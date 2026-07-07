@@ -1,0 +1,24 @@
+[package]
+name = "sidekick-embed"
+description = "Embedding backends for sidekick: Core ML/ANE encoders and a static CPU floor tier"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# Core ML encoder backend (only meaningful on macOS; elsewhere it is a stub
+# that reports Unavailable).
+coreml = ["dep:sidekick-coreml"]
+
+[dependencies]
+sidekick-core = { workspace = true }
+sidekick-coreml = { workspace = true, optional = true }
+tokenizers = { workspace = true }
+safetensors = { workspace = true }
+half = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

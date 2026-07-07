@@ -1,0 +1,11 @@
+# Static (model2vec-style) floor tier: a safetensors file with a single
+# `embeddings` [vocab, dims] tensor (f32 or f16) + tokenizer.json.
+# Runs anywhere on CPU in microseconds; works on Intel Macs and in CI.
+# Export from a model2vec distillation (e.g. minishlab/potion-base-8M).
+
+id = "static-floor"
+backend = "static"
+artifact = "model.safetensors"
+tokenizer = "tokenizer.json"
+dims = 256
+max_seq_len = 512

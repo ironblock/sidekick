@@ -1,0 +1,27 @@
+# EmbeddingGemma-300m converted to Core ML, targeting the ANE.
+#
+# Conversion: export google/embeddinggemma-300m with fixed-shape inputs at
+# each bucket below (enumerated shapes), fp16 weights, batch 1, and a pooled
+# fp16 output named `embeddings`. Ship the compiled .mlmodelc:
+#   xcrun coremlcompiler compile model.mlpackage .
+# Place tokenizer.json from the HF repo alongside.
+
+id = "embeddinggemma-300m"
+backend = "coreml"
+artifact = "model.mlmodelc"
+tokenizer = "tokenizer.json"
+dims = 768
+matryoshka = [768, 512, 256, 128]
+pooling = "none"          # conversion bakes pooling+normalization into the graph
+buckets = [128, 256, 512]
+max_seq_len = 512
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "embeddings"
+
+# EmbeddingGemma requires task prefixes; applied server-side per input_type.
+[prefixes]
+query = "task: search result | query: "
+document = "title: none | text: "

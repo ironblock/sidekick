@@ -268,6 +268,19 @@ sidekick-models      # manifest format: model id -> artifact, tokenizer.json,
 
 ---
 
+### Addendum (post-review, July 2026)
+
+Two directives were settled after review and now bind the implementation:
+
+1. **The daemon is an OpenAI-compatible server** (`sidekickd`): chat
+   completions + embeddings + `/v1/models` + health, with TTL'd session reuse
+   — llama.cpp/MLX-server in miniature, so consumers like OpenCode work
+   unmodified. The library/daemon split stands; the daemon is the first
+   consumer.
+2. **macOS 26 (Tahoe) is the API baseline.** The macOS 27 provider-protocol
+   surface is deliberately unused until corporate deployment makes it
+   testable. See docs/DECISIONS.md for the full judgment-call log.
+
 ## 6. Open questions
 
 1. **Generation fallback**: is "no local generation, heuristic degrade" acceptable when
