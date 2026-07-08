@@ -22,6 +22,11 @@ struct Args {
     /// also settable via SIDEKICK_API_KEY)
     #[arg(long, env = "SIDEKICK_API_KEY")]
     api_key: Option<String>,
+    /// Hard cap in seconds on a single generation call (overrides config;
+    /// also settable via SIDEKICK_TIMEOUT_SECS). Deliberately no clap
+    /// default: a default value would always override the config file.
+    #[arg(long, env = "SIDEKICK_TIMEOUT_SECS")]
+    request_timeout_secs: Option<u64>,
 }
 
 #[tokio::main]
@@ -43,6 +48,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if args.api_key.is_some() {
         config.api_key = args.api_key;
+    }
+    if let Some(secs) = args.request_timeout_secs {
+        config.request_timeout_secs = secs;
     }
 
     let state = build_state(&config)?;

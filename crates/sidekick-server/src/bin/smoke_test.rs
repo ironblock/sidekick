@@ -22,7 +22,7 @@ fn req(messages: Vec<ChatMessage>) -> ChatRequest {
 
 #[tokio::main]
 async fn main() {
-    let backend = fm_backend(Duration::from_secs(300));
+    let backend = fm_backend(Duration::from_secs(300), Duration::from_secs(60));
 
     println!("== availability ==");
     let availability = backend.availability().await;

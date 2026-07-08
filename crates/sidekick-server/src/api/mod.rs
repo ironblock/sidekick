@@ -103,6 +103,11 @@ impl From<Error> for ApiError {
                 "context_length_exceeded",
                 format!("Request exceeds the on-device context budget of {limit} tokens"),
             ),
+            Error::Timeout { secs } => Self::new(
+                StatusCode::GATEWAY_TIMEOUT,
+                "timeout",
+                format!("Generation did not complete within {secs}s"),
+            ),
             other => Self::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_error",
