@@ -10,6 +10,11 @@ repository.workspace = true
 name = "sidekickd"
 path = "src/main.rs"
 
+# Hardware smoke test for the Foundation Models backend; see the file header.
+[[bin]]
+name = "smoke-test"
+path = "src/bin/smoke_test.rs"
+
 [features]
 default = []
 # Enable the Core ML embedding backend (meaningful on macOS only).
