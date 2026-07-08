@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Test (Linux) + macOS cross-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (platform-neutral surface)
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Cross-check macOS-only code compiles
+        run: cargo check --workspace --target aarch64-apple-darwin --features sidekick-embed/coreml
+
+  macos:
+    name: Build + test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Runners predate the macOS 26 SDK; sidekick-fm falls back to its stub
+      # with a build warning, which is exactly the degradation users without
+      # Xcode 26 get. Core ML code builds and links for real here.
+      - name: Test with Core ML backend compiled in
+        run: cargo test --workspace --features sidekick-server/coreml,sidekick-embed/coreml

@@ -1,1 +1,120 @@
 # sidekick
+
+On-device inference for very small, asynchronous tasks on Apple Silicon —
+session titles, tags, embeddings, structured extraction — using every part of
+the silicon: Apple's Foundation Models (ANE, via Apple Intelligence) for
+generation, Core ML encoders on the Apple Neural Engine for embeddings, and a
+pure-CPU static-embedding floor tier that works anywhere.
+
+The daemon, **`sidekickd`**, speaks the OpenAI API, so anything that can point
+at an OpenAI-compatible base URL (OpenCode, editors, scripts) can use it:
+
+```
+POST /v1/chat/completions   Apple Foundation Models (macOS 26+, Apple Intelligence)
+POST /v1/embeddings         Core ML / ANE encoders + static floor models
+GET  /v1/models             what this machine can serve
+GET  /health                availability per tier, and why when unavailable
+```
+
+Design rationale lives in
+[docs/design/ane-inference-first-principles.md](docs/design/ane-inference-first-principles.md);
+autonomous implementation decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md).
+
+## Status
+
+Early. The platform-neutral machinery (server, routing, registry, static
+embeddings, session cache) is built and tested on Linux CI. The macOS-specific
+backends (Core ML runner, Foundation Models Swift shim) compile against the
+real bindings via cross-check but **have not yet been exercised on hardware**
+— that verification pass is the next milestone.
+
+## Quickstart
+
+```sh
+cargo build --release -p sidekick-server --features coreml   # on a Mac
+./target/release/sidekickd --models-dir ~/Library/Application\ Support/sidekick/models
+curl -s localhost:8790/health | jq
+```
+
+Chat requires macOS 26+ with Apple Intelligence enabled; `/health` tells you
+where you stand. Embeddings require at least one model in the models
+directory (see below). Requests degrade honestly: a missing tier is a 503
+with a reason, never a hang.
+
+### Example: OpenCode session titles
+
+Point a provider at `http://127.0.0.1:8790/v1` with model `apple-fm`.
+Constrained output works via the standard `response_format`:
+
+```json
+{
+  "model": "apple-fm",
+  "messages": [{"role": "user", "content": "Title this session: ..."}],
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {"name": "title", "schema": {
+      "type": "object",
+      "properties": {"title": {"type": "string"}},
+      "required": ["title"]
+    }}
+  }
+}
+```
+
+On-device guided generation makes the 3B model reliable at exactly this kind
+of task — the schema is enforced by constrained decoding, not by hoping.
+
+## Models directory
+
+Each embedding model is a directory with a `manifest.toml`:
+
+```
+~/Library/Application Support/sidekick/models/
+  embeddinggemma-300m/
+    manifest.toml
+    model.mlmodelc/        # precompile: xcrun coremlcompiler compile model.mlpackage .
+    tokenizer.json
+```
+
+See [examples/manifests/](examples/manifests/) for annotated manifests
+(EmbeddingGemma-300m on ANE, bge-small, a static floor model). Manifest rules
+that matter: Core ML models must declare enumerated sequence-length `buckets`
+(fixed shapes are what keep the model on the ANE), and `matryoshka` declares
+which `dimensions` values the OpenAI API may request.
+
+## Configuration
+
+`~/.config/sidekick/config.toml`, all optional (defaults shown):
+
+```toml
+addr = "127.0.0.1:8790"        # loopback only by default
+# models_dir = "..."           # default: <data dir>/sidekick/models
+# api_key = "..."              # require Authorization: Bearer <key> on /v1
+session_ttl_secs = 300         # Foundation Models session reuse window
+model_idle_ttl_secs = 900      # embedding model residency after last use
+```
+
+CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...`.
+
+## Workspace layout
+
+| Crate | What it is |
+|---|---|
+| `sidekick-core` | Backend-neutral traits and types: `ChatBackend`, `Embedder`, availability states, model manifest/registry. No Apple dependencies. |
+| `sidekick-coreml` | Small safe wrapper over `objc2-core-ml`: load, compute units, int32-in/float-out predictions. macOS only; empty stub elsewhere. |
+| `sidekick-fm` | Foundation Models backend: Swift C-ABI shim built by `build.rs` (macOS 26 SDK), guided generation from JSON Schema, TTL'd session reuse keyed by conversation prefix. Stub elsewhere. |
+| `sidekick-embed` | Embedding pipelines: Core ML/ANE encoder (feature `coreml`) and the static floor tier. |
+| `sidekick-server` | `sidekickd`, the OpenAI-compatible daemon. |
+
+## Development
+
+```sh
+cargo test --workspace                 # runs anywhere, including Linux
+cargo check --workspace --target aarch64-apple-darwin --features sidekick-embed/coreml
+```
+
+The second command is the cross-check CI uses to keep the macOS-only code
+honest from non-Mac machines. On a Mac, `cargo test --workspace --features
+sidekick-server/coreml` additionally builds the Swift shim (Xcode 26 needed
+for the real Foundation Models backend; anything older falls back to the
+stub with a build warning).

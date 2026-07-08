@@ -1,0 +1,15 @@
+[package]
+name = "sidekick-core"
+description = "Core traits and types for sidekick: tiered on-device inference for small background tasks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }

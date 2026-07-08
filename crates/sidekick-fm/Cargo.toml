@@ -1,0 +1,16 @@
+[package]
+name = "sidekick-fm"
+description = "Apple Foundation Models chat backend for sidekick (macOS 26+), via a Swift C-ABI shim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[dependencies]
+sidekick-core = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }

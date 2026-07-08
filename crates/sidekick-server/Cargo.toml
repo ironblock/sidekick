@@ -1,0 +1,42 @@
+[package]
+name = "sidekick-server"
+description = "sidekickd: an OpenAI-compatible server over Apple on-device inference (Foundation Models + ANE encoders)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sidekickd"
+path = "src/main.rs"
+
+[features]
+default = []
+# Enable the Core ML embedding backend (meaningful on macOS only).
+coreml = ["sidekick-embed/coreml"]
+
+[dependencies]
+sidekick-core = { workspace = true }
+sidekick-embed = { workspace = true }
+sidekick-fm = { workspace = true }
+
+anyhow = { workspace = true }
+axum = { workspace = true }
+base64 = { workspace = true }
+clap = { workspace = true }
+dirs = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"
+safetensors = { workspace = true }
