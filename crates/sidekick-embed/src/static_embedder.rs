@@ -72,6 +72,7 @@ impl StaticEmbedder {
     }
 
     fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
+        let text = crate::byte_cap(text, self.max_seq_len);
         let encoding = self
             .tokenizer
             .encode(text, false)

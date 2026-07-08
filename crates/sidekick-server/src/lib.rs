@@ -41,5 +41,6 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         embedders: Arc::new(EmbedderPool::new(registry, config.model_idle_ttl())),
         api_key: config.api_key.as_deref().map(Arc::from),
         started_at: Instant::now(),
+        request_timeout: config.request_timeout(),
     })
 }

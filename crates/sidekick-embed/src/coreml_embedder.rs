@@ -77,11 +77,12 @@ impl CoremlEmbedder {
     }
 
     fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
+        let max = *self.buckets.last().expect("validated non-empty");
+        let text = crate::byte_cap(text, max);
         let encoding = self
             .tokenizer
             .encode(text, true)
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
-        let max = *self.buckets.last().expect("validated non-empty");
         let ids: Vec<i32> = encoding
             .get_ids()
             .iter()

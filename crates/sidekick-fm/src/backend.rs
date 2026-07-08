@@ -32,6 +32,22 @@ fn is_recoverable(err: &Error) -> bool {
         .any(|k| message.contains(k))
 }
 
+/// Strip one leading `assistant` speaker label (ASCII case-insensitive,
+/// optional spaces before the colon), at the start of the reply only.
+fn strip_assistant_label(text: &str) -> &str {
+    const LABEL: &str = "assistant";
+    // `get`, not slicing, so a multi-byte char spanning the boundary can't panic.
+    if let Some(prefix) = text.get(..LABEL.len()) {
+        if prefix.eq_ignore_ascii_case(LABEL) {
+            let rest = text[LABEL.len()..].trim_start_matches(' ');
+            if let Some(after) = rest.strip_prefix(':') {
+                return after.trim_start();
+            }
+        }
+    }
+    text
+}
+
 impl<E: SessionEngine> SessionChatBackend<E> {
     pub fn new(engine: E, session_ttl: Duration, request_timeout: Duration) -> Self {
         Self {
@@ -129,7 +145,10 @@ impl<E: SessionEngine> SessionChatBackend<E> {
         // Cold replays present history as a "User:/Assistant:" transcript and
         // the model sometimes mimics the format (seen on real hardware);
         // a leading speaker label is never part of a wanted reply.
-        let text = text.strip_prefix("Assistant:").map(str::trim_start).map(String::from).unwrap_or(text);
+        let text = match strip_assistant_label(&text) {
+            stripped if stripped.len() != text.len() => stripped.to_string(),
+            _ => text,
+        };
 
         // File the session under the extended conversation for follow-ups.
         let mut extended = history;
@@ -361,6 +380,16 @@ mod tests {
         assert_eq!(r.content, "Paris has 2.1 million people.");
     }
 
+    #[test]
+    fn assistant_label_variants() {
+        for s in ["Assistant: x", "assistant: x", "ASSISTANT: x", "Assistant : x", "assistant  :  x"] {
+            assert_eq!(strip_assistant_label(s), "x", "should strip: {s:?}");
+        }
+        for s in ["Assistants: x", "The Assistant: x", "Assistant x", "", "助手: x"] {
+            assert_eq!(strip_assistant_label(s), s, "should not strip: {s:?}");
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn recoverable_error_retries_on_fresh_session() {
         let b = backend();
@@ -396,7 +425,7 @@ mod tests {
             .fail_with
             .lock()
             .unwrap()
-            .push(Error::ContextOverflow { actual: 5000, limit: 4096 });
+            .push(Error::ContextOverflow { limit: 4096 });
 
         let err = b
             .complete(req(vec![ChatMessage::new(Role::User, "hi")]))

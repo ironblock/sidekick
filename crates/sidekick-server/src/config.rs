@@ -15,7 +15,10 @@ pub struct Config {
     /// Require `Authorization: Bearer <key>` on /v1 routes when set.
     pub api_key: Option<String>,
     /// How long a Foundation Models session is kept for conversation
-    /// follow-ups before being dropped.
+    /// follow-ups before being dropped. Shorter than `model_idle_ttl_secs`
+    /// because a session is one conversation's context (cheap to rebuild via
+    /// replay) while a resident model serves every request (expensive to
+    /// reload — seconds of Core ML compile for large encoders).
     pub session_ttl_secs: u64,
     /// How long a loaded embedding model stays resident after its last use.
     pub model_idle_ttl_secs: u64,

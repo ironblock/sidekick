@@ -46,6 +46,29 @@ where you stand. Embeddings require at least one model in the models
 directory (see below). Requests degrade honestly: a missing tier is a 503
 with a reason, never a hang.
 
+### Running as a daemon
+
+For always-on use, run under launchd as a user agent. Save as
+`~/Library/LaunchAgents/dev.sidekick.sidekickd.plist` (adjust the binary
+path), then `launchctl load ~/Library/LaunchAgents/dev.sidekick.sidekickd.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.sidekick.sidekickd</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/local/bin/sidekickd</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/sidekickd.log</string>
+</dict></plist>
+```
+
+Foundation Models requires a logged-in user session (it is Apple
+Intelligence), so a LaunchAgent — not a LaunchDaemon — is the right unit.
+
 ### Example: OpenCode session titles
 
 Point a provider at `http://127.0.0.1:8790/v1` with model `apple-fm`.
