@@ -88,11 +88,24 @@ is configured it guards `/v1/*` only; `/health` stays open for probes
 Not `.all`: keeping background work off the GPU is the project's thesis. The
 wrapper exposes the choice; measurement can override.
 
-## Needs hardware verification (blocking v0.2)
-- `swift/bridge.swift` compiles and behaves against the real macOS 26 SDK
-  (exact `DynamicGenerationSchema`/`GenerationOptions` initializer shapes are
-  the risk; everything else is plain Foundation).
+## Hardware verification status
+
+Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
+`cargo run -p sidekick-server --bin smoke-test` and live `sidekickd` runs:
+- `swift/bridge.swift` compiles against the real macOS 26 SDK and behaves:
+  availability probe, plain completion, session reuse (~4x faster warm than
+  cold), and `DynamicGenerationSchema` constrained decoding returning valid
+  schema-conforming JSON.
+- Static embedding tier end-to-end over HTTP with a real model2vec artifact
+  (potion-base-8M): float + base64 encodings, sane cosine structure.
+- One runtime lesson encoded in code: binaries linking the Swift shim need
+  `-rpath /usr/lib/swift` or they abort at dyld load (see sidekick-fm and
+  sidekick-server build.rs), and cold-replay transcripts can make the model
+  emit a leading `Assistant:` label (stripped in the backend).
+
+Still needing hardware verification (blocking v0.2):
 - `sidekick-coreml` runtime behavior (compiles clean against `objc2-core-ml`
-  0.3.2 via cross-check; predictions untested).
+  0.3.2 via cross-check; predictions untested — needs a converted
+  `.mlmodelc` encoder artifact).
 - ANE residency check for a converted EmbeddingGemma/bge artifact
   (`.cpuOnly` vs `.cpuAndNeuralEngine` latency ratio, per design doc §5).

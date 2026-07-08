@@ -64,7 +64,8 @@ impl<E: SessionEngine> SessionChatBackend<E> {
             return history[0].content.clone();
         }
         let mut out = String::from(
-            "Continue this conversation. Prior turns:\n\n",
+            "Continue this conversation. Reply to the last user message only, \
+             without any speaker label. Prior turns:\n\n",
         );
         for m in &history[..history.len() - 1] {
             let label = match m.role {
@@ -125,6 +126,10 @@ impl<E: SessionEngine> SessionChatBackend<E> {
             }
             Err(e) => return Err(e),
         };
+        // Cold replays present history as a "User:/Assistant:" transcript and
+        // the model sometimes mimics the format (seen on real hardware);
+        // a leading speaker label is never part of a wanted reply.
+        let text = text.strip_prefix("Assistant:").map(str::trim_start).map(String::from).unwrap_or(text);
 
         // File the session under the extended conversation for follow-ups.
         let mut extended = history;
@@ -320,6 +325,40 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Other(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn leading_assistant_label_is_stripped() {
+        struct LabelingEngine;
+        struct NoSession;
+        impl SessionEngine for LabelingEngine {
+            type Session = NoSession;
+            fn availability(&self) -> Availability {
+                Availability::Available
+            }
+            fn create(&self, _instructions: &str) -> Result<NoSession> {
+                Ok(NoSession)
+            }
+            fn respond(
+                &self,
+                _session: &mut NoSession,
+                _prompt: &str,
+                _opts: &RespondOptions,
+            ) -> Result<String> {
+                Ok("Assistant: Paris has 2.1 million people.".into())
+            }
+        }
+
+        let b = SessionChatBackend::new(
+            LabelingEngine,
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        let r = b
+            .complete(req(vec![ChatMessage::new(Role::User, "population?")]))
+            .await
+            .unwrap();
+        assert_eq!(r.content, "Paris has 2.1 million people.");
     }
 
     #[tokio::test(flavor = "multi_thread")]

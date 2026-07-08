@@ -22,11 +22,13 @@ autonomous implementation decisions are logged in [docs/DECISIONS.md](docs/DECIS
 
 ## Status
 
-Early. The platform-neutral machinery (server, routing, registry, static
-embeddings, session cache) is built and tested on Linux CI. The macOS-specific
-backends (Core ML runner, Foundation Models Swift shim) compile against the
-real bindings via cross-check but **have not yet been exercised on hardware**
-— that verification pass is the next milestone.
+Early but hardware-verified for the chat and static-embedding paths: the
+Foundation Models Swift shim (including constrained decoding) and the static
+embedding tier run end-to-end on Apple Silicon (macOS 26.5.1) — see
+"Hardware verification status" in [docs/DECISIONS.md](docs/DECISIONS.md) and
+`cargo run -p sidekick-server --bin smoke-test`. The Core ML encoder path
+compiles against the real bindings but still awaits a converted `.mlmodelc`
+artifact to exercise predictions and ANE residency.
 
 ## Quickstart
 
