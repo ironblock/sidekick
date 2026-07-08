@@ -25,6 +25,9 @@ pub enum Error {
     #[error("inference error: {0}")]
     Inference(String),
 
+    #[error("generation did not complete within {secs}s")]
+    Timeout { secs: u64 },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 

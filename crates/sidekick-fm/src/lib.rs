@@ -28,14 +28,20 @@ pub use engine::{RespondOptions, SessionEngine};
 pub type FmChatBackend = SessionChatBackend<ffi::FfiEngine>;
 
 #[cfg(all(target_os = "macos", not(fm_stub)))]
-pub fn fm_backend(session_ttl: std::time::Duration) -> FmChatBackend {
-    SessionChatBackend::new(ffi::FfiEngine, session_ttl)
+pub fn fm_backend(
+    session_ttl: std::time::Duration,
+    request_timeout: std::time::Duration,
+) -> FmChatBackend {
+    SessionChatBackend::new(ffi::FfiEngine, session_ttl, request_timeout)
 }
 
 #[cfg(not(all(target_os = "macos", not(fm_stub))))]
 pub type FmChatBackend = SessionChatBackend<engine::StubEngine>;
 
 #[cfg(not(all(target_os = "macos", not(fm_stub))))]
-pub fn fm_backend(session_ttl: std::time::Duration) -> FmChatBackend {
-    SessionChatBackend::new(engine::StubEngine, session_ttl)
+pub fn fm_backend(
+    session_ttl: std::time::Duration,
+    request_timeout: std::time::Duration,
+) -> FmChatBackend {
+    SessionChatBackend::new(engine::StubEngine, session_ttl, request_timeout)
 }

@@ -19,6 +19,9 @@ pub struct Config {
     pub session_ttl_secs: u64,
     /// How long a loaded embedding model stays resident after its last use.
     pub model_idle_ttl_secs: u64,
+    /// Hard cap on a single generation call. A hung Foundation Models call
+    /// otherwise hangs its request forever.
+    pub request_timeout_secs: u64,
 }
 
 impl Default for Config {
@@ -29,6 +32,7 @@ impl Default for Config {
             api_key: None,
             session_ttl_secs: 300,
             model_idle_ttl_secs: 900,
+            request_timeout_secs: 60,
         }
     }
 }
@@ -62,6 +66,10 @@ impl Config {
 
     pub fn model_idle_ttl(&self) -> Duration {
         Duration::from_secs(self.model_idle_ttl_secs)
+    }
+
+    pub fn request_timeout(&self) -> Duration {
+        Duration::from_secs(self.request_timeout_secs)
     }
 }
 

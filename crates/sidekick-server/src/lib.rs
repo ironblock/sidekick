@@ -34,7 +34,8 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
             "no embedding models found; /v1/embeddings will 404"
         );
     }
-    let chat: Arc<dyn ChatBackend> = Arc::new(sidekick_fm::fm_backend(config.session_ttl()));
+    let chat: Arc<dyn ChatBackend> =
+        Arc::new(sidekick_fm::fm_backend(config.session_ttl(), config.request_timeout()));
     Ok(AppState {
         chat,
         embedders: Arc::new(EmbedderPool::new(registry, config.model_idle_ttl())),
