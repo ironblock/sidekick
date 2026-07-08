@@ -108,10 +108,14 @@ fn safetensors_view(bytes: &[u8], shape: Vec<usize>) -> safetensors::tensor::Ten
 }
 
 fn test_state(chat_available: bool, api_key: Option<&str>) -> AppState {
+    // A process-wide counter, not a timestamp: `Instant::now().elapsed()` is
+    // ~0ns and collided across concurrently-running tests, letting one test
+    // scan another's half-written fixture (observed as a ~1-in-5 flake).
+    static FIXTURE_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
         "sk-server-test-{}-{}",
         std::process::id(),
-        Instant::now().elapsed().as_nanos()
+        FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     write_embedding_fixture(&dir);
     let registry = ModelRegistry::scan(&dir).unwrap();
@@ -120,6 +124,7 @@ fn test_state(chat_available: bool, api_key: Option<&str>) -> AppState {
         embedders: Arc::new(EmbedderPool::new(registry, Duration::from_secs(60))),
         api_key: api_key.map(Arc::from),
         started_at: Instant::now(),
+        request_timeout: Duration::from_secs(60),
     }
 }
 
@@ -160,6 +165,25 @@ async fn chat_completion_round_trip() {
     assert_eq!(body["choices"][0]["message"]["content"], "echo: hello");
     assert_eq!(body["choices"][0]["finish_reason"], "stop");
     assert_eq!(body["usage"]["total_tokens"], 15);
+    assert_eq!(body["constrained"], false, "extension field present and honest");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_rejects_zero_max_tokens() {
+    let (status, body) = call(
+        test_state(true, None),
+        post_json(
+            "/v1/chat/completions",
+            json!({
+                "model": "apple-fm",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 0
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"]["message"].as_str().unwrap().contains("max_tokens"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

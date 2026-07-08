@@ -39,6 +39,7 @@ pub async fn chat_completions(
     let id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
     let created = now_unix();
     let model = req.model.clone();
+    let constrained = response.constrained;
 
     if !stream_requested {
         return Ok(Json(ChatCompletionResponse {
@@ -52,6 +53,7 @@ pub async fn chat_completions(
                 finish_reason: finish,
             }],
             usage,
+            constrained,
         })
         .into_response());
     }
@@ -60,13 +62,16 @@ pub async fn chat_completions(
     // under a second, so v1 "streams" by emitting the finished completion as
     // one delta. Wire-compatible with every OpenAI streaming client; real
     // token streaming is a shim upgrade later.
-    let chunk = |choices: Vec<ChunkChoice>, usage: Option<WireUsage>| ChatCompletionChunk {
-        id: id.clone(),
-        object: "chat.completion.chunk",
-        created,
-        model: model.clone(),
-        choices,
-        usage,
+    let chunk = |choices: Vec<ChunkChoice>, usage: Option<WireUsage>, constrained: Option<bool>| {
+        ChatCompletionChunk {
+            id: id.clone(),
+            object: "chat.completion.chunk",
+            created,
+            model: model.clone(),
+            choices,
+            usage,
+            constrained,
+        }
     };
 
     let mut events = vec![
@@ -77,6 +82,7 @@ pub async fn chat_completions(
                 finish_reason: None,
             }],
             None,
+            None,
         ),
         chunk(
             vec![ChunkChoice {
@@ -84,6 +90,7 @@ pub async fn chat_completions(
                 delta: Delta { role: None, content: Some(response.content) },
                 finish_reason: None,
             }],
+            None,
             None,
         ),
         chunk(
@@ -93,10 +100,11 @@ pub async fn chat_completions(
                 finish_reason: Some(finish),
             }],
             None,
+            Some(constrained),
         ),
     ];
     if include_usage {
-        events.push(chunk(vec![], Some(usage)));
+        events.push(chunk(vec![], Some(usage), None));
     }
 
     let stream = stream::iter(
@@ -154,12 +162,16 @@ fn to_core_request(req: &ChatCompletionRequest) -> Result<ChatRequest, ApiError>
         }
     };
 
-    Ok(ChatRequest {
-        messages,
-        temperature: req.temperature,
-        max_tokens: req.max_completion_tokens.or(req.max_tokens),
-        schema,
-    })
+    // Some(0) would collide with the FFI's 0-means-unset sentinel and be
+    // silently treated as "no limit"; OpenAI 400s it too.
+    let max_tokens = req.max_completion_tokens.or(req.max_tokens);
+    if max_tokens == Some(0) {
+        return Err(ApiError::invalid(
+            "max_tokens (or max_completion_tokens) must be at least 1",
+        ));
+    }
+
+    Ok(ChatRequest { messages, temperature: req.temperature, max_tokens, schema })
 }
 
 fn flatten_content(content: &WireContent) -> Result<String, ApiError> {

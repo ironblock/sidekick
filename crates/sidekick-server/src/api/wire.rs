@@ -80,6 +80,11 @@ pub struct ChatCompletionResponse {
     pub model: String,
     pub choices: Vec<Choice>,
     pub usage: WireUsage,
+    /// Non-standard extension: true when the output was produced under real
+    /// constrained decoding (response_format json_schema), false for plain
+    /// or best-effort-prompted output (json_object). OpenAI clients ignore
+    /// unknown top-level fields.
+    pub constrained: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,6 +118,10 @@ pub struct ChatCompletionChunk {
     pub choices: Vec<ChunkChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<WireUsage>,
+    /// Non-standard extension; set on the finish chunk only. See
+    /// [`ChatCompletionResponse::constrained`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub constrained: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

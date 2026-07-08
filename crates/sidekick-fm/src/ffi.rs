@@ -40,8 +40,9 @@ unsafe fn take_error(err: *mut c_char, context: &str) -> Error {
     let message = CStr::from_ptr(err).to_string_lossy().into_owned();
     sk_fm_string_free(err);
     if message.contains("exceededContextWindowSize") {
-        // The 4096-token combined budget was blown mid-generation.
-        return Error::ContextOverflow { actual: 0, limit: 4096 };
+        // The 4096-token combined budget was blown mid-generation. Apple's
+        // error carries no token counts, so none are reported.
+        return Error::ContextOverflow { limit: 4096 };
     }
     Error::Inference(format!("{context}: {message}"))
 }

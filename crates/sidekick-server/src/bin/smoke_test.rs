@@ -12,7 +12,7 @@
 //! a self-hosted CI job. This is the check `docs/DECISIONS.md` lists under
 //! "Needs hardware verification".
 
-use sidekick_core::{Availability, ChatBackend, ChatMessage, ChatRequest, Role};
+use sidekick_core::{Availability, ChatBackend, ChatMessage, ChatRequest, Role, UnavailableReason};
 use sidekick_fm::fm_backend;
 use std::time::{Duration, Instant};
 
@@ -25,12 +25,31 @@ async fn main() {
     let backend = fm_backend(Duration::from_secs(300), Duration::from_secs(60));
 
     println!("== availability ==");
-    let availability = backend.availability().await;
-    match &availability {
-        Availability::Available => println!("Foundation Models: available"),
-        Availability::Unavailable { reason } => {
-            eprintln!("FAIL: Foundation Models unavailable: {reason:?}");
-            std::process::exit(1);
+    // Model assets download lazily, so ModelNotReady can resolve on its own:
+    // give it a few bounded retries. Every other reason is terminal.
+    const AVAILABILITY_ATTEMPTS: u32 = 3;
+    const AVAILABILITY_RETRY_DELAY: Duration = Duration::from_secs(10);
+    let mut attempt = 1;
+    loop {
+        match backend.availability().await {
+            Availability::Available => {
+                println!("Foundation Models: available");
+                break;
+            }
+            Availability::Unavailable { reason: UnavailableReason::ModelNotReady }
+                if attempt < AVAILABILITY_ATTEMPTS =>
+            {
+                eprintln!(
+                    "model not ready (attempt {attempt}/{AVAILABILITY_ATTEMPTS}); retrying in {}s...",
+                    AVAILABILITY_RETRY_DELAY.as_secs()
+                );
+                tokio::time::sleep(AVAILABILITY_RETRY_DELAY).await;
+                attempt += 1;
+            }
+            Availability::Unavailable { reason } => {
+                eprintln!("FAIL: Foundation Models unavailable: {reason:?}");
+                std::process::exit(1);
+            }
         }
     }
 

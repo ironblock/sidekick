@@ -13,8 +13,11 @@ pub enum Error {
     #[error("invalid manifest at {path}: {message}")]
     InvalidManifest { path: String, message: String },
 
-    #[error("input exceeds context budget: {actual} tokens > {limit}")]
-    ContextOverflow { actual: usize, limit: usize },
+    // No `actual` count: the Foundation Models shim boundary only surfaces
+    // the error description, never token counts, so it was always a stub 0
+    // that rendered as the self-contradictory "0 tokens > 4096".
+    #[error("input exceeds context budget of {limit} tokens")]
+    ContextOverflow { limit: usize },
 
     #[error("guided generation failed: {0}")]
     GuidedGeneration(String),

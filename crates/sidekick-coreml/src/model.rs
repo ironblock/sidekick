@@ -200,7 +200,11 @@ impl CoremlModel {
     }
 }
 
-/// Minimal f16 -> f32 (avoids pulling `half` into this crate).
+/// Minimal f16 -> f32 (avoids pulling `half` into this crate). Verified
+/// bit-exact against the IEEE-754 definition for all 65536 inputs (see the
+/// exhaustive test below); the subnormal branch is correct — the normalized
+/// leading bit becomes the *implicit* bit of the f32, encoded via the
+/// exponent, which is why `f & 0x3ff` masks it off.
 fn half_to_f32(h: u16) -> f32 {
     let sign = ((h >> 15) & 1) as u32;
     let exp = ((h >> 10) & 0x1f) as u32;
@@ -222,4 +226,42 @@ fn half_to_f32(h: u16) -> f32 {
         (e, f) => (sign << 31) | ((e + 127 - 15) << 23) | (f << 13),
     };
     f32::from_bits(bits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::half_to_f32;
+
+    /// Independent reference straight from the IEEE-754 binary16 definition,
+    /// via f64 arithmetic (exact: every binary16 value fits in f64).
+    fn reference(h: u16) -> f32 {
+        let sign = if h >> 15 & 1 == 1 { -1.0f64 } else { 1.0 };
+        let exp = (h >> 10 & 0x1f) as i32;
+        let frac = (h & 0x3ff) as f64;
+        (match exp {
+            0 => sign * (frac / 1024.0) * (2.0f64).powi(-14),
+            0x1f if frac == 0.0 => sign * f64::INFINITY,
+            0x1f => f64::NAN,
+            e => sign * (1.0 + frac / 1024.0) * (2.0f64).powi(e - 15),
+        }) as f32
+    }
+
+    #[test]
+    fn half_to_f32_is_bit_exact_for_all_inputs() {
+        for h in 0..=u16::MAX {
+            let got = half_to_f32(h);
+            let want = reference(h);
+            if want.is_nan() {
+                assert!(got.is_nan(), "h={h:#06x}: expected NaN, got {got}");
+            } else {
+                assert_eq!(
+                    got.to_bits(),
+                    want.to_bits(),
+                    "h={h:#06x}: got {got} ({:#010x}), want {want} ({:#010x})",
+                    got.to_bits(),
+                    want.to_bits()
+                );
+            }
+        }
+    }
 }

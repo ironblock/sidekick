@@ -22,7 +22,15 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .nest("/v1", v1)
         .route("/health", get(misc::health))
+        // axum's default; stated explicitly because it is what bounds the
+        // tokenizer cost of one embeddings request.
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(state)
+}
+
+/// Constant-time byte comparison, so the auth check leaks length only.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 async fn require_auth(
@@ -36,7 +44,7 @@ async fn require_auth(
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|token| token == expected.as_ref())
+            .map(|token| constant_time_eq(token.as_bytes(), expected.as_bytes()))
             .unwrap_or(false);
         if !ok {
             return ApiError::new(
@@ -119,6 +127,15 @@ impl From<Error> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        // The one choke point every ApiError passes through — log here so
+        // failures are visible server-side, not just in the client's body.
+        if self.status.is_server_error() {
+            tracing::error!(status = %self.status, code = self.code, message = %self.message, "request failed");
+        } else if self.status == StatusCode::UNAUTHORIZED {
+            tracing::warn!(status = %self.status, code = self.code, "request rejected");
+        } else {
+            tracing::debug!(status = %self.status, code = self.code, message = %self.message, "request rejected");
+        }
         let body = serde_json::json!({
             "error": {
                 "message": self.message,
