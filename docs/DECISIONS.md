@@ -127,6 +127,29 @@ measured on-device against the same sentence set as the bge parity check:
 Not worth a third backend; revisit only if Apple ships a retrieval-tuned
 embedding API.
 
+## D17 — EmbeddingGemma ships ANE-default at ~0.990 parity
+Gemma3's 300m encoder needed real conversion engineering
+(tools/convert_embeddinggemma.py): a calibrated power-of-two fp16 range
+rewrite (the residual stream reaches ~1.5e5, past fp16 max — scale-invariant
+RMSNorm rewrites make it exact; fp32 parity gates at 1.000000), hand-built
+attention masks (transformers halves config.json's sliding_window to 257
+for bidirectional models; the 512 bucket has a live band, so the parity
+gates include a ~400-token text), and shape-arithmetic-free rotate_half /
+repeat_kv rewrites for coremltools' static-shape 'int' op crash.
+
+After all of that, the ANE itself costs ~1% cosine — intrinsic fp16
+accumulation across 24 layers, insensitive to residual scale and not
+attributable to softmax (measured; see the script docstring). The matrix at
+bucket 128, worst-of-parity vs fp32 sentence-transformers reference:
+CPU_AND_NE 0.9905 at 7.9ms; CPU_ONLY 0.9999 at 25.1ms; ALL/GPU 0.999999 at
+11.9ms. We keep the D14 no-GPU default and take 3x latency for 1% cosine:
+rank order in similarity tests is preserved with wide margins, and callers
+needing exact parity can use bge-small (0.99998 on ANE) or load with
+CpuOnly. Conversion gates are per-path: CPU_ONLY >= 0.999 (conversion is
+faithful), CPU_AND_NE >= 0.985 (what the ANE delivers). Artifact cost:
+~600MB per bucket; multifunction weight sharing is a possible future
+optimization.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
@@ -152,8 +175,16 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   failures) abort the process — Rust cannot catch them; the fix is
   converting models that don't provoke them (D15), not catching.
 
+- EmbeddingGemma-300m end-to-end (July 2026): conversion via
+  tools/convert_embeddinggemma.py (D17), ANE residency 3.4x/3.1x/2.9x at
+  buckets 128/256/512 via ane_check, server /v1/embeddings parity 0.9905
+  vs fp32 sentence-transformers (matching the ANE gate exactly — the Rust
+  tokenizer path is token-identical), matryoshka dimensions 512/256/128
+  with unit norms and 400 on undeclared dims, query/document prefixes,
+  and a 831-token input through the 512 bucket (47ms warm).
+
 Still open:
-- EmbeddingGemma conversion (mean pooling needs the mask folded into the
-  in-model pooling; same static-per-bucket recipe should apply).
 - An automated ANE-residency gate in a self-hosted CI job (the example
   exists; nothing runs it automatically).
+- Multifunction mlprogram weight sharing to collapse the 3x ~600MB
+  per-bucket artifact duplication for large encoders (D17).

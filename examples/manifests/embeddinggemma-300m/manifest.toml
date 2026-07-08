@@ -1,18 +1,25 @@
-# EmbeddingGemma-300m converted to Core ML, targeting the ANE.
+# EmbeddingGemma-300m as ANE-resident Core ML artifacts: one static-shape
+# model per sequence-length bucket ({seq} resolves against `buckets`), with
+# mask-aware mean pooling, the model's two dense projections (768->3072->768),
+# and L2 normalization all baked into the graph (output `embeddings`,
+# statically (1, 768)).
 #
-# Conversion: export google/embeddinggemma-300m with fixed-shape inputs at
-# each bucket below (enumerated shapes), fp16 weights, batch 1, and a pooled
-# fp16 output named `embeddings`. Ship the compiled .mlmodelc:
-#   xcrun coremlcompiler compile model.mlpackage .
-# Place tokenizer.json from the HF repo alongside.
+# Produce the artifacts with tools/convert_embeddinggemma.py. See
+# docs/DECISIONS.md D15 for why per-bucket static shapes and in-model
+# pooling are required — flexible shapes and raw hidden-state outputs
+# silently push the encoder off the ANE.
+#
+# Note the size tradeoff: ~600 MB per bucket artifact (300m params, fp16
+# weights duplicated per bucket). Weight-sharing via multifunction
+# mlprograms is a possible future optimization.
 
 id = "embeddinggemma-300m"
 backend = "coreml"
-artifact = "model.mlmodelc"
+artifact = "model_{seq}.mlmodelc"
 tokenizer = "tokenizer.json"
 dims = 768
 matryoshka = [768, 512, 256, 128]
-pooling = "none"          # conversion bakes pooling+normalization into the graph
+pooling = "none"          # mean pooling + dense stack live inside the model
 buckets = [128, 256, 512]
 max_seq_len = 512
 
