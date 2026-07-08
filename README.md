@@ -22,13 +22,16 @@ autonomous implementation decisions are logged in [docs/DECISIONS.md](docs/DECIS
 
 ## Status
 
-Early but hardware-verified for the chat and static-embedding paths: the
-Foundation Models Swift shim (including constrained decoding) and the static
-embedding tier run end-to-end on Apple Silicon (macOS 26.5.1) — see
-"Hardware verification status" in [docs/DECISIONS.md](docs/DECISIONS.md) and
-`cargo run -p sidekick-server --bin smoke-test`. The Core ML encoder path
-compiles against the real bindings but still awaits a converted `.mlmodelc`
-artifact to exercise predictions and ANE residency.
+All three inference paths are hardware-verified on Apple Silicon
+(macOS 26.5.1): the Foundation Models Swift shim (including constrained
+decoding), the static embedding tier, and the Core ML encoder tier with a
+locally converted bge-small running ANE-resident (3.4x over CPU at seq 128,
+verified via `cargo run -p sidekick-coreml --example ane_check`). See
+"Hardware verification status" in [docs/DECISIONS.md](docs/DECISIONS.md),
+`cargo run -p sidekick-server --bin smoke-test`, and
+[tools/convert_bge_small.py](tools/convert_bge_small.py) for the conversion
+recipe (the constraints it encodes are hardware-verified; deviating from
+them silently pushes the encoder off the ANE).
 
 ## Quickstart
 

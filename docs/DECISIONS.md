@@ -88,6 +88,45 @@ is configured it guards `/v1/*` only; `/health` stays open for probes
 Not `.all`: keeping background work off the GPU is the project's thesis. The
 wrapper exposes the choice; measurement can override.
 
+## D15 — Per-bucket static artifacts, pooling baked into the model
+The design doc (§5) assumed enumerated shapes keep an encoder on the ANE.
+Hardware disagreed on both counts:
+- A single `ct.EnumeratedShapes` artifact fails ANE plan compilation at load
+  ("tensor_buffer has known strides while the model has FlexibleShapeInfo")
+  and the whole encoder silently runs on CPU — 86 ms vs 2.4 ms/embed for
+  bge-small at seq 128.
+- A raw `last_hidden_state` output keeps a symbolic seq dim (coremltools
+  can't unify the shape symbols of two enumerated inputs) which the
+  ANE/CPU Espresso path rejects outright ("Data-dependent shapes were
+  disabled") while `.all` (GPU) tolerates it — an especially nasty trap
+  given D14.
+
+So: `artifact` supports a `{seq}` placeholder, one static-shape `.mlmodelc`
+per bucket, loaded lazily and kept resident; pooling happens inside the
+converted graph (statically-shaped `(1, dims)` output, manifest
+`pooling = "none"`). Measured residency ratios for bge-small (M-series,
+macOS 26.5): 3.4x/2.4x/1.75x at 128/256/512. Full recipe with the other
+two traps (SDPA-not-eager fp16 NaNs, explicit position_ids for the
+coremltools static-shape bug) in `tools/convert_bge_small.py`.
+
+## D16 — No Apple OS-embedding tier (NLContextualEmbedding / NLEmbedding)
+Evaluated as a candidate zero-download tier (July 2026) and declined.
+FoundationModels exposes no embedding API at all (confirmed: framework
+symbol index, Apple engineers at the WWDC25 group lab — "consider using
+Core ML for your embedding model" — and WWDC26 answering RAG demand with a
+Spotlight search tool instead of vectors). The NaturalLanguage options,
+measured on-device against the same sentence set as the bge parity check:
+- NLContextualEmbedding (512-d multilingual BERT, mean-pooled DIY): related
+  pairs 0.96/0.89 vs unrelated 0.75 — rank order survives but the
+  anisotropic baseline makes raw-cosine thresholds useless; ~17-22 ms warm;
+  it's an MLM feature extractor, not a retrieval model.
+- NLEmbedding.sentenceEmbedding (512-d, 2020-era): clean separation
+  (0.74/0.44 vs 0.14) at ~5-7 ms — but bge-small on the ANE is stronger
+  (0.78/0.81 vs 0.40 with retrieval-tuned training), faster (~2.4 ms), and
+  already shipped. The static floor tier covers the no-download niche.
+Not worth a third backend; revisit only if Apple ships a retrieval-tuned
+embedding API.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
@@ -102,10 +141,19 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   `-rpath /usr/lib/swift` or they abort at dyld load (see sidekick-fm and
   sidekick-server build.rs), and cold-replay transcripts can make the model
   emit a leading `Assistant:` label (stripped in the backend).
+- Core ML encoder path end-to-end with a locally converted bge-small
+  (tools/convert_bge_small.py): server `/v1/embeddings` parity vs torch
+  fp32 at worst cosine 0.99998; query-prefix, bucket selection (incl. lazy
+  per-bucket load), matryoshka rejection, and residency reporting all
+  exercised over HTTP. ANE residency measured via
+  `cargo run -p sidekick-coreml --example ane_check`: 3.4x/2.4x/1.75x over
+  CPU at seq 128/256/512 (see D15 for the conversion constraints this
+  required). Objc exceptions from Core ML (e.g. its E5RT/IOSurface
+  failures) abort the process — Rust cannot catch them; the fix is
+  converting models that don't provoke them (D15), not catching.
 
-Still needing hardware verification (blocking v0.2):
-- `sidekick-coreml` runtime behavior (compiles clean against `objc2-core-ml`
-  0.3.2 via cross-check; predictions untested — needs a converted
-  `.mlmodelc` encoder artifact).
-- ANE residency check for a converted EmbeddingGemma/bge artifact
-  (`.cpuOnly` vs `.cpuAndNeuralEngine` latency ratio, per design doc §5).
+Still open:
+- EmbeddingGemma conversion (mean pooling needs the mask folded into the
+  in-model pooling; same static-per-bucket recipe should apply).
+- An automated ANE-residency gate in a self-hosted CI job (the example
+  exists; nothing runs it automatically).

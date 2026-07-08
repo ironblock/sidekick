@@ -41,7 +41,13 @@ pub struct ModelManifest {
     /// Stable id; exposed as the OpenAI `model` name.
     pub id: String,
     pub backend: EmbeddingBackendKind,
-    /// Artifact path relative to the manifest's directory.
+    /// Artifact path relative to the manifest's directory. For the coreml
+    /// backend this may contain a `{seq}` placeholder resolved against each
+    /// bucket (`model_{seq}.mlmodelc` → `model_128.mlmodelc`, …): one static
+    /// artifact per bucket. Hardware verification showed a single
+    /// enumerated-shapes artifact is rejected by the ANE/CPU (Espresso) path
+    /// at plan time and falls back to CPU entirely; per-bucket static shapes
+    /// are what actually keep the encoder on the ANE.
     pub artifact: String,
     /// tokenizer.json path relative to the manifest's directory.
     pub tokenizer: String,
@@ -102,6 +108,12 @@ pub struct ResolvedModel {
 impl ResolvedModel {
     pub fn artifact_path(&self) -> PathBuf {
         self.dir.join(&self.manifest.artifact)
+    }
+    /// Artifact path for one sequence-length bucket: resolves a `{seq}`
+    /// placeholder if present, otherwise the shared artifact path.
+    pub fn artifact_path_for_bucket(&self, bucket: usize) -> PathBuf {
+        self.dir
+            .join(self.manifest.artifact.replace("{seq}", &bucket.to_string()))
     }
     pub fn tokenizer_path(&self) -> PathBuf {
         self.dir.join(&self.manifest.tokenizer)
@@ -170,7 +182,7 @@ impl ModelRegistry {
         }
         if m.backend == EmbeddingBackendKind::Coreml {
             if m.buckets.is_empty() {
-                return fail("coreml backend requires enumerated shape `buckets`".into());
+                return fail("coreml backend requires sequence-length `buckets`".into());
             }
             if m.buckets.windows(2).any(|w| w[0] >= w[1]) {
                 return fail("buckets must be strictly increasing".into());
@@ -178,6 +190,9 @@ impl ModelRegistry {
             if *m.buckets.last().unwrap() != m.max_seq_len {
                 return fail("largest bucket must equal max_seq_len".into());
             }
+        }
+        if m.backend != EmbeddingBackendKind::Coreml && m.artifact.contains("{seq}") {
+            return fail("`{seq}` artifact placeholder is only valid for the coreml backend".into());
         }
         Ok(())
     }
@@ -269,6 +284,53 @@ tokenizer = "t"
 dims = 768
 matryoshka = [512, 256]
 buckets = [128, 256, 512]
+max_seq_len = 512
+"#,
+        );
+        assert!(matches!(
+            ModelRegistry::scan(&tmp),
+            Err(Error::InvalidManifest { .. })
+        ));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn seq_placeholder_resolves_per_bucket() {
+        let tmp = std::env::temp_dir().join(format!("sk-registry-seq-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write_manifest(
+            &tmp,
+            "bge",
+            r#"
+id = "bge-small-en-v1.5"
+backend = "coreml"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+dims = 384
+pooling = "none"
+buckets = [128, 256, 512]
+max_seq_len = 512
+"#,
+        );
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        let m = reg.get("bge-small-en-v1.5").unwrap();
+        assert!(m.artifact_path_for_bucket(256).ends_with("bge/model_256.mlmodelc"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn rejects_seq_placeholder_on_static_backend() {
+        let tmp = std::env::temp_dir().join(format!("sk-registry-seq-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write_manifest(
+            &tmp,
+            "bad",
+            r#"
+id = "bad"
+backend = "static"
+artifact = "model_{seq}.safetensors"
+tokenizer = "t"
+dims = 256
 max_seq_len = 512
 "#,
         );

@@ -1,19 +1,26 @@
-# bge-small-en-v1.5 as a Core ML encoder (last_hidden_state output),
-# CLS-pooled by sidekick. Smaller/faster than EmbeddingGemma, English-only.
+# bge-small-en-v1.5 as ANE-resident Core ML artifacts: one static-shape
+# model per sequence-length bucket ({seq} resolves against `buckets`), with
+# CLS pooling baked into the graph (output `embedding`, statically (1, 384)).
+#
+# Produce the artifacts with tools/convert_bge_small.py. Hardware
+# verification (macOS 26, M-series) showed both alternatives fail: a single
+# enumerated-shapes artifact is rejected at ANE plan time and runs entirely
+# on CPU (~34x slower), and a raw last_hidden_state output has a symbolic
+# seq dim the ANE/CPU path refuses.
 
 id = "bge-small-en-v1.5"
 backend = "coreml"
-artifact = "model.mlmodelc"
+artifact = "model_{seq}.mlmodelc"
 tokenizer = "tokenizer.json"
 dims = 384
-pooling = "cls"           # bge models use the CLS token
+pooling = "none"          # CLS pooling happens inside the converted model
 buckets = [128, 256, 512]
 max_seq_len = 512
 
 [io]
 input_ids = "input_ids"
 attention_mask = "attention_mask"
-output = "last_hidden_state"
+output = "embedding"
 
 [prefixes]
 query = "Represent this sentence for searching relevant passages: "

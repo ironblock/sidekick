@@ -31,7 +31,7 @@ fn main() {
     let ids: Vec<i32> = (0..seq_len).map(|i| 1000 + (i as i32 * 7) % 20000).collect();
     let mask = vec![1i32; seq_len];
 
-    let mut measure = |units: ComputeUnits| -> (f64, Vec<usize>) {
+    let measure = |units: ComputeUnits| -> (f64, Vec<usize>) {
         let model = CoremlModel::load(&path, units).expect("model load");
         let inputs = [
             Int32Input { name: &ids_name, shape: vec![1, seq_len], data: ids.clone() },

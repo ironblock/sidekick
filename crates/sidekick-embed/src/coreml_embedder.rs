@@ -1,20 +1,32 @@
 //! Core ML encoder embedder (ANE-targeted).
 //!
-//! Pipeline: tokenize (HF `tokenizers`) → pad to the smallest enumerated
-//! shape bucket that fits → int32 `input_ids`/`attention_mask` prediction →
+//! Pipeline: tokenize (HF `tokenizers`) → pad to the smallest sequence-length
+//! bucket that fits → int32 `input_ids`/`attention_mask` prediction →
 //! pool per manifest → unit-normalize.
+//!
+//! Each bucket maps to its own static-shape artifact when the manifest uses
+//! a `{seq}` placeholder; bucket models load lazily on first use and stay
+//! resident. (A single enumerated-shapes artifact is also supported, but
+//! hardware verification showed E5RT rejects flexible shapes at ANE plan
+//! time and silently runs the whole encoder on CPU — prefer per-bucket
+//! static artifacts.)
 
 use crate::pooling::{mean_pool, normalize_in_place};
 use sidekick_core::manifest::ResolvedModel;
 use sidekick_core::{EmbedPurpose, Embedder, Error, Pooling, Result};
 use sidekick_coreml::{ComputeUnits, CoremlModel, Int32Input};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
 
 pub struct CoremlEmbedder {
     id: String,
     dims: usize,
     matryoshka: Vec<usize>,
-    model: CoremlModel,
+    resolved: ResolvedModel,
+    /// Lazily loaded per-bucket models. Without a `{seq}` placeholder every
+    /// bucket resolves to the same path and shares one entry.
+    models: Mutex<BTreeMap<std::path::PathBuf, Arc<CoremlModel>>>,
     tokenizer: Tokenizer,
     buckets: Vec<usize>,
     pooling: Pooling,
@@ -30,12 +42,12 @@ impl CoremlEmbedder {
         let m = &model.manifest;
         let tokenizer = Tokenizer::from_file(model.tokenizer_path())
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
-        let coreml = CoremlModel::load(&model.artifact_path(), ComputeUnits::CpuAndNeuralEngine)?;
-        Ok(Self {
+        let embedder = Self {
             id: m.id.clone(),
             dims: m.dims,
             matryoshka: m.matryoshka.clone(),
-            model: coreml,
+            resolved: model.clone(),
+            models: Mutex::new(BTreeMap::new()),
             tokenizer,
             buckets: m.buckets.clone(),
             pooling: m.pooling,
@@ -44,7 +56,24 @@ impl CoremlEmbedder {
             output_name: m.io.output.clone(),
             prefix_query: m.prefixes.query.clone(),
             prefix_document: m.prefixes.document.clone(),
-        })
+        };
+        // Load the smallest bucket eagerly so a broken artifact fails at
+        // load time (matching the pool's load-error surface), not on the
+        // first request.
+        let smallest = *embedder.buckets.first().expect("validated non-empty");
+        embedder.model_for_bucket(smallest)?;
+        Ok(embedder)
+    }
+
+    fn model_for_bucket(&self, bucket: usize) -> Result<Arc<CoremlModel>> {
+        let path = self.resolved.artifact_path_for_bucket(bucket);
+        let mut models = self.models.lock().unwrap();
+        if let Some(m) = models.get(&path) {
+            return Ok(m.clone());
+        }
+        let model = Arc::new(CoremlModel::load(&path, ComputeUnits::CpuAndNeuralEngine)?);
+        models.insert(path, model.clone());
+        Ok(model)
     }
 
     fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
@@ -84,7 +113,8 @@ impl CoremlEmbedder {
             });
         }
 
-        let out = self.model.predict_int32(&inputs, &self.output_name)?;
+        let model = self.model_for_bucket(bucket)?;
+        let out = model.predict_int32(&inputs, &self.output_name)?;
         let n: usize = out.shape.iter().product();
 
         let mut vector = match self.pooling {
