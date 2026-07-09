@@ -1,0 +1,28 @@
+[package]
+name = "sidekick-embed-ffi"
+description = "C ABI for sidekick's embedding tiers (libsidekick.dylib): in-process bge/EmbeddingGemma/static embeddings for hosts that can't or don't want to run sidekickd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# The artifact is libsidekick.dylib — the product name, not the crate name,
+# since this is the library face of sidekick (embeddings-only today).
+name = "sidekick"
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[features]
+# On macOS this lights up the Core ML/ANE tier; elsewhere it is inert
+# (sidekick-embed's own cfg gates), so defaulting it on is safe everywhere.
+default = ["coreml"]
+coreml = ["sidekick-embed/coreml"]
+
+[dependencies]
+sidekick-core = { workspace = true }
+sidekick-embed = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+safetensors = { workspace = true }

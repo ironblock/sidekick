@@ -150,6 +150,19 @@ faithful), CPU_AND_NE >= 0.985 (what the ANE delivers). Artifact cost:
 ~600MB per bucket; multifunction weight sharing is a possible future
 optimization.
 
+## D18 — Embeddings get a C ABI dylib; chat stays daemon-only
+Amends D1 with the use case it was waiting for: a host app that wants
+bge-on-ANE embeddings opportunistically, across "daemon running / installed
+but not running / not installed". `sidekick-embed-ffi` builds
+`libsidekick.dylib` (~5 MB): `sk_pool_open/close/models`, `sk_embed_dims`,
+`sk_embed` — panic-safe, thread-safe, no tokio, no FoundationModels
+linkage, same models directory as the daemon. Hosts probe: daemon `/health`
+(short timeout) → `dlopen` → their own fallback (docs/INTEGRATING.md).
+Chat is deliberately excluded: it would drag the Swift shim (and the
+Xcode 26 build requirement) into every host, and sessions want a daemon
+lifetime. The daemon remains the primary interface — it shares resident
+models across clients; the dylib trades that for zero service management.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

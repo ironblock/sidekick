@@ -33,6 +33,12 @@ verified via `cargo run -p sidekick-coreml --example ane_check`). See
 recipe (the constraints it encodes are hardware-verified; deviating from
 them silently pushes the encoder off the ANE).
 
+Embeddings are also available in-process via `libsidekick.dylib`
+(`cargo build --release -p sidekick-embed-ffi`) for hosts that can't or
+don't want to run the daemon — see
+[docs/INTEGRATING.md](docs/INTEGRATING.md) for the daemon → dylib →
+fallback probe chain.
+
 ## Quickstart
 
 ```sh
