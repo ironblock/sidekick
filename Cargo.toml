@@ -5,6 +5,7 @@ members = [
     "crates/sidekick-coreml",
     "crates/sidekick-fm",
     "crates/sidekick-embed",
+    "crates/sidekick-embed-ffi",
     "crates/sidekick-server",
 ]
 

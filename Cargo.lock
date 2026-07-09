@@ -1265,6 +1265,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sidekick-embed-ffi"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "safetensors",
+ "serde_json",
+ "sidekick-core",
+ "sidekick-embed",
+]
+
+[[package]]
 name = "sidekick-fm"
 version = "0.1.0"
 dependencies = [
