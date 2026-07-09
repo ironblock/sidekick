@@ -1,0 +1,79 @@
+# Tag-triggered release: build sidekickd + libsidekick.dylib on the hosted
+# macOS 26 runner (real Foundation Models shim — build.rs hard-errors on the
+# stub) and attach a tarball + checksum to a GitHub release.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# workflow_dispatch runs the same build as a dry run: artifacts are uploaded
+# to the run for inspection, but no release is created.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build release artifacts (aarch64-apple-darwin)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: |
+          cargo build --release -p sidekick-server --features coreml
+          cargo build --release -p sidekick-embed-ffi
+
+      - name: Verify artifacts are the real thing
+        run: |
+          # Chat: the FM shim must be linked, not the stub.
+          otool -L target/release/sidekickd | grep -q FoundationModels
+          # C ABI: the exported surface must be present.
+          for sym in _sk_abi_version _sk_pool_open _sk_embed _sk_model_info; do
+            nm -gU target/release/libsidekick.dylib | grep -q " $sym\$"
+          done
+
+      - name: Package
+        id: package
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="dry-run-$(git rev-parse --short HEAD)"
+          fi
+          NAME="sidekick-${VERSION}-aarch64-apple-darwin"
+          mkdir -p "dist/${NAME}"
+          cp target/release/sidekickd "dist/${NAME}/"
+          cp target/release/libsidekick.dylib "dist/${NAME}/"
+          cp crates/sidekick-embed-ffi/include/sidekick.h "dist/${NAME}/"
+          cp LICENSE README.md docs/INTEGRATING.md "dist/${NAME}/"
+          tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
+          (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifacts to the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+
+      - name: Create GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "sidekick ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*.tar.gz dist/*.tar.gz.sha256

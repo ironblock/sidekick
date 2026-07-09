@@ -37,22 +37,6 @@ pub(crate) fn byte_cap(text: &str, max_tokens: usize) -> &str {
     &text[..end]
 }
 
-#[cfg(test)]
-mod byte_cap_tests {
-    use super::byte_cap;
-
-    #[test]
-    fn caps_long_input_at_char_boundary() {
-        let short = "hello";
-        assert_eq!(byte_cap(short, 512), short, "short input untouched");
-        // 3-byte chars: a naive slice at the cap would split one.
-        let long = "日".repeat(4000);
-        let capped = byte_cap(&long, 4);
-        assert!(capped.len() <= 64);
-        assert!(capped.chars().all(|c| c == '日'), "cut lands on a boundary");
-    }
-}
-
 /// Load the right embedder for a registry entry.
 pub fn load_embedder(model: &ResolvedModel) -> Result<Box<dyn sidekick_core::Embedder>> {
     match model.manifest.backend {
@@ -69,5 +53,21 @@ pub fn load_embedder(model: &ResolvedModel) -> Result<Box<dyn sidekick_core::Emb
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod byte_cap_tests {
+    use super::byte_cap;
+
+    #[test]
+    fn caps_long_input_at_char_boundary() {
+        let short = "hello";
+        assert_eq!(byte_cap(short, 512), short, "short input untouched");
+        // 3-byte chars: a naive slice at the cap would split one.
+        let long = "日".repeat(4000);
+        let capped = byte_cap(&long, 4);
+        assert!(capped.len() <= 64);
+        assert!(capped.chars().all(|c| c == '日'), "cut lands on a boundary");
     }
 }

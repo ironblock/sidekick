@@ -33,8 +33,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Runners predate the macOS 26 SDK; sidekick-fm falls back to its stub
-      # with a build warning, which is exactly the degradation users without
-      # Xcode 26 get. Core ML code builds and links for real here.
-      - name: Test with Core ML backend compiled in
-        run: cargo test --workspace --features sidekick-server/coreml,sidekick-embed/coreml
+      # macos-latest is macos-26-arm64 (Xcode 26), so the real Foundation
+      # Models Swift shim compiles here — sidekick-fm's build.rs hard-errors
+      # if it can't, so a green build proves the shim built. Runtime FM calls
+      # still can't run in CI (no Apple Intelligence on runner VMs); the
+      # hardware gates are `smoke-test` and `ane_check`, run on real Macs.
+      - name: Test with all features (Core ML + real FM shim + C ABI)
+        run: cargo test --workspace --all-features
+      - name: Prove the real FM shim is linked, not the stub
+        run: |
+          cargo build --release -p sidekick-server --features coreml
+          otool -L target/release/sidekickd | grep -q FoundationModels
