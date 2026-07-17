@@ -158,3 +158,17 @@ honest from non-Mac machines. On a Mac, `cargo test --workspace --features
 sidekick-server/coreml` additionally builds the Swift shim (Xcode 26 needed
 for the real Foundation Models backend; anything older falls back to the
 stub with a build warning).
+
+### Contributing
+
+- **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/)
+  (`feat:`, `fix:`, `docs:`, `chore:`, …).
+- **Branching** is light, trunk-based: `main` is the trunk and is kept
+  releasable; feature and chore work happens on short-lived branches
+  (`feat/…`, `chore/…`, `fix/…`) that merge back into `main`.
+- **Releases** are annotated `vX.Y.Z` tags cut from `main`
+  ([semver](https://semver.org/)), each with published release notes; the tag
+  drives [`release.yml`](.github/workflows/release.yml).
+
+See [AGENTS.md](AGENTS.md) for the full contributor guidelines, including
+content-hygiene rules for this public repository.
