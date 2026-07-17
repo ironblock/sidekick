@@ -1,0 +1,41 @@
+# DOCUMENTED NEGATIVE RESULT — NOT a validated ANE model. gte-modernbert-base
+# converts faithfully but the whole ModernBERT family lands at ~0.90 parity on
+# the ANE (massive-activation outlier; see docs/MODELS.md "Incompatible" and
+# tools/convert_gte_modernbert.py OUTCOME). This manifest is retained only so
+# the converter/reproduction and an off-ANE fp32 artifact can be built. Do not
+# ship it as ANE-resident.
+#
+# Alibaba-NLP/gte-modernbert-base as Core ML artifacts: one static-shape model
+# per sequence-length bucket ({seq} resolves against `buckets`), with CLS
+# pooling baked into the graph (output `embedding`, statically (1, 768)). The
+# server L2-normalizes the pooled vector in f32.
+#
+# ModernBERT encoder: alternating local/global attention (sliding window 128,
+# global every 3rd layer) and per-layer-type RoPE. Produce the artifacts with
+# tools/convert_gte_modernbert.py; see that script's docstring for the
+# conversion constraints and docs/MODELS.md for measured parity/residency.
+#
+# No prefixes: gte-modernbert-base is a symmetric encoder (its
+# config_sentence_transformers.json declares no query/document prompts).
+#
+# No matryoshka: the model card documents a single 768-dim output and does
+# not advertise MRL.
+#
+# Note: the model supports up to 8192 tokens, but we bucket to 512 to match
+# the other registry models and keep per-bucket artifact size down (each
+# bucket is the whole model in fp16). Larger buckets can be added if a
+# long-context workload needs them.
+
+id = "gte-modernbert-base"
+backend = "coreml"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+dims = 768
+pooling = "none"          # CLS pooling lives inside the model
+buckets = [128, 256, 512]
+max_seq_len = 512
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "embedding"
