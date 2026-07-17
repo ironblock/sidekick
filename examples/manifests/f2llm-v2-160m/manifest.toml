@@ -1,0 +1,36 @@
+# codefuse-ai/F2LLM-v2-160M as ANE-resident Core ML artifacts: one
+# static-shape model per sequence-length bucket ({seq} resolves against
+# `buckets`), with LAST-TOKEN pooling baked into the graph (output
+# `embedding`, statically (1, 640)). The server L2-normalizes in f32.
+#
+# F2LLM-v2-160M is a Qwen3 causal decoder (9 layers, QK-norm). It is the
+# first decoder-class embedder validated on the stack. Produce the artifacts
+# with tools/convert_qwen3_embedding.py; see that script for the causal-mask,
+# in-graph last-token pooling, and RoPE/GQA conversion constraints, and
+# docs/MODELS.md for measured parity/residency.
+#
+# QK-norm keeps activations tiny, so no range rewrite is needed (contrast
+# ModernBERT, which is ANE-incompatible for the opposite reason).
+#
+# No matryoshka: the model card documents a single 640-dim output.
+#
+# Prefixes are asymmetric: queries get an instruction prompt, documents get
+# nothing (per the model's config_sentence_transformers.json).
+
+id = "f2llm-v2-160m"
+backend = "coreml"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+dims = 640
+pooling = "none"          # last-token pooling lives inside the model
+buckets = [128, 256, 512]
+max_seq_len = 512
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "embedding"
+
+[prefixes]
+query = "Instruct: Given a question, retrieve passages that can help answer the question.\nQuery: "
+document = ""
