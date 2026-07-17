@@ -12,10 +12,11 @@ Usage:
 Requires: torch, transformers >= 4.51 (Qwen3), coremltools, numpy
 (arm64-native Python), plus Xcode for `xcrun coremlcompiler`.
 
-Qwen3 is the fifth architecture class validated on the stack (after classic
-BERT / bge, Gemma3 / embeddinggemma, LFM2 hybrid, and — as a negative result
-— ModernBERT). It is the first CAUSAL DECODER used for embeddings here. Three
-conversion facts, all handled below:
+Qwen3 is the fifth architecture class EVALUATED on the stack, and the fourth
+VALIDATED (after classic BERT / bge, Gemma3 / embeddinggemma, and LFM2 hybrid;
+ModernBERT was the fifth evaluated but is a negative result — ANE-incompatible,
+see docs/MODELS.md). It is the first CAUSAL DECODER used for embeddings here.
+Three conversion facts, all handled below:
 
 A. CAUSAL + PADDING MASK, fp16-safe. Qwen3Model builds its mask via
    transformers.masking_utils.create_causal_mask, which materializes
@@ -35,10 +36,14 @@ B. LAST-TOKEN POOLING, in-graph, no data-dependent index. The embedding is
    shape the server expects for pooling = "none"; the server L2-normalizes
    in f32.
 
-C. RoPE + GQA shape arithmetic. Stock rotate_half slices with x.shape[-1]//2
-   and repeat_kv reshapes from tensor sizes — both trace to Int ops that
-   crash coremltools under static shapes. Same chunk(2) / expand+flatten
-   replacements as the gemma/LFM recipes.
+C. RoPE + GQA shape arithmetic. Stock rotate_half slices with x.shape[-1]//2,
+   which traces to an Int op that crashes coremltools under static shapes —
+   the chunk(2) replacement (as in the gemma/LFM recipes) is required and IS
+   on the used path (apply_rotary_pos_emb lives in the qwen3 module). The
+   repeat_kv replacement is defensive: Qwen3's stock repeat_kv already
+   expands+reshapes without the hazard, and the sdpa path uses the
+   sdpa_attention module's copy anyway — we patch both so intent matches the
+   graph, but conversion succeeds with or without it.
 
 fp16 note: NO range rewrite. Qwen3's q_norm/k_norm (QK-norm) keep activations
 tiny (measured max ~420 on F2LLM-v2-160M), so fp16 is simply safe — the
@@ -61,6 +66,7 @@ import torch.nn.functional as F
 import coremltools as ct
 from transformers import AutoModel, AutoTokenizer
 import transformers.models.qwen3.modeling_qwen3 as _qwen3
+import transformers.integrations.sdpa_attention as _sdpa_attention
 
 MASK_ADD = -30000.0
 
@@ -108,6 +114,12 @@ def _fp16_safe_causal_mask(config=None, input_embeds=None, attention_mask=None, 
 def install_patches():
     _qwen3.rotate_half = _traceable_rotate_half
     _qwen3.repeat_kv = _traceable_repeat_kv
+    # The sdpa attention path calls repeat_kv from the sdpa_attention module,
+    # not qwen3's — patch there too, or the traceable version is inert on the
+    # path actually used (matches the LFM converter). Qwen3's stock repeat_kv
+    # already expands+reshapes without the Int-op hazard, so this is defensive
+    # rather than load-bearing, but keeps the graph identical to intent.
+    _sdpa_attention.repeat_kv = _traceable_repeat_kv
     _qwen3.create_causal_mask = _fp16_safe_causal_mask
 
 
