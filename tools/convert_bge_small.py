@@ -101,25 +101,56 @@ def compile_to_mlmodelc(pkg, install_dir, seq_len):
     return dest
 
 
+PARITY_SENTENCES = [
+    "A cat sat on the mat.",
+    "A kitten rested on the rug.",
+    "Quarterly financial earnings exceeded expectations.",
+    "The company reported strong revenue growth this quarter.",
+    # ~400 tokens: exercises long-sequence fp16 accumulation in the buckets
+    # it fits (512). Short sentences alone under-test the larger buckets.
+    " ".join(
+        f"Sentence number {i} discusses topic {i * 7 % 13} in considerable detail."
+        for i in range(40)
+    ),
+]
+
+
 def parity_check(model, tokenizer, pkg, seq_len):
-    """CLS cosine between the Core ML artifact (ANE-eligible path) and torch fp32."""
-    text = "Parity check sentence for the converted encoder."
-    enc = tokenizer(text, return_tensors="pt")
-    with torch.no_grad():
-        ref = model(**enc).last_hidden_state[0, 0].numpy()
-    n = enc["input_ids"].shape[1]
-    ids = np.zeros((1, seq_len), dtype=np.int32)
-    ids[0, :n] = enc["input_ids"][0].numpy()
-    mask = np.zeros((1, seq_len), dtype=np.int32)
-    mask[0, :n] = 1
-    m = ct.models.MLModel(str(pkg), compute_units=ct.ComputeUnit.CPU_AND_NE)
-    out = m.predict({"input_ids": ids, "attention_mask": mask})["embedding"][0]
-    if np.isnan(out).any():
-        raise SystemExit(f"seq {seq_len}: NaN output — see recipe constraint 3")
-    cos = float(np.dot(ref, out) / (np.linalg.norm(ref) * np.linalg.norm(out)))
-    if cos < 0.999:
-        raise SystemExit(f"seq {seq_len}: parity cosine {cos:.6f} < 0.999")
-    return cos
+    """Worst-case CLS cosine vs torch fp32 over the shared parity set, on
+    BOTH Espresso compute paths — the per-path protocol from D17 that
+    convert_embeddinggemma.py and convert_lfm25_embedding.py also use:
+    CPU_ONLY proves the conversion is faithful, CPU_AND_NE is what the ANE
+    delivers. (Originally this script gated a single sentence on CPU_AND_NE
+    only; docs/MODELS.md reports per-path numbers, so it measures both.)"""
+    cases = []
+    for text in PARITY_SENTENCES:
+        enc = tokenizer(text, return_tensors="pt")
+        n = enc["input_ids"].shape[1]
+        if n > seq_len:
+            continue  # the long text participates only in buckets it fits
+        with torch.no_grad():
+            ref = model(**enc).last_hidden_state[0, 0].numpy()
+        ids = np.zeros((1, seq_len), dtype=np.int32)
+        ids[0, :n] = enc["input_ids"][0].numpy()
+        mask = np.zeros((1, seq_len), dtype=np.int32)
+        mask[0, :n] = 1
+        cases.append((ids, mask, ref))
+
+    results = {}
+    for label, cu, gate in (("CPU_AND_NE", ct.ComputeUnit.CPU_AND_NE, 0.985),
+                            ("CPU_ONLY", ct.ComputeUnit.CPU_ONLY, 0.999)):
+        m = ct.models.MLModel(str(pkg), compute_units=cu)
+        worst = 1.0
+        for ids, mask, ref in cases:
+            out = m.predict({"input_ids": ids, "attention_mask": mask})["embedding"][0]
+            if not np.isfinite(out).all():
+                raise SystemExit(f"seq {seq_len} [{label}]: non-finite output — see recipe constraint 3")
+            cos = float(np.dot(ref, out) / (np.linalg.norm(ref) * np.linalg.norm(out)))
+            worst = min(worst, cos)
+        if worst < gate:
+            raise SystemExit(f"seq {seq_len} [{label}]: parity cosine {worst:.6f} < {gate}")
+        results[label] = worst
+    return results
 
 
 def main():
@@ -135,9 +166,11 @@ def main():
     with tempfile.TemporaryDirectory() as workdir:
         for seq in buckets:
             pkg = convert_bucket(model, seq, workdir)
-            cos = parity_check(model, tokenizer, pkg, seq)
+            res = parity_check(model, tokenizer, pkg, seq)
             dest = compile_to_mlmodelc(pkg, install_dir, seq)
-            print(f"bucket {seq}: parity cos={cos:.6f} -> {dest}")
+            for label, cos in res.items():
+                print(f"bucket {seq} [{label}]: parity cos={cos:.6f}")
+            print(f"bucket {seq} -> {dest}")
 
     shutil.copy(src / "tokenizer.json", install_dir / "tokenizer.json")
     repo_manifest = Path(__file__).resolve().parent.parent / "examples/manifests/bge-small-en-v1.5/manifest.toml"

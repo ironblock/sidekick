@@ -163,6 +163,25 @@ Xcode 26 build requirement) into every host, and sessions want a daemon
 lifetime. The daemon remains the primary interface — it shares resident
 models across clients; the dylib trades that for zero service management.
 
+## D19 — Model registry doc + LFM2.5: flexibility validated, ColBERT declined
+Two LiquidAI models were run through the stack to test whether the recipe
+generalizes beyond BERT-class and Gemma-class encoders — it does, with one
+new constraint. LFM2.5-Embedding-350M (hybrid: 10 short-conv + 6
+full-attention blocks, custom bidirectional remote code) converted and
+shipped (tools/convert_lfm25_embedding.py); the new lesson is constraint D:
+token mixers other than attention (convs, SSMs) read pad STATES, not pad
+keys, so pads must be zeroed before every conv layer or right-padding
+contaminates the tail and embeddings become bucket-dependent (measured
+0.905 → 0.987 parity). LFM2.5-ColBERT-350M is documented as not integrated:
+late-interaction emits per-token vectors scored with MaxSim — no single
+vector exists for /v1/embeddings or sk_embed to return — and its
+query-expansion tokens (mask=0 but scored) require the padded-batch conv
+semantics the embedding model must avoid. The encoder itself converts and
+offloads (tools/smoke_lfm25_colbert.py), so a late-interaction API surface
+remains possible if wanted. Measured results and a
+"will a new model convert?" checklist live in docs/MODELS.md, which is now
+the registry of validated/incompatible models.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
@@ -184,7 +203,12 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   exercised over HTTP. ANE residency measured via
   `cargo run -p sidekick-coreml --example ane_check`: 3.4x/2.4x/1.75x over
   CPU at seq 128/256/512 (see D15 for the conversion constraints this
-  required). Objc exceptions from Core ML (e.g. its E5RT/IOSurface
+  required). Re-measured per compute path over the shared parity set when
+  the artifacts were regenerated for docs/MODELS.md (D19): CPU_ONLY
+  0.999972 / CPU_AND_NE 0.999984 worst-case. That re-measurement also
+  established two operational lessons now in MODELS.md: ANE residency
+  ratios destabilize under concurrent GPU load, and ANECCompile stderr
+  failures can be transient service state rather than artifact defects. Objc exceptions from Core ML (e.g. its E5RT/IOSurface
   failures) abort the process — Rust cannot catch them; the fix is
   converting models that don't provoke them (D15), not catching.
 
@@ -195,6 +219,16 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   tokenizer path is token-identical), matryoshka dimensions 512/256/128
   with unit norms and 400 on undeclared dims, query/document prefixes,
   and a 831-token input through the 512 bucket (47ms warm).
+
+- LFM2.5-Embedding-350M end-to-end (July 2026, D19): conversion via
+  tools/convert_lfm25_embedding.py, ANE residency 2.49x/1.91x/1.66x at
+  buckets 128/256/512, conversion parity CPU_ONLY 0.9999 / CPU_AND_NE
+  0.987010 (the ANE figure identical to six decimals across buckets —
+  constraint D's bucket-invariance), live /v1/embeddings worst parity 0.9856
+  over the reference set incl. a 483-token text, unit norms, prefixes,
+  and preserved similarity structure. LFM2.5-ColBERT-350M encoder
+  smoke-tested on ANE (2.0x, per-token parity 0.9919, MaxSim ranking
+  preserved) but not integrated — see docs/MODELS.md.
 
 Still open:
 - An automated ANE-residency gate in a self-hosted CI job (the example
