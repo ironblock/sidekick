@@ -33,6 +33,12 @@ verified via `cargo run -p sidekick-coreml --example ane_check`). See
 recipe (the constraints it encodes are hardware-verified; deviating from
 them silently pushes the encoder off the ANE).
 
+Which encoders are known to convert cleanly and achieve full ANE offload —
+and which don't, and why — is tracked with measured numbers in
+[docs/MODELS.md](docs/MODELS.md), along with a "will a new model convert?"
+checklist. Validated so far: bge-small-en-v1.5, EmbeddingGemma-300m,
+LFM2.5-Embedding-350M.
+
 Embeddings are also available in-process via `libsidekick.dylib`
 (`cargo build --release -p sidekick-embed-ffi`) for hosts that can't or
 don't want to run the daemon — see

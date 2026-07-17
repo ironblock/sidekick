@@ -1,0 +1,32 @@
+# LiquidAI/LFM2.5-Embedding-350M as ANE-resident Core ML artifacts: one
+# static-shape model per sequence-length bucket ({seq} resolves against
+# `buckets`), with CLS pooling and L2 normalization baked into the graph
+# (output `embedding`, statically (1, 1024)).
+#
+# The backbone is an LFM2 hybrid (10 short-conv + 6 full-attention blocks)
+# patched bidirectional by the upstream repo. Produce the artifacts with
+# tools/convert_lfm25_embedding.py; see that script's docstring for the
+# LFM2.5-specific conversion constraints and docs/MODELS.md for measured
+# parity/residency.
+#
+# No matryoshka: the model card documents a single 1024-dim CLS vector and
+# never mentions MRL training, so truncated dims are not advertised here.
+
+id = "lfm2.5-embedding-350m"
+backend = "coreml"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+dims = 1024
+pooling = "none"          # CLS pooling + L2 normalize live inside the model
+buckets = [128, 256, 512]
+max_seq_len = 512
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "embedding"
+
+# LFM2.5-Embedding uses retrieval prefixes; applied server-side per input_type.
+[prefixes]
+query = "query: "
+document = "document: "
