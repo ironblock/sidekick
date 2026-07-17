@@ -27,6 +27,7 @@ Method, for every validated entry:
 | [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | 384 | CLS | [convert_bge_small.py](../tools/convert_bge_small.py) | 0.999972 | 0.999984 | 3.4x / 2.4x / 1.75x |
 | [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma.py](../tools/convert_embeddinggemma.py) | 0.9999 | 0.9905 | 3.4x / 3.1x / 2.9x |
 | [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.9999 | 0.9870 | 2.49x / 1.91x / 1.66x |
+| [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.9999 | 0.99985 | 2.02x / 1.77x / 1.59x |
 
 Notes per model:
 
@@ -56,6 +57,17 @@ Notes per model:
   Ships custom code (`modeling_lfm2_bidirectional.py`, ~140 benign lines —
   read before trusting). Live `/v1/embeddings` worst parity 0.9856 (a
   483-token text); ~670 MB per bucket, 2.0 GB installed.
+- **F2LLM-v2-160M** — the first **causal decoder** and first **last-token
+  pooling** on the stack. A Qwen3 decoder; its QK-norm keeps activations
+  tiny (max ~420), so it converts as cleanly as bge (ANE parity 0.99985) —
+  the exact opposite of ModernBERT, and the reason we chose it after that
+  failure. Last-token pooling is baked in-graph via the attention mask
+  (no data-dependent index): `last_onehot = mask · (1 − shift_left(mask))`,
+  then a masked sum. Validating it surfaced and fixed a real server bug:
+  naive `take(max)` truncation dropped the trailing EOS that last-token
+  pooling reads, collapsing over-length-doc parity to 0.36 — the server now
+  preserves the final token on truncation (harmless for CLS/mean).
+  ~950 MB installed; a 640-dim decoder for ~0.95 GB.
 
 ## Incompatible / not integrated
 
@@ -72,8 +84,15 @@ Notes per model:
 Read the model's `modeling_*.py` before anything else. The recipe survives:
 
 - **Encoder-style, single-vector output** — bidirectional attention (or a
-  published bidirectional patch), CLS or mean pooling. Multi-vector,
-  generative, and rerank heads don't fit the API.
+  published bidirectional patch), CLS or mean pooling; or a causal decoder
+  with last-token pooling (F2LLM). Multi-vector, and rerank heads don't fit
+  the API; generative models have no pooled vector at all.
+- **Last-token pooling has two traps** — (1) select the last real token
+  in-graph via the mask (`mask · (1 − shift_left(mask))`, masked sum), never
+  a data-dependent gather index; (2) the embedding IS the trailing EOS
+  token, so truncation must preserve it — the server keeps `[first max-1,
+  last]` for exactly this reason. A short-input-only parity gate misses
+  both; test an over-length input that fills the largest bucket.
 - **SDPA-capable attention** — the conversion forces `sdpa`; eager-only
   mask code tends to materialize -inf constants that NaN in fp16 (D15).
 - **Static-shape-friendly graph** — no data-dependent shapes. Stock

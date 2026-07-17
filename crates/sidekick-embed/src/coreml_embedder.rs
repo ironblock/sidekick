@@ -37,6 +37,26 @@ pub struct CoremlEmbedder {
     prefix_document: String,
 }
 
+/// Truncate token ids to `max`, but PRESERVE THE FINAL TOKEN. Tokenizers that
+/// append a terminator (EOS/SEP) put it last, and last-token pooling reads
+/// exactly that token — a naive `take(max)` that drops it silently corrupts
+/// any input longer than the biggest bucket (measured: 0.36 vs 1.0 cosine on
+/// an over-length doc through an F2LLM last-token model). Keeping
+/// `[first max-1, last]` matches HF's right-truncation and is harmless for
+/// CLS/mean pooling (one dropped interior token). Only over-length inputs are
+/// touched. `max` is a bucket size (>= 1), so `max - 1` never underflows.
+fn truncate_preserving_last(raw: &[u32], max: usize) -> Vec<i32> {
+    if raw.len() > max {
+        raw[..max - 1]
+            .iter()
+            .chain(std::iter::once(&raw[raw.len() - 1]))
+            .map(|&u| u as i32)
+            .collect()
+    } else {
+        raw.iter().map(|&u| u as i32).collect()
+    }
+}
+
 impl CoremlEmbedder {
     pub fn load(model: &ResolvedModel) -> Result<Self> {
         let m = &model.manifest;
@@ -83,12 +103,7 @@ impl CoremlEmbedder {
             .tokenizer
             .encode(text, true)
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
-        let ids: Vec<i32> = encoding
-            .get_ids()
-            .iter()
-            .take(max)
-            .map(|&u| u as i32)
-            .collect();
+        let ids = truncate_preserving_last(encoding.get_ids(), max);
         let used = ids.len();
         let bucket = *self
             .buckets
@@ -177,5 +192,25 @@ impl Embedder for CoremlEmbedder {
                 }
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_preserving_last;
+
+    #[test]
+    fn keeps_all_when_within_max() {
+        assert_eq!(truncate_preserving_last(&[1, 2, 3], 5), vec![1, 2, 3]);
+        assert_eq!(truncate_preserving_last(&[1, 2, 3], 3), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn preserves_final_token_when_over_max() {
+        // e.g. raw ends with EOS=99; a naive take(3) would drop it. The
+        // last-token pooler must still see 99.
+        let raw = [10, 11, 12, 13, 99];
+        assert_eq!(truncate_preserving_last(&raw, 3), vec![10, 11, 99]);
+        assert_eq!(truncate_preserving_last(&raw, 4), vec![10, 11, 12, 99]);
     }
 }

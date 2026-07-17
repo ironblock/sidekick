@@ -182,6 +182,35 @@ remains possible if wanted. Measured results and a
 "will a new model convert?" checklist live in docs/MODELS.md, which is now
 the registry of validated/incompatible models.
 
+## D20 — Two more architecture classes: ModernBERT rejected, Qwen3 decoder validated
+Triaged the MTEB/CoIR leaderboards and validated the two families sidekick
+hadn't covered, one of each verdict:
+
+- **ModernBERT (gte-modernbert-base) is ANE-incompatible** — a documented
+  negative result. It converts faithfully (Core ML fp32 parity 1.0) and is
+  perfect in PyTorch fp16 (0.999999), but Core ML's ANE fp16 delivers only
+  0.9038. Root cause: a massive-activation outlier (dim 251 ~40000 in the
+  residual) dominates every LayerNorm variance and crushes the other dims
+  below the ANE's fp16 between-op storage precision. PyTorch survives via
+  fp32-internal reductions; the ANE can't. Forcing sensitive ops to fp32
+  restores parity but relocates off the ANE (~5x, no benefit); the macOS26
+  compiler is identical; a D17 range rewrite underflows the compensated eps.
+  Affects the whole ModernBERT family. New checklist rule: compare
+  CPU_AND_NE vs PyTorch-fp16 (not just fp32) — a gap is the outlier
+  signature. QK-norm models avoid this by construction.
+
+- **Qwen3 causal decoder (F2LLM-v2-160M) validated** — the first decoder and
+  first last-token pooling on the stack (tools/convert_qwen3_embedding.py).
+  QK-norm keeps activations tiny (max ~420), so ANE parity is 0.99985 — as
+  clean as bge, vindicating the ModernBERT lesson. Last-token pooling is
+  baked in-graph via the attention mask (last_onehot = mask·(1−shift_left(
+  mask)), masked sum → (1, dims)); no server pooling change. It did require
+  one server fix: naive take(max) truncation dropped the trailing EOS that
+  last-token pooling reads (over-length-doc parity 0.36 → 0.99985), so the
+  server now preserves the final token on truncation (harmless for
+  CLS/mean; unit-tested). docs/MODELS.md carries both results and the
+  hardened last-token checklist.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
@@ -229,6 +258,16 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   and preserved similarity structure. LFM2.5-ColBERT-350M encoder
   smoke-tested on ANE (2.0x, per-token parity 0.9919, MaxSim ranking
   preserved) but not integrated — see docs/MODELS.md.
+
+- F2LLM-v2-160M end-to-end (July 2026, D20): first causal-decoder embedder,
+  conversion via tools/convert_qwen3_embedding.py, ANE residency
+  2.02x/1.77x/1.59x at buckets 128/256/512, conversion parity CPU_ONLY
+  0.9999 / CPU_AND_NE 0.99985 (bucket-invariant), live /v1/embeddings worst
+  parity 0.99850 over the reference set including a 512-token doc (the case
+  that exposed the EOS-truncation bug), unit norms, asymmetric query/document
+  prefixes, and preserved similarity structure. gte-modernbert-base tested
+  and rejected as ANE-incompatible (massive-activation outlier) — negative
+  result in docs/MODELS.md.
 
 Still open:
 - An automated ANE-residency gate in a self-hosted CI job (the example
