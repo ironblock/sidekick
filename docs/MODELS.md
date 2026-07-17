@@ -65,6 +65,7 @@ Notes per model:
 | Apple NLContextualEmbedding | OS-provided contextual | Mean-pooled MLM states, strongly anisotropic (unrelated-pair cosine ~0.75) — unusable for similarity thresholds without post-hoc calibration sidekick doesn't own (D16). |
 | Apple NLEmbedding.sentenceEmbedding | OS-provided static-ish | 2020-era quality, measurably weaker than bge-small on the same pairs; no prefixes, no control over dims (D16). |
 | Apple FoundationModels | LLM | Has **no embedding API at all** (verified against macOS 26 SDK docs/headers, D16) — chat only. |
+| [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) **and the ModernBERT family** (incl. granite-embedding-r2, nomic-modernbert-embed) | ModernBERT encoder | Converts faithfully (Core ML **fp32 parity 1.000000**) and **PyTorch fp16 is perfect (0.999999)** — but **Core ML's ANE fp16 gives only 0.9038**. Root cause: a **massive-activation outlier** (dim 251 reaches ~40000 in the residual stream) dominates every LayerNorm's variance (40000² ≈ 1.6e9), dividing all other dims by ~1400 and crushing them below fp16's between-op storage precision *on the ANE*. PyTorch survives via fp32-internal reductions; the ANE stores fp16 between every op and can't recover them. Forcing sensitive ops to fp32 restores 0.9998 but relocates the graph off the ANE (~41ms, ~5× slower, no ANE benefit); macOS26's newer ANE compiler is identical; a D17 global 1/K range rewrite can't win (K≥156 needed to bound the square, at which point the compensated eps/K² underflows fp16). At 0.90 the space compresses (an unrelated pair rose 0.38→0.53), hurting retrieval. Full diagnosis + reproduction in [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py). |
 
 ## Will a new model convert? A checklist
 
@@ -82,6 +83,17 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   on a mixed corpus). Under ~30k: convert directly (bge, LFM2.5). Over:
   apply the D17 power-of-two range rewrite (gemma). Watch for `-1e9` mask
   constants (rewrite at -30000) and rmsnorm eps below ~1e-4.
+- **Massive-activation outliers are an ANE killer, and calibration alone
+  won't warn you** — a *single* feature dimension in the tens of thousands
+  (common in models trained without QK-norm; ModernBERT's dim 251 hits 40k)
+  passes an fp16 convert, matches in fp32, and is even perfect in *PyTorch*
+  fp16 — then lands at ~0.90 on the ANE, because that dim dominates every
+  LayerNorm/RMSNorm variance and crushes the rest below the ANE's fp16
+  between-op storage. A global range rewrite can't fix it (it's the outlier's
+  *ratio* to other dims, not the absolute scale). QK-norm models (LFM2.5,
+  Qwen3) avoid it by construction; LayerNorm-only models (ModernBERT) are the
+  risk. Test this specifically: compare **CPU_AND_NE vs PyTorch-fp16** parity,
+  not just vs fp32 — a gap there is the outlier signature.
 - **Token mixing other than attention** (convs, SSMs): decide the padding
   semantics explicitly. Attention masks silence pad *keys*, but anything
   convolutional reads pad *states* — zero them per layer if the reference
