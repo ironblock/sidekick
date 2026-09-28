@@ -2,8 +2,8 @@
 
 What runs on the ANE through sidekick's Core ML encoder path, what doesn't,
 and how to tell before spending an afternoon finding out. Every entry here
-was measured on real hardware (Apple Silicon, macOS 26); nothing is
-extrapolated from model cards.
+was measured on real hardware (Apple Silicon, macOS 26; ANE eligibility
+re-checked on macOS 27); nothing is extrapolated from model cards.
 
 Method, for every validated entry:
 - **parity** — worst-case cosine between the Core ML artifact and the fp32
@@ -11,23 +11,49 @@ Method, for every validated entry:
   a ~400-token text), reported per compute path (D17): `CPU_ONLY` proves the
   conversion is faithful (gate ≥ 0.999), `CPU_AND_NE` is what the ANE's
   fp16 arithmetic actually delivers (gate ≥ 0.985).
-- **residency** — `cargo run -p sidekick-coreml --example ane_check`:
+- **ANE eligibility** (`cargo run -p sidekick-coreml --example ane_check`),
+  the verdict: Core ML's compute plan for `.cpuAndNeuralEngine`, i.e. which
+  device each operation is assigned to. It never runs the model and is
+  unaffected by machine load. A model passes when every compute-heavy
+  operation (matmul, linear, conv, attention) is on the ANE and at least 80%
+  of assigned operations are. The table's "ANE ops" column is that share.
+  The plan is the compiler's intent, so it can't see failures that only
+  happen at run time. That is what the ratio below is for.
+- **residency ratio**, runtime evidence, reported by the same tool: the
   median-latency ratio of `.cpuOnly` over `.cpuAndNeuralEngine` per bucket.
-  A ratio near 1.0 means the plan silently fell back to CPU — the failure
-  mode this whole table exists to catch. Ratios are from a quiet machine:
-  concurrent GPU/memory-bandwidth load (a local LLM, overnight media
-  indexing) measurably depresses and destabilizes them — re-measuring the
-  same bge artifact under an active MLX workload swung 1.4x–2.8x between
-  runs. Parity is insensitive to load; judge residency only when quiet.
+  A ratio near 1.0 on an eligible model points at a runtime fallback, so
+  `ane_check` warns below 1.1x. It is not a pass/fail gate, for two reasons:
+  - It moves with things other than residency. Concurrent GPU and
+    memory-bandwidth load depresses and destabilizes it: the same bge
+    artifact under an active MLX workload swung 1.4x–2.8x between runs.
+  - A faster CPU path shrinks it on a model that is fully on the ANE. On
+    macOS 27, bge-small's 512 bucket measures ~1.25x (it was 1.75x on 26.5)
+    with a compute plan identical to its 3x buckets. The old 1.5x ratio gate
+    called that bucket "not resident".
+  Parity is insensitive to load. Judge ratios only on a quiet machine, and
+  judge eligibility by the plan.
 
 ## Validated on ANE
 
-| model | dims | pooling | conversion | parity CPU_ONLY | parity ANE | residency (128/256/512) |
-|---|---|---|---|---|---|---|
-| [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | 384 | CLS | [convert_bge_small.py](../tools/convert_bge_small.py) | 0.999972 | 0.999984 | 3.4x / 2.4x / 1.75x |
-| [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma.py](../tools/convert_embeddinggemma.py) | 0.9999 | 0.9905 | 3.4x / 3.1x / 2.9x |
-| [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.9999 | 0.9870 | 2.49x / 1.91x / 1.66x |
-| [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.9999 | 0.99985 | 2.02x / 1.77x / 1.59x |
+| model | dims | pooling | conversion | parity CPU_ONLY | parity ANE | ANE ops (macOS 27) | residency ratio, macOS 26.5 (128/256/512) |
+|---|---|---|---|---|---|---|---|
+| [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | 384 | CLS | [convert_bge_small.py](../tools/convert_bge_small.py) | 0.999972 | 0.999984 | 229/245 (93.5%) | 3.4x / 2.4x / 1.75x |
+| [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma.py](../tools/convert_embeddinggemma.py) | 0.9999 | 0.9905 | 2015/2024 (99.6%) | 3.4x / 3.1x / 2.9x |
+| [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.9999 | 0.9870 | 693/698 (99.3%) | 2.49x / 1.91x / 1.66x |
+| [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.9999 | 0.99985 | 612/617 (99.2%) | 2.02x / 1.77x / 1.59x |
+
+ANE ops are identical at every bucket. On every model, the operations off
+the ANE are mask and cast plumbing plus the embedding `gather` (e.g. bge:
+add, cast, expand_dims, gather, greater_equal, layer_norm, select, sub,
+tile). Nothing compute-heavy is off the ANE. Ratios re-measured on macOS 27
+(M1 Max, not a quiet machine):
+
+| model | 128 | 256 | 512 |
+|---|---|---|---|
+| bge-small | 3.0x | 2.0x | 1.26x |
+| embeddinggemma | 2.5x | 2.5x | 1.9x |
+| LFM2.5 | 2.4x | 2.0x | 1.7x |
+| F2LLM | 2.3x | 2.0x | 1.5x |
 
 Notes per model:
 
@@ -37,8 +63,10 @@ Notes per model:
   parity set (July 2026, artifacts regenerated); residency from the D15
   quiet-machine measurement of the same recipe. Loads may print one
   `ANECCompile() FAILED` line on stderr while the encoder still resides on
-  the ANE (a small ineligible segment) — judge by the ane_check ratio, not
-  stderr.
+  the ANE (a small ineligible segment). Judge by the ane_check compute plan,
+  not stderr. `convert_bge_small.py --enumerated-shapes` builds the
+  flexible-shape artifact that D15 rules out, as a negative control:
+  `ane_check` must reject it, and does (0 of 362 operations on the ANE).
 - **embeddinggemma-300m** — the "hard" conversion: needed a calibrated fp16
   range rewrite, hand-built sliding-window band masks, and traceable
   rotate_half/repeat_kv (D17). The ~1% ANE parity cost is intrinsic fp16
@@ -122,8 +150,18 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   buckets. Fine on disk, but mind the install footprint.
 
 Gates to pass, in order: fp32 rewrite parity ≥ 0.9999 (only if rewriting),
-`CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.985, `ane_check` ratio comfortably
-above 1.5x per bucket, then a live `/v1/embeddings` parity check.
+`CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.985, `ane_check` eligibility OK per
+bucket (its ratio should be clearly above 1.0 on a quiet machine), then a
+live `/v1/embeddings` parity check.
+
+Flexible input shapes are ruled out (D15), and on macOS 27 they became
+dangerous. A single enumerated-shapes artifact used to run slowly on the
+CPU; it now aborts the process at the first prediction ("E5RT: No memory
+object bound to port"), whatever the compute units. That abort is an
+Objective-C exception Rust can't catch. It takes down `sidekickd` or the
+host app linking `libsidekick.dylib`. Always ship one static-shape artifact
+per bucket, and run `ane_check` on each: it reads the compute plan without
+predicting, so it rejects such an artifact instead of crashing.
 
 Two hard-won measurement gotchas: run residency checks on a quiet machine
 (see the method note — concurrent GPU load makes ratios swing 2x), and

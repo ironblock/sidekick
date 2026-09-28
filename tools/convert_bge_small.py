@@ -5,6 +5,7 @@ pooling baked into the graph, matching examples/manifests/bge-small-en-v1.5.
 
 Usage:
     python tools/convert_bge_small.py <hf-model-dir> <install-dir> [buckets...]
+    python tools/convert_bge_small.py --enumerated-shapes <hf-model-dir> <out.mlmodelc>
 
     hf-model-dir: local snapshot of BAAI/bge-small-en-v1.5
                   (hf download BAAI/bge-small-en-v1.5 --local-dir <dir>
@@ -35,6 +36,12 @@ produces garbage:
 4. Explicit position_ids buffer: without it, coremltools 9.x fails to
    convert the traced graph under static input shapes ("'int' op ...
    only 0-dimensional arrays can be converted to Python scalars").
+
+`--enumerated-shapes` deliberately violates constraint 1: it writes ONE
+artifact with enumerated sequence lengths 128/256/512. It is a negative
+control for `ane_check`, which must reject it (its compute plan puts every
+operation on the CPU). Never install it: on macOS 27, predicting with it
+aborts the process ("E5RT: No memory object bound to port").
 """
 
 import shutil
@@ -64,6 +71,52 @@ class ClsWrapper(torch.nn.Module):
             position_ids=self.position_ids,
         ).last_hidden_state
         return hidden[:, 0, :].reshape(1, DIMS)
+
+
+class FlexibleClsWrapper(torch.nn.Module):
+    """CLS pooling without the fixed position_ids buffer, for the
+    enumerated-shapes negative control (sequence length varies)."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids, attention_mask):
+        hidden = self.model(
+            input_ids=input_ids.long(),
+            attention_mask=attention_mask.long(),
+        ).last_hidden_state
+        return hidden[:, 0, :].reshape(1, DIMS)
+
+
+def convert_enumerated_negative_control(model, out_path):
+    """One flexible-shape artifact — the configuration constraint 1 forbids."""
+    ids = torch.zeros((1, 128), dtype=torch.int32)
+    ids[0, 0], ids[0, 1] = 101, 102  # [CLS] [SEP]
+    mask = torch.zeros((1, 128), dtype=torch.int32)
+    mask[0, :2] = 1
+    wrapper = FlexibleClsWrapper(model)
+    wrapper.eval()
+    with torch.no_grad():
+        traced = torch.jit.trace(wrapper, (ids, mask))
+    shapes = ct.EnumeratedShapes(shapes=[(1, 128), (1, 256), (1, 512)], default=(1, 128))
+    mlmodel = ct.convert(
+        traced,
+        inputs=[
+            ct.TensorType(name="input_ids", shape=shapes, dtype=np.int32),
+            ct.TensorType(name="attention_mask", shape=shapes, dtype=np.int32),
+        ],
+        outputs=[ct.TensorType(name="embedding")],
+        convert_to="mlprogram",
+        minimum_deployment_target=ct.target.macOS15,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        pkg = Path(tmp) / "enumerated.mlpackage"
+        mlmodel.save(str(pkg))
+        subprocess.run(["xcrun", "coremlcompiler", "compile", str(pkg), tmp], check=True)
+        shutil.rmtree(out_path, ignore_errors=True)
+        shutil.move(str(next(Path(tmp).glob("*.mlmodelc"))), out_path)
+    print(f"negative control (do not install) -> {out_path}")
 
 
 def convert_bucket(model, seq_len, workdir):
@@ -154,6 +207,13 @@ def parity_check(model, tokenizer, pkg, seq_len):
 
 
 def main():
+    if sys.argv[1] == "--enumerated-shapes":
+        src = Path(sys.argv[2]).expanduser()
+        model = AutoModel.from_pretrained(src, dtype=torch.float32, attn_implementation="sdpa")
+        model.eval()
+        convert_enumerated_negative_control(model, Path(sys.argv[3]).expanduser())
+        return
+
     src = Path(sys.argv[1]).expanduser()
     install_dir = Path(sys.argv[2]).expanduser()
     buckets = [int(b) for b in sys.argv[3:]] or [128, 256, 512]
