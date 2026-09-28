@@ -83,6 +83,11 @@ pub struct ChatResponse {
     pub constrained: bool,
 }
 
+/// Receives streamed reply text, one delta at a time. Returning false means
+/// the receiver is gone (e.g. the client disconnected) and generation should
+/// stop.
+pub type DeltaSink = Box<dyn FnMut(&str) -> bool + Send>;
+
 /// A generation backend. Implementations: Foundation Models (macOS 26+),
 /// future Core ML LLM tier, mock (tests).
 ///
@@ -109,4 +114,14 @@ pub trait ChatBackend: Send + Sync {
     async fn availability(&self) -> Availability;
 
     async fn complete(&self, req: ChatRequest) -> Result<ChatResponse>;
+
+    /// Like [`complete`](Self::complete), streaming the reply text through
+    /// `sink` as it is generated; the returned response's `content` is the
+    /// concatenation of everything sent. The default sends the whole reply
+    /// as one delta.
+    async fn complete_stream(&self, req: ChatRequest, mut sink: DeltaSink) -> Result<ChatResponse> {
+        let response = self.complete(req).await?;
+        sink(&response.content);
+        Ok(response)
+    }
 }

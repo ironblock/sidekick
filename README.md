@@ -33,7 +33,9 @@ verified via `cargo run -p sidekick-coreml --example ane_check`). See
 recipe (the constraints it encodes are hardware-verified; deviating from
 them silently pushes the encoder off the ANE).
 
-On macOS 27 (built with Xcode 27) chat reports real token usage, including
+Chat streams for real: `stream: true` sends text as the model generates it
+(schema-constrained replies arrive whole). On macOS 27 (built with Xcode 27)
+chat reports real token usage, including
 cached tokens when a follow-up reuses its session. `/health` reports which
 Foundation Models variant the Mac has and its context size. Over-long
 prompts are a proper 400. See D21 in [docs/DECISIONS.md](docs/DECISIONS.md).

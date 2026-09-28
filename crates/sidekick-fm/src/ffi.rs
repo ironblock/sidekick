@@ -3,7 +3,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::engine::{EngineResponse, RespondOptions, SessionEngine};
+use crate::engine::{EngineResponse, RespondOptions, SessionEngine, StreamedResponse};
 use crate::envelope;
 use sidekick_core::{Availability, Error, ModelInfo, Result, UnavailableReason};
 use std::ffi::{c_char, c_void, CStr};
@@ -29,11 +29,63 @@ extern "C" {
         out_len: *mut usize,
         err: *mut *mut c_char,
     ) -> i32;
+    fn sk_fm_respond_stream(
+        session: *mut c_void,
+        prompt: *const u8,
+        prompt_len: usize,
+        temperature: f64,
+        max_tokens: i64,
+        on_snapshot: SnapshotCallback,
+        ctx: *mut c_void,
+        out: *mut *mut u8,
+        out_len: *mut usize,
+        err: *mut *mut c_char,
+    ) -> i32;
     fn sk_fm_model_info(out: *mut *mut u8, out_len: *mut usize) -> i32;
     fn sk_fm_buf_free(ptr: *mut u8, len: usize);
     fn sk_fm_string_free(ptr: *mut c_char);
     #[cfg(test)]
     fn sk_fm_selftest(out: *mut *mut u8, out_len: *mut usize) -> i32;
+}
+
+type SnapshotCallback = extern "C" fn(ctx: *mut c_void, text: *const u8, len: usize) -> i32;
+
+/// What the snapshot trampoline needs: the caller's callback, and a slot for
+/// a panic caught inside it (unwinding across the FFI boundary is undefined
+/// behavior, so it is caught there and re-raised after the call returns).
+struct SnapshotContext<'a> {
+    callback: &'a mut (dyn FnMut(&str) -> bool + Send),
+    panic: Option<Box<dyn std::any::Any + Send>>,
+}
+
+/// Called by the shim with each snapshot's cumulative text. Returns nonzero
+/// to stop generation.
+extern "C" fn snapshot_trampoline(ctx: *mut c_void, text: *const u8, len: usize) -> i32 {
+    // SAFETY: `ctx` is the `SnapshotContext` that `respond_stream` passed to
+    // sk_fm_respond_stream. It outlives that call, and the shim invokes this
+    // callback one call at a time, all before the call returns, while the
+    // owning thread is blocked in it — so this is the only live reference.
+    let context = unsafe { &mut *(ctx as *mut SnapshotContext<'_>) };
+    if context.panic.is_some() {
+        return 1;
+    }
+    let bytes = if text.is_null() || len == 0 {
+        &[][..]
+    } else {
+        // SAFETY: the shim passes a valid buffer of `len` bytes for the
+        // duration of this call.
+        unsafe { std::slice::from_raw_parts(text, len) }
+    };
+    let text = String::from_utf8_lossy(bytes);
+    let callback = &mut context.callback;
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(&text))) {
+        Ok(true) => 0,
+        Ok(false) => 1,
+        Err(payload) => {
+            context.panic = Some(payload);
+            1
+        }
+    }
 }
 
 /// Context size assumed when Foundation Models reports none (macOS 26's
@@ -110,6 +162,62 @@ impl SessionEngine for FfiEngine {
                 None
             }
         }
+    }
+
+    fn respond_stream(
+        &self,
+        session: &mut FfiSession,
+        prompt: &str,
+        opts: &RespondOptions,
+        on_snapshot: &mut (dyn FnMut(&str) -> bool + Send),
+    ) -> Result<StreamedResponse> {
+        if opts.schema.is_some() {
+            // Constrained output isn't streamed (partial JSON snapshots
+            // aren't prefix-stable): deliver it whole.
+            let response = self.respond(session, prompt, opts)?;
+            let cancelled = !on_snapshot(&response.text);
+            return Ok(StreamedResponse { response, cancelled });
+        }
+        let mut context = SnapshotContext { callback: on_snapshot, panic: None };
+        let mut out: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        let mut err: *mut c_char = std::ptr::null_mut();
+        let code = unsafe {
+            sk_fm_respond_stream(
+                session.0.as_ptr(),
+                prompt.as_ptr(),
+                prompt.len(),
+                opts.temperature.map(f64::from).unwrap_or(-1.0),
+                opts.max_tokens.map(i64::from).unwrap_or(0),
+                snapshot_trampoline,
+                &mut context as *mut SnapshotContext<'_> as *mut c_void,
+                &mut out,
+                &mut out_len,
+                &mut err,
+            )
+        };
+        if let Some(payload) = context.panic.take() {
+            // SAFETY: owned shim allocations; freed before unwinding.
+            unsafe {
+                if !out.is_null() {
+                    drop(take_buffer(out, out_len));
+                }
+                if !err.is_null() {
+                    sk_fm_string_free(err);
+                }
+            }
+            std::panic::resume_unwind(payload);
+        }
+        if code != 0 {
+            return Err(unsafe { take_error(err, "respond") });
+        }
+        if out.is_null() {
+            return Err(Error::Inference("respond: shim returned null buffer".into()));
+        }
+        // SAFETY: shim guarantees `out` is a valid UTF-8 buffer of `out_len`
+        // bytes that we own.
+        let json = unsafe { take_buffer(out, out_len) };
+        envelope::parse_streamed(&json, DEFAULT_CONTEXT_SIZE)
     }
 
     fn create(&self, instructions: &str) -> Result<FfiSession> {

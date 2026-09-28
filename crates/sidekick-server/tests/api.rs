@@ -6,8 +6,8 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sidekick_core::{
-    Availability, ChatBackend, ChatRequest, ChatResponse, FinishReason, ModelInfo, ModelRegistry,
-    Result, Usage,
+    Availability, ChatBackend, ChatRequest, ChatResponse, DeltaSink, FinishReason, ModelInfo,
+    ModelRegistry, Result, Usage,
 };
 use sidekick_server::{build_router, AppState, EmbedderPool};
 use std::sync::Arc;
@@ -45,6 +45,34 @@ impl ChatBackend for MockChat {
                 sidekick_core::UnavailableReason::AppleIntelligenceNotEnabled,
             )
         }
+    }
+
+    /// A last message `stream:a|b|c` streams those deltas; a `FAIL` part
+    /// errors mid-stream and a `FILTER` part is a mid-stream guardrail stop.
+    async fn complete_stream(&self, req: ChatRequest, mut sink: DeltaSink) -> Result<ChatResponse> {
+        let last = req.messages.last().unwrap().content.clone();
+        let Some(parts) = last.strip_prefix("stream:") else {
+            let response = self.complete(req).await?;
+            sink(&response.content);
+            return Ok(response);
+        };
+        let mut content = String::new();
+        for part in parts.split('|') {
+            match part {
+                "FAIL" => return Err(sidekick_core::Error::Inference("broke mid-stream".into())),
+                "FILTER" => return Err(sidekick_core::Error::ContentFiltered("guardrail".into())),
+                _ => {
+                    sink(part);
+                    content.push_str(part);
+                }
+            }
+        }
+        Ok(ChatResponse {
+            content,
+            finish: FinishReason::Stop,
+            usage: Usage { prompt_tokens: 10, completion_tokens: 3, cached_tokens: Some(4), reasoning_tokens: None },
+            constrained: false,
+        })
     }
 
     async fn complete(&self, req: ChatRequest) -> Result<ChatResponse> {
@@ -553,4 +581,75 @@ async fn parameters_that_cannot_be_honored_are_rejected() {
         let (status, body) = call(test_state(true, None), chat(bad.clone())).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
     }
+}
+
+/// POST a streaming chat request; returns status, content type, and the
+/// SSE `data:` payloads in order.
+async fn stream_chat(content: &str, include_usage: bool) -> (StatusCode, String, Vec<String>) {
+    let response = build_router(test_state(true, None))
+        .oneshot(post_json(
+            "/v1/chat/completions",
+            json!({
+                "model": "apple-fm",
+                "messages": [{"role": "user", "content": content}],
+                "stream": true,
+                "stream_options": {"include_usage": include_usage}
+            }),
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    let content_type = response.headers()["content-type"].to_str().unwrap().to_string();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let data = String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter_map(|l| l.strip_prefix("data: ").map(str::to_string))
+        .collect();
+    (status, content_type, data)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stream_forwards_each_delta_then_finish_usage_and_done() {
+    let (status, _, data) = stream_chat("stream:Hel|lo| world", true).await;
+    assert_eq!(status, StatusCode::OK);
+    let chunks: Vec<Value> = data[..data.len() - 1].iter().map(|d| serde_json::from_str(d).unwrap()).collect();
+    assert_eq!(chunks[0]["choices"][0]["delta"]["role"], "assistant");
+    let contents: Vec<&str> = chunks
+        .iter()
+        .filter_map(|c| c["choices"][0]["delta"]["content"].as_str())
+        .collect();
+    assert_eq!(contents, vec!["Hel", "lo", " world"], "one chunk per delta, in order");
+    let finish = chunks.iter().find(|c| !c["choices"][0]["finish_reason"].is_null()).unwrap();
+    assert_eq!(finish["choices"][0]["finish_reason"], "stop");
+    let usage = chunks.last().unwrap();
+    assert_eq!(usage["usage"]["total_tokens"], 13);
+    assert_eq!(usage["usage"]["prompt_tokens_details"]["cached_tokens"], 4);
+    assert_eq!(data.last().unwrap(), "[DONE]");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stream_failure_before_any_text_keeps_its_status() {
+    let (status, content_type, _) = stream_chat("error:rate_limited", false).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(content_type.starts_with("application/json"), "{content_type}");
+    let (status, _, _) = stream_chat("error:overflow", false).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stream_failure_after_text_is_an_error_event() {
+    let (status, _, data) = stream_chat("stream:partial|FAIL", false).await;
+    assert_eq!(status, StatusCode::OK, "already committed");
+    assert!(data.iter().any(|d| d.contains("\"content\":\"partial\"")));
+    let last: Value = serde_json::from_str(data.last().unwrap()).unwrap();
+    assert_eq!(last["error"]["code"], "internal_error");
+    assert!(!data.iter().any(|d| d == "[DONE]"), "a failed stream doesn't claim completion");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stream_guardrail_stop_is_a_content_filter_finish() {
+    let (_, _, data) = stream_chat("stream:partial|FILTER", false).await;
+    let finish: Value = serde_json::from_str(&data[data.len() - 2]).unwrap();
+    assert_eq!(finish["choices"][0]["finish_reason"], "content_filter");
+    assert_eq!(data.last().unwrap(), "[DONE]");
 }

@@ -8,8 +8,9 @@
 //!
 //! Exercises the real Swift shim end-to-end: availability probe, model info,
 //! plain completion, session-reuse follow-up, schema-constrained generation,
-//! finish reasons (max_tokens, stop sequences), and the context-overflow
-//! error mapping. On macOS 27 with a 27-SDK build it also requires real
+//! finish reasons (max_tokens, stop sequences), real streaming (incremental
+//! deltas, early stop, no reuse of an interrupted session), and the
+//! context-overflow error mapping. On macOS 27 with a 27-SDK build it also requires real
 //! token usage, including cached tokens on the reused session.
 //! Exits non-zero on the first failure so it can gate a release or run in
 //! a self-hosted CI job. This is the check `docs/DECISIONS.md` lists under
@@ -203,6 +204,68 @@ async fn main() {
             }
             Err(e) => fail(format!("{label}: {e}")),
         }
+    }
+
+    println!("\n== streaming ==");
+    let collect = || {
+        let deltas = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = deltas.clone();
+        let sink: sidekick_core::DeltaSink = Box::new(move |d: &str| {
+            seen.lock().unwrap().push(d.to_string());
+            true
+        });
+        (sink, deltas)
+    };
+    let essay = vec![ChatMessage::new(Role::User, "Write three sentences about the moon.")];
+    let (sink, deltas) = collect();
+    let start = Instant::now();
+    let full = match backend.complete_stream(req(essay), sink).await {
+        Ok(r) => r,
+        Err(e) => fail(format!("stream errored: {e}")),
+    };
+    let full_time = start.elapsed();
+    let deltas = deltas.lock().unwrap().clone();
+    println!("[{full_time:?}] {} deltas, {} chars, usage {:?}", deltas.len(), full.content.len(), full.usage);
+    if deltas.len() < 2 {
+        fail("a multi-sentence reply should arrive in more than one delta");
+    }
+    if deltas.concat() != full.content {
+        fail("streamed deltas must concatenate to the returned content");
+    }
+
+    // A stop sequence mid-stream ends generation, and the interrupted session
+    // must not be reused by a follow-up (that would trap the process).
+    let counting = vec![ChatMessage::new(Role::User, "Count from 1 to 40, separated by commas.")];
+    let mut stop_req = req(counting.clone());
+    stop_req.stop = vec!["5".into()];
+    let (sink, deltas) = collect();
+    let start = Instant::now();
+    let stopped = match backend.complete_stream(stop_req, sink).await {
+        Ok(r) => r,
+        Err(e) => fail(format!("stream with stop errored: {e}")),
+    };
+    let stop_time = start.elapsed();
+    let (sink, _) = collect();
+    let start = Instant::now();
+    let uncut = backend.complete_stream(req(counting.clone()), sink).await;
+    let uncut_time = start.elapsed();
+    println!(
+        "stop [\"5\"]: {:?} in {stop_time:?} (uncut count took {uncut_time:?}); deltas {:?}",
+        stopped.content,
+        deltas.lock().unwrap()
+    );
+    if stopped.content.contains('5') || deltas.lock().unwrap().concat() != stopped.content {
+        fail("the stop sequence must end the streamed reply before it");
+    }
+    if uncut.is_ok() && stop_time >= uncut_time {
+        fail("a stop hit should end generation early");
+    }
+    let mut follow_up = counting;
+    follow_up.push(ChatMessage::new(Role::Assistant, stopped.content.clone()));
+    follow_up.push(ChatMessage::new(Role::User, "Keep going, just the next number."));
+    match backend.complete_stream(req(follow_up), collect().0).await {
+        Ok(r) => println!("follow-up after an interrupted stream: {:?}", r.content),
+        Err(e) => fail(format!("follow-up after an interrupted stream errored: {e}")),
     }
 
     println!("\n== context overflow maps to ContextOverflow ==");

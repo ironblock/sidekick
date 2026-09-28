@@ -41,6 +41,15 @@ impl EngineResponse {
     }
 }
 
+/// A response delivered as cumulative snapshots.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StreamedResponse {
+    /// The final snapshot's text, usage and truncation.
+    pub response: EngineResponse,
+    /// Generation stopped early because the snapshot callback asked it to.
+    pub cancelled: bool,
+}
+
 /// A provider of stateful chat sessions. The Foundation Models FFI is the
 /// real implementation; tests use mocks.
 ///
@@ -67,6 +76,24 @@ pub trait SessionEngine: Send + Sync + 'static {
         prompt: &str,
         opts: &RespondOptions,
     ) -> Result<EngineResponse>;
+
+    /// Like [`respond`](Self::respond), but calls `on_snapshot` with the
+    /// cumulative text as it is generated; returning false stops generation.
+    /// Plain text only (`opts.schema` must be None). A session whose stream
+    /// was stopped early must not be used again.
+    ///
+    /// The default delivers the whole reply as a single snapshot.
+    fn respond_stream(
+        &self,
+        session: &mut Self::Session,
+        prompt: &str,
+        opts: &RespondOptions,
+        on_snapshot: &mut (dyn FnMut(&str) -> bool + Send),
+    ) -> Result<StreamedResponse> {
+        let response = self.respond(session, prompt, opts)?;
+        let cancelled = !on_snapshot(&response.text);
+        Ok(StreamedResponse { response, cancelled })
+    }
 }
 
 /// Engine used when Foundation Models isn't compiled in.
