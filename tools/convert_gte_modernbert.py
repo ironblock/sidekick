@@ -24,9 +24,11 @@ softmax reductions in fp32; the ANE stores fp16 between every op, so the
 crushed values cannot be recovered downstream. Forcing the sensitive ops to
 fp32 restores parity but relocates the graph off the ANE (~5x slower, no ANE
 benefit) — the newer macOS26 ANE compiler behaves identically. A global 1/K
-range rewrite (the D17 gemma trick) does not help: cooling 40000 below the
-fp16 square limit needs K>=156, at which point the compensated LayerNorm eps
-(eps/K^2) underflows fp16 to zero. The degradation is not cosmetic: at 0.90
+range rewrite (the D17 gemma trick) does not help either, as measured on
+macOS 27: it is exact (CPU parity 1.0) yet reaches only 0.913/0.929/0.921 at
+K = 8/64/256, so the loss is not about magnitude. Bisection by op class puts
+it inside attention: attention alone in fp32 restores 0.9998 (but as a CPU/ANE
+hybrid runs slower than CPU-only). The degradation is not cosmetic: at 0.90
 parity the embedding space compresses (an unrelated pair rose 0.38 -> 0.53),
 which hurts retrieval discrimination.
 
