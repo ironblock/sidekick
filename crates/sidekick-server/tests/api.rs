@@ -44,6 +44,25 @@ impl ChatBackend for MockChat {
                 sidekick_core::UnavailableReason::AppleIntelligenceNotEnabled,
             ));
         }
+        // A last message of the form `error:<kind>` makes the mock fail with
+        // that error, to exercise the HTTP error mapping.
+        if let Some(kind) = req.messages.last().unwrap().content.strip_prefix("error:") {
+            use sidekick_core::Error;
+            return Err(match kind {
+                "overflow" => Error::ContextOverflow { limit: 4096, actual: Some(4459) },
+                "overflow_unknown" => Error::ContextOverflow { limit: 4096, actual: None },
+                "content_filter" => Error::ContentFiltered("guardrailViolation".into()),
+                "rate_limited" => Error::RateLimited {
+                    message: "slow down".into(),
+                    retry_after_secs: Some(7),
+                },
+                "transient" => Error::Transient("concurrentRequests".into()),
+                "language" => Error::UnsupportedLanguage("xx".into()),
+                "guided" => Error::GuidedGeneration("unsupported JSON schema type: null".into()),
+                "not_ready" => Error::Unavailable(sidekick_core::UnavailableReason::ModelNotReady),
+                other => Error::Inference(other.into()),
+            });
+        }
         let content = if let Some(schema) = &req.schema {
             format!("{{\"schema_props\": {}}}", schema["properties"].to_string().len())
         } else {
@@ -379,4 +398,60 @@ async fn api_key_enforced_on_v1_but_not_health() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "/health stays open for probes");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_errors_map_to_openai_statuses() {
+    for (kind, status, code) in [
+        ("overflow", StatusCode::BAD_REQUEST, "context_length_exceeded"),
+        ("overflow_unknown", StatusCode::BAD_REQUEST, "context_length_exceeded"),
+        ("content_filter", StatusCode::BAD_REQUEST, "content_filter"),
+        ("rate_limited", StatusCode::TOO_MANY_REQUESTS, "rate_limit_exceeded"),
+        ("transient", StatusCode::SERVICE_UNAVAILABLE, "backend_busy"),
+        ("language", StatusCode::BAD_REQUEST, "unsupported_language"),
+        ("guided", StatusCode::BAD_REQUEST, "unsupported_schema"),
+        ("not_ready", StatusCode::SERVICE_UNAVAILABLE, "backend_unavailable"),
+        ("anything else", StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+    ] {
+        let (got, body) = call(
+            test_state(true, None),
+            post_json(
+                "/v1/chat/completions",
+                json!({"model": "apple-fm", "messages": [{"role": "user", "content": format!("error:{kind}")}]}),
+            ),
+        )
+        .await;
+        assert_eq!(got, status, "{kind}: {body}");
+        assert_eq!(body["error"]["code"], code, "{kind}: {body}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn overflow_reports_real_counts_when_known() {
+    let (_, body) = call(
+        test_state(true, None),
+        post_json(
+            "/v1/chat/completions",
+            json!({"model": "apple-fm", "messages": [{"role": "user", "content": "error:overflow"}]}),
+        ),
+    )
+    .await;
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.contains("4459") && message.contains("4096"), "{message}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rate_limit_sets_retry_after_and_type() {
+    let response = build_router(test_state(true, None))
+        .oneshot(post_json(
+            "/v1/chat/completions",
+            json!({"model": "apple-fm", "messages": [{"role": "user", "content": "error:rate_limited"}]}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()["retry-after"], "7");
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["type"], "rate_limit_error");
 }

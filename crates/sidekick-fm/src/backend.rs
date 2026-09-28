@@ -19,15 +19,19 @@ pub struct SessionChatBackend<E: SessionEngine> {
 
 /// A runtime failure worth one retry on a fresh session: transient conditions
 /// where the model runtime was busy, interrupted, or timed out internally.
-/// Keyword set carried over from real-hardware failures observed in the
-/// predecessor project. Context overflow is deliberately not here — a fresh
-/// session cannot make the input smaller.
+/// The shim classifies these by type (`Error::Transient`); the keyword set
+/// is a fallback for unclassified errors, carried over from real-hardware
+/// failures observed in the predecessor project. "cancelled" is deliberately
+/// absent: a cancellation is intentional and must not be retried. Context
+/// overflow isn't recoverable either — a fresh session cannot make the input
+/// smaller.
 fn is_recoverable(err: &Error) -> bool {
     let message = match err {
+        Error::Transient(_) => return true,
         Error::Inference(m) => m.to_lowercase(),
         _ => return false,
     };
-    ["timeout", "timed out", "resource", "busy", "interrupted", "cancelled"]
+    ["timeout", "timed out", "resource", "busy", "interrupted"]
         .iter()
         .any(|k| message.contains(k))
 }
@@ -133,8 +137,8 @@ impl<E: SessionEngine> SessionChatBackend<E> {
         // out of the cache and is never re-filed). Transient failures get one
         // retry on a fresh session, which needs the full replay prompt since
         // it has no history.
-        let text = match engine.respond(&mut session, &prompt, &opts) {
-            Ok(text) => text,
+        let response = match engine.respond(&mut session, &prompt, &opts) {
+            Ok(response) => response,
             Err(e) if is_recoverable(&e) => {
                 drop(session);
                 session = engine.create(&instructions)?;
@@ -142,6 +146,7 @@ impl<E: SessionEngine> SessionChatBackend<E> {
             }
             Err(e) => return Err(e),
         };
+        let text = response.text;
         // Cold replays present history as a "User:/Assistant:" transcript and
         // the model sometimes mimics the format (seen on real hardware);
         // a leading speaker label is never part of a wanted reply.
@@ -215,6 +220,7 @@ impl<E: SessionEngine> ChatBackend for SessionChatBackend<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::EngineResponse;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock engine that records prompts; sessions count their turns. Can be
@@ -246,16 +252,16 @@ mod tests {
             session: &mut MockSession,
             prompt: &str,
             opts: &RespondOptions,
-        ) -> Result<String> {
+        ) -> Result<EngineResponse> {
             session.turns += 1;
             *self.last_prompt.lock().unwrap() = prompt.to_string();
             if let Some(err) = self.fail_with.lock().unwrap().pop() {
                 return Err(err);
             }
             if opts.schema.is_some() {
-                Ok(format!("{{\"turns\": {}}}", session.turns))
+                Ok(EngineResponse::text(format!("{{\"turns\": {}}}", session.turns)))
             } else {
-                Ok(format!("reply-{}", session.turns))
+                Ok(EngineResponse::text(format!("reply-{}", session.turns)))
             }
         }
     }
@@ -363,8 +369,8 @@ mod tests {
                 _session: &mut NoSession,
                 _prompt: &str,
                 _opts: &RespondOptions,
-            ) -> Result<String> {
-                Ok("Assistant: Paris has 2.1 million people.".into())
+            ) -> Result<EngineResponse> {
+                Ok(EngineResponse::text("Assistant: Paris has 2.1 million people."))
             }
         }
 
@@ -419,13 +425,42 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn typed_transient_error_retries_on_fresh_session() {
+        let b = backend();
+        b.engine
+            .fail_with
+            .lock()
+            .unwrap()
+            .push(Error::Transient("concurrentRequests".into()));
+        let r = b.complete(req(vec![ChatMessage::new(Role::User, "hi")])).await.unwrap();
+        assert_eq!(r.content, "reply-1");
+        assert_eq!(b.engine.creates.load(Ordering::SeqCst), 2, "retried on a fresh session");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancellation_is_not_retried() {
+        let b = backend();
+        b.engine
+            .fail_with
+            .lock()
+            .unwrap()
+            .push(Error::Inference("respond: CancellationError: cancelled".into()));
+        let err = b
+            .complete(req(vec![ChatMessage::new(Role::User, "hi")]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Inference(_)));
+        assert_eq!(b.engine.creates.load(Ordering::SeqCst), 1, "no retry session");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn non_recoverable_error_propagates_without_retry() {
         let b = backend();
         b.engine
             .fail_with
             .lock()
             .unwrap()
-            .push(Error::ContextOverflow { limit: 4096 });
+            .push(Error::ContextOverflow { limit: 4096, actual: None });
 
         let err = b
             .complete(req(vec![ChatMessage::new(Role::User, "hi")]))
@@ -452,10 +487,10 @@ mod tests {
                 _session: &mut NoSession,
                 _prompt: &str,
                 _opts: &RespondOptions,
-            ) -> Result<String> {
+            ) -> Result<EngineResponse> {
                 // Short: runtime shutdown waits for started blocking tasks.
                 std::thread::sleep(Duration::from_millis(400));
-                Ok("too late".into())
+                Ok(EngineResponse::text("too late"))
             }
         }
 

@@ -64,11 +64,15 @@ pub struct ApiError {
     pub status: StatusCode,
     pub code: &'static str,
     pub message: String,
+    /// Overrides the `type` derived from the status class.
+    pub kind: Option<&'static str>,
+    /// Sent as a `Retry-After` header (seconds).
+    pub retry_after_secs: Option<u64>,
 }
 
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
-        Self { status, code, message: message.into() }
+        Self { status, code, message: message.into(), kind: None, retry_after_secs: None }
     }
 
     pub fn invalid(message: impl Into<String>) -> Self {
@@ -106,10 +110,41 @@ impl From<Error> for ApiError {
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, "backend_unavailable", message)
             }
             Error::ModelNotFound(m) => Self::model_not_found(&m),
-            Error::ContextOverflow { limit, .. } => Self::new(
+            Error::ContextOverflow { limit, actual } => Self::new(
                 StatusCode::BAD_REQUEST,
                 "context_length_exceeded",
-                format!("Request exceeds the on-device context budget of {limit} tokens"),
+                match actual {
+                    Some(actual) => format!(
+                        "Request uses {actual} tokens, exceeding the on-device context \
+                         budget of {limit} tokens"
+                    ),
+                    None => format!("Request exceeds the on-device context budget of {limit} tokens"),
+                },
+            ),
+            Error::ContentFiltered(message) => Self::new(
+                StatusCode::BAD_REQUEST,
+                "content_filter",
+                format!("The on-device model's guardrails rejected this request: {message}"),
+            ),
+            Error::RateLimited { message, retry_after_secs } => Self {
+                kind: Some("rate_limit_error"),
+                retry_after_secs,
+                ..Self::new(StatusCode::TOO_MANY_REQUESTS, "rate_limit_exceeded", message)
+            },
+            Error::Transient(message) => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "backend_busy",
+                format!("The on-device model is busy; try again: {message}"),
+            ),
+            Error::UnsupportedLanguage(message) => Self::new(
+                StatusCode::BAD_REQUEST,
+                "unsupported_language",
+                message,
+            ),
+            Error::GuidedGeneration(message) => Self::new(
+                StatusCode::BAD_REQUEST,
+                "unsupported_schema",
+                format!("response_format schema can't be used for guided generation: {message}"),
             ),
             Error::Timeout { secs } => Self::new(
                 StatusCode::GATEWAY_TIMEOUT,
@@ -136,17 +171,24 @@ impl IntoResponse for ApiError {
         } else {
             tracing::debug!(status = %self.status, code = self.code, message = %self.message, "request rejected");
         }
+        let kind = self.kind.unwrap_or(if self.status.is_client_error() {
+            "invalid_request_error"
+        } else {
+            "server_error"
+        });
         let body = serde_json::json!({
             "error": {
                 "message": self.message,
-                "type": if self.status.is_client_error() {
-                    "invalid_request_error"
-                } else {
-                    "server_error"
-                },
+                "type": kind,
                 "code": self.code,
             }
         });
-        (self.status, Json(body)).into_response()
+        let mut response = (self.status, Json(body)).into_response();
+        if let Some(secs) = self.retry_after_secs {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, secs.into());
+        }
+        response
     }
 }

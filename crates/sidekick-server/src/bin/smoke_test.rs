@@ -7,17 +7,43 @@
 //! ```
 //!
 //! Exercises the real Swift shim end-to-end: availability probe, plain
-//! completion, session-reuse follow-up, and schema-constrained generation.
+//! completion, session-reuse follow-up, schema-constrained generation, and
+//! the context-overflow error mapping.
 //! Exits non-zero on the first failure so it can gate a release or run in
 //! a self-hosted CI job. This is the check `docs/DECISIONS.md` lists under
 //! "Needs hardware verification".
 
-use sidekick_core::{Availability, ChatBackend, ChatMessage, ChatRequest, Role, UnavailableReason};
+use sidekick_core::{
+    Availability, ChatBackend, ChatMessage, ChatRequest, Error, Role, UnavailableReason,
+};
 use sidekick_fm::fm_backend;
 use std::time::{Duration, Instant};
 
 fn req(messages: Vec<ChatMessage>) -> ChatRequest {
     ChatRequest { messages, ..Default::default() }
+}
+
+/// Major version of the running macOS, e.g. 27.
+fn macos_major() -> u32 {
+    std::process::Command::new("sysctl")
+        .args(["-n", "kern.osproductversion"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|v| v.trim().split('.').next().and_then(|m| m.parse().ok()))
+        .unwrap_or(0)
+}
+
+/// macOS 27 features are in the binary only when the shim was built with
+/// the 27 SDK, and only active when running on macOS 27.
+fn macos27_features() -> bool {
+    macos_major() >= 27
+        && sidekick_fm::FM_SDK.split('.').next().and_then(|m| m.parse::<u32>().ok()) >= Some(27)
+}
+
+fn fail(message: impl std::fmt::Display) -> ! {
+    eprintln!("FAIL: {message}");
+    std::process::exit(1);
 }
 
 #[tokio::main]
@@ -127,6 +153,19 @@ async fn main() {
             eprintln!("FAIL: constrained completion errored: {e}");
             std::process::exit(1);
         }
+    }
+
+    println!("\n== context overflow maps to ContextOverflow ==");
+    let oversized = "The Apple Neural Engine requires static shapes for efficient execution. ".repeat(400);
+    match backend.complete(req(vec![ChatMessage::new(Role::User, oversized)])).await {
+        Err(Error::ContextOverflow { limit, actual }) => {
+            println!("limit {limit}, actual {actual:?}");
+            if macos27_features() && actual.is_none() {
+                fail("macOS 27 overflow should report the actual token count");
+            }
+        }
+        Err(e) => fail(format!("oversized prompt should be ContextOverflow, got: {e}")),
+        Ok(_) => fail("oversized prompt unexpectedly succeeded"),
     }
 
     println!("\nSMOKE TEST PASSED");

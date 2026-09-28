@@ -17,12 +17,13 @@
 pub mod backend;
 pub mod cache;
 pub mod engine;
+pub mod envelope;
 
 #[cfg(all(target_os = "macos", not(fm_stub)))]
 mod ffi;
 
 pub use backend::SessionChatBackend;
-pub use engine::{RespondOptions, SessionEngine};
+pub use engine::{EngineResponse, EngineUsage, RespondOptions, SessionEngine};
 
 /// The macOS SDK version the Foundation Models shim was compiled against
 /// (e.g. `"27.0"`), or `"none"` in stub builds. macOS 27 features — real
