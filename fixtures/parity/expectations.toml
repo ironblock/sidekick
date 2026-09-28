@@ -13,9 +13,10 @@
 [gates]
 # Cosine between a case's output in its natural bucket and in every larger
 # one. The CPU path is bitwise bucket-invariant; the GPU and ANE compile
-# each bucket separately, and the ANE's fp16 accumulation order follows the
-# tiling (EmbeddingGemma and LFM2.5 measure ~0.998). A dropped attention
-# mask measured 0.61-0.94.
+# each bucket separately. On the ANE, precision lost in a model's MLP shows
+# up here too: LFM2.5 measures 0.9965, and EmbeddingGemma measured 0.9977
+# before its MLP rewrite (D17) and 0.99998 after. A dropped attention mask
+# measured 0.40-0.94.
 bucket_invariance = { cpu = 0.999999, gpu = 0.9999, ane = 0.995 }
 # Cosine between pad ids 0 and random pad ids in the same bucket: the mask
 # hides pads, so nothing may change.
@@ -25,9 +26,10 @@ determinism = 0.999999
 # Similarity gap below which a path may reorder two candidates (report only).
 rank_margin = 0.02
 
-# Apple M1 Max, macOS 27.0 (September 2026). The ANE floors for
-# embeddinggemma-300m and lfm2.5-embedding-350m are grade D: see
-# docs/MODELS.md "Confidence grades" and D26.
+# Apple M1 Max, macOS 27.0 (September 2026). The ANE floor for
+# lfm2.5-embedding-350m is grade D: see docs/MODELS.md "Confidence grades"
+# and D26. embeddinggemma-300m's are from after its MLP precision rewrite
+# (D17).
 
 [[floor]]
 chip = "Apple M1 Max"
@@ -57,25 +59,25 @@ drift = 0.003107
 chip = "Apple M1 Max"
 model = "embeddinggemma-300m"
 path = "cpu"
-worst = 0.999839
-stress = 0.999759
-drift = 0.004307
+worst = 0.999838
+stress = 0.999665
+drift = 0.004762
 
 [[floor]]
 chip = "Apple M1 Max"
 model = "embeddinggemma-300m"
 path = "gpu"
-worst = 0.999985
-stress = 0.999988
-drift = 0.0006
+worst = 0.999988
+stress = 0.999987
+drift = 0.000719
 
 [[floor]]
 chip = "Apple M1 Max"
 model = "embeddinggemma-300m"
 path = "ane"
-worst = 0.96226
-stress = 0.965285
-drift = 0.063565
+worst = 0.999977
+stress = 0.999958
+drift = 0.001693
 
 [[floor]]
 chip = "Apple M1 Max"

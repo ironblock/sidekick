@@ -47,7 +47,11 @@ and which don't, and why — is tracked with measured numbers in
 checklist. Validated so far: bge-small-en-v1.5, EmbeddingGemma-300m,
 LFM2.5-Embedding-350M, F2LLM-v2-160M, gte-modernbert-base.
 `tools/probe_activations.py` triages a candidate in minutes before any
-conversion.
+conversion. A parity suite (D26) grades every model on the CPU, GPU and ANE
+paths through sidekick's own code, on inputs chosen to break it. On the
+ANE, bge-small and EmbeddingGemma grade A, gte-modernbert and F2LLM B, and
+LFM2.5 D (it loses accuracy on URLs and delimiters). See the confidence
+grades in [docs/MODELS.md](docs/MODELS.md).
 
 Embeddings are also available in-process via `libsidekick.dylib`
 (`cargo build --release -p sidekick-embed-ffi`) for hosts that can't or
@@ -166,6 +170,8 @@ CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ..
 ```sh
 cargo test --workspace                 # runs anywhere, including Linux
 cargo check --workspace --target aarch64-apple-darwin --features sidekick-embed/coreml
+# On a Mac with converted models and references (docs/MODELS.md):
+cargo run --release -p sidekick-embed --features coreml --example parity
 ```
 
 The second command is the cross-check CI uses to keep the macOS-only code
