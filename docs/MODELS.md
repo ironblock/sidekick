@@ -78,6 +78,9 @@ Notes per model:
   not stderr. `convert_bge_small.py --enumerated-shapes` builds the
   flexible-shape artifact that D15 rules out, as a negative control:
   `ane_check` must reject it, and does (0 of 362 operations on the ANE).
+  Its fused attention is correct only through Core ML's fallback: the
+  compute plan gives the 12 attention ops no device, and at the iOS26 opset
+  the same graph fails to load on CPU_AND_NE (D25). Keep the macOS15 target.
 - **embeddinggemma-300m** — the "hard" conversion: needed a calibrated fp16
   range rewrite, hand-built sliding-window band masks, traceable
   rotate_half/repeat_kv, and an MLP precision rewrite (D17). Its ANE parity
@@ -121,12 +124,14 @@ Notes per model:
   sliding-window and global attention and has per-layer-type RoPE (see the
   converter). **Convert attention explicitly** (`attn_implementation="eager"`,
   i.e. matmul → softmax → matmul). With `sdpa`, Core ML's fused
-  `scaled_dot_product_attention` op drops the attention mask on the ANE in
-  this graph:
+  `scaled_dot_product_attention` op drops the attention mask on the ANE,
+  because ModernBERT's masks are built on the CPU (see the checklist rule):
   - pads are attended and the sliding window vanishes (parity 0.87–0.975,
     matching an *unmasked* reference at 0.99998);
   - the output changes with pad content (pad ids 0 vs random: 0.61–0.94);
-  - the same op on the CPU returns NaN below 64 of 128 real tokens.
+  - the same op on the CPU returns NaN below 64 of 128 real tokens. A pad
+    query's whole ±64 window is then padding, and -30000 × √64 overflows
+    fp16.
 
   The earlier diagnosis blamed ModernBERT's massive activation (dimension
   251, ~48,000 on delimiter tokens) crushing fp16 precision. It doesn't:
@@ -216,12 +221,39 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   both; test an over-length input that fills the largest bucket.
 - **Explicit attention with fp16-safe masks.** Masks must use a finite
   constant such as -30000, not `-inf`/`finfo.min`, which NaN in fp16 (D15).
-  The converters patch the mask builders to do this. Then prefer attention
-  that converts to explicit matmul → softmax → matmul (gemma, F2LLM,
-  ModernBERT via `attn_implementation="eager"`). Core ML's fused
-  `scaled_dot_product_attention` op dropped ModernBERT's mask on the ANE.
-  bge's fused attention is fine, so this is graph-specific, not universal.
-  Whatever the form, `ane_check`'s pad-invariance gate must pass.
+  The converters patch the mask builders to do this. Then use attention that
+  converts to explicit matmul → softmax → matmul (gemma, F2LLM, ModernBERT
+  via `attn_implementation="eager"`). Passing `scale=` to
+  `F.scaled_dot_product_attention` works too: coremltools then emits
+  explicit ops instead of the fused one. Whatever the form, `ane_check`'s
+  pad-invariance gate must pass.
+- **Fused SDPA drops the mask on the ANE when the mask is an input of the
+  ANE procedure that runs the attention.** That is, when no op inside that
+  procedure computes the mask. It may be a model input, the output of an op
+  on the CPU, or the output of an earlier ANE procedure. The output then
+  equals unmasked attention exactly, for every mask shape, dtype and fill
+  value tried and at both opsets (D25). The compute plan shows it:
+  - `scaled_dot_product_attention` is on the NeuralEngine, and
+  - its `attn_mask` comes from a model input or a CPU op, or from an ANE op
+    with a CPU op between it and the attention.
+
+  ModernBERT builds its masks before the CPU-only embedding gather, so the
+  mask plumbing lands on the CPU. `python tools/repro_sdpa_mask.py --check
+  <model>` applies the rule to a compiled model. A fused attention whose plan
+  shows no device (bge-small) is correct only through a Core ML fallback that
+  doesn't run it natively. At the iOS26 opset that fallback is gone and bge
+  fails to load on CPU_AND_NE, so keep the macOS15 target for fused-attention
+  models.
+- **Fused SDPA on the CPU (`CPU_ONLY`) has two more defects**
+  (reproduced by the same tool):
+  - A query row whose keys are all masked returns NaN when
+    |fill| × √head_dim > 65504, e.g. -30000 at head dim 64. Explicit
+    attention returns a finite row.
+  - q/k/v split straight off a packed projection with
+    `.transpose(3, 1).unbind(2)` give wrong output. `.permute(2, 0, 3, 1, 4)`
+    is correct.
+
+  CPU_ONLY parity catches both.
 - **Static-shape-friendly graph** — no data-dependent shapes. Stock
   `rotate_half`/`repeat_kv` and any `F.conv1d(padding=shape-derived)`
   need the traceable rewrites (D17 constraint 8, LFM2.5 constraint B).

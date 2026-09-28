@@ -14,9 +14,11 @@ reference at 0.99998 and the intended one at only 0.87-0.975; it changes
 with the *content* of the pad positions (pad ids 0 vs random: cosine
 0.61-0.94); and the same fused op on the CPU returns NaN whenever fewer than
 64 of 128 positions are real (a query whose whole sliding window is masked).
-A synthetic single-layer fused SDPA does honour its mask, so the trigger is
-specific to this graph and not yet isolated. bge-small's fused SDPA passes
-the same pad-invariance check.
+The trigger: transformers builds ModernBERT's masks before the CPU-only
+embedding gather, so they are computed on the CPU and reach the ANE's
+attention as an input, and the ANE's fused attention ignores a mask it
+doesn't compute itself. tools/repro_sdpa_mask.py reproduces this standalone
+and checks any compiled model for it (D25).
 
 With explicit attention the whole graph stays on the ANE and parity is
 0.9999 at every bucket (docs/MODELS.md). This file used to document

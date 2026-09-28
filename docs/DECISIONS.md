@@ -523,9 +523,10 @@ window is dropped. Evidence:
 - The same op on the CPU returns NaN whenever fewer than 64 of 128
   positions are real (a query whose whole sliding window is masked).
 
-The trigger isn't isolated. A single synthetic fused-SDPA layer honours its
-mask, while ModernBERT cut down to one layer doesn't. bge-small's fused SDPA
-passes the same pad-invariance check.
+At first the trigger wasn't isolated. A single synthetic fused-SDPA layer
+honoured its mask, while ModernBERT cut down to one layer didn't, and
+bge-small's fused SDPA passed the same pad-invariance check. The amendment
+below explains all three.
 
 **The fix** is to convert with `attn_implementation="eager"`, so attention
 becomes explicit matmul → softmax → matmul:
@@ -564,8 +565,85 @@ pooled outputs are unaffected.
   and "QK-norm models avoid this by construction" are withdrawn. QK-norm
   does keep activations small, which spares a range rewrite.
 
-**Not done:** a minimal reproduction of the fused-op mask drop, which would
-yield a precise checklist rule and material for an Apple Feedback report.
+**Amendment: the trigger, isolated** (September 2026, M1 Max, macOS 27.0,
+coremltools 9). The ANE's native fused attention ignores its `attn_mask`
+when the mask is an input of the ANE procedure that runs the attention,
+i.e. when no op inside that procedure computes it. The output then equals
+unmasked attention exactly. `tools/repro_sdpa_mask.py` reproduces it with
+one random-weight layer in seconds.
+
+How it was found. The bisection ran from ModernBERT cut to one layer
+(fails) toward a synthetic layer (passes), one factor at a time. It used a
+NaN-safe drop fraction: distance to the masked fp32 reference over the
+distance between masked and unmasked references, 0 when the mask is
+honoured and 1 when it's ignored. Pad invariance was measured alongside.
+- A reimplementation of that layer, bit-exact with transformers in fp32,
+  passed. Its MIL program had the same ops as the failing one, only in a
+  different order.
+- transformers builds the masks in `_update_attention_mask`, before the
+  embedding gather. The partitioner puts that plumbing on the CPU with the
+  CPU-only gather, so the mask reaches the ANE as an input. Built after the
+  gather, the same ops run on the ANE and the mask holds, through the
+  fallback described below.
+- With the mask fed as a model input, the fully synthetic layer fails
+  too: drop 1.000. So do these variants of it:
+  - every q/k/v layout tried (transpose + unbind, permute, separate linears);
+  - with and without RoPE, and with and without biases;
+  - mask shapes (1,1,S,S), (1,H,S,S) and (1,1,1,S), in fp16 or fp32;
+  - fills -inf, -30000, -10000 and -100;
+  - head dims 32 and 64, 6 and 12 heads, sequence lengths 128 to 512;
+  - the macOS15 and iOS26 opsets.
+
+  The pass pipeline doesn't matter. Removing `topological_reorder` changes
+  nothing. An empty pipeline or fp32 compute "passes" only because the
+  attention then runs on the CPU.
+- A mask built entirely by ANE ops still fails when a CPU gather between it
+  and the attention splits the ANE work into two procedures. The E5 program
+  shows the mask leaving one `AneInference` and entering the next.
+- Core ML's E5 program for the failing model is a `BnnsCpuInference` that
+  emits the mask, then an `AneInference` that runs the attention. The
+  earlier synthetic layer passed because it built its mask by ANE ops in the
+  attention's own procedure. That case works natively.
+
+On the full 22-layer model, the compute plan puts all 22 fused attention
+ops on the ANE. Their masks come from `tile` (8 global layers) and `select`
+(14 sliding-window layers), all on the CPU. The rule predicts every result
+measured.
+
+Every other correct fused-attention graph measured is correct through a
+fallback. For these graphs Core ML evidently builds no native ANE plan: no
+ANE bundle is cached, and the compute plan reports the attention op with no
+device. They include:
+- bge-small, whose mask is built on the CPU too;
+- ModernBERT cut to one layer, with its mask built after the gather;
+- ModernBERT with its mask passed through one clamp before each attention
+  (full model: parity 0.999793, pad invariance 1.0).
+
+What triggers the fallback isn't pinned down. At the iOS26 opset there is
+no fallback, and those same graphs fail to load on CPU_AND_NE ("Failed to
+build the model execution plan", error -14). bge is correct at macOS15 by
+that fallback alone.
+
+The CPU NaN has its own rule. On the CPU, the fused op returns NaN for a
+query row whose keys are all masked when |fill| × √head_dim > 65504,
+measured at head dims 32, 64 and 128. A second CPU defect: q/k/v split off a
+packed projection by `.transpose(3, 1).unbind(2)` and fed straight to the op
+give wrong output (cosine 0.59 against fp32; `.permute` is correct).
+ModernBERT's RoPE sits between the split and the attention, so it escapes
+that one.
+
+Consequences:
+- The MODELS.md checklist states the rule, and `repro_sdpa_mask.py --check`
+  applies it to any compiled model by reading its compute plan.
+  - It flags all 22 attention ops of a fused ModernBERT artifact.
+  - It passes bge's (attention ops with no device).
+  - The other validated models have no fused attention op.
+- Explicit attention stays the fix. Passing `scale=` to
+  `F.scaled_dot_product_attention` is an equivalent one-line alternative:
+  coremltools then emits explicit ops. On full ModernBERT it gives ANE
+  parity 0.999787, pad invariance 1.0, and CPU output that stays finite.
+- Fused-attention models keep the macOS15 target, and pad invariance stays
+  the run-time gate.
 
 ## Hardware verification status
 
