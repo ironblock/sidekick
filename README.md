@@ -192,8 +192,10 @@ which SDK a binary was built with; after switching Xcode with
   releasable; feature and chore work happens on short-lived branches
   (`feat/…`, `chore/…`, `fix/…`) that merge back into `main`.
 - **Releases** are annotated `vX.Y.Z` tags cut from `main`
-  ([semver](https://semver.org/)), each with published release notes; the tag
-  drives [`release.yml`](.github/workflows/release.yml).
+  ([semver](https://semver.org/)). Each has release notes in
+  [`docs/releases/`](docs/releases/), written before tagging. The tag drives
+  [`release.yml`](.github/workflows/release.yml), which publishes the notes
+  with the build artifacts on the Releases page.
 
 See [AGENTS.md](AGENTS.md) for the full contributor guidelines, including
 content-hygiene rules for this public repository.

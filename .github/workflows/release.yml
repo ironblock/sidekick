@@ -1,13 +1,21 @@
-# Tag-triggered release: build sidekickd + libsidekick.dylib with Xcode 27
-# (real Foundation Models shim — build.rs hard-errors on the stub — compiled
-# against the macOS 27 SDK so the macOS 27 features are in the binary), prove
-# the daemon still loads on macOS 26, then attach a tarball + checksum to a
-# GitHub release.
+# Tag-triggered release: check the release notes, build sidekickd +
+# libsidekick.dylib with Xcode 27 (real Foundation Models shim — build.rs
+# hard-errors on the stub — compiled against the macOS 27 SDK so the macOS 27
+# features are in the binary), prove the daemon still loads on macOS 26, then
+# publish a GitHub release whose body is the release notes, with the tarball
+# and checksum attached.
 #
-#   git tag v0.1.0 && git push origin v0.1.0
+# Release notes are written before tagging, in docs/releases/vX.Y.Z.md, in
+# the same change that bumps [workspace.package] version (AGENTS.md):
 #
-# workflow_dispatch runs the same build as a dry run: artifacts are uploaded
-# to the run for inspection, but no release is created.
+#   git tag -a v0.2.0 -m "sidekick v0.2.0" && git push origin v0.2.0
+#
+# The tag must match the workspace version and the notes file must exist, or
+# the release stops before building.
+#
+# workflow_dispatch runs the same checks and build as a dry run, for the
+# workspace version: artifacts are uploaded to the run for inspection, but no
+# release is created.
 #
 # The xcode-27 runner image is a GitHub public preview (no SLA; jobs may
 # queue). Xcode is pinned to a release build because the image also carries
@@ -27,8 +35,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  notes:
+    name: Check release notes and version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches the workspace version; notes exist
+        id: check
+        run: |
+          WORKSPACE="v$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+            if [ "${VERSION}" != "${WORKSPACE}" ]; then
+              echo "::error::tag ${VERSION} doesn't match [workspace.package] version ${WORKSPACE} in Cargo.toml"
+              exit 1
+            fi
+          else
+            VERSION="${WORKSPACE}"
+          fi
+          NOTES="docs/releases/${VERSION}.md"
+          if [ ! -s "${NOTES}" ]; then
+            echo "::error::no release notes at ${NOTES}; write them before tagging (AGENTS.md)"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build release artifacts (aarch64-apple-darwin)
+    needs: notes
     runs-on: xcode-27
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
@@ -84,6 +120,7 @@ jobs:
           cp target/release/libsidekick.dylib "dist/${NAME}/"
           cp crates/sidekick-embed-ffi/include/sidekick.h "dist/${NAME}/"
           cp LICENSE README.md docs/INTEGRATING.md "dist/${NAME}/"
+          cp "docs/releases/${{ needs.notes.outputs.version }}.md" "dist/${NAME}/RELEASE_NOTES.md"
           tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
           (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
@@ -114,7 +151,7 @@ jobs:
   publish:
     name: Create GitHub release
     if: github.event_name == 'push'
-    needs: [build, verify-macos26]
+    needs: [notes, build, verify-macos26]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -126,7 +163,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The hand-written notes come first; --generate-notes appends
+          # GitHub's changelog link.
           gh release create "${GITHUB_REF_NAME}" \
             --title "sidekick ${GITHUB_REF_NAME}" \
+            --notes-file "docs/releases/${{ needs.notes.outputs.version }}.md" \
             --generate-notes \
+            --verify-tag \
             dist/*.tar.gz dist/*.tar.gz.sha256
