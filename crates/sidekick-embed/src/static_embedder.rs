@@ -41,16 +41,14 @@ impl StaticEmbedder {
             )));
         }
         let table = match tensor.dtype() {
-            safetensors::Dtype::F32 => tensor
-                .data()
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                .collect(),
-            safetensors::Dtype::F16 => tensor
-                .data()
-                .chunks_exact(2)
-                .map(|b| f16::from_le_bytes([b[0], b[1]]).to_f32())
-                .collect(),
+            safetensors::Dtype::F32 => {
+                let (values, _) = tensor.data().as_chunks::<4>();
+                values.iter().map(|b| f32::from_le_bytes(*b)).collect()
+            }
+            safetensors::Dtype::F16 => {
+                let (values, _) = tensor.data().as_chunks::<2>();
+                values.iter().map(|b| f16::from_le_bytes(*b).to_f32()).collect()
+            }
             other => {
                 return Err(Error::Inference(format!(
                     "unsupported embeddings dtype {other:?}"
