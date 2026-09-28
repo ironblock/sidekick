@@ -18,6 +18,7 @@ pub mod backend;
 pub mod cache;
 pub mod engine;
 pub mod envelope;
+pub mod shaping;
 
 #[cfg(all(target_os = "macos", not(fm_stub)))]
 mod ffi;

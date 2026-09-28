@@ -33,6 +33,11 @@ verified via `cargo run -p sidekick-coreml --example ane_check`). See
 recipe (the constraints it encodes are hardware-verified; deviating from
 them silently pushes the encoder off the ANE).
 
+On macOS 27 (built with Xcode 27) chat reports real token usage, including
+cached tokens when a follow-up reuses its session. `/health` reports which
+Foundation Models variant the Mac has and its context size. Over-long
+prompts are a proper 400. See D21 in [docs/DECISIONS.md](docs/DECISIONS.md).
+
 Which encoders are known to convert cleanly and achieve full ANE offload —
 and which don't, and why — is tracked with measured numbers in
 [docs/MODELS.md](docs/MODELS.md), along with a "will a new model convert?"
@@ -103,6 +108,11 @@ Constrained output works via the standard `response_format`:
 
 On-device guided generation makes the 3B model reliable at exactly this kind
 of task — the schema is enforced by constrained decoding, not by hoping.
+Check `finish_reason`: a reply cut by `max_tokens` reports `"length"`, and
+for constrained output that means the JSON may be missing properties.
+
+`stop` (one string or up to four) is supported, except together with
+`json_schema`.
 
 ## Models directory
 

@@ -70,10 +70,14 @@ async fn main() -> anyhow::Result<()> {
 
     let state = build_state(&config)?;
     let availability = state.chat.availability().await;
+    let model = state.chat.model_info().await.unwrap_or_default();
     tracing::info!(
         addr = %config.addr,
         models_dir = %config.models_dir().display(),
         chat_availability = ?availability,
+        chat_model = model.variant.as_deref().unwrap_or("unknown"),
+        chat_context = state.chat.context_limit().unwrap_or(0),
+        fm_sdk = sidekick_fm::FM_SDK,
         "sidekickd starting"
     );
 

@@ -5,7 +5,7 @@
 
 use crate::engine::{EngineResponse, RespondOptions, SessionEngine};
 use crate::envelope;
-use sidekick_core::{Availability, Error, Result, UnavailableReason};
+use sidekick_core::{Availability, Error, ModelInfo, Result, UnavailableReason};
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr::NonNull;
 
@@ -29,6 +29,7 @@ extern "C" {
         out_len: *mut usize,
         err: *mut *mut c_char,
     ) -> i32;
+    fn sk_fm_model_info(out: *mut *mut u8, out_len: *mut usize) -> i32;
     fn sk_fm_buf_free(ptr: *mut u8, len: usize);
     fn sk_fm_string_free(ptr: *mut c_char);
     #[cfg(test)]
@@ -91,6 +92,23 @@ impl SessionEngine for FfiEngine {
             _ => Availability::unavailable(UnavailableReason::Other(
                 "Foundation Models unavailable for an unknown reason".into(),
             )),
+        }
+    }
+
+    fn model_info(&self) -> Option<ModelInfo> {
+        let mut out: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        if unsafe { sk_fm_model_info(&mut out, &mut out_len) } != 0 || out.is_null() {
+            return None;
+        }
+        // SAFETY: on success the shim hands us an owned UTF-8 buffer.
+        let json = unsafe { take_buffer(out, out_len) };
+        match serde_json::from_str(&json) {
+            Ok(info) => Some(info),
+            Err(e) => {
+                tracing::warn!("malformed model info from the shim: {e}");
+                None
+            }
         }
     }
 

@@ -39,6 +39,8 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
 
 pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let chat_availability = state.chat.availability().await;
+    // Fetched before context_limit(), which it refreshes.
+    let info = state.chat.model_info().await.unwrap_or_default();
     let embedding_models: Vec<&str> = state.embedders.registry().ids().collect();
     Json(json!({
         "status": "ok",
@@ -47,6 +49,13 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "model": state.chat.id(),
             "availability": chat_availability,
             "context_limit": state.chat.context_limit(),
+            "variant": info.variant,
+            "variant_id": info.variant_id,
+            // What the underlying model supports; this daemon serves text.
+            "model_capabilities": info.capabilities,
+            // The SDK the Foundation Models shim was compiled against; the
+            // macOS 27 features are only present when it is 27 or newer.
+            "fm_sdk": sidekick_fm::FM_SDK,
         },
         "embeddings": {
             "models": embedding_models,

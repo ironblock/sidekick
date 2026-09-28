@@ -15,6 +15,10 @@ vehicle. The Swift shim targets `macosx26.0` and only uses macOS 26 APIs
 (`SystemLanguageModel.availability`, `LanguageModelSession`,
 `DynamicGenerationSchema`). Revisit when 27 is deployable.
 
+*Amended by D21:* the runtime floor is still macOS 26.0, but a build with
+the macOS 27 SDK now uses selected 27 APIs behind compile- and run-time
+gates. The `LanguageModel` provider protocol is still unused.
+
 ## D3 — Chat 503s when Foundation Models is unavailable; no generation fallback tier
 The daemon returns an honest OpenAI-shaped `503 backend_unavailable` (with the
 specific reason: AI toggled off, model downloading, ineligible hardware) and
@@ -50,12 +54,16 @@ The macOS 26 Foundation Models API doesn't report token usage (the `usage`
 property arrived with the 27 SDK). Clients get plausible numbers rather than
 zeros; revisit under D2's review.
 
+*Superseded on macOS 27 by D21* (real per-response usage). macOS 26 keeps
+the estimate, now rounded up so a non-empty reply is never zero tokens.
+
 ## D8 — `response_format` mapping
 `json_schema` → guided generation (the shim converts a JSON Schema subset —
 object/string/integer/number/boolean/enum/array/nested objects/required — to
 `DynamicGenerationSchema`). `json_object` → prompt nudge only, since there's
 no schema to constrain against. Unsupported schema keywords fail loudly in
-the shim rather than being silently dropped.
+the shim rather than being silently dropped. D21 extends the fail-loudly rule to
+errors (typed classification, real HTTP statuses) and to `stop`.
 
 ## D9 — Embedding purpose via non-standard `input_type`
 OpenAI's embeddings API has no query/document distinction, but EmbeddingGemma
@@ -211,6 +219,87 @@ hadn't covered, one of each verdict:
   CLS/mean; unit-tested). docs/MODELS.md carries both results and the
   hardened last-token checklist.
 
+## D21 — macOS 27: real usage and model facts, typed errors; the shim stays
+macOS 27 reworked Foundation Models. This entry records what sidekick
+adopts, what it declined, and the measurements behind both (M1 Max,
+macOS 27.0, Xcode 27.0).
+
+**Build.** The shim keeps its macOS 26.0 runtime floor. APIs that exist only
+in the 27 SDK are compiled when build.rs finds SDK ≥ 27 (`SK_SDK_27`) and run
+under `#available(macOS 27, *)`. SDKs older than 26.4 are a build error.
+Release binaries must be built with the 27 SDK — built with a 26.x SDK, a
+binary silently behaves like macOS 26 even on 27 — so the release workflow
+pins Xcode 27, fails on an older SDK, and proves the result still loads on
+macOS 26. `sidekickd --version` and `/health` report the SDK in use.
+
+**Token usage** comes from the per-response `usage` on macOS 27. Prompt
+counts include instructions and chat framing and matched Apple's own
+`fm serve` exactly on single-turn requests (62, 63 and 382 tokens in a spot
+check). `prompt_tokens_details.cached_tokens` reports what the reused session
+(D5) served from cache: a follow-up measured 69 of 87 prompt tokens cached.
+`completion_tokens` can exceed `max_tokens` because output counts include
+framing.
+
+**`finish_reason: "length"`** is inferred; Foundation Models reports no
+finish reason. For plain text, a reply is truncated when its re-counted
+tokens, net of the counter's constant overhead (1 token on macOS 27), reach
+`max_tokens`. Measured replies cut at 5, 12 and 30 re-counted to exactly the
+limit; natural ones stayed well below. The re-count (~45 ms) runs only near
+the limit: fewer UTF-8 bytes than the limit, or on macOS 27 an output count
+under it, rules truncation out. Constrained output can't be re-counted
+(structure tokens), and a truncated constrained reply still reports itself
+complete while missing required properties. There the macOS 27 output count
+is the only signal, and clients must check `finish_reason`.
+
+**`stop`** is honored; it used to be silently ignored. The reply ends before
+the earliest match. Up to four sequences are accepted. `stop` can't be
+combined with `json_schema`, since cutting constrained output breaks the
+schema. A session whose reply was cut by `stop` isn't cached, because its
+transcript holds text the client never saw. A `max_tokens` cut is cached.
+
+**Model facts.** `/health` reports the model variant (display name plus a
+stable id), its real context size, and what the model supports.
+`SystemLanguageModel.variant` is read-only: the OS decides. Per Apple, AFM 3
+Core Advanced needs a Mac with M3 or later and 12 GB+ of memory; an M1 Max
+gets AFM 3 Core (4096-token context, no reasoning).
+
+**Typed errors.** On macOS 27 an over-long prompt returned HTTP 500 instead
+of 400: overflow had been recognized by matching macOS 26's error text, and
+27 throws a new type, `LanguageModelError.contextSizeExceeded`. The shim now
+classifies errors by type, macOS 27's and macOS 26's, into kinds the server
+maps to statuses:
+
+| Kind | Status |
+|---|---|
+| context overflow | 400, with real counts on 27 |
+| guardrails | 400 `content_filter` |
+| rate limit | 429 with Retry-After |
+| transient | one retry on a fresh session, then 503 |
+| assets unavailable | 503 |
+| bad schema | 400 |
+| unsupported language | 400 |
+
+The only string matching left is a fallback that recognizes 27's overflow
+message, for binaries built without the 27 SDK. A shim self-test checks the
+classification in CI on both SDKs, without a model.
+
+**Not adopted.**
+- *`PrivateCloudComputeLanguageModel`.* It reports available on an eligible
+  Mac, but `respond` fails from an unentitled binary (ModelManagerError
+  1046). Apple documents a managed entitlement for PCC development. It would
+  also move inference off-device, which is contrary to this project's
+  premise.
+- *Apple's `fm serve`*, the macOS 27 CLI's OpenAI-compatible server, as a
+  replacement for the shim.
+  - It streams when `stream` is omitted.
+  - It ignores legacy `max_tokens`: 399 tokens came back for a limit of 5.
+  - It rejects `json_object` and `stop`.
+  - It reports no cached tokens, since it uses a fresh session per request.
+  - It needs a machine-wide license acceptance and a second process to
+    supervise.
+  - It is useful as a conformance reference, and the token counts above were
+    checked against it.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
@@ -268,6 +357,15 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   prefixes, and preserved similarity structure. gte-modernbert-base tested
   and rejected as ANE-incompatible (massive-activation outlier) — negative
   result in docs/MODELS.md.
+
+- macOS 27 (September 2026, D21): M1 Max, macOS 27.0, Xcode 27.0.
+  Verified with the smoke test and a live `sidekickd`:
+  - the shim builds against the 27 SDK and against a real 26.5 SDK
+  - model info: AFM 3 Core, 4096 context
+  - real usage, with cached tokens on session reuse
+  - `finish_reason` length/stop, and `stop` sequences
+  - over-long prompts → ContextOverflow with real counts → HTTP 400
+  - single-turn prompt token counts identical to Apple's `fm serve`
 
 Still open:
 - An automated ANE-residency gate in a self-hosted CI job (the example

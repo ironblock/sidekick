@@ -1,4 +1,4 @@
-use sidekick_core::{Availability, Result, UnavailableReason};
+use sidekick_core::{Availability, ModelInfo, Result, UnavailableReason};
 
 /// Options for a single response.
 #[derive(Debug, Clone, Default)]
@@ -49,6 +49,12 @@ pub trait SessionEngine: Send + Sync + 'static {
     type Session: Send + 'static;
 
     fn availability(&self) -> Availability;
+
+    /// Facts about the model (variant, context size, capabilities), where
+    /// the engine can report them.
+    fn model_info(&self) -> Option<ModelInfo> {
+        None
+    }
 
     /// Create a session primed with system instructions (may be empty).
     fn create(&self, instructions: &str) -> Result<Self::Session>;

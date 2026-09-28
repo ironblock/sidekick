@@ -6,8 +6,8 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sidekick_core::{
-    Availability, ChatBackend, ChatRequest, ChatResponse, FinishReason, ModelRegistry, Result,
-    Usage,
+    Availability, ChatBackend, ChatRequest, ChatResponse, FinishReason, ModelInfo, ModelRegistry,
+    Result, Usage,
 };
 use sidekick_server::{build_router, AppState, EmbedderPool};
 use std::sync::Arc;
@@ -26,6 +26,15 @@ impl ChatBackend for MockChat {
 
     fn context_limit(&self) -> Option<usize> {
         Some(4096)
+    }
+
+    async fn model_info(&self) -> Option<ModelInfo> {
+        self.available.then(|| ModelInfo {
+            variant: Some("AFM 3 Core".into()),
+            variant_id: Some("core3".into()),
+            context_size: Some(4096),
+            capabilities: Some(vec!["guided_generation".into(), "tool_calling".into()]),
+        })
     }
 
     async fn availability(&self) -> Availability {
@@ -65,13 +74,20 @@ impl ChatBackend for MockChat {
         }
         let content = if let Some(schema) = &req.schema {
             format!("{{\"schema_props\": {}}}", schema["properties"].to_string().len())
+        } else if !req.stop.is_empty() {
+            format!("stops: {}", req.stop.join("|"))
         } else {
             format!("echo: {}", req.messages.last().unwrap().content)
         };
         Ok(ChatResponse {
             content,
             finish: FinishReason::Stop,
-            usage: Usage { prompt_tokens: 10, completion_tokens: 5 },
+            usage: Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                cached_tokens: Some(3),
+                reasoning_tokens: None,
+            },
             constrained: req.schema.is_some(),
         })
     }
@@ -184,6 +200,11 @@ async fn chat_completion_round_trip() {
     assert_eq!(body["choices"][0]["message"]["content"], "echo: hello");
     assert_eq!(body["choices"][0]["finish_reason"], "stop");
     assert_eq!(body["usage"]["total_tokens"], 15);
+    assert_eq!(body["usage"]["prompt_tokens_details"]["cached_tokens"], 3);
+    assert!(
+        body["usage"].get("completion_tokens_details").is_none(),
+        "no reasoning detail when none was reported"
+    );
     assert_eq!(body["constrained"], false, "extension field present and honest");
 }
 
@@ -369,6 +390,17 @@ async fn models_and_health_report_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["chat"]["availability"]["state"], "unavailable");
     assert_eq!(body["chat"]["context_limit"], 4096);
+    assert!(body["chat"]["variant"].is_null(), "no model info while unavailable");
+    assert_eq!(body["chat"]["fm_sdk"], sidekick_fm::FM_SDK);
+
+    let (_, body) = call(
+        test_state(true, None),
+        Request::get("/health").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(body["chat"]["variant"], "AFM 3 Core");
+    assert_eq!(body["chat"]["variant_id"], "core3");
+    assert_eq!(body["chat"]["model_capabilities"], json!(["guided_generation", "tool_calling"]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -454,4 +486,34 @@ async fn rate_limit_sets_retry_after_and_type() {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["error"]["type"], "rate_limit_error");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_is_accepted_as_string_or_list_and_validated() {
+    let chat = |extra: Value| {
+        let mut body = json!({"model": "apple-fm", "messages": [{"role": "user", "content": "count"}]});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        post_json("/v1/chat/completions", body)
+    };
+    let (status, body) = call(test_state(true, None), chat(json!({"stop": "5"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["choices"][0]["message"]["content"], "stops: 5", "reaches the backend");
+
+    let (status, body) = call(test_state(true, None), chat(json!({"stop": ["a", "b"]}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["choices"][0]["message"]["content"], "stops: a|b");
+
+    let (status, _) = call(test_state(true, None), chat(json!({"stop": null}))).await;
+    assert_eq!(status, StatusCode::OK, "null means no stop sequences");
+
+    for bad in [
+        json!({"stop": ["1", "2", "3", "4", "5"]}),
+        json!({"stop": ""}),
+        json!({"stop": ["ok", ""]}),
+        json!({"stop": "x", "response_format": {"type": "json_schema",
+            "json_schema": {"name": "t", "schema": {"type": "object"}}}}),
+    ] {
+        let (status, body) = call(test_state(true, None), chat(bad.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
 }

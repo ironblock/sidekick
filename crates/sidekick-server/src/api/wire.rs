@@ -22,6 +22,16 @@ pub struct ChatCompletionRequest {
     pub stream_options: Option<StreamOptions>,
     #[serde(default)]
     pub response_format: Option<ResponseFormat>,
+    #[serde(default)]
+    pub stop: Option<StopSequences>,
+}
+
+/// OpenAI's `stop`: one string or up to four.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum StopSequences {
+    One(String),
+    Many(Vec<String>),
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +115,46 @@ pub struct WireUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    /// Standard OpenAI detail; present when the backend reports real usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens_details: Option<CompletionTokensDetails>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PromptTokensDetails {
+    pub cached_tokens: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompletionTokensDetails {
+    pub reasoning_tokens: u32,
+}
+
+impl WireUsage {
+    /// Plain counts, no details.
+    pub fn new(prompt_tokens: u32, completion_tokens: u32) -> Self {
+        Self {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens + completion_tokens,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+        }
+    }
+}
+
+impl From<sidekick_core::Usage> for WireUsage {
+    fn from(u: sidekick_core::Usage) -> Self {
+        Self {
+            prompt_tokens_details: u.cached_tokens.map(|cached_tokens| PromptTokensDetails { cached_tokens }),
+            completion_tokens_details: u
+                .reasoning_tokens
+                .map(|reasoning_tokens| CompletionTokensDetails { reasoning_tokens }),
+            ..Self::new(u.prompt_tokens, u.completion_tokens)
+        }
+    }
 }
 
 // Streaming chunk shapes.

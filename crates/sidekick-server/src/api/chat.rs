@@ -26,11 +26,7 @@ pub async fn chat_completions(
 
     let response = state.chat.complete(core_req).await?;
 
-    let usage = WireUsage {
-        prompt_tokens: response.usage.prompt_tokens,
-        completion_tokens: response.usage.completion_tokens,
-        total_tokens: response.usage.prompt_tokens + response.usage.completion_tokens,
-    };
+    let usage = WireUsage::from(response.usage);
     let finish = match response.finish {
         FinishReason::Stop => "stop",
         FinishReason::Length => "length",
@@ -171,7 +167,25 @@ fn to_core_request(req: &ChatCompletionRequest) -> Result<ChatRequest, ApiError>
         ));
     }
 
-    Ok(ChatRequest { messages, temperature: req.temperature, max_tokens, schema })
+    let stop = match &req.stop {
+        None => Vec::new(),
+        Some(StopSequences::One(s)) => vec![s.clone()],
+        Some(StopSequences::Many(list)) => list.clone(),
+    };
+    if stop.len() > 4 {
+        return Err(ApiError::invalid("`stop` accepts at most 4 sequences"));
+    }
+    if stop.iter().any(String::is_empty) {
+        return Err(ApiError::invalid("`stop` sequences must not be empty"));
+    }
+    // Cutting schema-constrained output short would break the schema.
+    if !stop.is_empty() && schema.is_some() {
+        return Err(ApiError::invalid(
+            "`stop` can't be combined with response_format json_schema",
+        ));
+    }
+
+    Ok(ChatRequest { messages, temperature: req.temperature, max_tokens, schema, stop })
 }
 
 fn flatten_content(content: &WireContent) -> Result<String, ApiError> {

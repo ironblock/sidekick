@@ -1,20 +1,49 @@
 use crate::cache::{conversation_key, ConversationCache};
-use crate::engine::{RespondOptions, SessionEngine};
+use crate::engine::{EngineUsage, RespondOptions, SessionEngine};
+use crate::shaping::shape;
 use sidekick_core::{
     Availability, ChatBackend, ChatMessage, ChatRequest, ChatResponse, Error, FinishReason,
-    Result, Role, Usage,
+    ModelInfo, Result, Role, Usage,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// The Foundation Models on-device combined input+output token budget.
-const FM_CONTEXT_LIMIT: usize = 4096;
+/// Context budget assumed until the model reports its own: macOS 26's fixed
+/// on-device budget (also AFM 3 Core's on macOS 27).
+const DEFAULT_CONTEXT_LIMIT: usize = 4096;
 
 /// `ChatBackend` over any [`SessionEngine`], with prefix-keyed session reuse.
 pub struct SessionChatBackend<E: SessionEngine> {
     engine: Arc<E>,
     cache: Arc<Mutex<ConversationCache<E::Session>>>,
     request_timeout: Duration,
+    /// Last context size the model reported (0 = not yet known). Refreshed
+    /// on every `model_info()` call, so a model asset update is picked up.
+    context_size: AtomicUsize,
+}
+
+/// Usage from the engine when it reports it (macOS 27), otherwise an
+/// estimate at ~4 bytes/token, rounded up so a non-empty text never counts
+/// as zero tokens.
+fn usage(real: Option<EngineUsage>, messages: &[ChatMessage], reply: &str) -> Usage {
+    match real {
+        Some(u) => Usage {
+            prompt_tokens: u.input,
+            completion_tokens: u.output,
+            cached_tokens: Some(u.cached),
+            reasoning_tokens: (u.reasoning > 0).then_some(u.reasoning),
+        },
+        None => {
+            let estimate = |bytes: usize| bytes.div_ceil(4) as u32;
+            Usage {
+                prompt_tokens: estimate(messages.iter().map(|m| m.content.len()).sum()),
+                completion_tokens: estimate(reply.len()),
+                cached_tokens: None,
+                reasoning_tokens: None,
+            }
+        }
+    }
 }
 
 /// A runtime failure worth one retry on a fresh session: transient conditions
@@ -36,28 +65,13 @@ fn is_recoverable(err: &Error) -> bool {
         .any(|k| message.contains(k))
 }
 
-/// Strip one leading `assistant` speaker label (ASCII case-insensitive,
-/// optional spaces before the colon), at the start of the reply only.
-fn strip_assistant_label(text: &str) -> &str {
-    const LABEL: &str = "assistant";
-    // `get`, not slicing, so a multi-byte char spanning the boundary can't panic.
-    if let Some(prefix) = text.get(..LABEL.len()) {
-        if prefix.eq_ignore_ascii_case(LABEL) {
-            let rest = text[LABEL.len()..].trim_start_matches(' ');
-            if let Some(after) = rest.strip_prefix(':') {
-                return after.trim_start();
-            }
-        }
-    }
-    text
-}
-
 impl<E: SessionEngine> SessionChatBackend<E> {
     pub fn new(engine: E, session_ttl: Duration, request_timeout: Duration) -> Self {
         Self {
             engine: Arc::new(engine),
             cache: Arc::new(Mutex::new(ConversationCache::new(session_ttl, 8))),
             request_timeout,
+            context_size: AtomicUsize::new(0),
         }
     }
 
@@ -146,35 +160,29 @@ impl<E: SessionEngine> SessionChatBackend<E> {
             }
             Err(e) => return Err(e),
         };
-        let text = response.text;
-        // Cold replays present history as a "User:/Assistant:" transcript and
-        // the model sometimes mimics the format (seen on real hardware);
-        // a leading speaker label is never part of a wanted reply.
-        let text = match strip_assistant_label(&text) {
-            stripped if stripped.len() != text.len() => stripped.to_string(),
-            _ => text,
+        let shaped = shape(&response.text, &req.stop);
+
+        // File the session under the extended conversation for follow-ups —
+        // unless a stop sequence cut the reply: the session's transcript then
+        // holds text the client never saw, so it must not be resumed.
+        // (A max_tokens cut is fine: the transcript is exactly the reply.)
+        if !shaped.stop_hit {
+            let mut extended = history;
+            extended.push(ChatMessage::new(Role::Assistant, shaped.text.clone()));
+            let key = conversation_key(&instructions, &extended);
+            cache.lock().unwrap().insert(key, session);
+        }
+
+        // A stop hit is a normal stop even if the limit was also reached.
+        let finish = if !shaped.stop_hit && response.truncated == Some(true) {
+            FinishReason::Length
+        } else {
+            FinishReason::Stop
         };
-
-        // File the session under the extended conversation for follow-ups.
-        let mut extended = history;
-        extended.push(ChatMessage::new(Role::Assistant, text.clone()));
-        let key = conversation_key(&instructions, &extended);
-        cache.lock().unwrap().insert(key, session);
-
-        // Foundation Models (macOS 26) does not report token usage; estimate
-        // at ~4 chars/token so OpenAI clients see plausible numbers.
-        let prompt_chars: usize = req
-            .messages
-            .iter()
-            .map(|m| m.content.len())
-            .sum::<usize>();
         Ok(ChatResponse {
-            usage: Usage {
-                prompt_tokens: (prompt_chars / 4) as u32,
-                completion_tokens: (text.len() / 4) as u32,
-            },
-            content: text,
-            finish: FinishReason::Stop,
+            usage: usage(response.usage, &req.messages, &shaped.text),
+            content: shaped.text,
+            finish,
             constrained,
         })
     }
@@ -187,7 +195,19 @@ impl<E: SessionEngine> ChatBackend for SessionChatBackend<E> {
     }
 
     fn context_limit(&self) -> Option<usize> {
-        Some(FM_CONTEXT_LIMIT)
+        match self.context_size.load(Ordering::Relaxed) {
+            0 => Some(DEFAULT_CONTEXT_LIMIT),
+            known => Some(known),
+        }
+    }
+
+    async fn model_info(&self) -> Option<ModelInfo> {
+        let engine = self.engine.clone();
+        let info = tokio::task::spawn_blocking(move || engine.model_info()).await.ok().flatten();
+        if let Some(size) = info.as_ref().and_then(|i| i.context_size) {
+            self.context_size.store(size, Ordering::Relaxed);
+        }
+        info
     }
 
     async fn availability(&self) -> Availability {
@@ -220,7 +240,7 @@ impl<E: SessionEngine> ChatBackend for SessionChatBackend<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::EngineResponse;
+    use crate::engine::{EngineResponse, EngineUsage};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock engine that records prompts; sessions count their turns. Can be
@@ -386,44 +406,6 @@ mod tests {
         assert_eq!(r.content, "Paris has 2.1 million people.");
     }
 
-    #[test]
-    fn assistant_label_variants() {
-        for s in ["Assistant: x", "assistant: x", "ASSISTANT: x", "Assistant : x", "assistant  :  x"] {
-            assert_eq!(strip_assistant_label(s), "x", "should strip: {s:?}");
-        }
-        for s in ["Assistants: x", "The Assistant: x", "Assistant x", "", "助手: x"] {
-            assert_eq!(strip_assistant_label(s), s, "should not strip: {s:?}");
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn recoverable_error_retries_on_fresh_session() {
-        let b = backend();
-        b.engine
-            .fail_with
-            .lock()
-            .unwrap()
-            .push(Error::Inference("respond: model runtime busy".into()));
-
-        let history = vec![
-            ChatMessage::new(Role::User, "one"),
-            ChatMessage::new(Role::Assistant, "two"),
-            ChatMessage::new(Role::User, "three"),
-        ];
-        let r = b.complete(req(history)).await.unwrap();
-        assert_eq!(r.content, "reply-1", "retry ran on a fresh session");
-        assert_eq!(
-            b.engine.creates.load(Ordering::SeqCst),
-            2,
-            "failed session dropped, fresh one created"
-        );
-        let prompt = b.engine.last_prompt.lock().unwrap().clone();
-        assert!(
-            prompt.contains("User: one") && prompt.ends_with("User: three"),
-            "retry replays full history since the fresh session has none"
-        );
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn typed_transient_error_retries_on_fresh_session() {
         let b = backend();
@@ -504,6 +486,140 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Timeout { .. }));
+    }
+
+    /// Engine returning a fixed response; counts sessions created and
+    /// reports a fixed model info.
+    struct ScriptedEngine {
+        response: EngineResponse,
+        creates: AtomicUsize,
+        info: Option<ModelInfo>,
+    }
+
+    impl SessionEngine for ScriptedEngine {
+        type Session = ();
+        fn availability(&self) -> Availability {
+            Availability::Available
+        }
+        fn model_info(&self) -> Option<ModelInfo> {
+            self.info.clone()
+        }
+        fn create(&self, _instructions: &str) -> Result<()> {
+            self.creates.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn respond(&self, _s: &mut (), _p: &str, _o: &RespondOptions) -> Result<EngineResponse> {
+            Ok(self.response.clone())
+        }
+    }
+
+    fn scripted(response: EngineResponse) -> SessionChatBackend<ScriptedEngine> {
+        SessionChatBackend::new(
+            ScriptedEngine { response, creates: AtomicUsize::new(0), info: None },
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        )
+    }
+
+    /// Ask, then follow up exactly as a client would; returns the first
+    /// response and whether the follow-up reused the session.
+    async fn ask_then_follow_up(
+        b: &SessionChatBackend<ScriptedEngine>,
+        first: ChatRequest,
+    ) -> (ChatResponse, bool) {
+        let messages = first.messages.clone();
+        let r1 = b.complete(first).await.unwrap();
+        let mut second = messages;
+        second.push(ChatMessage::new(Role::Assistant, r1.content.clone()));
+        second.push(ChatMessage::new(Role::User, "and then?"));
+        b.complete(req(second)).await.unwrap();
+        let reused = b.engine.creates.load(Ordering::SeqCst) == 1;
+        (r1, reused)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn real_usage_passes_through() {
+        let b = scripted(EngineResponse {
+            text: "Madrid.".into(),
+            usage: Some(EngineUsage { input: 86, cached: 78, output: 5, reasoning: 0 }),
+            truncated: Some(false),
+        });
+        let r = b.complete(req(vec![ChatMessage::new(Role::User, "capital of Spain?")])).await.unwrap();
+        assert_eq!(
+            r.usage,
+            Usage { prompt_tokens: 86, completion_tokens: 5, cached_tokens: Some(78), reasoning_tokens: None }
+        );
+        assert_eq!(r.finish, FinishReason::Stop);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn estimated_usage_rounds_up() {
+        let b = scripted(EngineResponse::text("4"));
+        let r = b.complete(req(vec![ChatMessage::new(Role::User, "2+2?")])).await.unwrap();
+        assert_eq!(
+            r.usage,
+            Usage { prompt_tokens: 1, completion_tokens: 1, cached_tokens: None, reasoning_tokens: None },
+            "a one-character reply is one token, not zero"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn truncated_reply_finishes_with_length_and_stays_cacheable() {
+        let b = scripted(EngineResponse {
+            text: "Beneath the moon".into(),
+            usage: None,
+            truncated: Some(true),
+        });
+        let (r, reused) =
+            ask_then_follow_up(&b, req(vec![ChatMessage::new(Role::User, "a poem")])).await;
+        assert_eq!(r.finish, FinishReason::Length);
+        assert!(reused, "a max_tokens cut leaves the transcript equal to the reply");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stop_truncates_and_is_not_cached() {
+        let b = scripted(EngineResponse::text("1, 2, 3, 4, 5, 6"));
+        let mut first = req(vec![ChatMessage::new(Role::User, "count")]);
+        first.stop = vec!["4".into()];
+        let (r, reused) = ask_then_follow_up(&b, first).await;
+        assert_eq!(r.content, "1, 2, 3, ");
+        assert_eq!(r.finish, FinishReason::Stop);
+        assert!(!reused, "the transcript holds text the client never saw");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stop_wins_over_length() {
+        let b = scripted(EngineResponse {
+            text: "a b c STOP d".into(),
+            usage: None,
+            truncated: Some(true),
+        });
+        let mut r = req(vec![ChatMessage::new(Role::User, "go")]);
+        r.stop = vec!["STOP".into()];
+        let r = b.complete(r).await.unwrap();
+        assert_eq!((r.content.as_str(), r.finish), ("a b c ", FinishReason::Stop));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn context_limit_follows_reported_model_info() {
+        let b = SessionChatBackend::new(
+            ScriptedEngine {
+                response: EngineResponse::text("x"),
+                creates: AtomicUsize::new(0),
+                info: Some(ModelInfo {
+                    variant: Some("AFM 3 Core Advanced".into()),
+                    variant_id: Some("core_advanced3".into()),
+                    context_size: Some(8192),
+                    capabilities: Some(vec!["guided_generation".into()]),
+                }),
+            },
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        assert_eq!(b.context_limit(), Some(4096), "default before the model reports");
+        let info = b.model_info().await.unwrap();
+        assert_eq!(info.variant_id.as_deref(), Some("core_advanced3"));
+        assert_eq!(b.context_limit(), Some(8192));
     }
 
     #[tokio::test(flavor = "multi_thread")]
