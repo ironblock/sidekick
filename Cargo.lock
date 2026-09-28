@@ -1268,10 +1268,13 @@ version = "0.2.0"
 dependencies = [
  "half",
  "safetensors",
+ "serde",
  "serde_json",
+ "sha2",
  "sidekick-core",
  "sidekick-coreml",
  "tokenizers",
+ "toml",
  "tracing",
 ]
 
