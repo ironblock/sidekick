@@ -8,7 +8,8 @@ re-checked on macOS 27); nothing is extrapolated from model cards.
 How confident to be in each model on each compute path, graded on inputs
 chosen to break it, is in [Confidence grades](#confidence-grades-the-parity-suite)
 below. That is the number to trust; the converter parity in the first table
-is measured on short prose and can flatter a model (LFM2.5).
+is measured on short prose and can flatter a model (it did for LFM2.5 before
+its precision rewrite).
 
 Method, for every validated entry:
 - **parity** — worst-case cosine between the Core ML artifact and the fp32
@@ -56,7 +57,7 @@ Method, for every validated entry:
 |---|---|---|---|---|---|---|---|
 | [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | 384 | CLS | [convert_bge_small.py](../tools/convert_bge_small.py) | 0.999972 | 0.999984 | 229/245 (93.5%) | 3.4x / 2.4x / 1.75x |
 | [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma.py](../tools/convert_embeddinggemma.py) | 0.99993 | 0.99999 | 2161/2170 (99.6%) | 3.4x / 3.1x / 2.9x (before the MLP rewrite) |
-| [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.9999 | 0.9870 | 693/698 (99.3%) | 2.49x / 1.91x / 1.66x |
+| [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.99991 | 0.99999 | 773/778 (99.4%) | 2.49x / 1.91x / 1.66x (before the precision rewrite) |
 | [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.9999 | 0.99985 | 612/617 (99.2%) | 2.02x / 1.77x / 1.59x |
 | [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | 768 | CLS | [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py) | 0.999919 | 0.999793 | 794/805 (98.6%) | validated on macOS 27 (below) |
 
@@ -72,7 +73,7 @@ Ratios re-measured on macOS 27
 |---|---|---|---|
 | bge-small | 3.0x | 2.0x | 1.26x |
 | embeddinggemma | 2.6x | 2.4x | 1.7x |
-| LFM2.5 | 2.4x | 2.0x | 1.7x |
+| LFM2.5 | 2.3x | 1.9x | 1.6x |
 | F2LLM | 2.3x | 2.0x | 1.5x |
 | gte-modernbert | 2.9x | 2.0x | 1.55x |
 
@@ -119,10 +120,21 @@ Notes per model:
   QK-norm keeps activations tiny (max ~25),
   so no range rewrite is needed despite the model being deeper than bge.
   Ships custom code (`modeling_lfm2_bidirectional.py`, ~140 benign lines —
-  read before trusting). Live `/v1/embeddings` worst parity 0.9856 (a
-  483-token text); ~670 MB per bucket, 2.0 GB installed. The parity suite
-  finds worse on the ANE: 0.954 on a 39-token URL, and similarity scores
-  moving by up to 0.19 (grade D, below). CPU and GPU stay at 0.9999.
+  read before trusting). ~670 MB per bucket, 2.0 GB installed.
+  **Precision rewrite (D19 amendment).** Its ANE parity was 0.987 on prose
+  and 0.954 on a 39-token URL (grade D), with similarity scores moving by
+  up to 0.19. The cause was the same as EmbeddingGemma's, spread over every
+  sub-block. Tiny activations meant every output projection's input had
+  rms 0.003–0.07, below the ANE `linear`'s precision floor, and Core ML's
+  native silu is coarse on the ANE. The converter now rescales each of
+  those inputs to rms ~1 with power-of-two scales. Because no norm follows
+  the conv, attention or MLP branch, each is undone by an explicit multiply
+  before the residual add. It also builds SiLU from tanh. The ANE now
+  grades A (0.99999, drift 0.003, no rank flips) and tracks fp32 more
+  closely than CPU_ONLY does, at 13–16% more ANE latency. Live
+  `/v1/embeddings` worst parity is 0.999988 over the suite's 51 inputs.
+  Ratios in the table's last column predate the rewrite (re-measured on
+  macOS 27 above).
 - **F2LLM-v2-160M** — the first **causal decoder** and first **last-token
   pooling** on the stack. A Qwen3 decoder; its QK-norm keeps activations
   tiny (max ~420), so it converts as cleanly as bge (ANE parity 0.99985). Last-token pooling is baked in-graph via the attention mask
@@ -197,7 +209,8 @@ stress inputs graded separately:
 
 Grades are a best-effort statement about these inputs on this hardware,
 not a bound on every input. How much accuracy the ANE loses depends on the
-content: LFM2.5 loses most on a URL, EmbeddingGemma on a run of digits.
+content: before their precision rewrites, LFM2.5 lost most on a URL and
+EmbeddingGemma on a run of digits, and F2LLM still does on digits.
 
 M1 Max, macOS 27.0, September 2026. sidekick serves the ANE column; ms is
 the median per input, ANE (CPU).
@@ -208,7 +221,7 @@ the median per input, ANE (CPU).
 | gte-modernbert-base | B 0.99926 | A 0.99998 | **B** 0.99940 (a Markdown list) | 0.010 (+0.003) | 0 | 6.9 (18.6) |
 | F2LLM-v2-160M | B 0.99987 | A 0.999999 | **B** 0.99966 (a run of digits) | 0.006 (0.000) | 0 | 5.3 (13.4) |
 | embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.1 (20.3) |
-| LFM2.5-Embedding-350M | B 0.99990 | A 0.999999 | **D** 0.9536 (a URL) | 0.187 (−0.010) | 1,399 | 13.0 (34.5) |
+| LFM2.5-Embedding-350M | B 0.99986 | A 0.999999 | **A** 0.99999 (a delimiter flood) | 0.003 (0.000) | 0 | 14.9 (33.8) |
 
 - **Similarity drift** is the largest change in any pairwise similarity
   score against fp32. **Bias** is the mean signed change: LFM2.5's ANE
@@ -222,24 +235,26 @@ the median per input, ANE (CPU).
 - EmbeddingGemma graded D before its MLP precision rewrite (D17): 0.975 on
   a run of digits, drift 0.042 with scores biased +0.009 high, and 122 rank
   flips.
+- LFM2.5 graded D before its precision rewrite (D19 amendment): 0.954 on a
+  URL, drift 0.187 with scores biased −0.010 low, and 1,399 rank flips.
 
 All five pass every hard gate on every path:
 - token ids identical to the reference pipeline's;
 - finite output;
 - exact pad invariance;
-- bucket invariance of at least 0.9965 on the ANE (LFM2.5; 0.99998 for
-  EmbeddingGemma since its rewrite) and exact on the CPU;
+- bucket invariance of at least 0.99998 on the ANE (it was 0.9977 for
+  EmbeddingGemma and 0.9965 for LFM2.5 before their rewrites) and exact on
+  the CPU;
 - bit-identical ANE output across two processes.
 
-**What changes.** LFM2.5's 0.987 in the table above holds for prose. On
-URLs, delimiters and repeated tokens its ANE path falls to 0.954, and a
-similarity threshold calibrated on fp32 vectors can move by 0.19. Its CPU
-and GPU paths stay at 0.9999, so the loss happens on the ANE.
-EmbeddingGemma showed the same pattern until its MLP precision rewrite
-(D17), which recovered it from D to A, so LFM2.5's SwiGLU MLP is the first
-suspect. Until it's fixed, if inputs like these matter, prefer
-bge-small, EmbeddingGemma, gte-modernbert or F2LLM, which are all B or
-better on the ANE.
+**What changed.** Two models graded D on the ANE while their CPU and GPU
+paths stayed at 0.9999. LFM2.5 fell to 0.954 on URLs, delimiters and
+repeated tokens, with drift up to 0.19; EmbeddingGemma fell to 0.975 on
+digits. Both were the ANE's `linear` precision floor plus its coarse
+native GELU/SiLU, and both now grade A after precision rewrites (D17 and
+D19 amendments). An ANE-only loss is worth diagnosing before it's
+accepted. F2LLM and gte-modernbert (B) haven't been checked against the
+same rules yet.
 
 **Reading a report.** For each model the report prints its lowest cases
 with the CPU, GPU and ANE cosines side by side. The pattern points at a
@@ -268,7 +283,7 @@ known-bad artifact on the gate that targets it:
 |---|---|---|
 | flexible-shape bge-small | `convert_bge_small.py --enumerated-shapes` | compute plan: 0 of 362 ops on the ANE. Nothing predicts, so nothing aborts. |
 | fused-attention gte-modernbert | `convert_gte_modernbert.py --attn sdpa` | CPU output non-finite on 43 of 51 inputs; ANE pad invariance 0.61, bucket invariance 0.40, worst case 0.71 |
-| LFM2.5 without pad zeroing | `convert_lfm25_embedding.py --no-pad-zeroing` | pad invariance 0.33–0.39 on every path; worst case 0.46–0.54 |
+| LFM2.5 without pad zeroing | `convert_lfm25_embedding.py --no-pad-zeroing` | pad invariance 0.40–0.41 on every path (0.33–0.39 before the precision rewrite); worst case 0.54–0.55 |
 | naive truncation, on F2LLM | the daemon with `take(max)` truncation | token ids differ on both over-length inputs; cosine 0.23 |
 
 **ONNX oracles.** Where a model's publisher, or onnx-community, ships ONNX
@@ -325,7 +340,7 @@ its grade as a starting expectation, not a promise, and run the suite.
 | ModernBERT | gte-modernbert-base; laya's encoder (CLS ≥ 0.997) | B | fused attention drops the mask on the ANE (convert eager); the vectors of delimiter tokens are a little less accurate | pad and bucket invariance; delimiters |
 | Qwen3 decoder, last-token pooling | F2LLM-v2-160M | B | truncation must keep the final token | over-length; the ids gate |
 | Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
-| LFM2 hybrid (conv + attention) | LFM2.5-Embedding-350M | D | convolutions read pad states unless they're zeroed; up to 4.6% ANE loss on URLs and delimiters (suspected: SwiGLU MLP precision, D17) | pad invariance; delimiters, numbers |
+| LFM2 hybrid (conv + attention) | LFM2.5-Embedding-350M | A | convolutions read pad states unless they're zeroed; without the precision rewrite, up to 4.6% ANE loss on URLs and delimiters (graded D) | pad invariance; delimiters, numbers |
 
 ## Incompatible / not integrated
 
@@ -368,7 +383,7 @@ Most rejections are visible long before a conversion. Cheapest first:
    | model | norms | peak (dim) | × median | probe says | measured on ANE |
    |---|---|---|---|---|---|
    | bge-small-en-v1.5 | LayerNorm | 338 (99) | 146× | no range issue | 0.99998 |
-   | LFM2.5-Embedding-350M | RMSNorm | 1.9 | 17× | no range issue | 0.987 |
+   | LFM2.5-Embedding-350M | RMSNorm | 1.9 | 17× | no range issue | 0.99999 after the precision rewrite |
    | embeddinggemma-300m | RMSNorm | 152,485 (731) | 313× | range rewrite | 0.99999 after range + MLP rewrites |
    | gte-modernbert-base | LayerNorm | 47,973 (251) | 502× | no range issue | 0.9998 (explicit attention) |
    | laya (ModernBERT-large) | LayerNorm | 27,296 (379) | 556× | no range issue | CLS ≥ 0.997 (explicit attention) |
@@ -444,17 +459,23 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   0.004; the GPU is flat at 0.04%). Scaling the weights doesn't help; only
   the input's magnitude matters. Measure the rms of every linear input in
   fp32 with forward pre-hooks. Likely offenders are MLP down projections
-  after a gated product (act(gate)·up is a product of two small numbers)
-  and in-graph heads that pool at a reduced scale. Fix with a power-of-two
-  scale folded into the weights upstream and cancelled by a
-  scale-invariant norm or the final L2 normalize (EmbeddingGemma, D17).
+  after a gated product (act(gate)·up is a product of two small numbers),
+  in-graph heads that pool at a reduced scale, and any model whose
+  activations are tiny everywhere (LFM2.5: every output projection at rms
+  0.003–0.07). A small activation range spares a range rewrite, but it
+  isn't safe on the ANE. Fix with a power-of-two scale folded into the
+  weights upstream. Cancel it with a scale-invariant norm or the final L2
+  normalize (EmbeddingGemma, D17). Where only a residual add follows,
+  cancel it with an explicit multiply rather than weights divided into
+  fp16's subnormal range (LFM2.5, D19).
 - **Don't use Core ML's native GELU or SiLU ops on the ANE.** Measured
   absolute error on [-1, 1]: gelu ~6e-3, silu ~1.5e-2, versus tanh 1.6e-3,
   sigmoid 3e-3, and exact mul/relu. Build GELU as
   `x * (1 + tanh(x * (c + c·0.044715·x²)))` with the factor 2 absorbed
-  downstream. Check the converted program for surviving `gelu` ops, since
-  coremltools has passes that fuse such patterns. The SiLU replacement
-  hasn't been validated yet.
+  downstream, and SiLU as `x * (1 + tanh(x / 2))` (LFM2.5). Check the
+  converted program for surviving `gelu`/`silu` ops: coremltools has passes
+  that fuse such patterns, and `x * sigmoid(x)` converts straight back to
+  the native silu.
 - **Massive activations are not disqualifying.** A few feature dimensions
   reaching tens of thousands on delimiter/[SEP] tokens (ModernBERT ~48,000,
   EmbeddingGemma ~152,000) convert fine once attention is explicit and values

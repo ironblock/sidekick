@@ -49,9 +49,8 @@ LFM2.5-Embedding-350M, F2LLM-v2-160M, gte-modernbert-base.
 `tools/probe_activations.py` triages a candidate in minutes before any
 conversion. A parity suite (D26) grades every model on the CPU, GPU and ANE
 paths through sidekick's own code, on inputs chosen to break it. On the
-ANE, bge-small and EmbeddingGemma grade A, gte-modernbert and F2LLM B, and
-LFM2.5 D (it loses accuracy on URLs and delimiters). See the confidence
-grades in [docs/MODELS.md](docs/MODELS.md).
+ANE, bge-small, EmbeddingGemma and LFM2.5 grade A, and gte-modernbert and
+F2LLM B. See the confidence grades in [docs/MODELS.md](docs/MODELS.md).
 
 Embeddings are also available in-process via `libsidekick.dylib`
 (`cargo build --release -p sidekick-embed-ffi`) for hosts that can't or

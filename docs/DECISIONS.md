@@ -273,7 +273,7 @@ Xcode 26 build requirement) into every host, and sessions want a daemon
 lifetime. The daemon remains the primary interface — it shares resident
 models across clients; the dylib trades that for zero service management.
 
-## D19 — Model registry doc + LFM2.5: flexibility validated, ColBERT declined
+## D19 — Model registry doc + LFM2.5: flexibility validated, ColBERT declined (amended: full ANE parity after a precision rewrite)
 Two LiquidAI models were run through the stack to test whether the recipe
 generalizes beyond BERT-class and Gemma-class encoders — it does, with one
 new constraint. LFM2.5-Embedding-350M (hybrid: 10 short-conv + 6
@@ -293,6 +293,87 @@ remains possible if wanted. Measured results and a
 the registry of validated/incompatible models.
 *Qualified by D26:* 0.987 is LFM2.5's ANE parity on prose. On URLs and
 delimiters the ANE reaches 0.954, and similarity scores move by up to 0.19.
+*Superseded by the amendment below.*
+
+**Amendment (September 2026, macOS 27.0, M1 Max): LFM2.5's ANE loss was
+the same two limits as EmbeddingGemma's (D17 amendment), spread over the
+whole block.** A converter rewrite removes it.
+
+Ruled out first: the graph is faithful and fp16 itself is fine. The parity
+suite (D26) grades the CPU path B (0.9999) and Core ML's GPU path A
+(0.999999). Only the ANE is low: D, 0.954 on a URL.
+
+Located:
+- *By layer, teacher-forced* (each layer converted alone and fed the exact
+  fp32 residual): on the ANE, the conv or attention branch adds 1–8% local
+  error and the MLP 3–13%, in every layer. The CPU adds 0.3–0.9%, the GPU
+  0.03%. Unlike EmbeddingGemma, where only the MLP was lossy, every
+  sub-block loses.
+- *By op class kept in fp32*, moving it to the CPU: the conv op 0.9539 and
+  attention's matmul/softmax 0.9460, so neither is the cause. SiLU alone
+  gives 0.9777, the MLP down projections alone 0.9788, and both 0.9974. Kept
+  as a whole class, the linears or the MLP moved the entire graph off the
+  ANE, which isolates nothing.
+- *By input magnitude* (fp32, over the suite's inputs): the rms of every
+  output projection's input is far below 1. It is 0.003–0.036 for the MLP
+  down projection, 0.003–0.06 for the conv block's out_proj, 0.007–0.07 for
+  attention's out_proj, and 0.04–0.16 for q/k/v. At the ANE linear's
+  ~3e-4 / rms error, that predicts 0.5–10% per projection. QK-norm and
+  small norm weights (attention layers' operator norms average 0.06–0.13)
+  keep this model's activations tiny. That spares a range rewrite, which is
+  why the converter called LFM2.5 the "easy class", and it is exactly what
+  the ANE's `linear` punishes.
+
+**The fix** (tools/convert_lfm25_embedding.py, constraint E): calibrated
+power-of-two scales bring each of those inputs to rms ~1, per layer.
+- Attention: the operator norm's weight ×8–16 scales q/k/v. q and k are
+  re-normalized per head, so only their RMSNorm eps moves (×s²). v_proj
+  takes attention's output to ×16–64.
+- Conv: the operator norm ×2–4, B's rows of in_proj so the conv input B·x
+  has rms ~1 (×2–8 total), and C's rows so out_proj's input C·conv(B·x)
+  does (×32–128 total).
+- MLP: w3 ×m, so the down projection's input is ×32–128.
+- Nothing follows these branches but the residual add, so there is no norm
+  to absorb a scale, as there was in Gemma. Each branch's output is
+  multiplied by 1/S before the add. The multiply is explicit, not folded
+  into the weights, because dividing weights by up to 256 would push small
+  ones into fp16's subnormal range.
+- SiLU is built as x·(1 + tanh(x/2)), and its factor 2 is folded into the
+  MLP's 1/S. Core ML's native silu is off by up to ~1.5e-2 on [-1, 1] on
+  the ANE. `x * sigmoid(x)` isn't an alternative: conversion fuses it back
+  into the native op, with identical output and op count.
+
+At bucket 128 on the suite's inputs, the ANE's worst case:
+- 0.9536 before;
+- 0.9917 with the explicit SiLU alone;
+- 0.9758 with every rescale but the native SiLU;
+- 0.9974 with SiLU and the MLP rescale;
+- 0.9990 adding attention;
+- 0.99999 adding the conv block.
+
+**Results:**
+- converter parity CPU_AND_NE 0.999992 at every bucket (was 0.987010) and
+  CPU_ONLY 0.999935 / 0.999935 / 0.999912; the fp32 rewrite gate is exact
+  (1.0000000);
+- 773/778 operations on the ANE (was 693/698), and pad invariance
+  1.0000000 on both paths;
+- parity suite ANE grade **A**: worst 0.999988 (was 0.953594), mean
+  0.999994, similarity drift 0.0033 (was 0.187), bias 0.0000 (was −0.010),
+  0 rank flips (was 1,399), and bucket invariance 0.999995 (was 0.9965).
+  The ANE path now tracks fp32 more closely than the CPU path does (drift
+  0.0076);
+- live `/v1/embeddings` over all 51 suite inputs: worst 0.999988.
+
+The rescales are free. The explicit SiLU costs 13–16% of ANE latency at
+every bucket (13.4 → 15.5, 28.8 → 33.0, 59.1 → 66.8 ms, interleaved on
+the same loaded machine). `ane_check` ratios are 2.3x/1.9x/1.6x.
+
+**The same gate hole as EmbeddingGemma's.** The "~480-token" parity text
+was 523 tokens with the `document: ` prefix, so no bucket ever ran it. It
+is now 471 tokens, and the converter fails if it stops fitting the 512
+bucket. The converter also gates pad invariance, rejects fused attention
+and native silu/gelu ops, treats NaN as failure, and gates the ANE path at
+0.999.
 
 ## D20 — Two more architecture classes: ModernBERT rejected, Qwen3 decoder validated
 Triaged the MTEB/CoIR leaderboards and validated the two families sidekick
@@ -735,35 +816,38 @@ last two on demand.
 **Findings (M1 Max, macOS 27.0).**
 - On the ANE, bge-small and EmbeddingGemma grade A, and gte-modernbert and
   F2LLM grade B.
-- LFM2.5 grades **D**: 0.954 on a URL, pairwise similarity drifting by up to
-  0.187, and 1,399 rank flips at a 0.02 margin. Its CPU and GPU paths are
-  0.9999, so the graph is faithful and the loss happens on the ANE. D19's
-  0.987 holds for prose only.
+- LFM2.5 graded **D**: 0.954 on a URL, pairwise similarity drifting by up
+  to 0.187, and 1,399 rank flips at a 0.02 margin. Its CPU and GPU paths
+  were 0.9999, so the graph was faithful and the loss happened on the ANE.
 - EmbeddingGemma graded D too (0.975 on a run of digits, drift 0.042, 122
-  flips) until its MLP precision rewrite (D17's amendment). The rewrite
-  addresses two limits of ANE arithmetic: the `linear` op loses precision on
-  small inputs, and the native GELU is coarse. It now grades A (0.99999,
-  drift 0.001, no flips), and its ANE bucket invariance rose from 0.9977 to
-  0.99998. So an ANE-only loss can be a conversion problem to fix, not just
-  something to measure. LFM2.5's SwiGLU MLP is the prime suspect for the
-  same cause.
+  flips). Both had the same two limits of ANE arithmetic: the `linear` op
+  loses precision on small inputs, and the native GELU/SiLU are coarse.
+  Precision rewrites fixed both (the D17 and D19 amendments), so an
+  ANE-only loss can be a conversion problem to fix, not just something to
+  measure. Both now grade A:
+  - EmbeddingGemma 0.99999, drift 0.001, no flips; ANE bucket invariance
+    0.9977 → 0.99998.
+  - LFM2.5 0.99999, drift 0.003, no flips; ANE bucket invariance
+    0.9965 → 0.999995.
 - The GPU path measures at fp32-like accuracy on every model (A). "GPU fine,
   ANE low" therefore isolates the ANE, not fp16 arithmetic in general.
 
 **The 0.985 gate.** It stays the converters' acceptance gate on their own
-parity sets; the EmbeddingGemma converter now gates at 0.999. A D on the
-adversarial corpus doesn't remove a model: the grade is published, and this
-chip's floor makes it a regression test. LFM2.5 keeps the ANE default while
-its MLP is re-examined against D17's rules.
+parity sets; the EmbeddingGemma and LFM2.5 converters now gate at 0.999.
+A D on the adversarial corpus doesn't remove a model: the grade is
+published, and this chip's floor makes it a regression test.
 
 **Not done.**
 - Per-token grading for models whose token vectors are the product (laya,
   ColBERT). Every registry model pools inside its graph, so the suite can't
   see per-token vectors.
 - Parity through the HTTP layer.
-- LFM2.5's ANE loss.
-- Tightening the ANE bucket-invariance gate (0.995, set by LFM2.5's 0.9965)
-  once LFM2.5 is fixed.
+- Tightening the ANE bucket-invariance gate (0.995, set by LFM2.5's old
+  0.9965). After both rewrites every model measures at least 0.99998:
+  bge-small 0.999992, EmbeddingGemma 0.999983, F2LLM 0.999982, LFM2.5
+  0.999995, gte-modernbert 0.999984.
+- F2LLM (SwiGLU) and gte-modernbert (GeGLU) grade B on the ANE. Neither has
+  been checked against the D17/D19 rules yet.
 
 ## D27 — Refuse multi-shape Core ML models at load on macOS 27
 D24 said that on macOS 27 a flexible-shape artifact aborts the process at
@@ -875,7 +959,12 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   0.987010 (the ANE figure identical to six decimals across buckets —
   constraint D's bucket-invariance), live /v1/embeddings worst parity 0.9856
   over the reference set incl. a 483-token text, unit norms, prefixes,
-  and preserved similarity structure. LFM2.5-ColBERT-350M encoder
+  and preserved similarity structure. Re-converted in September 2026 with
+  the precision rewrite (D19 amendment, macOS 27): parity CPU_AND_NE
+  0.999992 at every bucket, CPU_ONLY 0.99991–0.99994, 773/778 operations
+  on the ANE, pad invariance 1.0000000, ane_check ratios 2.3x/1.9x/1.6x,
+  parity suite ANE grade A (0.999988), and live /v1/embeddings worst parity
+  0.999988 over all 51 suite inputs. LFM2.5-ColBERT-350M encoder
   smoke-tested on ANE (2.0x, per-token parity 0.9919, MaxSim ranking
   preserved) but not integrated — see docs/MODELS.md.
 
