@@ -32,10 +32,14 @@ empty, the daemon 404s the model and `sk_pool_models` returns `[]` — treat
 either as "fall back".
 
 Install only artifacts built with the repository's converters (one
-static-shape `.mlmodelc` per bucket). On macOS 27 a flexible-shape Core ML
-artifact aborts the process at its first prediction, and with the dylib
-that process is your host app. `ane_check` rejects such an artifact
-without running it (docs/MODELS.md).
+static-shape `.mlmodelc` per bucket). On macOS 27, a Core ML artifact
+whose inputs accept several enumerated shapes can abort the process at its
+first prediction, with an exception nothing can catch. With the dylib, that
+process is your host app. So on macOS 27 sidekick refuses to load such a
+model: `sk_embed` returns NULL with an error naming the input, and the daemon
+answers with an error. Other flexible-shape artifacts load with a warning and
+run on the CPU, off the ANE. `ane_check` rejects all of them without running
+them (docs/MODELS.md, D27).
 
 ## Path 1: the daemon
 

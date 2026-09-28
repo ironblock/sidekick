@@ -112,8 +112,9 @@ Hardware disagreed on both counts:
   disabled") while `.all` (GPU) tolerates it — an especially nasty trap
   given D14.
 
-*(On macOS 27 the flexible-shape artifact no longer falls back to CPU: it
-aborts the process at predict time. See D24.)*
+*(On macOS 27 the flexible-shape artifact still falls back to the CPU under
+`.cpuAndNeuralEngine`, but aborts the process at predict time under
+`.cpuOnly`; `CoremlModel::load` refuses it there. See D27.)*
 
 So: `artifact` supports a `{seq}` placeholder, one static-shape `.mlmodelc`
 per bucket, loaded lazily and kept resident; pooling happens inside the
@@ -494,8 +495,9 @@ covers that gap. Measured on macOS 27:
   reproducible with `convert_bge_small.py --enumerated-shapes`) scores 0%.
 
 A failing plan ends the run before any prediction. That matters on
-macOS 27, where predicting with that flexible-shape artifact aborts the
-process with an Objective-C exception, whatever the compute units.
+macOS 27, where predicting with that flexible-shape artifact under
+`.cpuOnly` aborts the process with an Objective-C exception. (This entry
+first said "whatever the compute units"; D27 measured otherwise.)
 
 A plan can come back empty (every operation unassigned) or fail with
 "internal failure" while the artifact is fine. Core ML caches compiled
@@ -513,11 +515,10 @@ The plan is the compiler's intent and can't see a runtime ANE compile
 failure; a ratio near 1.0 would. `ane_check` warns below 1.1x but doesn't
 fail on the ratio. MODELS.md records plan shares alongside the ratios.
 
-Not done: a load-time guard in `CoremlModel::load` against flexible-shape
-artifacts. Reading the plan at load costs 1.3–18 s cold per bucket, and
-refusing such models would regress macOS 26, where they still run (slowly)
-on the CPU. A guard limited to macOS 27 that checks input shape
-constraints is a possible follow-up.
+A load-time guard in `CoremlModel::load` doesn't read the plan: that costs
+1.3–18 s cold per bucket. D27 adds one that checks input shape constraints
+instead, and refuses only on macOS 27, so macOS 26, where such models still
+run (slowly) on the CPU, doesn't regress.
 
 ## D25 — ModernBERT validated: its rejection was a Core ML attention-mask bug
 Supersedes D20's ModernBERT verdict. Found by an adversarial review of the
@@ -764,6 +765,67 @@ its MLP is re-examined against D17's rules.
 - Tightening the ANE bucket-invariance gate (0.995, set by LFM2.5's 0.9965)
   once LFM2.5 is fixed.
 
+## D27 — Refuse multi-shape Core ML models at load on macOS 27
+D24 said that on macOS 27 a flexible-shape artifact aborts the process at
+its first prediction "whatever the compute units". Measured again on an M1 Max
+(macOS 27.0, September 2026), that holds only for `.cpuOnly`. The test
+artifacts were bge-small negative controls: `convert_bge_small.py
+--enumerated-shapes`, built with torch 2.7 and with 2.13 (coremltools 9.0),
+plus a `ct.RangeDim(1, 512)` variant. Each was predicted from Rust
+(`CoremlModel`) and from Swift, in a fresh process per run:
+- **Several enumerated shapes** (`ct.EnumeratedShapes`, 128/256/512).
+  `.cpuOnly` aborted every time with an uncatchable `NSGenericException`
+  ("Failed to add operation to E5 stream. E5RT: No memory object bound to
+  port."). `.cpuAndNeuralEngine` and `.all` never aborted, including all
+  three shapes predicted in one process. They ran on the CPU, the fallback
+  D15 measured: 85 ms per call at seq 128 (a static bucket takes 2.2 ms on
+  the ANE), and up to 1 s at 512.
+- **A range** (`ct.RangeDim`) never aborted under any compute units. Its
+  compute plan puts 0 of 375 operations on the ANE.
+
+The `ane_check` that first hit the abort predicted under `.cpuOnly` before
+`.cpuAndNeuralEngine`, which fits these results. `sidekickd` and
+`libsidekick.dylib` load with `.cpuAndNeuralEngine` (D14), so on this
+machine such an artifact runs slowly there rather than aborting. Any caller
+choosing `.cpuOnly` can still hit the abort. Whether the ANE preference's
+CPU fallback always avoids it is Core ML's internal behavior, observed on one
+machine.
+
+**Decision.** `CoremlModel::load` reads each input's shape constraint from
+the model description once the model has loaded:
+- On macOS 27 and later (`available!(macos = 27.0)`), an input with more
+  than one enumerated shape is refused with `Error::Inference`, whatever the
+  compute units. The error names the input and points to the per-bucket
+  recipe. An abort that no one can catch, inside a host app, outweighs
+  refusing an artifact D15 already rules out and that gets nothing from the
+  ANE.
+- A range input that admits more than one size is only warned about
+  (`tracing::warn!`): it never aborted, and it runs on the CPU.
+- Before macOS 27, every flexible layout only warns. Those models still run,
+  so refusing them would be a regression.
+
+The discriminator is the number of shapes, not the constraint type. All
+twelve installed per-bucket artifacts (four models, three buckets each)
+report `.enumerated` with exactly one shape, and the control reports three.
+Range constraints read as `(location, length)` per dimension, and a fixed
+dimension of 128 reads `(128, 1)`.
+
+The check costs microseconds; the compute plan stays in `ane_check`.
+`available!` reads `kern.osproductversion`, and that reported 27.0 even in
+binaries whose SDK version was rewritten (with `vtool`) to 10.15, 11, 15 or
+26. So the check holds inside a host app built against an older SDK.
+
+The rule is `sidekick_coreml::shape_verdict`: platform-neutral and
+unit-tested on every CI platform. `sidekick_coreml::input_shapes` reads a
+model's constraints with a CPU-only load that never predicts, for tools that
+want the verdict without loading the model for inference.
+
+Verified on the M1 Max, macOS 27.0:
+- The enumerated control is refused under `.cpuOnly`, `.cpuAndNeuralEngine`
+  and `.all`, with no abort.
+- The range control loads with a warning and predicts.
+- The twelve installed buckets load with no warning and predict.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
@@ -855,6 +917,12 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   - live /v1/embeddings worst parity 0.99896 over nine texts, including a
     722-token input
   - unit norms, and similarity structure matching fp32
+
+- Flexible-shape load guard (September 2026, macOS 27, D27):
+  - the enumerated-shapes control aborts only under `.cpuOnly`, and is now
+    refused at load under every compute unit
+  - the range-shaped control loads with a warning and predicts
+  - all twelve installed buckets load clean and predict
 
 Still open:
 - An automated ANE gate in a self-hosted CI job. `ane_check` now exits

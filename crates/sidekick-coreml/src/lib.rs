@@ -14,11 +14,12 @@ mod model;
 #[cfg(target_os = "macos")]
 mod plan;
 #[cfg(target_os = "macos")]
-pub use model::{CoremlModel, OutputTensor};
+pub use model::{input_shapes, CoremlModel, OutputTensor};
 #[cfg(target_os = "macos")]
 pub use plan::compute_plan;
 
 use std::collections::BTreeMap;
+use std::ops::RangeInclusive;
 
 /// Compute-unit preference. `CpuAndNeuralEngine` is sidekick's default: it
 /// keeps background work off the GPU entirely, which is the point of the
@@ -38,6 +39,113 @@ pub struct Int32Input<'a> {
     pub name: &'a str,
     pub shape: Vec<usize>,
     pub data: Vec<i32>,
+}
+
+/// The shapes a Core ML multi-array input accepts, as the compiled model
+/// describes them (`MLMultiArrayShapeConstraint`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShapeConstraint {
+    /// No flexibility declared: the input takes its default shape only.
+    Unspecified,
+    /// A list of accepted shapes. Static-shape artifacts built by
+    /// coremltools report exactly one; `ct.EnumeratedShapes` reports several.
+    Enumerated(Vec<Vec<usize>>),
+    /// An inclusive size range per dimension (`ct.RangeDim`). Fixed
+    /// dimensions are single-size ranges.
+    Range(Vec<RangeInclusive<usize>>),
+}
+
+impl ShapeConstraint {
+    /// Whether the input accepts more than one shape.
+    pub fn is_flexible(&self) -> bool {
+        match self {
+            ShapeConstraint::Unspecified => false,
+            ShapeConstraint::Enumerated(shapes) => shapes.len() > 1,
+            ShapeConstraint::Range(dims) => dims.iter().any(|d| d.start() != d.end()),
+        }
+    }
+
+    /// Several enumerated shapes: the layout that can abort the process at
+    /// prediction on macOS 27.
+    fn is_multi_shape(&self) -> bool {
+        matches!(self, ShapeConstraint::Enumerated(shapes) if shapes.len() > 1)
+    }
+}
+
+/// A multi-array input of a Core ML model and the shapes it accepts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputShape {
+    pub name: String,
+    pub constraint: ShapeConstraint,
+}
+
+/// What loading does with a model, judged from its inputs' shape
+/// constraints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShapeVerdict {
+    /// Every input takes exactly one shape: the supported layout, one
+    /// static-shape artifact per sequence-length bucket (D15).
+    Static,
+    /// Flexible inputs that still run, off the ANE and slowly: load the
+    /// model and log the reason.
+    Warn(String),
+    /// Flexible inputs that can abort the process at prediction: refuse
+    /// the model with this reason.
+    Refuse(String),
+}
+
+/// Where a converted model should come from instead of a flexible one.
+const STATIC_RECIPE: &str = "convert one static-shape .mlmodelc per sequence-length bucket \
+     instead (tools/convert_bge_small.py is the reference recipe; see docs/MODELS.md)";
+
+/// Judge a model's inputs. `multi_shape_aborts` says whether predicting
+/// with an input that has several enumerated shapes can abort the process
+/// with an uncatchable Objective-C exception, which it can on macOS 27
+/// (measured under `.cpuOnly`; D27). Such models are refused there,
+/// whatever the compute units. Every other flexible layout only warns: it
+/// runs, on the CPU instead of the ANE.
+pub fn shape_verdict(inputs: &[InputShape], multi_shape_aborts: bool) -> ShapeVerdict {
+    let multi: Vec<&InputShape> = inputs.iter().filter(|i| i.constraint.is_multi_shape()).collect();
+    if multi_shape_aborts && !multi.is_empty() {
+        return ShapeVerdict::Refuse(format!(
+            "{} several enumerated shapes ({}). On macOS 27 and later, predicting with such a \
+             model can abort the whole process; {STATIC_RECIPE}",
+            describe(&multi, "accepts", "accept"),
+            shapes(&multi[0].constraint),
+        ));
+    }
+    let flexible: Vec<&InputShape> = inputs.iter().filter(|i| i.constraint.is_flexible()).collect();
+    if flexible.is_empty() {
+        return ShapeVerdict::Static;
+    }
+    let mut reason = format!(
+        "{} flexible shapes ({}), which run on the CPU instead of the ANE; {STATIC_RECIPE}",
+        describe(&flexible, "takes", "take"),
+        shapes(&flexible[0].constraint),
+    );
+    if !multi.is_empty() {
+        reason.push_str(". macOS 27 and later refuse models with several enumerated shapes");
+    }
+    ShapeVerdict::Warn(reason)
+}
+
+/// "input `a` accepts" / "inputs `a`, `b` accept".
+fn describe(inputs: &[&InputShape], singular: &str, plural: &str) -> String {
+    let names: Vec<String> = inputs.iter().map(|i| format!("`{}`", i.name)).collect();
+    match names.len() {
+        1 => format!("input {} {singular}", names[0]),
+        _ => format!("inputs {} {plural}", names.join(", ")),
+    }
+}
+
+fn shapes(constraint: &ShapeConstraint) -> String {
+    match constraint {
+        ShapeConstraint::Unspecified => "default only".into(),
+        ShapeConstraint::Enumerated(shapes) => {
+            shapes.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ")
+        }
+        ShapeConstraint::Range(dims) => format!("{dims:?}"),
+    }
 }
 
 /// How Core ML's compute plan assigns a model's operations to devices, for
@@ -156,6 +264,87 @@ mod tests {
     #[test]
     fn low_share_fails() {
         assert!(plan(70, 30, &[("cast", 30)]).verdict().is_err());
+    }
+
+    fn input(name: &str, constraint: ShapeConstraint) -> InputShape {
+        InputShape { name: name.into(), constraint }
+    }
+
+    fn enumerated(seqs: &[usize]) -> ShapeConstraint {
+        ShapeConstraint::Enumerated(seqs.iter().map(|&s| vec![1, s]).collect())
+    }
+
+    /// What the per-bucket artifacts report on macOS 27: `.enumerated`
+    /// with exactly one shape per input.
+    fn static_bucket(seq: usize) -> Vec<InputShape> {
+        vec![input("attention_mask", enumerated(&[seq])), input("input_ids", enumerated(&[seq]))]
+    }
+
+    #[test]
+    fn single_shape_buckets_are_static_on_every_os() {
+        for aborts in [false, true] {
+            assert_eq!(shape_verdict(&static_bucket(128), aborts), ShapeVerdict::Static);
+            let fixed = [input("x", ShapeConstraint::Unspecified)];
+            assert_eq!(shape_verdict(&fixed, aborts), ShapeVerdict::Static);
+            assert_eq!(shape_verdict(&[], aborts), ShapeVerdict::Static);
+        }
+    }
+
+    #[test]
+    fn several_enumerated_shapes_are_refused_where_they_abort() {
+        // The `convert_bge_small.py --enumerated-shapes` negative control.
+        let inputs = [
+            input("attention_mask", enumerated(&[128, 256, 512])),
+            input("input_ids", enumerated(&[128, 256, 512])),
+        ];
+        let ShapeVerdict::Refuse(reason) = shape_verdict(&inputs, true) else {
+            panic!("expected a refusal");
+        };
+        assert!(reason.contains("inputs `attention_mask`, `input_ids` accept"), "{reason}");
+        assert!(reason.contains("[1, 128], [1, 256], [1, 512]"), "{reason}");
+        assert!(reason.contains("macOS 27"), "{reason}");
+        assert!(reason.contains("static-shape"), "{reason}");
+    }
+
+    #[test]
+    fn several_enumerated_shapes_only_warn_before_macos_27() {
+        let inputs = [input("input_ids", enumerated(&[128, 256]))];
+        let ShapeVerdict::Warn(reason) = shape_verdict(&inputs, false) else {
+            panic!("expected a warning");
+        };
+        assert!(reason.contains("input `input_ids` takes"), "{reason}");
+        assert!(reason.contains("macOS 27 and later refuse"), "{reason}");
+    }
+
+    #[test]
+    fn only_the_multi_shape_input_is_named() {
+        let inputs = [input("attention_mask", enumerated(&[128])), input("input_ids", enumerated(&[128, 256]))];
+        let ShapeVerdict::Refuse(reason) = shape_verdict(&inputs, true) else {
+            panic!("expected a refusal");
+        };
+        assert!(reason.contains("input `input_ids` accepts"), "{reason}");
+        assert!(!reason.contains("attention_mask"), "{reason}");
+    }
+
+    #[test]
+    fn ranges_warn_and_are_never_refused() {
+        // `ct.RangeDim(1, 512)`: runs under every compute unit on macOS 27.
+        let range = || ShapeConstraint::Range(vec![1..=1, 1..=512]);
+        let inputs = [input("attention_mask", range()), input("input_ids", range())];
+        for aborts in [false, true] {
+            let ShapeVerdict::Warn(reason) = shape_verdict(&inputs, aborts) else {
+                panic!("expected a warning");
+            };
+            assert!(reason.contains("[1..=1, 1..=512]"), "{reason}");
+            assert!(!reason.contains("refuse"), "{reason}");
+        }
+    }
+
+    #[test]
+    fn single_size_ranges_are_static() {
+        let inputs = [input("input_ids", ShapeConstraint::Range(vec![1..=1, 128..=128]))];
+        assert!(!inputs[0].constraint.is_flexible());
+        assert_eq!(shape_verdict(&inputs, true), ShapeVerdict::Static);
     }
 
     #[test]

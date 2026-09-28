@@ -88,6 +88,7 @@ Notes per model:
   not stderr. `convert_bge_small.py --enumerated-shapes` builds the
   flexible-shape artifact that D15 rules out, as a negative control:
   `ane_check` must reject it, and does (0 of 362 operations on the ANE).
+  On macOS 27, `CoremlModel::load` refuses it too (D27).
   Its fused attention is correct only through Core ML's fallback: the
   compute plan gives the 12 attention ops no device, and at the iOS26 opset
   the same graph fails to load on CPU_AND_NE (D25). Keep the macOS15 target.
@@ -477,14 +478,22 @@ through the product code on every path and adds the adversarial corpus. Its
 grade is the one to publish, and `--suggest-floors` records it for the
 chip.
 
-Flexible input shapes are ruled out (D15), and on macOS 27 they became
-dangerous. A single enumerated-shapes artifact used to run slowly on the
-CPU; it now aborts the process at the first prediction ("E5RT: No memory
-object bound to port"), whatever the compute units. That abort is an
-Objective-C exception Rust can't catch. It takes down `sidekickd` or the
-host app linking `libsidekick.dylib`. Always ship one static-shape artifact
-per bucket, and run `ane_check` on each: it reads the compute plan without
-predicting, so it rejects such an artifact instead of crashing.
+Flexible input shapes are ruled out (D15), and on macOS 27 one kind became
+dangerous. Under `.cpuOnly`, an artifact whose inputs have several
+enumerated shapes (`ct.EnumeratedShapes`) aborts the process at its first
+prediction ("E5RT: No memory object bound to port"). Under
+`.cpuAndNeuralEngine` and `.all` it still falls back to the CPU: 85 ms per
+bge-small embed at seq 128, where a static bucket takes 2.2 ms on the ANE.
+The abort is an Objective-C exception Rust can't catch. It would take down
+`sidekickd`, or the host app linking `libsidekick.dylib`.
+
+So on macOS 27, `CoremlModel::load` refuses such a model, whatever the
+compute units, with an error that names the input. Two cases only get a
+warning: range-shaped inputs (`ct.RangeDim`), which run on the CPU and never
+aborted, and any flexible layout on earlier macOS (D27). Always ship one
+static-shape artifact per bucket, and run `ane_check` on each: it reads the
+compute plan without predicting, so it rejects any flexible artifact without
+running it.
 
 Make every parity metric NaN-safe. `min(worst, cos)` returns the old value
 when `cos` is NaN, which hid a NaN-producing CPU path behind "parity

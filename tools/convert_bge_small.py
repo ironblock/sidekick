@@ -41,7 +41,8 @@ produces garbage:
 artifact with enumerated sequence lengths 128/256/512. It is a negative
 control for `ane_check`, which must reject it (its compute plan puts every
 operation on the CPU). Never install it: on macOS 27, predicting with it
-aborts the process ("E5RT: No memory object bound to port").
+under .cpuOnly aborts the process ("E5RT: No memory object bound to port"),
+and sidekick refuses to load it there (docs/DECISIONS.md D27).
 """
 
 import shutil
