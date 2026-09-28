@@ -21,8 +21,12 @@ safetensors (arm64-native Python), plus Xcode for `xcrun coremlcompiler`.
 This inherits the four hardware-verified constraints of the bge-small recipe
 (see tools/convert_bge_small.py and docs/DECISIONS.md D15): static shapes per
 bucket, pooling inside the graph with a literal (1, dims) reshape, SDPA
-attention, explicit position_ids. EmbeddingGemma adds NEW constraints, all
-verified on hardware (macOS 26, M-series):
+attention, explicit position_ids. Gemma's SDPA call passes an explicit
+scale, so coremltools lowers it to explicit matmul -> softmax -> matmul
+rather than its fused scaled_dot_product_attention op (which dropped
+ModernBERT's mask on the ANE, docs/DECISIONS.md D25); convert_bucket()
+fails if the fused op ever appears. EmbeddingGemma adds NEW constraints,
+verified on hardware (macOS 26 and 27, M-series):
 
 5. fp16 RANGE REWRITE of the residual stream. Gemma3 scales embeddings by
    sqrt(hidden)=27.7 and its residual stream grows to ~1.5e5 by layer 24 —
@@ -53,13 +57,16 @@ verified on hardware (macOS 26, M-series):
    sliding layers attend iff abs(q-k) < 257
    (`_bidirectional_window_overlay` in modeling_gemma3.py). At bucket 512
    the band is live — positions >256 apart don't attend — so the parity
-   gates include a ~400-token text; short sentences alone would pass even
-   with a wrong mask.
+   gates include a 394-token text, and main() fails if no parity text
+   reaches the band at a bucket where it is live; short sentences alone
+   would pass even with a wrong mask. (An earlier version's "~400-token"
+   text was really 527 tokens, so no bucket ever ran it.)
 7. Mean pooling and L2 normalization overflow fp16 too: channel sums over
    512 tokens of |h|<=~140 hidden states, and sum(y^2) of the ~1e3-norm
-   Dense output, both exceed 65504. The pooling numerator and the dense
-   stack run at 1/32 scale (linear maps commute with scaling); the final L2
-   normalize cancels the factor exactly.
+   Dense output, both exceed 65504. The pooling sum runs at 1/32 scale and
+   is divided by count/32, so the dense stack sees the mean at natural
+   scale (its linears need O(1) inputs, constraint 9); the Dense output is
+   scaled by 1/32 before the L2 sum of squares, which the normalize cancels.
 8. rotate_half and repeat_kv are monkeypatched to shape-arithmetic-free
    equivalents before tracing (chunk(2) instead of `x[..., : shape//2]`
    slices; expand(-1,..)+flatten instead of reshape(kv_heads * n_rep)).
@@ -67,23 +74,38 @@ verified on hardware (macOS 26, M-series):
    chains (144 + 48 sites), and coremltools 9.x's 'int' op handler
    crashes on them under static input shapes ("only 0-dimensional arrays
    can be converted to Python scalars"). Both rewrites are exact.
-9. The ANE itself costs ~1% cosine on this model and that is NOT fixable
-   here: measured at bucket 128, worst parity vs fp32 reference is
-   0.9905 on CPU_AND_NE vs 0.9999 on CPU_ONLY and 0.999999 on ALL/GPU —
-   intrinsic fp16 accumulation across 24 layers, insensitive to the
-   residual scale K (16/32/64 all ~0.990) and not attributable to
-   softmax (keeping softmax fp32 left parity at 0.9904 while tripling
-   latency to 22.5ms from CPU fallbacks). The speedup is worth it:
-   7.9ms ANE vs 25.1ms CPU at seq 128. Hence per-path parity gates:
-   CPU_ONLY >= 0.999 proves the conversion is faithful; CPU_AND_NE >=
-   0.985 reflects what the ANE actually delivers. Callers who need
-   exact parity can load with CpuOnly (or All, accepting GPU use).
+9. MLP PRECISION REWRITE. Two ANE arithmetic limits that fp16 itself
+   doesn't have (the same graph in fp16 on the GPU, or in PyTorch, is
+   exact to ~1e-6), measured on macOS 27, M1 Max (docs/DECISIONS.md D17):
+     - The ANE's linear op has an ABSOLUTE precision floor on its input:
+       its relative error is ~3e-4 / rms(input) (0.04% at rms 1, 2% at
+       rms 0.016, 10% at rms 0.004). Gemma's down_proj input,
+       gelu(gate) * up, has rms 0.004-0.03 in layers 18-23, so each late
+       MLP lost 5-19% of its output. Fix: fold a calibrated power-of-two
+       scale m into up_proj (m*GAIN brings the down_proj input to rms ~1;
+       the totals span 2-256 across layers) and divide it out in
+       post_feedforward_layernorm's pre-scale, which is exact because that
+       norm is scale-invariant (the constraint-5 machinery).
+     - Core ML's gelu op is coarse on the ANE: ~6e-3 absolute error on
+       [-1, 1], where most of Gemma's gate activations lie (GPU: ~7e-5).
+       TanhGelu computes it from tanh, mul and add instead (<= 9e-4 on
+       [-1, 1], <= 2e-4 near 0); convert_bucket() fails if a gelu op
+       survives conversion.
+   Before this rewrite the ANE parity was 0.9905 (0.981 on the 394-token
+   text at bucket 512) and was documented as intrinsic fp16 accumulation.
+   After it, the ANE is more accurate than CPU_ONLY. The rescale alone
+   gets to 0.9997 (0.9992 at bucket 512) at no latency cost; the explicit
+   gelu gets the rest and costs ~14% at bucket 512 (none at 128). Hence
+   the gates: CPU_ONLY >= 0.999 proves the conversion is faithful,
+   CPU_AND_NE >= 0.999 that the ANE runs it at full precision.
 
 The parity gate runs the converted artifact under BOTH CPU_AND_NE and
 CPU_ONLY (the Espresso paths that reject what .all/GPU tolerates) on real
 tokenized sentences and requires cosine >= 0.999 against a float32 reference
-computed with the exact sentence-transformers math, plus finite outputs.
-A fp32 torch gate (>= 0.9999) validates the range rewrite before conversion.
+computed with the exact sentence-transformers math, finite outputs, and pad
+invariance (pad ids 0 vs random must give the same output, D25). A fp32
+torch gate (>= 0.9999) validates the range and MLP rewrites before
+conversion. Every gate treats NaN as a failure.
 
 Tokenizer note: the snapshot's tokenizer adds BOS(2) ... EOS(1) around the
 text (add_special_tokens=True), pad id is 0, and EmbeddingGemma requires task
@@ -132,9 +154,12 @@ _sdpa_attention.repeat_kv = _traceable_repeat_kv
 DIMS = 768
 EPS_FLOOR = 1e-4          # smallest fp16-safe rmsnorm eps (1e-6 flushes to 0)
 MASK_ADD = -30000.0       # fp16-safe additive attention mask for padded keys
-POOL_SCALE = 1.0 / 32.0   # pooling/dense downscale, cancelled by L2 normalize
+POOL_SCALE = 1.0 / 32.0   # pooling-sum / L2 downscale (constraint 7)
 RESIDUAL_MAX_TARGET = 8192.0   # keep |residual| <= this after 1/K scaling
 NORM_SQ_MAX = 30000.0     # keep (|x|*s)^2 under this inside every rmsnorm
+DOWN_IN_MAX = 2048.0      # cap on |down_proj input| after the MLP rescale (constraint 9)
+DOWN_OUT_MAX = 16384.0    # cap on |down_proj output| after the MLP rescale
+GELU_C = (2.0 / np.pi) ** 0.5
 DOC_PREFIX = "title: none | text: "
 
 PARITY_SENTENCES = [
@@ -142,12 +167,13 @@ PARITY_SENTENCES = [
     "A kitten rested on the rug.",
     "Quarterly financial earnings exceeded expectations.",
     "The company reported strong revenue growth this quarter.",
-    # ~400 tokens: exercises the sliding-window band (live for distances
-    # > 256), which the short sentences never reach. Do not remove — a wrong
-    # sliding mask passes every short-text parity check.
+    # 394 tokens with the document prefix: exercises the sliding-window band
+    # (live for distances > 256), which the short sentences never reach. Do
+    # not remove, and keep it between the window and the 512 bucket (main()
+    # checks) — a wrong sliding mask passes every short-text parity check.
     " ".join(
         f"Sentence number {i} discusses topic {i * 7 % 13} in considerable detail."
-        for i in range(40)
+        for i in range(30)
     ),
 ]
 
@@ -195,8 +221,27 @@ class ScaledEmbedding(torch.nn.Module):
         return self.inner(input_ids) * self.scale
 
 
+class TanhGelu(torch.nn.Module):
+    """TWICE gelu_pytorch_tanh, built from tanh, mul and add (constraint 9).
+    On the ANE, Core ML's native gelu op is off by up to ~6e-3 on [-1, 1];
+    this form by at most ~9e-4 (~2e-4 near 0).
+
+    2*gelu(x) = x * (1 + tanh(x * (c + c*0.044715*x^2))), c = sqrt(2/pi). The
+    factor 2 saves the 0.5 multiply; the post-feedforward RMSNorm is
+    scale-invariant and absorbs it (GAIN). Nothing overflows fp16 below
+    |x| ~ 256, and beyond that x^2 = inf only saturates tanh to +-1, which
+    still gives the right answer (2x or 0).
+    """
+
+    GAIN = 2.0
+
+    def forward(self, x):
+        return x * (1.0 + torch.tanh(x * (GELU_C + (GELU_C * 0.044715) * (x * x))))
+
+
 def calibrate(model, tokenizer):
-    """fp32 activation stats (max_abs, min/max mean-square) at every RMSNorm input."""
+    """fp32 activation stats: (max_abs, min/max mean-square) at every RMSNorm
+    input, and (max_abs, sum of squares, count) at every MLP down_proj input."""
     stats = {}
 
     def pre_hook(name):
@@ -209,6 +254,15 @@ def calibrate(model, tokenizer):
             rec[2] = min(rec[2], float(msq.min()))
         return f
 
+    def rms_hook(name):
+        def f(mod, args):
+            t = args[0].detach()
+            rec = stats.setdefault(name, [0.0, 0.0, 0])
+            rec[0] = max(rec[0], float(t.abs().max()))
+            rec[1] += float(t.pow(2).sum())
+            rec[2] += t.numel()
+        return f
+
     handles = []
     for i, layer in enumerate(model.layers):
         for attr in ("input_layernorm", "post_attention_layernorm",
@@ -216,6 +270,7 @@ def calibrate(model, tokenizer):
             handles.append(getattr(layer, attr).register_forward_pre_hook(pre_hook(f"L{i}.{attr}")))
         handles.append(layer.self_attn.q_norm.register_forward_pre_hook(pre_hook(f"L{i}.q_norm")))
         handles.append(layer.self_attn.k_norm.register_forward_pre_hook(pre_hook(f"L{i}.k_norm")))
+        handles.append(layer.mlp.down_proj.register_forward_pre_hook(rms_hook(f"L{i}.down_proj")))
     handles.append(model.norm.register_forward_pre_hook(pre_hook("final")))
 
     with torch.no_grad():
@@ -238,8 +293,21 @@ def norm_scale(rec):
     return s
 
 
+def mlp_scale(down_in, down_out, gain):
+    """Power-of-two up_proj scale m for one layer (constraint 9): brings the
+    down_proj input, raw * gain * m, to rms ~1 within fp16 headroom for the
+    down_proj input and output. Never below 1."""
+    max_abs, sumsq, count = down_in
+    m = pow2(1.0 / (gain * (sumsq / count) ** 0.5))
+    while m > 1.0 and (max_abs * gain * m > DOWN_IN_MAX or down_out[0] * gain * m > DOWN_OUT_MAX):
+        m /= 2.0
+    return max(m, 1.0)
+
+
 def patch_model(model, stats, rms_eps):
-    """Apply the 1/K residual rewrite (constraint 5). Returns K."""
+    """Apply the 1/K residual rewrite (constraint 5) and the MLP precision
+    rewrite (constraint 9). Returns K and each layer's total down_proj input
+    scale (GAIN * m)."""
     residual_max = max(rec[0] for name, rec in stats.items()
                        if name.endswith(("input_layernorm", "pre_feedforward_layernorm", "final")))
     k = pow2(1.0)
@@ -251,20 +319,31 @@ def patch_model(model, stats, rms_eps):
         eps_eff = max(rms_eps * s * s, EPS_FLOOR)
         return SafeRMSNorm(orig, mult=s / in_scale, eps_eff=eps_eff, out_scale=out_scale)
 
+    mlp_scales = []
     for i, layer in enumerate(model.layers):
+        # constraint 9: the MLP branch reaches post_feedforward_layernorm
+        # scaled by TanhGelu.GAIN * m, where m is folded into up_proj
+        m = mlp_scale(stats[f"L{i}.down_proj"], stats[f"L{i}.post_feedforward_layernorm"],
+                      TanhGelu.GAIN)
+        mlp_scales.append(TanhGelu.GAIN * m)
+        with torch.no_grad():
+            layer.mlp.up_proj.weight.mul_(m)
+        layer.mlp.act_fn = TanhGelu()
         layer.input_layernorm = safe(layer.input_layernorm, stats[f"L{i}.input_layernorm"], 1 / k)
         layer.pre_feedforward_layernorm = safe(
             layer.pre_feedforward_layernorm, stats[f"L{i}.pre_feedforward_layernorm"], 1 / k)
-        # branch-output norms: unscaled inputs, output folds the 1/K step
+        # branch-output norms: output folds the 1/K step. The attention branch
+        # arrives unscaled, the MLP branch scaled by GAIN * m (constraint 9).
         layer.post_attention_layernorm = safe(
             layer.post_attention_layernorm, stats[f"L{i}.post_attention_layernorm"], 1.0, 1 / k)
         layer.post_feedforward_layernorm = safe(
-            layer.post_feedforward_layernorm, stats[f"L{i}.post_feedforward_layernorm"], 1.0, 1 / k)
+            layer.post_feedforward_layernorm, stats[f"L{i}.post_feedforward_layernorm"],
+            mlp_scales[-1], 1 / k)
         layer.self_attn.q_norm = safe(layer.self_attn.q_norm, stats[f"L{i}.q_norm"], 1.0)
         layer.self_attn.k_norm = safe(layer.self_attn.k_norm, stats[f"L{i}.k_norm"], 1.0)
     model.norm = safe(model.norm, stats["final"], 1 / k)
     model.embed_tokens = ScaledEmbedding(model.embed_tokens, 1 / k)
-    return k
+    return k, mlp_scales
 
 
 class EmbedWrapper(torch.nn.Module):
@@ -299,12 +378,14 @@ class EmbedWrapper(torch.nn.Module):
             position_ids=self.position_ids,
             use_cache=False,
         ).last_hidden_state
-        # constraint 7: mask-aware mean at 1/32 scale, cancelled by the final normalize
+        # constraint 7: mask-aware channel sum at 1/32 scale (fp16 range), then
+        # the mean at natural scale — the dense linears need O(1) inputs on
+        # the ANE (constraint 9) — and 1/32 again before the L2 sum of squares.
         w = (mask_f * POOL_SCALE).unsqueeze(-1)
         summed = (h * w).sum(dim=1)
         count = torch.clamp(mask_f.sum(dim=1, keepdim=True), min=1.0)
-        pooled = summed / count
-        y = self.dense2(self.dense1(pooled))
+        pooled = summed / (count * POOL_SCALE)
+        y = self.dense2(self.dense1(pooled)) * POOL_SCALE
         den = y.pow(2).sum(dim=-1, keepdim=True)
         out = y * torch.rsqrt(den + 1e-6)
         return out.reshape(1, DIMS)
@@ -336,12 +417,22 @@ def padded_inputs(tokenizer, text, seq_len):
 
 
 def cosine(a, b):
+    """Cosine similarity, NaN when either side is non-finite."""
+    if not (np.isfinite(a).all() and np.isfinite(b).all()):
+        return float("nan")
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+
+def worst_of(values):
+    """min() that keeps NaN: min(worst, nan) returns worst and hides a NaN output."""
+    values = list(values)
+    return float("nan") if any(np.isnan(v) for v in values) else min(values)
 
 
 def fitting_pairs(tokenizer, refs, seq_len):
     """(text, ref) pairs whose token count fits the bucket. The long text
-    only participates at 512 — that's the bucket with a live sliding band."""
+    only participates at 512 — that's the bucket with a live sliding band
+    (main() checks that it does)."""
     pairs = []
     for s, ref in zip(PARITY_SENTENCES, refs):
         n = len(tokenizer(DOC_PREFIX + s, add_special_tokens=True)["input_ids"])
@@ -351,14 +442,16 @@ def fitting_pairs(tokenizer, refs, seq_len):
 
 
 def fp32_gate(wrapper, tokenizer, refs, seq_len):
-    """The range rewrite must be ~exact in fp32 before we spend on conversion."""
-    worst = 1.0
+    """The range and MLP rewrites must be ~exact in fp32 before we spend on
+    conversion."""
+    cosines = []
     with torch.no_grad():
         for s, ref in fitting_pairs(tokenizer, refs, seq_len):
             ids, mask = padded_inputs(tokenizer, DOC_PREFIX + s, seq_len)
             out = wrapper(torch.from_numpy(ids), torch.from_numpy(mask))[0].numpy()
-            worst = min(worst, cosine(ref, out))
-    if worst < 0.9999:
+            cosines.append(cosine(ref, out))
+    worst = worst_of(cosines)
+    if not worst >= 0.9999:  # NaN fails too
         raise SystemExit(f"seq {seq_len}: fp32 rewrite parity {worst:.6f} < 0.9999")
     return worst
 
@@ -380,6 +473,16 @@ def convert_bucket(wrapper, seq_len, workdir):
         convert_to="mlprogram",
         minimum_deployment_target=ct.target.macOS15,
     )
+    # Explicit attention (D25) and the explicit GELU (constraint 9) must
+    # survive conversion: coremltools fuses attention into its
+    # scaled_dot_product_attention op when the torch call has no explicit
+    # scale, and could pattern-match the tanh GELU back into its gelu op.
+    ops = {op.type for fn in mlmodel.get_spec().mlProgram.functions.values()
+           for block in fn.block_specializations.values() for op in block.operations}
+    fused = ops & {"scaled_dot_product_attention", "gelu"}
+    if fused:
+        raise SystemExit(f"seq {seq_len}: converted graph contains {sorted(fused)} — "
+                         "see constraint 9 and docs/DECISIONS.md D25")
     pkg = Path(workdir) / f"model_{seq_len}.mlpackage"
     mlmodel.save(str(pkg))
     return pkg
@@ -391,18 +494,30 @@ def parity_check(tokenizer, pkg, seq_len, refs):
     results = {}
     # per-path gates, see constraint 9: CPU_ONLY validates the conversion,
     # CPU_AND_NE validates hardware execution at the ANE's native precision
-    for label, cu, gate in (("CPU_AND_NE", ct.ComputeUnit.CPU_AND_NE, 0.985),
+    for label, cu, gate in (("CPU_AND_NE", ct.ComputeUnit.CPU_AND_NE, 0.999),
                             ("CPU_ONLY", ct.ComputeUnit.CPU_ONLY, 0.999)):
         m = ct.models.MLModel(str(pkg), compute_units=cu)
-        worst = 1.0
+        cosines = []
         for s, ref in fitting_pairs(tokenizer, refs, seq_len):
             ids, mask = padded_inputs(tokenizer, DOC_PREFIX + s, seq_len)
             out = m.predict({"input_ids": ids, "attention_mask": mask})["embeddings"][0]
             if not np.isfinite(out).all():
                 raise SystemExit(f"seq {seq_len} [{label}]: non-finite output — see constraint 5")
-            worst = min(worst, cosine(ref, out))
-        if worst < gate:
+            cosines.append(cosine(ref, out))
+        worst = worst_of(cosines)
+        if not worst >= gate:
             raise SystemExit(f"seq {seq_len} [{label}]: parity cosine {worst:.6f} < {gate}")
+        # Pad invariance (D25): a correctly masked model can't see its pad
+        # positions, so their content must not change the output.
+        ids, mask = padded_inputs(tokenizer, DOC_PREFIX + PARITY_SENTENCES[0], seq_len)
+        noisy = ids.copy()
+        pads = mask[0] == 0
+        noisy[0, pads] = np.random.default_rng(0).integers(1000, 40000, int(pads.sum()))
+        a = m.predict({"input_ids": ids, "attention_mask": mask})["embeddings"][0]
+        b = m.predict({"input_ids": noisy, "attention_mask": mask})["embeddings"][0]
+        if not cosine(a, b) >= 0.99999:
+            raise SystemExit(f"seq {seq_len} [{label}]: output depends on pad content "
+                             f"(cos {cosine(a, b):.6f}); the attention mask is being dropped")
         # latency, as an ANE-residency proxy (D15 measured ratios the same way)
         ids, mask = padded_inputs(tokenizer, DOC_PREFIX + PARITY_SENTENCES[0], seq_len)
         for _ in range(3):
@@ -440,6 +555,13 @@ def main():
     # transformers halves it (512//2+1) for bidirectional models. It is the
     # exclusive band half-width for the wrapper's sliding mask.
     window = model.config.sliding_window
+    # constraint 6: wherever the sliding band is live, a parity text must reach it
+    longest = max(len(tokenizer(DOC_PREFIX + s, add_special_tokens=True)["input_ids"])
+                  for s in PARITY_SENTENCES)
+    for seq in buckets:
+        if seq > window and not window < longest <= seq:
+            raise SystemExit(f"bucket {seq}: no parity text longer than the sliding window "
+                             f"({window}) fits (longest is {longest} tokens)")
 
     dense1_w = load_file(src / "2_Dense/model.safetensors")["linear.weight"].float()
     dense2_w = load_file(src / "3_Dense/model.safetensors")["linear.weight"].float()
@@ -447,8 +569,8 @@ def main():
     print("calibrating fp32 activation ranges...")
     stats = calibrate(model, tokenizer)
     refs = st_reference(model, tokenizer, dense1_w, dense2_w)
-    k = patch_model(model, stats, model.config.rms_norm_eps)
-    print(f"residual scale K={k:g}")
+    k, mlp_scales = patch_model(model, stats, model.config.rms_norm_eps)
+    print(f"residual scale K={k:g}; down_proj input scales {[int(m) for m in mlp_scales]}")
 
     parity = {}
     with tempfile.TemporaryDirectory() as workdir:

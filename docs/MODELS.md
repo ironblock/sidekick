@@ -9,8 +9,10 @@ Method, for every validated entry:
 - **parity** — worst-case cosine between the Core ML artifact and the fp32
   torch/sentence-transformers reference over the parity set (short pairs +
   a ~400-token text), reported per compute path (D17): `CPU_ONLY` proves the
-  conversion is faithful (gate ≥ 0.999), `CPU_AND_NE` is what the ANE's
-  fp16 arithmetic actually delivers (gate ≥ 0.985).
+  conversion is faithful (gate ≥ 0.999), `CPU_AND_NE` is what the ANE
+  actually delivers (gate ≥ 0.985; the embeddinggemma converter gates
+  ≥ 0.999 since its MLP precision rewrite, D17). Check that the long text
+  really fits the bucket: an over-length parity text is silently skipped.
 - **ANE eligibility** (`cargo run -p sidekick-coreml --example ane_check`),
   the verdict: Core ML's compute plan for `.cpuAndNeuralEngine`, i.e. which
   device each operation is assigned to. It never runs the model and is
@@ -45,7 +47,7 @@ Method, for every validated entry:
 | model | dims | pooling | conversion | parity CPU_ONLY | parity ANE | ANE ops (macOS 27) | residency ratio, macOS 26.5 (128/256/512) |
 |---|---|---|---|---|---|---|---|
 | [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | 384 | CLS | [convert_bge_small.py](../tools/convert_bge_small.py) | 0.999972 | 0.999984 | 229/245 (93.5%) | 3.4x / 2.4x / 1.75x |
-| [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma.py](../tools/convert_embeddinggemma.py) | 0.9999 | 0.9905 | 2015/2024 (99.6%) | 3.4x / 3.1x / 2.9x |
+| [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma.py](../tools/convert_embeddinggemma.py) | 0.99993 | 0.99999 | 2161/2170 (99.6%) | 3.4x / 3.1x / 2.9x (before the MLP rewrite) |
 | [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.9999 | 0.9870 | 693/698 (99.3%) | 2.49x / 1.91x / 1.66x |
 | [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.9999 | 0.99985 | 612/617 (99.2%) | 2.02x / 1.77x / 1.59x |
 | [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | 768 | CLS | [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py) | 0.999919 | 0.999793 | 794/805 (98.6%) | validated on macOS 27 (below) |
@@ -59,7 +61,7 @@ tile). Nothing compute-heavy is off the ANE. Ratios re-measured on macOS 27
 | model | 128 | 256 | 512 |
 |---|---|---|---|
 | bge-small | 3.0x | 2.0x | 1.26x |
-| embeddinggemma | 2.5x | 2.5x | 1.9x |
+| embeddinggemma | 2.6x | 2.4x | 1.7x |
 | LFM2.5 | 2.4x | 2.0x | 1.7x |
 | F2LLM | 2.3x | 2.0x | 1.5x |
 | gte-modernbert | 2.9x | 2.0x | 1.55x |
@@ -77,10 +79,20 @@ Notes per model:
   flexible-shape artifact that D15 rules out, as a negative control:
   `ane_check` must reject it, and does (0 of 362 operations on the ANE).
 - **embeddinggemma-300m** — the "hard" conversion: needed a calibrated fp16
-  range rewrite, hand-built sliding-window band masks, and traceable
-  rotate_half/repeat_kv (D17). The ~1% ANE parity cost is intrinsic fp16
-  accumulation across 24 layers, not a conversion defect; rank order in
-  similarity tests is preserved with wide margins. ~600 MB per bucket.
+  range rewrite, hand-built sliding-window band masks, traceable
+  rotate_half/repeat_kv, and an MLP precision rewrite (D17). Its ANE parity
+  was 0.9905 (0.981 on a 394-token text) until September 2026, documented
+  as intrinsic fp16 accumulation. It wasn't. The ANE's `linear` op loses
+  precision on small inputs (Gemma's late-layer down projections see rms
+  ~0.005), and Core ML's native `gelu` is coarse on the ANE. The
+  converter now rescales each down_proj input to rms ~1 with a
+  power-of-two scale that the post-feedforward RMSNorm cancels exactly,
+  and builds GELU from tanh. The ANE path is now more accurate than
+  CPU_ONLY. The explicit GELU costs ~14% latency at bucket 512 and nothing
+  at 128. Ratios in the table's last column predate the rewrite (re-measured
+  on macOS 27 above). Live `/v1/embeddings` worst parity 0.999982 over 13
+  inputs, including a 527-token document truncated to 512. ~590 MB per
+  bucket.
 - **LFM2.5-Embedding-350M** — the first hybrid (10 short-conv + 6
   full-attention blocks) and the model that motivated conversion
   constraint D: symmetric convs mix neighbors regardless of attention
@@ -175,7 +187,7 @@ Most rejections are visible long before a conversion. Cheapest first:
    |---|---|---|---|---|---|
    | bge-small-en-v1.5 | LayerNorm | 338 (99) | 146× | no range issue | 0.99998 |
    | LFM2.5-Embedding-350M | RMSNorm | 1.9 | 17× | no range issue | 0.987 |
-   | embeddinggemma-300m | RMSNorm | 152,485 (731) | 313× | range rewrite | 0.9905 after rewrite |
+   | embeddinggemma-300m | RMSNorm | 152,485 (731) | 313× | range rewrite | 0.99999 after range + MLP rewrites |
    | gte-modernbert-base | LayerNorm | 47,973 (251) | 502× | no range issue | 0.9998 (explicit attention) |
    | laya (ModernBERT-large) | LayerNorm | 27,296 (379) | 556× | no range issue | CLS ≥ 0.997 (explicit attention) |
 
@@ -217,6 +229,23 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   on a mixed corpus). Under ~30k: convert directly (bge, LFM2.5). Over:
   apply the D17 power-of-two range rewrite (gemma). Watch for `-1e9` mask
   constants (rewrite at -30000) and rmsnorm eps below ~1e-4.
+- **Keep every linear-layer input near rms 1.** The ANE's `linear` op has
+  an absolute precision floor on its input, not a relative one: its
+  relative error is ~3e-4 / rms(input) (0.04% at rms 1, 2% at 0.016, 10% at
+  0.004; the GPU is flat at 0.04%). Scaling the weights doesn't help; only
+  the input's magnitude matters. Measure the rms of every linear input in
+  fp32 with forward pre-hooks. Likely offenders are MLP down projections
+  after a gated product (act(gate)·up is a product of two small numbers)
+  and in-graph heads that pool at a reduced scale. Fix with a power-of-two
+  scale folded into the weights upstream and cancelled by a
+  scale-invariant norm or the final L2 normalize (EmbeddingGemma, D17).
+- **Don't use Core ML's native GELU or SiLU ops on the ANE.** Measured
+  absolute error on [-1, 1]: gelu ~6e-3, silu ~1.5e-2, versus tanh 1.6e-3,
+  sigmoid 3e-3, and exact mul/relu. Build GELU as
+  `x * (1 + tanh(x * (c + c·0.044715·x²)))` with the factor 2 absorbed
+  downstream. Check the converted program for surviving `gelu` ops, since
+  coremltools has passes that fuse such patterns. The SiLU replacement
+  hasn't been validated yet.
 - **Massive activations are not disqualifying.** A few feature dimensions
   reaching tens of thousands on delimiter/[SEP] tokens (ModernBERT ~48,000,
   EmbeddingGemma ~152,000) convert fine once attention is explicit and values
@@ -250,9 +279,14 @@ when `cos` is NaN, which hid a NaN-producing CPU path behind "parity
 1.000000" during the ModernBERT investigation; fail on non-finite output
 instead, as the converters' parity checks do.
 
-Two hard-won measurement gotchas: run residency checks on a quiet machine
+Three hard-won measurement gotchas: run residency checks on a quiet machine
 (see the method note — concurrent GPU load makes ratios swing 2x), and
 treat `E5RT ... ANECCompile() FAILED` stderr lines as *possibly transient
 service state*, not proof of a bad artifact — the same file measured 1.48x
 with failures and 2.63x clean forty minutes apart. Re-measure before
-re-converting.
+re-converting. Likewise, a compute plan with *every* operation unassigned
+("no operations are assigned to any compute device") can be Core ML state
+tied to the model's path. After many loads in one session, an
+embeddinggemma artifact read that way repeatedly while still predicting
+at ANE speed, and the same file copied to another path read normally
+(2015/2024).
