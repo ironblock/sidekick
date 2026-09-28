@@ -50,7 +50,11 @@ Light, trunk-based git-flow:
 - **Releases are annotated `vX.Y.Z` tags cut from `main`**, following
   [semver](https://semver.org/). Pushing a `v*` tag drives the build-and-
   publish workflow (`.github/workflows/release.yml`).
-- **Every release ships published release notes.** Do not tag a release
-  without them.
+- **Every release ships published release notes.** Write them in
+  `docs/releases/vX.Y.Z.md`, for the reader upgrading from the previous
+  release, in the same change that bumps the version. The release workflow
+  refuses a tag without them, or one that doesn't match the workspace
+  version. It publishes them as the GitHub release's body and ships them in
+  the archive as `RELEASE_NOTES.md`.
 - Bump `[workspace.package] version` in the root `Cargo.toml` to match the tag
   so `sidekickd --version` stays honest.
