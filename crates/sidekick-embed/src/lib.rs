@@ -14,7 +14,7 @@ pub use static_embedder::StaticEmbedder;
 #[cfg(all(feature = "coreml", target_os = "macos"))]
 mod coreml_embedder;
 #[cfg(all(feature = "coreml", target_os = "macos"))]
-pub use coreml_embedder::CoremlEmbedder;
+pub use coreml_embedder::{CoremlEmbedder, Prepared};
 
 use sidekick_core::manifest::ResolvedModel;
 use sidekick_core::{EmbeddingBackendKind, Result};
