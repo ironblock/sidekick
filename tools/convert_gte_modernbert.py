@@ -35,6 +35,12 @@ seconds.
 
 Usage:
     python tools/convert_gte_modernbert.py <hf-model-dir> <install-dir> [buckets...]
+    python tools/convert_gte_modernbert.py --attn sdpa <hf-model-dir> <install-dir> [buckets...]
+
+    --attn sdpa:  NEGATIVE CONTROL. Convert with the fused attention op that
+                  drops the mask on the ANE, to prove the parity suite and
+                  ane_check catch it. Parity failures are reported, not
+                  fatal. Never install the result where the daemon looks.
 
     hf-model-dir: local snapshot of Alibaba-NLP/gte-modernbert-base
                   (config.json, tokenizer.json, model.safetensors)
@@ -221,10 +227,16 @@ def convert_bucket(wrapper, seq_len, workdir):
     return pkg
 
 
-def parity_check(tokenizer, pkg, seq_len, refs):
+def parity_check(tokenizer, pkg, seq_len, refs, gate_failures=True):
     """Cosine vs the fp32 reference on BOTH Espresso compute paths (D17
     constraint 9): CPU_ONLY validates the conversion, CPU_AND_NE validates
-    ANE-precision execution."""
+    ANE-precision execution. A negative control reports failures instead of
+    stopping on them."""
+    def fail(message):
+        if gate_failures:
+            raise SystemExit(message)
+        print(f"negative control, expected: {message}")
+
     results = {}
     for label, cu, gate in (("CPU_AND_NE", ct.ComputeUnit.CPU_AND_NE, 0.985),
                             ("CPU_ONLY", ct.ComputeUnit.CPU_ONLY, 0.999)):
@@ -234,10 +246,12 @@ def parity_check(tokenizer, pkg, seq_len, refs):
             ids, mask = padded_inputs(tokenizer, s, seq_len)
             out = m.predict({"input_ids": ids, "attention_mask": mask})["embedding"][0]
             if not np.isfinite(out).all():
-                raise SystemExit(f"seq {seq_len} [{label}]: non-finite output — see constraint A")
+                fail(f"seq {seq_len} [{label}]: non-finite output — see constraint A")
+                worst = float("nan")
+                break
             worst = min(worst, cosine(ref, out))
         if worst < gate:
-            raise SystemExit(f"seq {seq_len} [{label}]: parity cosine {worst:.6f} < {gate}")
+            fail(f"seq {seq_len} [{label}]: parity cosine {worst:.6f} < {gate}")
         # Pad invariance: a correctly masked model can't see its pad
         # positions, so their content must not change the output.
         ids, mask = padded_inputs(tokenizer, PARITY_SENTENCES[0], seq_len)
@@ -247,8 +261,8 @@ def parity_check(tokenizer, pkg, seq_len, refs):
         a = m.predict({"input_ids": ids, "attention_mask": mask})["embedding"][0]
         b = m.predict({"input_ids": noisy, "attention_mask": mask})["embedding"][0]
         if not (np.isfinite(a).all() and np.isfinite(b).all()) or cosine(a, b) < 0.99999:
-            raise SystemExit(f"seq {seq_len} [{label}]: output depends on pad content "
-                             f"(cos {cosine(a, b):.6f}); the attention mask is being dropped")
+            fail(f"seq {seq_len} [{label}]: output depends on pad content "
+                 f"(cos {cosine(a, b):.6f}); the attention mask is being dropped")
         ids, mask = padded_inputs(tokenizer, PARITY_SENTENCES[0], seq_len)
         for _ in range(3):
             m.predict({"input_ids": ids, "attention_mask": mask})
@@ -271,14 +285,23 @@ def compile_to_mlmodelc(pkg, install_dir, seq_len):
 
 
 def main():
-    src = Path(sys.argv[1]).expanduser()
-    install_dir = Path(sys.argv[2]).expanduser()
-    buckets = [int(b) for b in sys.argv[3:]] or [128, 256, 512]
+    args = sys.argv[1:]
+    attn = "eager"
+    if args[:1] == ["--attn"]:
+        attn, args = args[1], args[2:]
+        if attn not in ("eager", "sdpa"):
+            raise SystemExit("--attn takes eager or sdpa")
+    src = Path(args[0]).expanduser()
+    install_dir = Path(args[1]).expanduser()
+    buckets = [int(b) for b in args[2:]] or [128, 256, 512]
     install_dir.mkdir(parents=True, exist_ok=True)
+    negative_control = attn != "eager"
+    if negative_control:
+        print("NEGATIVE CONTROL: fused attention, which drops the mask on the ANE")
 
     tokenizer = AutoTokenizer.from_pretrained(src)
     # eager, not sdpa: see KEY CONSTRAINT in the module docstring.
-    model = AutoModel.from_pretrained(src, dtype=torch.float32, attn_implementation="eager")
+    model = AutoModel.from_pretrained(src, dtype=torch.float32, attn_implementation=attn)
     model.eval()
     install_patches()
 
@@ -288,7 +311,7 @@ def main():
         for seq in buckets:
             wrapper = ClsWrapper(model, seq).eval()
             pkg = convert_bucket(wrapper, seq, workdir)
-            res = parity_check(tokenizer, pkg, seq, refs)
+            res = parity_check(tokenizer, pkg, seq, refs, gate_failures=not negative_control)
             dest = compile_to_mlmodelc(pkg, install_dir, seq)
             for label, (cos, ms) in res.items():
                 print(f"bucket {seq} [{label}]: parity cos={cos:.6f} {ms:.1f}ms")
