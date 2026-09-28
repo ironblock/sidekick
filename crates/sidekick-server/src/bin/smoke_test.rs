@@ -6,18 +6,47 @@
 //! cargo run -p sidekick-server --bin smoke-test
 //! ```
 //!
-//! Exercises the real Swift shim end-to-end: availability probe, plain
-//! completion, session-reuse follow-up, and schema-constrained generation.
+//! Exercises the real Swift shim end-to-end: availability probe, model info,
+//! plain completion, session-reuse follow-up, schema-constrained generation,
+//! finish reasons (max_tokens, stop sequences), and the context-overflow
+//! error mapping. On macOS 27 with a 27-SDK build it also requires real
+//! token usage, including cached tokens on the reused session.
 //! Exits non-zero on the first failure so it can gate a release or run in
 //! a self-hosted CI job. This is the check `docs/DECISIONS.md` lists under
 //! "Needs hardware verification".
 
-use sidekick_core::{Availability, ChatBackend, ChatMessage, ChatRequest, Role, UnavailableReason};
+use sidekick_core::{
+    Availability, ChatBackend, ChatMessage, ChatRequest, Error, FinishReason, Role,
+    UnavailableReason,
+};
 use sidekick_fm::fm_backend;
 use std::time::{Duration, Instant};
 
 fn req(messages: Vec<ChatMessage>) -> ChatRequest {
     ChatRequest { messages, ..Default::default() }
+}
+
+/// Major version of the running macOS, e.g. 27.
+fn macos_major() -> u32 {
+    std::process::Command::new("sysctl")
+        .args(["-n", "kern.osproductversion"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|v| v.trim().split('.').next().and_then(|m| m.parse().ok()))
+        .unwrap_or(0)
+}
+
+/// macOS 27 features are in the binary only when the shim was built with
+/// the 27 SDK, and only active when running on macOS 27.
+fn macos27_features() -> bool {
+    macos_major() >= 27
+        && sidekick_fm::FM_SDK.split('.').next().and_then(|m| m.parse::<u32>().ok()) >= Some(27)
+}
+
+fn fail(message: impl std::fmt::Display) -> ! {
+    eprintln!("FAIL: {message}");
+    std::process::exit(1);
 }
 
 #[tokio::main]
@@ -53,6 +82,17 @@ async fn main() {
         }
     }
 
+    println!("\n== model info ==");
+    let info = backend.model_info().await.unwrap_or_default();
+    println!(
+        "{info:?}; context limit {:?}; shim built with SDK {}",
+        backend.context_limit(),
+        sidekick_fm::FM_SDK
+    );
+    if macos27_features() && info.variant.as_deref().unwrap_or("").is_empty() {
+        fail("macOS 27 should report the model variant");
+    }
+
     println!("\n== plain completion ==");
     let start = Instant::now();
     let first = vec![ChatMessage::new(Role::User, "What is 2+2? Answer with just the number.")];
@@ -68,6 +108,12 @@ async fn main() {
         eprintln!("FAIL: plain completion returned empty content");
         std::process::exit(1);
     }
+    if r1.usage.completion_tokens == 0 {
+        fail("a non-empty reply must count at least one completion token");
+    }
+    if macos27_features() && r1.usage.cached_tokens.is_none() {
+        fail("macOS 27 should report real token usage");
+    }
 
     println!("\n== follow-up (session reuse) ==");
     let start = Instant::now();
@@ -76,10 +122,13 @@ async fn main() {
     second.push(ChatMessage::new(Role::User, "Now double it. Just the number."));
     match backend.complete(req(second)).await {
         Ok(r) => {
-            println!("[{:?}] {:?}", start.elapsed(), r.content);
+            println!("[{:?}] {:?} (usage: {:?})", start.elapsed(), r.content, r.usage);
             if r.content.trim().is_empty() {
                 eprintln!("FAIL: follow-up returned empty content");
                 std::process::exit(1);
+            }
+            if macos27_features() && r.usage.cached_tokens.unwrap_or(0) == 0 {
+                fail("the reused session should serve part of the prompt from cache");
             }
         }
         Err(e) => {
@@ -127,6 +176,46 @@ async fn main() {
             eprintln!("FAIL: constrained completion errored: {e}");
             std::process::exit(1);
         }
+    }
+
+    println!("\n== finish reasons ==");
+    let mut capped = req(vec![ChatMessage::new(Role::User, "Write a long poem about the sea.")]);
+    capped.max_tokens = Some(5);
+    let mut natural = req(vec![ChatMessage::new(Role::User, "Name the largest planet. One word.")]);
+    natural.max_tokens = Some(50);
+    let mut stopped = req(vec![ChatMessage::new(Role::User, "Count from 1 to 10, separated by commas.")]);
+    stopped.stop = vec!["5".into()];
+    for (label, request, want) in [
+        ("max_tokens=5", capped, FinishReason::Length),
+        ("natural answer under max_tokens=50", natural, FinishReason::Stop),
+        ("stop [\"5\"]", stopped, FinishReason::Stop),
+    ] {
+        match backend.complete(request).await {
+            Ok(r) => {
+                println!("{label}: {:?} finish={:?}", r.content, r.finish);
+                // Length detection needs the 26.4 token counter.
+                if r.finish != want && (want != FinishReason::Length || macos_major() >= 27) {
+                    fail(format!("{label}: expected finish {want:?}, got {:?}", r.finish));
+                }
+                if label.starts_with("stop") && r.content.contains('5') {
+                    fail("stop sequence must end the reply before it");
+                }
+            }
+            Err(e) => fail(format!("{label}: {e}")),
+        }
+    }
+
+    println!("\n== context overflow maps to ContextOverflow ==");
+    let oversized = "The Apple Neural Engine requires static shapes for efficient execution. ".repeat(400);
+    match backend.complete(req(vec![ChatMessage::new(Role::User, oversized)])).await {
+        Err(Error::ContextOverflow { limit, actual }) => {
+            println!("limit {limit}, actual {actual:?}");
+            if macos27_features() && actual.is_none() {
+                fail("macOS 27 overflow should report the actual token count");
+            }
+        }
+        Err(e) => fail(format!("oversized prompt should be ContextOverflow, got: {e}")),
+        Ok(_) => fail("oversized prompt unexpectedly succeeded"),
     }
 
     println!("\nSMOKE TEST PASSED");

@@ -6,8 +6,8 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sidekick_core::{
-    Availability, ChatBackend, ChatRequest, ChatResponse, FinishReason, ModelRegistry, Result,
-    Usage,
+    Availability, ChatBackend, ChatRequest, ChatResponse, FinishReason, ModelInfo, ModelRegistry,
+    Result, Usage,
 };
 use sidekick_server::{build_router, AppState, EmbedderPool};
 use std::sync::Arc;
@@ -28,6 +28,15 @@ impl ChatBackend for MockChat {
         Some(4096)
     }
 
+    async fn model_info(&self) -> Option<ModelInfo> {
+        self.available.then(|| ModelInfo {
+            variant: Some("AFM 3 Core".into()),
+            variant_id: Some("core3".into()),
+            context_size: Some(4096),
+            capabilities: Some(vec!["guided_generation".into(), "tool_calling".into()]),
+        })
+    }
+
     async fn availability(&self) -> Availability {
         if self.available {
             Availability::Available
@@ -44,15 +53,41 @@ impl ChatBackend for MockChat {
                 sidekick_core::UnavailableReason::AppleIntelligenceNotEnabled,
             ));
         }
+        // A last message of the form `error:<kind>` makes the mock fail with
+        // that error, to exercise the HTTP error mapping.
+        if let Some(kind) = req.messages.last().unwrap().content.strip_prefix("error:") {
+            use sidekick_core::Error;
+            return Err(match kind {
+                "overflow" => Error::ContextOverflow { limit: 4096, actual: Some(4459) },
+                "overflow_unknown" => Error::ContextOverflow { limit: 4096, actual: None },
+                "content_filter" => Error::ContentFiltered("guardrailViolation".into()),
+                "rate_limited" => Error::RateLimited {
+                    message: "slow down".into(),
+                    retry_after_secs: Some(7),
+                },
+                "transient" => Error::Transient("concurrentRequests".into()),
+                "language" => Error::UnsupportedLanguage("xx".into()),
+                "guided" => Error::GuidedGeneration("unsupported JSON schema type: null".into()),
+                "not_ready" => Error::Unavailable(sidekick_core::UnavailableReason::ModelNotReady),
+                other => Error::Inference(other.into()),
+            });
+        }
         let content = if let Some(schema) = &req.schema {
             format!("{{\"schema_props\": {}}}", schema["properties"].to_string().len())
+        } else if !req.stop.is_empty() {
+            format!("stops: {}", req.stop.join("|"))
         } else {
             format!("echo: {}", req.messages.last().unwrap().content)
         };
         Ok(ChatResponse {
             content,
             finish: FinishReason::Stop,
-            usage: Usage { prompt_tokens: 10, completion_tokens: 5 },
+            usage: Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                cached_tokens: Some(3),
+                reasoning_tokens: None,
+            },
             constrained: req.schema.is_some(),
         })
     }
@@ -165,6 +200,11 @@ async fn chat_completion_round_trip() {
     assert_eq!(body["choices"][0]["message"]["content"], "echo: hello");
     assert_eq!(body["choices"][0]["finish_reason"], "stop");
     assert_eq!(body["usage"]["total_tokens"], 15);
+    assert_eq!(body["usage"]["prompt_tokens_details"]["cached_tokens"], 3);
+    assert!(
+        body["usage"].get("completion_tokens_details").is_none(),
+        "no reasoning detail when none was reported"
+    );
     assert_eq!(body["constrained"], false, "extension field present and honest");
 }
 
@@ -350,6 +390,17 @@ async fn models_and_health_report_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["chat"]["availability"]["state"], "unavailable");
     assert_eq!(body["chat"]["context_limit"], 4096);
+    assert!(body["chat"]["variant"].is_null(), "no model info while unavailable");
+    assert_eq!(body["chat"]["fm_sdk"], sidekick_fm::FM_SDK);
+
+    let (_, body) = call(
+        test_state(true, None),
+        Request::get("/health").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(body["chat"]["variant"], "AFM 3 Core");
+    assert_eq!(body["chat"]["variant_id"], "core3");
+    assert_eq!(body["chat"]["model_capabilities"], json!(["guided_generation", "tool_calling"]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -379,4 +430,127 @@ async fn api_key_enforced_on_v1_but_not_health() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "/health stays open for probes");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_errors_map_to_openai_statuses() {
+    for (kind, status, code) in [
+        ("overflow", StatusCode::BAD_REQUEST, "context_length_exceeded"),
+        ("overflow_unknown", StatusCode::BAD_REQUEST, "context_length_exceeded"),
+        ("content_filter", StatusCode::BAD_REQUEST, "content_filter"),
+        ("rate_limited", StatusCode::TOO_MANY_REQUESTS, "rate_limit_exceeded"),
+        ("transient", StatusCode::SERVICE_UNAVAILABLE, "backend_busy"),
+        ("language", StatusCode::BAD_REQUEST, "unsupported_language"),
+        ("guided", StatusCode::BAD_REQUEST, "unsupported_schema"),
+        ("not_ready", StatusCode::SERVICE_UNAVAILABLE, "backend_unavailable"),
+        ("anything else", StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+    ] {
+        let (got, body) = call(
+            test_state(true, None),
+            post_json(
+                "/v1/chat/completions",
+                json!({"model": "apple-fm", "messages": [{"role": "user", "content": format!("error:{kind}")}]}),
+            ),
+        )
+        .await;
+        assert_eq!(got, status, "{kind}: {body}");
+        assert_eq!(body["error"]["code"], code, "{kind}: {body}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn overflow_reports_real_counts_when_known() {
+    let (_, body) = call(
+        test_state(true, None),
+        post_json(
+            "/v1/chat/completions",
+            json!({"model": "apple-fm", "messages": [{"role": "user", "content": "error:overflow"}]}),
+        ),
+    )
+    .await;
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.contains("4459") && message.contains("4096"), "{message}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rate_limit_sets_retry_after_and_type() {
+    let response = build_router(test_state(true, None))
+        .oneshot(post_json(
+            "/v1/chat/completions",
+            json!({"model": "apple-fm", "messages": [{"role": "user", "content": "error:rate_limited"}]}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()["retry-after"], "7");
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["type"], "rate_limit_error");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_is_accepted_as_string_or_list_and_validated() {
+    let chat = |extra: Value| {
+        let mut body = json!({"model": "apple-fm", "messages": [{"role": "user", "content": "count"}]});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        post_json("/v1/chat/completions", body)
+    };
+    let (status, body) = call(test_state(true, None), chat(json!({"stop": "5"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["choices"][0]["message"]["content"], "stops: 5", "reaches the backend");
+
+    let (status, body) = call(test_state(true, None), chat(json!({"stop": ["a", "b"]}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["choices"][0]["message"]["content"], "stops: a|b");
+
+    let (status, _) = call(test_state(true, None), chat(json!({"stop": null}))).await;
+    assert_eq!(status, StatusCode::OK, "null means no stop sequences");
+
+    for bad in [
+        json!({"stop": ["1", "2", "3", "4", "5"]}),
+        json!({"stop": ""}),
+        json!({"stop": ["ok", ""]}),
+        json!({"stop": "x", "response_format": {"type": "json_schema",
+            "json_schema": {"name": "t", "schema": {"type": "object"}}}}),
+    ] {
+        let (status, body) = call(test_state(true, None), chat(bad.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn parameters_that_cannot_be_honored_are_rejected() {
+    let chat = |extra: Value| {
+        let mut body = json!({"model": "apple-fm", "messages": [{"role": "user", "content": "hi"}]});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        post_json("/v1/chat/completions", body)
+    };
+    // What SDKs commonly send by default must keep working.
+    for ok in [
+        json!({"n": 1}),
+        json!({"tools": []}),
+        json!({"tool_choice": "auto"}),
+        json!({"tool_choice": "none"}),
+        json!({"tool_choice": null}),
+        json!({"function_call": "none"}),
+        json!({"logprobs": false}),
+        json!({"top_logprobs": 0}),
+        json!({"seed": 7, "top_p": 0.9, "presence_penalty": 0, "user": "x"}),
+    ] {
+        let (status, body) = call(test_state(true, None), chat(ok.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{ok}: {body}");
+    }
+    for bad in [
+        json!({"n": 2}),
+        json!({"tools": [{"type": "function", "function": {"name": "f"}}]}),
+        json!({"functions": [{"name": "f"}]}),
+        json!({"tool_choice": "required"}),
+        json!({"tool_choice": {"type": "function", "function": {"name": "f"}}}),
+        json!({"function_call": {"name": "f"}}),
+        json!({"logprobs": true}),
+        json!({"top_logprobs": 3}),
+    ] {
+        let (status, body) = call(test_state(true, None), chat(bad.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
 }

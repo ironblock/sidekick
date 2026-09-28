@@ -13,7 +13,9 @@ pub mod embed;
 pub mod error;
 pub mod manifest;
 
-pub use chat::{ChatBackend, ChatMessage, ChatRequest, ChatResponse, FinishReason, Role, Usage};
+pub use chat::{
+    ChatBackend, ChatMessage, ChatRequest, ChatResponse, FinishReason, ModelInfo, Role, Usage,
+};
 pub use embed::{truncate_normalized, EmbedPurpose, Embedder};
 pub use error::{Error, Result};
 pub use manifest::{EmbeddingBackendKind, ModelManifest, ModelRegistry, Pooling};

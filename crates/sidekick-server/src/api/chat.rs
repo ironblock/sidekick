@@ -26,11 +26,7 @@ pub async fn chat_completions(
 
     let response = state.chat.complete(core_req).await?;
 
-    let usage = WireUsage {
-        prompt_tokens: response.usage.prompt_tokens,
-        completion_tokens: response.usage.completion_tokens,
-        total_tokens: response.usage.prompt_tokens + response.usage.completion_tokens,
-    };
+    let usage = WireUsage::from(response.usage);
     let finish = match response.finish {
         FinishReason::Stop => "stop",
         FinishReason::Length => "length",
@@ -116,10 +112,39 @@ pub async fn chat_completions(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()).into_response())
 }
 
+/// Reject parameters this daemon can't honor, rather than answering as if
+/// they weren't there (D22). Harmless forms that clients send by default —
+/// `n: 1`, `tool_choice: "auto"`/`"none"` without tools, `logprobs: false` —
+/// are accepted. Everything else unknown (`seed`, `top_p`, penalties,
+/// `user`, …) is ignored on purpose.
+fn reject_unsupported(req: &ChatCompletionRequest) -> Result<(), ApiError> {
+    if req.n.is_some_and(|n| n > 1) {
+        return Err(ApiError::invalid("`n` > 1 is not supported; send separate requests"));
+    }
+    if req.tools.as_ref().is_some_and(|t| !t.is_empty())
+        || req.functions.as_ref().is_some_and(|f| !f.is_empty())
+    {
+        return Err(ApiError::invalid("tool calling is not supported (this daemon is text-only)"));
+    }
+    let forces_a_tool = |choice: &Option<serde_json::Value>| match choice {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::String(s)) => s != "auto" && s != "none",
+        Some(_) => true,
+    };
+    if forces_a_tool(&req.tool_choice) || forces_a_tool(&req.function_call) {
+        return Err(ApiError::invalid("tool calling is not supported (this daemon is text-only)"));
+    }
+    if req.logprobs == Some(true) || req.top_logprobs.is_some_and(|n| n > 0) {
+        return Err(ApiError::invalid("logprobs are not supported"));
+    }
+    Ok(())
+}
+
 fn to_core_request(req: &ChatCompletionRequest) -> Result<ChatRequest, ApiError> {
     if req.messages.is_empty() {
         return Err(ApiError::invalid("`messages` must not be empty"));
     }
+    reject_unsupported(req)?;
     let mut messages = Vec::with_capacity(req.messages.len());
     for m in &req.messages {
         let role = match m.role.as_str() {
@@ -171,7 +196,25 @@ fn to_core_request(req: &ChatCompletionRequest) -> Result<ChatRequest, ApiError>
         ));
     }
 
-    Ok(ChatRequest { messages, temperature: req.temperature, max_tokens, schema })
+    let stop = match &req.stop {
+        None => Vec::new(),
+        Some(StopSequences::One(s)) => vec![s.clone()],
+        Some(StopSequences::Many(list)) => list.clone(),
+    };
+    if stop.len() > 4 {
+        return Err(ApiError::invalid("`stop` accepts at most 4 sequences"));
+    }
+    if stop.iter().any(String::is_empty) {
+        return Err(ApiError::invalid("`stop` sequences must not be empty"));
+    }
+    // Cutting schema-constrained output short would break the schema.
+    if !stop.is_empty() && schema.is_some() {
+        return Err(ApiError::invalid(
+            "`stop` can't be combined with response_format json_schema",
+        ));
+    }
+
+    Ok(ChatRequest { messages, temperature: req.temperature, max_tokens, schema, stop })
 }
 
 fn flatten_content(content: &WireContent) -> Result<String, ApiError> {

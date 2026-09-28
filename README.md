@@ -33,6 +33,11 @@ verified via `cargo run -p sidekick-coreml --example ane_check`). See
 recipe (the constraints it encodes are hardware-verified; deviating from
 them silently pushes the encoder off the ANE).
 
+On macOS 27 (built with Xcode 27) chat reports real token usage, including
+cached tokens when a follow-up reuses its session. `/health` reports which
+Foundation Models variant the Mac has and its context size. Over-long
+prompts are a proper 400. See D21 in [docs/DECISIONS.md](docs/DECISIONS.md).
+
 Which encoders are known to convert cleanly and achieve full ANE offload —
 and which don't, and why — is tracked with measured numbers in
 [docs/MODELS.md](docs/MODELS.md), along with a "will a new model convert?"
@@ -103,6 +108,11 @@ Constrained output works via the standard `response_format`:
 
 On-device guided generation makes the 3B model reliable at exactly this kind
 of task — the schema is enforced by constrained decoding, not by hoping.
+Check `finish_reason`: a reply cut by `max_tokens` reports `"length"`, and
+for constrained output that means the JSON may be missing properties.
+
+`stop` (one string or up to four) is supported, except together with
+`json_schema`.
 
 ## Models directory
 
@@ -142,7 +152,7 @@ CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ..
 |---|---|
 | `sidekick-core` | Backend-neutral traits and types: `ChatBackend`, `Embedder`, availability states, model manifest/registry. No Apple dependencies. |
 | `sidekick-coreml` | Small safe wrapper over `objc2-core-ml`: load, compute units, int32-in/float-out predictions. macOS only; empty stub elsewhere. |
-| `sidekick-fm` | Foundation Models backend: Swift C-ABI shim built by `build.rs` (macOS 26 SDK), guided generation from JSON Schema, TTL'd session reuse keyed by conversation prefix. Stub elsewhere. |
+| `sidekick-fm` | Foundation Models backend: Swift C-ABI shim built by `build.rs` (macOS 26.4+ SDK; 27 SDK for the macOS 27 features), guided generation from JSON Schema, TTL'd session reuse keyed by conversation prefix. Stub elsewhere. |
 | `sidekick-embed` | Embedding pipelines: Core ML/ANE encoder (feature `coreml`) and the static floor tier. |
 | `sidekick-server` | `sidekickd`, the OpenAI-compatible daemon. |
 
@@ -155,9 +165,13 @@ cargo check --workspace --target aarch64-apple-darwin --features sidekick-embed/
 
 The second command is the cross-check CI uses to keep the macOS-only code
 honest from non-Mac machines. On a Mac, `cargo test --workspace --features
-sidekick-server/coreml` additionally builds the Swift shim (Xcode 26 needed
-for the real Foundation Models backend; anything older falls back to the
-stub with a build warning).
+sidekick-server/coreml` additionally builds the Swift shim. That needs Xcode
+26.4 or later; older SDKs are a build error (set `SIDEKICK_FM_STUB=1` to build
+the stub backend instead). Build with **Xcode 27** to get the macOS 27
+Foundation Models features (real token usage, model variant, typed errors):
+they are compiled in only against the 27 SDK. `sidekickd --version` reports
+which SDK a binary was built with; after switching Xcode with
+`xcode-select`, run `cargo clean -p sidekick-fm` so the shim is rebuilt.
 
 ### Contributing
 

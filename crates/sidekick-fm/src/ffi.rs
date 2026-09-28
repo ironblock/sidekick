@@ -3,8 +3,9 @@
 
 #![allow(unsafe_code)]
 
-use crate::engine::{RespondOptions, SessionEngine};
-use sidekick_core::{Availability, Error, Result, UnavailableReason};
+use crate::engine::{EngineResponse, RespondOptions, SessionEngine};
+use crate::envelope;
+use sidekick_core::{Availability, Error, ModelInfo, Result, UnavailableReason};
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr::NonNull;
 
@@ -28,22 +29,36 @@ extern "C" {
         out_len: *mut usize,
         err: *mut *mut c_char,
     ) -> i32;
+    fn sk_fm_model_info(out: *mut *mut u8, out_len: *mut usize) -> i32;
     fn sk_fm_buf_free(ptr: *mut u8, len: usize);
     fn sk_fm_string_free(ptr: *mut c_char);
+    #[cfg(test)]
+    fn sk_fm_selftest(out: *mut *mut u8, out_len: *mut usize) -> i32;
 }
 
-/// Take ownership of an error string from the shim.
+/// Context size assumed when Foundation Models reports none (macOS 26's
+/// fixed on-device budget).
+const DEFAULT_CONTEXT_SIZE: usize = 4096;
+
+/// Copy a shim-allocated UTF-8 buffer into a String and free it.
+///
+/// # Safety
+/// `ptr` must be a buffer of `len` bytes allocated by the shim, not yet freed.
+unsafe fn take_buffer(ptr: *mut u8, len: usize) -> String {
+    let bytes = std::slice::from_raw_parts(ptr, len).to_vec();
+    sk_fm_buf_free(ptr, len);
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Take ownership of an error string from the shim. These are failures of
+/// the shim itself (null arguments, encoding); model errors arrive typed in
+/// the respond envelope instead.
 unsafe fn take_error(err: *mut c_char, context: &str) -> Error {
     if err.is_null() {
         return Error::Inference(format!("{context}: unknown error"));
     }
     let message = CStr::from_ptr(err).to_string_lossy().into_owned();
     sk_fm_string_free(err);
-    if message.contains("exceededContextWindowSize") {
-        // The 4096-token combined budget was blown mid-generation. Apple's
-        // error carries no token counts, so none are reported.
-        return Error::ContextOverflow { limit: 4096 };
-    }
     Error::Inference(format!("{context}: {message}"))
 }
 
@@ -80,6 +95,23 @@ impl SessionEngine for FfiEngine {
         }
     }
 
+    fn model_info(&self) -> Option<ModelInfo> {
+        let mut out: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        if unsafe { sk_fm_model_info(&mut out, &mut out_len) } != 0 || out.is_null() {
+            return None;
+        }
+        // SAFETY: on success the shim hands us an owned UTF-8 buffer.
+        let json = unsafe { take_buffer(out, out_len) };
+        match serde_json::from_str(&json) {
+            Ok(info) => Some(info),
+            Err(e) => {
+                tracing::warn!("malformed model info from the shim: {e}");
+                None
+            }
+        }
+    }
+
     fn create(&self, instructions: &str) -> Result<FfiSession> {
         let mut err: *mut c_char = std::ptr::null_mut();
         let ptr = unsafe {
@@ -96,7 +128,7 @@ impl SessionEngine for FfiEngine {
         session: &mut FfiSession,
         prompt: &str,
         opts: &RespondOptions,
-    ) -> Result<String> {
+    ) -> Result<EngineResponse> {
         let schema_text = opts
             .schema
             .as_ref()
@@ -128,12 +160,72 @@ impl SessionEngine for FfiEngine {
             return Err(Error::Inference("respond: shim returned null buffer".into()));
         }
         // SAFETY: shim guarantees `out` is a valid UTF-8 buffer of `out_len`
-        // bytes that we own; copy then free via the shim's deallocator.
-        let text = unsafe {
-            let bytes = std::slice::from_raw_parts(out, out_len).to_vec();
-            sk_fm_buf_free(out, out_len);
-            String::from_utf8_lossy(&bytes).into_owned()
+        // bytes that we own.
+        let json = unsafe { take_buffer(out, out_len) };
+        envelope::parse_response(&json, DEFAULT_CONTEXT_SIZE)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    /// The shim's typed error classification, exercised over constructed
+    /// errors — no model needed, so this runs in CI on both SDK paths.
+    #[test]
+    fn shim_classifies_foundation_models_errors() {
+        let mut out: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        assert_eq!(unsafe { sk_fm_selftest(&mut out, &mut out_len) }, 0);
+        let report: Value = serde_json::from_str(&unsafe { take_buffer(out, out_len) }).unwrap();
+        let cases = report["cases"].as_array().expect("cases");
+        let kind_of = |name: &str| -> &Value {
+            cases
+                .iter()
+                .find(|c| c["case"] == name)
+                .unwrap_or_else(|| panic!("self-test case {name} missing: {report}"))
         };
-        Ok(text)
+
+        for (name, kind) in [
+            ("gen.exceededContextWindowSize", "context_overflow"),
+            ("gen.assetsUnavailable", "model_not_ready"),
+            ("gen.guardrailViolation", "content_filter"),
+            ("gen.refusal", "content_filter"),
+            ("gen.unsupportedGuide", "unsupported_guide"),
+            ("gen.unsupportedLanguageOrLocale", "unsupported_language"),
+            ("gen.decodingFailure", "other"),
+            ("gen.rateLimited", "rate_limited"),
+            ("gen.concurrentRequests", "transient"),
+            ("message.contextOverflow", "context_overflow"),
+            ("message.other", "other"),
+        ] {
+            assert_eq!(kind_of(name)["kind"], kind, "{name}");
+        }
+        // The message fallback recovers both numbers.
+        assert_eq!(kind_of("message.contextOverflow")["token_count"], 4459);
+        assert_eq!(kind_of("message.contextOverflow")["context_size"], 4096);
+
+        if report["runtime27"] == true {
+            for (name, kind) in [
+                ("lm.contextSizeExceeded", "context_overflow"),
+                ("lm.rateLimited", "rate_limited"),
+                ("lm.guardrailViolation", "content_filter"),
+                ("lm.refusal", "content_filter"),
+                ("lm.timeout", "transient"),
+                ("lm.unsupportedLanguageOrLocale", "unsupported_language"),
+                ("lm.unsupportedGenerationGuide", "unsupported_guide"),
+                ("session.concurrentRequests", "transient"),
+                ("session.transcriptMutationWhileResponding", "transient"),
+                ("system.assetsUnavailable", "model_not_ready"),
+            ] {
+                assert_eq!(kind_of(name)["kind"], kind, "{name}");
+            }
+            let overflow = kind_of("lm.contextSizeExceeded");
+            assert_eq!(overflow["token_count"], 5000);
+            assert_eq!(overflow["context_size"], 4096);
+            let retry = kind_of("lm.rateLimited")["retry_after_secs"].as_u64().unwrap();
+            assert!((1..=30).contains(&retry), "retry_after_secs {retry}");
+        }
     }
 }

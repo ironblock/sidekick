@@ -17,12 +17,21 @@
 pub mod backend;
 pub mod cache;
 pub mod engine;
+pub mod envelope;
+pub mod shaping;
 
 #[cfg(all(target_os = "macos", not(fm_stub)))]
 mod ffi;
 
 pub use backend::SessionChatBackend;
-pub use engine::{RespondOptions, SessionEngine};
+pub use engine::{EngineResponse, EngineUsage, RespondOptions, SessionEngine};
+
+/// The macOS SDK version the Foundation Models shim was compiled against
+/// (e.g. `"27.0"`), or `"none"` in stub builds. macOS 27 features — real
+/// token usage, model variant, typed errors — are only compiled in with the
+/// 27 SDK, so a binary built with an older SDK behaves like macOS 26 even on
+/// a macOS 27 machine; this makes that visible.
+pub const FM_SDK: &str = env!("SIDEKICK_FM_SDK");
 
 #[cfg(all(target_os = "macos", not(fm_stub)))]
 pub type FmChatBackend = SessionChatBackend<ffi::FfiEngine>;

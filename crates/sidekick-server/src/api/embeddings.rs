@@ -115,10 +115,6 @@ pub async fn embeddings(
         object: "list",
         data,
         model: req.model,
-        usage: WireUsage {
-            prompt_tokens: approx_tokens as u32,
-            completion_tokens: 0,
-            total_tokens: approx_tokens as u32,
-        },
+        usage: WireUsage::new(approx_tokens as u32, 0),
     }))
 }

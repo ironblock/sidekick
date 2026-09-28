@@ -1,11 +1,17 @@
-# Tag-triggered release: build sidekickd + libsidekick.dylib on the hosted
-# macOS 26 runner (real Foundation Models shim — build.rs hard-errors on the
-# stub) and attach a tarball + checksum to a GitHub release.
+# Tag-triggered release: build sidekickd + libsidekick.dylib with Xcode 27
+# (real Foundation Models shim — build.rs hard-errors on the stub — compiled
+# against the macOS 27 SDK so the macOS 27 features are in the binary), prove
+# the daemon still loads on macOS 26, then attach a tarball + checksum to a
+# GitHub release.
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
 # workflow_dispatch runs the same build as a dry run: artifacts are uploaded
 # to the run for inspection, but no release is created.
+#
+# The xcode-27 runner image is a GitHub public preview (no SLA; jobs may
+# queue). Xcode is pinned to a release build because the image also carries
+# betas.
 
 name: Release
 
@@ -23,21 +29,43 @@ env:
 jobs:
   build:
     name: Build release artifacts (aarch64-apple-darwin)
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    outputs:
+      name: ${{ steps.package.outputs.name }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      - name: Require the macOS 27 SDK
+        run: |
+          xcodebuild -version
+          SDK="$(xcrun --show-sdk-version)"
+          echo "macOS SDK: ${SDK}"
+          [ "${SDK%%.*}" -ge 27 ] || { echo "release builds need the macOS 27 SDK, got ${SDK}"; exit 1; }
+
       - name: Build
         run: |
-          cargo build --release -p sidekick-server --features coreml
+          # The daemon's honest floor is macOS 26.0 (it hard-links
+          # FoundationModels); building for it makes dyld bind every import
+          # at launch, which the macOS 26 launch check below relies on.
+          # Stripping stays off for this invocation: with a 26.0 deployment
+          # target the default debuginfo strip leaves proc-macro dylibs that
+          # macOS 27's dyld refuses to load.
+          MACOSX_DEPLOYMENT_TARGET=26.0 CARGO_PROFILE_RELEASE_STRIP=none \
+            cargo build --release -p sidekick-server --features coreml --bin sidekickd
+          # The C ABI dylib doesn't link FoundationModels; default floor.
           cargo build --release -p sidekick-embed-ffi
 
       - name: Verify artifacts are the real thing
         run: |
-          # Chat: the FM shim must be linked, not the stub.
+          # Chat: the FM shim must be linked, not the stub, built with SDK 27.
           otool -L target/release/sidekickd | grep -q FoundationModels
+          ./target/release/sidekickd --version | grep -q 'macOS SDK 27'
+          vtool -show-build target/release/sidekickd | grep -E 'minos 26\.0'
+          otool -l target/release/sidekickd | grep -q LC_DYLD_CHAINED_FIXUPS
           # C ABI: the exported surface must be present.
           for sym in _sk_abi_version _sk_pool_open _sk_embed _sk_model_info; do
             nm -gU target/release/libsidekick.dylib | grep -q " $sym\$"
@@ -68,8 +96,33 @@ jobs:
             dist/*.tar.gz
             dist/*.tar.gz.sha256
 
+  verify-macos26:
+    # A 27-SDK daemon must still load on macOS 26 (27-only symbols weak).
+    name: Launch the release daemon on macOS 26
+    needs: build
+    runs-on: macos-26
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.name }}
+      - name: Launch (dyld binds every import here)
+        run: |
+          tar -xzf "${{ needs.build.outputs.name }}.tar.gz"
+          sw_vers
+          "./${{ needs.build.outputs.name }}/sidekickd" --version
+
+  publish:
+    name: Create GitHub release
+    if: github.event_name == 'push'
+    needs: [build, verify-macos26]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.name }}
+          path: dist
       - name: Create GitHub release
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
