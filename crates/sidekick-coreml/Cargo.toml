@@ -18,6 +18,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSDictionary",
     "NSEnumerator",
     "NSError",
+    "NSRange",
     "NSString",
     "NSURL",
     "NSValue",
@@ -33,6 +34,10 @@ objc2-core-ml = { version = "0.3", default-features = false, features = [
     "MLDictionaryFeatureProvider",
     "MLMultiArray",
     "MLModel_MLModelCompilation",
+    # Input shape constraints: the flexible-shape guard in CoremlModel::load.
+    "MLMultiArrayConstraint",
+    "MLMultiArrayShapeConstraint",
+    "MLMultiArrayShapeConstraintType",
     # Compute plans: which device each operation is assigned to (ane_check).
     "MLComputePlan",
     "MLComputePlanDeviceUsage",

@@ -4,13 +4,13 @@
 // freshly created / just-returned array.
 #![allow(deprecated)]
 
-use crate::{ComputeUnits, Int32Input};
+use crate::{shape_verdict, ComputeUnits, InputShape, Int32Input, ShapeConstraint, ShapeVerdict};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::AnyThread;
+use objc2::{available, AnyThread};
 use objc2_core_ml::{
     MLDictionaryFeatureProvider, MLFeatureProvider, MLFeatureValue, MLModel,
-    MLModelConfiguration, MLMultiArray, MLMultiArrayDataType,
+    MLModelConfiguration, MLMultiArray, MLMultiArrayDataType, MLMultiArrayShapeConstraintType,
 };
 use objc2_foundation::{NSDictionary, NSNumber, NSString, NSURL};
 use sidekick_core::{Error, Result};
@@ -54,42 +54,25 @@ impl CoremlModel {
     /// `.mlpackage`/`.mlmodel`, compiles it first via `MLModel::compileModelAtURL`
     /// (synchronous variant) — callers should cache the compiled artifact by
     /// shipping `.mlmodelc` in the model directory to avoid recompiles.
+    ///
+    /// Refuses, on macOS 27 and later, a model with an input that accepts
+    /// several enumerated shapes: predicting with one there can abort the
+    /// process with an Objective-C exception Rust can't catch (D27). Other
+    /// flexible-shape models load with a warning; they run on the CPU.
     pub fn load(path: &Path, units: ComputeUnits) -> Result<Self> {
-        let is_compiled = path
-            .extension()
-            .map(|e| e == "mlmodelc")
-            .unwrap_or(false);
-
-        let url_for = |p: &Path| -> Retained<NSURL> {
-            let s = NSString::from_str(&p.to_string_lossy());
-            NSURL::fileURLWithPath(&s)
-        };
-
-        let compiled_url = if is_compiled {
-            url_for(path)
-        } else {
-            // The synchronous compiler is deprecated in favor of the
-            // completion-handler variant, but it's exactly right for a
-            // blocking loader and avoids a block2 dependency. Ship
-            // precompiled .mlmodelc in the model dir to skip this entirely
-            // (`xcrun coremlcompiler compile model.mlpackage .`).
-            let src = url_for(path);
-            #[allow(deprecated)]
-            unsafe { MLModel::compileModelAtURL_error(&src) }.map_err(|e| {
-                Error::Inference(format!("Core ML compile failed for {}: {e}", path.display()))
-            })?
-        };
-
-        let config = unsafe { MLModelConfiguration::new() };
-        unsafe { config.setComputeUnits(units.to_ml()) };
-
-        let model = unsafe {
-            MLModel::modelWithContentsOfURL_configuration_error(&compiled_url, &config)
+        let model = open(path, units)?;
+        match shape_verdict(&read_input_shapes(&model), available!(macos = 27.0)) {
+            ShapeVerdict::Static => {}
+            ShapeVerdict::Warn(reason) => {
+                tracing::warn!(model = %path.display(), "flexible-shape Core ML model: {reason}");
+            }
+            ShapeVerdict::Refuse(reason) => {
+                return Err(Error::Inference(format!(
+                    "refusing Core ML model {}: {reason}",
+                    path.display()
+                )));
+            }
         }
-        .map_err(|e| {
-            Error::Inference(format!("Core ML load failed for {}: {e}", path.display()))
-        })?;
-
         Ok(Self { model })
     }
 
@@ -198,6 +181,90 @@ impl CoremlModel {
 
         Ok(OutputTensor { shape, data })
     }
+}
+
+/// The shape constraints of a model's multi-array inputs, sorted by name.
+/// Loads the model for the CPU only, which is cheap and never predicts, so
+/// it is safe on artifacts that [`CoremlModel::load`] refuses. Judge the
+/// result with [`crate::shape_verdict`].
+pub fn input_shapes(path: &Path) -> Result<Vec<InputShape>> {
+    let model = open(path, ComputeUnits::CpuOnly)?;
+    Ok(read_input_shapes(&model))
+}
+
+/// Compile if needed, then load with the given compute units.
+fn open(path: &Path, units: ComputeUnits) -> Result<Retained<MLModel>> {
+    let is_compiled = path
+        .extension()
+        .map(|e| e == "mlmodelc")
+        .unwrap_or(false);
+
+    let url_for = |p: &Path| -> Retained<NSURL> {
+        let s = NSString::from_str(&p.to_string_lossy());
+        NSURL::fileURLWithPath(&s)
+    };
+
+    let compiled_url = if is_compiled {
+        url_for(path)
+    } else {
+        // The synchronous compiler is deprecated in favor of the
+        // completion-handler variant, but it's exactly right for a
+        // blocking loader and avoids a block2 dependency. Ship
+        // precompiled .mlmodelc in the model dir to skip this entirely
+        // (`xcrun coremlcompiler compile model.mlpackage .`).
+        let src = url_for(path);
+        #[allow(deprecated)]
+        unsafe { MLModel::compileModelAtURL_error(&src) }.map_err(|e| {
+            Error::Inference(format!("Core ML compile failed for {}: {e}", path.display()))
+        })?
+    };
+
+    let config = unsafe { MLModelConfiguration::new() };
+    unsafe { config.setComputeUnits(units.to_ml()) };
+
+    unsafe { MLModel::modelWithContentsOfURL_configuration_error(&compiled_url, &config) }.map_err(
+        |e| Error::Inference(format!("Core ML load failed for {}: {e}", path.display())),
+    )
+}
+
+/// Read each multi-array input's shape constraint from the model
+/// description. Per-bucket artifacts built by coremltools report
+/// `.enumerated` with exactly one shape, so the number of shapes is what
+/// tells a flexible model apart, not the constraint type.
+fn read_input_shapes(model: &MLModel) -> Vec<InputShape> {
+    let description = unsafe { model.modelDescription() };
+    let (names, features) = unsafe { description.inputDescriptionsByName() }.to_vecs();
+    let mut inputs: Vec<InputShape> = names
+        .iter()
+        .zip(&features)
+        .filter_map(|(name, feature)| {
+            let shape = unsafe { feature.multiArrayConstraint()?.shapeConstraint() };
+            let constraint = match unsafe { shape.r#type() } {
+                MLMultiArrayShapeConstraintType::Enumerated => ShapeConstraint::Enumerated(
+                    unsafe { shape.enumeratedShapes() }
+                        .iter()
+                        .map(|s| s.iter().map(|n| n.as_usize()).collect())
+                        .collect(),
+                ),
+                MLMultiArrayShapeConstraintType::Range => ShapeConstraint::Range(
+                    unsafe { shape.sizeRangeForDimension() }
+                        .iter()
+                        .map(|v| match v.get_range() {
+                            // `length` sizes starting at `location`; a fixed
+                            // dimension of 128 reads (128, 1).
+                            Some(r) => r.location..=r.location.saturating_add(r.length.max(1) - 1),
+                            // Never observed; count it as flexible.
+                            None => 0..=usize::MAX,
+                        })
+                        .collect(),
+                ),
+                _ => ShapeConstraint::Unspecified,
+            };
+            Some(InputShape { name: name.to_string(), constraint })
+        })
+        .collect();
+    inputs.sort_by(|a, b| a.name.cmp(&b.name));
+    inputs
 }
 
 /// Minimal f16 -> f32 (avoids pulling `half` into this crate). Verified
