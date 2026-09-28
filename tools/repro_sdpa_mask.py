@@ -70,10 +70,21 @@ Usage:
     python tools/repro_sdpa_mask.py --check M    # apply the ANE rule to a model
                                                  # (.mlmodelc or .mlpackage)
 
-`--check` exits 1 if any attention op matches the rule. It reads the compute
-plan and never runs the model. It detects a mask from a model input or a CPU
-op directly; an ANE-built mask in another procedure is inferred from a
-non-ANE op sitting between the mask and the attention in program order.
+`--check` exits 1 if any attention op matches the rule, and 2 if the compute
+plan is unreadable. It reads the compute plan and never runs the model. It
+detects a mask from a model input or a CPU op directly; an ANE-built mask in
+another procedure is inferred from a non-ANE op sitting between the mask and
+the attention in program order.
+
+An unreadable plan is one that fails to load, or loads with no operation
+assigned to any device. It must not pass: an attention op with no device
+normally means Core ML's fallback, so an all-unassigned plan would clear
+every op. Core ML's cache of compiled bundles
+(~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache) can hold a broken
+entry for an artifact's path. Plans for that path then come back
+all-unassigned, or fail with "internal failure", until the entry is gone. A
+copy at a new path reads normally (`cp -c -R <model> <new path>` makes an
+APFS clone).
 
 Requires: torch, coremltools >= 8 (arm64-native Python), Apple Silicon.
 """
@@ -298,13 +309,30 @@ def _device(plan, op):
     return type(usage.preferred_compute_device).__name__.replace("ML", "").replace("ComputeDevice", "")
 
 
-def attention_masks(compiled_path):
+class PlanUnreadable(Exception):
+    """The compute plan failed to load, or assigned no operation to a device."""
+
+
+STALE_CACHE_HINT = ("Core ML's bundle cache (~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache) "
+                    "may hold a broken entry for this path; re-check a copy at a new path "
+                    "(`cp -c -R <model> <new path>`).")
+
+
+def attention_masks(compiled_path, label=None):
     """For every fused attention op: (its device, where its mask comes from,
-    whether the rule predicts the mask is ignored)."""
-    plan = MLComputePlan.load_from_path(path=str(compiled_path), compute_units=ct.ComputeUnit.CPU_AND_NE)
+    whether the rule predicts the mask is ignored). Raises PlanUnreadable
+    rather than returning a plan it can't trust."""
+    label = label or compiled_path
+    try:
+        plan = MLComputePlan.load_from_path(path=str(compiled_path), compute_units=ct.ComputeUnit.CPU_AND_NE)
+    except Exception as e:
+        raise PlanUnreadable(f"compute plan for {label} failed to load: {e}. {STALE_CACHE_HINT}") from e
     ops = [op for op in plan.model_structure.program.functions["main"].block.operations
            if not op.operator_name.endswith(".const")]
     devices = [_device(plan, op) for op in ops]
+    if ops and all(d == "none" for d in devices):
+        raise PlanUnreadable(f"compute plan for {label} assigns none of its {len(ops)} operations "
+                             f"to a device. {STALE_CACHE_HINT}")
     produced_by = {out.name: i for i, op in enumerate(ops) for out in op.outputs}
     rows = []
     for i, op in enumerate(ops):
@@ -425,7 +453,7 @@ def check(path):
     compiled = path
     if path.suffix == ".mlpackage":
         compiled = Path(ct.utils.compile_model(str(path)))
-    rows = attention_masks(compiled)
+    rows = attention_masks(compiled, label=path)
     if not rows:
         print(f"{path}: no fused {SDPA} ops")
         return 0
@@ -447,9 +475,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--check", metavar="MODEL", help="apply the ANE rule to a .mlmodelc or .mlpackage")
     args = parser.parse_args()
-    if args.check:
-        sys.exit(check(args.check))
-    run_all()
+    try:
+        if args.check:
+            sys.exit(check(args.check))
+        run_all()
+    except PlanUnreadable as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":
