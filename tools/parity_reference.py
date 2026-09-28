@@ -30,8 +30,8 @@ Usage:
     --source      the Hugging Face checkpoint the model was converted from
     --onnx        a published ONNX export, e.g.
                   Alibaba-NLP/gte-modernbert-base:onnx/model_int8.onnx
-    --out         a references directory shared by several models (the
-                  suite reads it from SIDEKICK_PARITY_REFS)
+    --out         a references directory shared by several models (pass
+                  the same directory to the suite as --refs)
 
 Requires: torch, sentence-transformers, safetensors, numpy; onnxruntime and
 huggingface_hub for --onnx (arm64-native Python).
@@ -56,7 +56,9 @@ def corpus_hash(text):
     """sha256 of the corpus without its full-line comments and blank lines,
     so editing a comment doesn't invalidate every reference. Must match
     corpus_sha256() in the parity suite."""
-    lines = [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+    # Split exactly as Rust's str::lines() does: on "\n", dropping one "\r".
+    lines = [l.removesuffix("\r") for l in text.split("\n")]
+    lines = [l for l in lines if l.strip() and not l.lstrip().startswith("#")]
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 

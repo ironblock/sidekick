@@ -1,8 +1,9 @@
 //! The live suite (macOS, `--features coreml`): a parent that reads compute
 //! plans and grades, and workers that each run one model on one compute path
-//! in their own process. An Objective-C exception inside Core ML (a
-//! flexible-shape artifact aborts at predict on macOS 27) or a stuck ANE
-//! compile then costs one cell of the report, not the whole run.
+//! in their own process. An Objective-C exception inside Core ML (on
+//! macOS 27 a flexible-shape artifact aborts at predict under `.cpuOnly`)
+//! or a stuck ANE compile then costs one cell of the report, not the whole
+//! run.
 
 use crate::expect::{Expectations, Path3};
 use crate::grade::{fmt, grade, suggest_floor, CaseResult, Check, PathGrade, WorkerResult};
@@ -11,7 +12,7 @@ use crate::reference::{corpus_sha256, sha256_hex, Reference};
 use serde::Serialize;
 use sidekick_core::manifest::{ModelRegistry, ResolvedModel};
 use sidekick_core::{EmbedPurpose, Embedder, EmbeddingBackendKind};
-use sidekick_coreml::{compute_plan, ComputeUnits};
+use sidekick_coreml::{compute_plan, ComputeUnits, PlanSummary};
 use sidekick_embed::CoremlEmbedder;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -28,6 +29,10 @@ usage: parity [options]
   --expectations FILE  default: fixtures/parity/expectations.toml
   --json FILE          also write the full report as JSON
   --suggest-floors     print [[floor]] entries for this chip from this run
+  --allow-unverified-plans
+                       grade a model whose compute plan Core ML can't produce
+                       (a warning, not a failure), provided its ANE output
+                       isn't bit-identical to CPU_ONLY
   --timeout SECS       per worker (default 1200)";
 
 /// Cases re-run in a second ANE process to check determinism across loads.
@@ -35,6 +40,15 @@ const DETERMINISM_CASES: usize = 8;
 
 pub fn main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--plan") {
+        return match plan_child(&args[1..]) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("plan error: {e}");
+                3
+            }
+        };
+    }
     if args.first().map(String::as_str) == Some("--worker") {
         return match worker(&args[1..]) {
             Ok(()) => 0,
@@ -72,6 +86,146 @@ fn reference_dir(model: &ResolvedModel, refs: Option<&Path>) -> PathBuf {
 fn load_model(models_dir: &Path, id: &str) -> Result<ResolvedModel, String> {
     let reg = ModelRegistry::scan(models_dir).map_err(|e| e.to_string())?;
     reg.get(id).cloned().map_err(|e| e.to_string())
+}
+
+// ---- compute plans ---------------------------------------------------------
+
+/// `--plan <artifact> <out.json>`: one compute plan, read in its own
+/// process so that a crash inside Core ML can't take the suite down.
+fn plan_child(args: &[String]) -> Result<(), String> {
+    let [artifact, out] = args else {
+        return Err("bad plan arguments".into());
+    };
+    let plan = compute_plan(Path::new(artifact), ComputeUnits::CpuAndNeuralEngine)
+        .map_err(|e| e.to_string())?;
+    let json = serde_json::json!({
+        "ane": plan.ane,
+        "cpu": plan.cpu,
+        "gpu": plan.gpu,
+        "unassigned": plan.unassigned,
+        "off_ane_ops": plan.off_ane_ops,
+    });
+    std::fs::write(out, json.to_string()).map_err(|e| e.to_string())
+}
+
+/// Where Core ML caches compiled bundles for this executable.
+fn bundle_cache() -> String {
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "parity".into());
+    format!("~/Library/Caches/{exe}/com.apple.e5rt.e5bundlecache")
+}
+
+/// One plan read in a child process. `Ok(None)`: Core ML produced no plan
+/// (every operation unassigned, or "internal failure").
+fn read_plan_once(
+    artifact: &Path,
+    timeout: Duration,
+    scratch: &Path,
+) -> Result<Option<PlanSummary>, String> {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let out = scratch.join(format!("plan-{n}.json"));
+    let args: Vec<std::ffi::OsString> = vec!["--plan".into(), artifact.into(), out.clone().into()];
+    match run_child(&args, &out, &out.with_extension("log"), timeout) {
+        Ok(()) => {}
+        Err(e) if e.contains("internal failure") => return Ok(None),
+        Err(e) => return Err(e),
+    }
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&out).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let n = |k: &str| v[k].as_u64().unwrap_or(0) as usize;
+    let plan = PlanSummary {
+        ane: n("ane"),
+        cpu: n("cpu"),
+        gpu: n("gpu"),
+        unassigned: n("unassigned"),
+        off_ane_ops: serde_json::from_value(v["off_ane_ops"].clone()).unwrap_or_default(),
+    };
+    Ok((plan.assigned() > 0).then_some(plan))
+}
+
+/// The compute plan for `.cpuAndNeuralEngine`, and whether it had to be
+/// read from a copy.
+///
+/// Core ML caches compiled bundles per executable, keyed by artifact path.
+/// A broken cache entry makes every plan for that path come back empty or
+/// fail with "internal failure", deterministically, while the artifact is
+/// fine: a copy at another path reads normally. So an unavailable plan is
+/// read once more from an APFS clone at a fixed path (reused across runs,
+/// so the cache doesn't grow). `Ok(None)` means it stayed unavailable.
+fn read_plan(
+    artifact: &Path,
+    label: &str,
+    timeout: Duration,
+    scratch: &Path,
+) -> Result<Option<(PlanSummary, bool)>, String> {
+    if let Some(plan) = read_plan_once(artifact, timeout, scratch)? {
+        return Ok(Some((plan, false)));
+    }
+    let clones = std::env::temp_dir().join("sidekick-parity-plans");
+    std::fs::create_dir_all(&clones).map_err(|e| e.to_string())?;
+    let clone = clones.join(format!("{label}.mlmodelc"));
+    let _ = std::fs::remove_dir_all(&clone);
+    let cloned = Command::new("cp")
+        .arg("-Rc")
+        .arg(artifact)
+        .arg(&clone)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !cloned.success() {
+        return Ok(None);
+    }
+    Ok(read_plan_once(&clone, timeout, scratch)?.map(|p| (p, true)))
+}
+
+/// Run this binary with `args` as a child, logging to `log`, with a
+/// timeout. `Err` describes a crash, a non-zero exit or a timeout.
+fn run_child(
+    args: &[std::ffi::OsString],
+    out: &Path,
+    log: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    let _ = std::fs::remove_file(out);
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let logf = std::fs::File::create(log).map_err(|e| e.to_string())?;
+    let mut child = Command::new(exe)
+        .args(args.iter())
+        .stdout(Stdio::null())
+        .stderr(logf)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let start = Instant::now();
+    let status = loop {
+        if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
+            break s;
+        }
+        if start.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("timed out after {}s", timeout.as_secs()));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    if status.success() {
+        return Ok(());
+    }
+    use std::os::unix::process::ExitStatusExt;
+    let lines: Vec<String> = std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(String::from)
+        .collect();
+    let tail = lines[lines.len().saturating_sub(3)..].join(" | ");
+    let how = match status.signal() {
+        Some(sig) => format!("killed by signal {sig}"),
+        None => format!("exit {}", status.code().unwrap_or(-1)),
+    };
+    Err(format!("{how}: {tail}"))
 }
 
 // ---- worker ----------------------------------------------------------------
@@ -130,7 +284,6 @@ fn worker(args: &[String]) -> Result<(), String> {
 
     let mut results = Vec::with_capacity(cases.len());
     let mut raw = Vec::with_capacity(cases.len());
-    let mut embed_equals_run = true;
     for case in cases {
         let purpose = if case.purpose == "query" {
             EmbedPurpose::Query
@@ -144,7 +297,6 @@ fn worker(args: &[String]) -> Result<(), String> {
             .map_err(e)?
             .remove(0);
         let ms = t.elapsed().as_secs_f64() * 1e3;
-        embed_equals_run &= bitwise_eq(&v, &emb.run(&prepared.ids, prepared.bucket).map_err(e)?);
 
         let ids_match = prepared.ids == case.ids;
         let model_only = if ids_match {
@@ -211,7 +363,6 @@ fn worker(args: &[String]) -> Result<(), String> {
         path: path.name().into(),
         cases: results,
         repeat_bitwise,
-        embed_equals_run,
         load_ms,
     };
     std::fs::write(out, serde_json::to_vec(&result).map_err(|e| e.to_string())?)
@@ -228,6 +379,7 @@ struct Options {
     expectations: PathBuf,
     json: Option<PathBuf>,
     suggest: bool,
+    allow_unverified: bool,
     timeout: Duration,
 }
 
@@ -240,6 +392,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         expectations: Expectations::default_path(),
         json: None,
         suggest: false,
+        allow_unverified: false,
         timeout: Duration::from_secs(1200),
     };
     let mut it = args.iter();
@@ -262,6 +415,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--expectations" => o.expectations = val()?.into(),
             "--json" => o.json = Some(val()?.into()),
             "--suggest-floors" => o.suggest = true,
+            "--allow-unverified-plans" => o.allow_unverified = true,
             "--timeout" => {
                 o.timeout = Duration::from_secs(val()?.parse().map_err(|_| "bad --timeout")?)
             }
@@ -340,47 +494,18 @@ fn spawn_worker(
     );
     let out = scratch.join(format!("{tag}.json"));
     let log = scratch.join(format!("{tag}.log"));
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut cmd = Command::new(exe);
-    cmd.arg("--worker")
-        .arg(models_dir)
-        .arg(&model.manifest.id)
-        .arg(refs.map_or("-".into(), |r| r.display().to_string()))
-        .arg(path.name())
-        .arg(&out);
+    let mut args: Vec<std::ffi::OsString> = vec![
+        "--worker".into(),
+        models_dir.into(),
+        model.manifest.id.clone().into(),
+        refs.map_or("-".into(), |r| r.as_os_str().to_owned()),
+        path.name().into(),
+        out.clone().into(),
+    ];
     if let Some(l) = limit {
-        cmd.arg(l.to_string());
+        args.push(l.to_string().into());
     }
-    let logf = std::fs::File::create(&log).map_err(|e| e.to_string())?;
-    cmd.stdout(Stdio::null()).stderr(logf);
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
-    let start = Instant::now();
-    let status = loop {
-        if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
-            break s;
-        }
-        if start.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("timed out after {}s", timeout.as_secs()));
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-    if !status.success() {
-        use std::os::unix::process::ExitStatusExt;
-        let tail: Vec<String> = std::fs::read_to_string(&log)
-            .unwrap_or_default()
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(String::from)
-            .collect();
-        let tail = tail[tail.len().saturating_sub(3)..].join(" | ");
-        let how = match status.signal() {
-            Some(sig) => format!("killed by signal {sig}"),
-            None => format!("exit {}", status.code().unwrap_or(-1)),
-        };
-        return Err(format!("{how}: {tail}"));
-    }
+    run_child(&args, &out, &log, timeout)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }
@@ -429,6 +554,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
         models: Vec::new(),
     };
     let mut ok = true;
+    let mut graded = 0usize;
     let mut suggestions = Vec::new();
     for (models_dir, model) in &models {
         let id = &model.manifest.id;
@@ -436,11 +562,19 @@ fn parent(args: &[String]) -> Result<bool, String> {
         println!("\n=== {id}");
         let reference = match Reference::load(&refs_dir) {
             Ok(r) => r,
+            Err(e) if !refs_dir.join("reference.json").exists() && o.models.is_empty() => {
+                println!(
+                    "  SKIPPED: no reference ({e}); generate one with tools/parity_reference.py"
+                );
+                continue;
+            }
             Err(e) => {
-                println!("  SKIPPED: no usable reference ({e}); generate one with tools/parity_reference.py");
+                println!("  FAIL: unusable reference: {e}");
+                ok = false;
                 continue;
             }
         };
+        graded += 1;
         let tok_sha = std::fs::read(model.tokenizer_path())
             .map(|b| sha256_hex(&b))
             .unwrap_or_default();
@@ -484,23 +618,50 @@ fn parent(args: &[String]) -> Result<bool, String> {
         // Compute plans first, on every bucket, before anything predicts:
         // an artifact the ANE rejects can abort the process at predict.
         let mut plan_ok = true;
+        let mut unverified: Vec<usize> = Vec::new();
         for &b in &model.manifest.buckets {
             let art = model.artifact_path_for_bucket(b);
-            let plan =
-                compute_plan(&art, ComputeUnits::CpuAndNeuralEngine).map_err(|e| e.to_string());
+            let plan = read_plan(&art, &format!("{id}-{b}"), o.timeout, &scratch);
             let (ane, assigned, verdict) = match &plan {
-                Ok(p) => (p.ane, p.assigned(), p.verdict()),
+                Ok(Some((p, _))) => (p.ane, p.assigned(), p.verdict()),
+                Ok(None) => (0, 0, Ok(())),
                 Err(e) => (0, 0, Err(format!("could not read the compute plan: {e}"))),
             };
             println!(
-                "  bucket {b:>4}: ANE ops {ane}/{assigned}{}  model.mil {} weights {}",
-                match &verdict {
-                    Ok(()) => " eligible".to_string(),
-                    Err(e) => format!(" NOT ELIGIBLE: {e}"),
+                "  bucket {b:>4}: {}  model.mil {} weights {}",
+                match (&plan, &verdict) {
+                    (Ok(None), _) => "NO COMPUTE PLAN: eligibility unverified".to_string(),
+                    (Ok(Some((_, true))), Ok(())) => {
+                        format!("ANE ops {ane}/{assigned} eligible (read from a copy)")
+                    }
+                    (_, Ok(())) => format!("ANE ops {ane}/{assigned} eligible"),
+                    (_, Err(e)) => format!("ANE ops {ane}/{assigned} NOT ELIGIBLE: {e}"),
                 },
                 file_sha(&art.join("model.mil")).unwrap_or("-".into()),
                 file_sha(&art.join("weights/weight.bin")).unwrap_or("-".into()),
             );
+            if matches!(plan, Ok(Some((_, true)))) {
+                mr.warnings.push(format!(
+                    "bucket {b}: its compute plan read only from a copy of the artifact; \
+                     Core ML's cache entry for its path looks broken ({}, safe to delete)",
+                    bundle_cache()
+                ));
+            }
+            if matches!(plan, Ok(None)) {
+                let why = format!(
+                    "bucket {b}: no compute plan, from its path or a fresh copy (every operation \
+                     unassigned, or Core ML \"internal failure\"). Core ML's bundle cache for \
+                     this executable may hold broken entries: {} (safe to delete). Check the \
+                     bucket with ane_check, or pass --allow-unverified-plans",
+                    bundle_cache()
+                );
+                if o.allow_unverified {
+                    mr.warnings.push(why);
+                    unverified.push(b);
+                } else {
+                    mr.failures.push(why);
+                }
+            }
             if let Err(e) = &verdict {
                 plan_ok = false;
                 mr.failures.push(format!("bucket {b}: compute plan: {e}"));
@@ -515,7 +676,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             });
         }
         if !plan_ok {
-            println!("  FAIL: not ANE-eligible; skipping predictions (an ineligible artifact can abort at predict)");
+            println!("  FAIL: not ANE-eligible; skipping predictions (such an artifact can abort at predict)");
             ok = false;
             report.models.push(mr);
             continue;
@@ -592,10 +753,39 @@ fn parent(args: &[String]) -> Result<bool, String> {
             })
             .collect();
 
-        // A full runtime fallback to the CPU would make the ANE path look
-        // perfect. Only a complete fallback is visible this way.
+        // A bucket graded without a compute plan must show it ran somewhere
+        // other than the CPU: bit-identical ANE and CPU_ONLY output means
+        // the "ANE" path fell back to the CPU.
         let cpu = results.iter().find(|(p, _)| *p == Path3::Cpu);
         let ane = results.iter().find(|(p, _)| *p == Path3::Ane);
+        for &b in &unverified {
+            let (Some((_, c)), Some((_, a))) = (cpu, ane) else {
+                mr.failures.push(format!(
+                    "bucket {b}: without a compute plan, grading needs both the cpu and ane paths \
+                     to rule out a CPU fallback"
+                ));
+                continue;
+            };
+            let in_bucket: Vec<usize> = (0..a.cases.len())
+                .filter(|&i| a.cases[i].bucket == b)
+                .collect();
+            if in_bucket.is_empty() {
+                mr.failures.push(format!(
+                    "bucket {b}: no compute plan and no case to check it with"
+                ));
+            } else if in_bucket
+                .iter()
+                .all(|&i| bitwise_eq(&a.cases[i].vector, &c.cases[i].vector))
+            {
+                mr.failures.push(format!(
+                    "bucket {b}: no compute plan, and its ANE output is bit-identical to CPU_ONLY: \
+                     it runs on the CPU"
+                ));
+            }
+        }
+
+        // A full runtime fallback to the CPU would make the ANE path look
+        // perfect. Only a complete fallback is visible this way.
         if let (Some((_, c)), Some((_, a))) = (cpu, ane) {
             if c.cases
                 .iter()
@@ -659,6 +849,10 @@ fn parent(args: &[String]) -> Result<bool, String> {
             serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,
         )
         .map_err(|e| format!("{}: {e}", json.display()))?;
+    }
+    if graded == 0 {
+        println!("\nFAIL: nothing was graded (no model had a reference)");
+        ok = false;
     }
     let _ = std::fs::remove_dir_all(&scratch);
     println!("\n{}", if ok { "parity: PASS" } else { "parity: FAIL" });

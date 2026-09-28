@@ -92,7 +92,10 @@ impl PlanSummary {
     /// Whether the plan puts the model on the ANE; `Err` explains why not.
     pub fn verdict(&self) -> Result<(), String> {
         if self.assigned() == 0 {
-            return Err("no operations are assigned to any compute device".into());
+            return Err("no operations are assigned to any compute device (a known-good \
+                        artifact reads this way when Core ML's bundle cache entry for its \
+                        path is broken; re-read a copy of it at another path)"
+                .into());
         }
         let heavy: Vec<&str> = self
             .off_ane_ops

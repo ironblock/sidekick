@@ -25,6 +25,14 @@ const PLAN_TIMEOUT: Duration = Duration::from_secs(300);
 /// Summarize the compute plan of a compiled model (`.mlmodelc`) for the
 /// given compute units. Requires macOS 14.4. Only ML programs have
 /// per-operation plans; neural-network and pipeline models are an error.
+///
+/// A plan can come back empty (every operation unassigned) or fail with
+/// "internal failure" while the artifact is fine: Core ML caches compiled
+/// bundles per executable, keyed by artifact path, and a broken entry fails
+/// every read of that path. A copy at another path reads normally. An empty
+/// summary fails [`PlanSummary::verdict`] without the model being
+/// ineligible, so re-read from a copy before concluding anything; the
+/// parity suite does.
 pub fn compute_plan(path: &Path, units: ComputeUnits) -> Result<PlanSummary> {
     if !available!(macos = 14.4) {
         return Err(Error::Inference("Core ML compute plans need macOS 14.4 or later".into()));

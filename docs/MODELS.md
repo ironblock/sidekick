@@ -277,9 +277,11 @@ measure the ecosystem, not sidekick:
   repeated-syllable input. sidekick's ANE path is 0.9994.
 - onnx-community's EmbeddingGemma exports, fp32 and fp16 alike, differ from
   sentence-transformers at 0.9936 on inputs of 400 tokens or more, and match
-  below about 200. That fits a different sliding-window convention
-  (transformers halves the window for bidirectional models, D17), not an
-  error in either. sidekick follows sentence-transformers: its CPU path
+  below about 200. That fits the export applying Gemma's full 512-token
+  window, which leaves no band within 512 tokens. transformers halves the
+  window for bidirectional models (D17), and in fp32, no band against the
+  halved window measures 0.997 on a 394-token text. It's a convention
+  difference, not an error in either. sidekick follows sentence-transformers: its CPU path
   scores 0.99989 on the same inputs. The export's q8 variant reaches 0.972.
 
 **Running it.**

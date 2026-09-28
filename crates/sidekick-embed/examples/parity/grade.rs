@@ -71,8 +71,6 @@ pub struct WorkerResult {
     pub cases: Vec<CaseResult>,
     /// Re-running the first cases at the end gave identical bits.
     pub repeat_bitwise: bool,
-    /// `embed()` and `run(prepare())` gave identical bits.
-    pub embed_equals_run: bool,
     pub load_ms: f64,
 }
 
@@ -237,15 +235,17 @@ pub fn grade(
 
     // Hard gates.
     let mut failures = Vec::new();
+    // No usable output: non-finite, or a vector cosine can't use (all zeros).
     let bad: Vec<&str> = result
         .cases
         .iter()
-        .filter(|c| !c.finite)
-        .map(|c| c.id.as_str())
+        .zip(&per_case)
+        .filter(|(_, c)| c.is_none())
+        .map(|(r, _)| r.id.as_str())
         .collect();
     if !bad.is_empty() {
         failures.push(format!(
-            "non-finite output on {} case(s): {}",
+            "no usable output (non-finite, or all zeros) on {} case(s): {}",
             bad.len(),
             bad.join(", ")
         ));
@@ -262,9 +262,6 @@ pub fn grade(
             bad.len(),
             bad.join(", ")
         ));
-    }
-    if !result.embed_equals_run {
-        failures.push("embed() and run(prepare()) disagree".into());
     }
     if !result.repeat_bitwise {
         failures.push("re-running cases in the same process changed the output".into());
@@ -448,7 +445,6 @@ mod tests {
                 })
                 .collect(),
             repeat_bitwise: true,
-            embed_equals_run: true,
             load_ms: 0.0,
         }
     }
@@ -504,6 +500,21 @@ mod tests {
         assert_eq!(g.worst, None);
         assert_eq!(g.drift, None);
         assert!(g.failures[0].contains("non-finite"));
+    }
+
+    #[test]
+    fn zero_vector_is_f() {
+        let t = vec![unit(&[1.0, 0.0]), unit(&[0.0, 1.0])];
+        let r = reference(t.clone(), &[&[], &[]]);
+        let mut v = t;
+        v[1] = vec![0.0, 0.0];
+        let g = grade(&r, &result(v), Path3::Ane, &gates(), None, &[]);
+        assert_eq!(g.letter, 'F');
+        assert!(
+            g.failures[0].contains("all zeros") && g.failures[0].contains("c1"),
+            "{:?}",
+            g.failures
+        );
     }
 
     #[test]

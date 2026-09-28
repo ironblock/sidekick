@@ -497,6 +497,15 @@ A failing plan ends the run before any prediction. That matters on
 macOS 27, where predicting with that flexible-shape artifact aborts the
 process with an Objective-C exception, whatever the compute units.
 
+A plan can come back empty (every operation unassigned) or fail with
+"internal failure". On macOS 27 this happened on 2–4 of 15 buckets per run
+while other Core ML work was running on the machine, in fresh processes
+too, and the same artifacts read normally later. `verdict` fails an empty
+plan, so it must not be read as "ineligible". The parity suite (D26)
+retries an unavailable plan and then reports the bucket's eligibility as
+unverified. A plan that assigns compute-heavy operations off the ANE is
+the only plan result that fails a model.
+
 The latency ratio is still measured and reported, as runtime evidence.
 The plan is the compiler's intent and can't see a runtime ANE compile
 failure; a ratio near 1.0 would. `ane_check` warns below 1.1x but doesn't
@@ -686,10 +695,12 @@ targets) and references from `tools/parity_reference.py`.
   being folded away.
 
 **Engineering choices.**
-- **An example binary, not an ignored test.** Each (model, path) runs in its
+- **An example binary, not an ignored test.** Each compute plan is read in
+  its own child process. One that comes back empty is retried and then
+  reported as unverified, not failed (D24). Each (model, path) runs in its
   own worker process, with a timeout. An Objective-C exception in Core ML
-  (macOS 27 aborts at predict on a flexible-shape artifact) or a stuck ANE
-  compile then costs one cell of the report. The pure logic is unit-tested
+  (on macOS 27 a flexible-shape artifact aborts at predict under
+  `.cpuOnly`) or a stuck ANE compile then costs one cell of the report. The pure logic is unit-tested
   by `cargo test` on every platform (`[[example]] test = true`).
 - **ONNX is report-only.** Published exports run at reference time. They
   measure the ecosystem (gte-modernbert's int8 export: 0.892), and one
