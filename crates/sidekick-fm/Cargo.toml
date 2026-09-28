@@ -1,6 +1,6 @@
 [package]
 name = "sidekick-fm"
-description = "Apple Foundation Models chat backend for sidekick (macOS 26+), via a Swift C-ABI shim"
+description = "Apple Foundation Models chat backend for sidekick (macOS 26+, macOS 27 features when built with the 27 SDK), via a Swift C-ABI shim"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,3 +14,7 @@ sha2 = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+
+[build-dependencies]
+# Reads the SDK's SDKSettings.json to gate macOS 27 APIs at compile time.
+serde_json = { workspace = true }

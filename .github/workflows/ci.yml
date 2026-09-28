@@ -27,20 +27,84 @@ jobs:
         run: cargo check --workspace --target aarch64-apple-darwin --features sidekick-embed/coreml
 
   macos:
-    name: Build + test (macOS)
-    runs-on: macos-latest
+    # The Foundation Models shim compiles differently per SDK: macOS 27
+    # features (token usage, model variant, typed errors) exist only in the
+    # 27 SDK and sit behind `#if SK_SDK_27`. Build and test both paths:
+    # macos-26 carries Xcode 26.x (SDK 26.x), xcode-27 carries Xcode 27.
+    # sidekick-fm's build.rs hard-errors if the shim can't build, so a green
+    # build proves it built. Runtime FM calls still can't run in CI (no Apple
+    # Intelligence on runner VMs); the hardware gates are `smoke-test` and
+    # `ane_check`, run on real Macs. The shim's error-classification
+    # self-test needs no model and does run here.
+    name: Build + test (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, xcode-27]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      # macos-latest is macos-26-arm64 (Xcode 26), so the real Foundation
-      # Models Swift shim compiles here — sidekick-fm's build.rs hard-errors
-      # if it can't, so a green build proves the shim built. Runtime FM calls
-      # still can't run in CI (no Apple Intelligence on runner VMs); the
-      # hardware gates are `smoke-test` and `ane_check`, run on real Macs.
+        with:
+          key: ${{ matrix.runner }}
+      - name: Toolchain in use
+        run: |
+          xcodebuild -version
+          echo "macOS SDK: $(xcrun --show-sdk-version)"
       - name: Test with all features (Core ML + real FM shim + C ABI)
         run: cargo test --workspace --all-features
+      - name: Clippy (macOS-only code, incl. the FFI)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Prove the real FM shim is linked, not the stub
         run: |
           cargo build --release -p sidekick-server --features coreml
           otool -L target/release/sidekickd | grep -q FoundationModels
+          ./target/release/sidekickd --version
+
+  macos27-binary-on-macos26:
+    # A daemon built with the 27 SDK must still load on macOS 26: every
+    # 27-only symbol has to be weak-linked. Building with a 26.0 deployment
+    # target makes dyld bind every import at launch (chained fixups), so a
+    # successful launch on a macOS 26 runner proves it. Stripping stays off
+    # for this build: with a 26.0 deployment target the default debuginfo
+    # strip leaves proc-macro dylibs that macOS 27's dyld refuses to load.
+    name: 27-SDK sidekickd loads on macOS 26
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: minos26
+      - name: Build sidekickd for a macOS 26.0 floor
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "26.0"
+          CARGO_PROFILE_RELEASE_STRIP: none
+        run: |
+          cargo build --release -p sidekick-server --features coreml --bin sidekickd
+          vtool -show-build target/release/sidekickd | grep -E 'minos 26\.0'
+          otool -l target/release/sidekickd | grep -q LC_DYLD_CHAINED_FIXUPS
+          ./target/release/sidekickd --version
+          # Tar to keep the executable bit through the artifact round-trip.
+          tar -C target/release -czf sidekickd.tar.gz sidekickd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidekickd-sdk27-minos26
+          path: sidekickd.tar.gz
+
+  launch-on-macos26:
+    name: Launch 27-SDK sidekickd on macOS 26
+    needs: macos27-binary-on-macos26
+    runs-on: macos-26
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sidekickd-sdk27-minos26
+      - name: Launch (dyld binds every import here)
+        run: |
+          tar -xzf sidekickd.tar.gz
+          sw_vers
+          ./sidekickd --version

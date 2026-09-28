@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use sidekick_server::{build_router, build_state, Config};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -29,6 +29,21 @@ struct Args {
     request_timeout_secs: Option<u64>,
 }
 
+/// `sidekickd --version`: the crate version plus the SDK the Foundation
+/// Models shim was built with, since that decides which macOS 27 features
+/// the binary has. Called once per process, so leaking it for clap's
+/// `'static` requirement is fine.
+fn version() -> &'static str {
+    let text = match sidekick_fm::FM_SDK {
+        "none" => format!("{} (Foundation Models: stub build)", env!("CARGO_PKG_VERSION")),
+        sdk => format!(
+            "{} (Foundation Models shim built with macOS SDK {sdk})",
+            env!("CARGO_PKG_VERSION")
+        ),
+    };
+    Box::leak(text.into_boxed_str())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -38,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let args = Args::parse();
+    let args = Args::from_arg_matches(&Args::command().version(version()).get_matches())?;
     let mut config = Config::load(args.config.as_ref())?;
     if let Some(addr) = args.addr {
         config.addr = addr;
