@@ -5,14 +5,22 @@ and how to tell before spending an afternoon finding out. Every entry here
 was measured on real hardware (Apple Silicon, macOS 26; ANE eligibility
 re-checked on macOS 27); nothing is extrapolated from model cards.
 
+How confident to be in each model on each compute path, graded on inputs
+chosen to break it, is in [Confidence grades](#confidence-grades-the-parity-suite)
+below. That is the number to trust; the converter parity in the first table
+is measured on short prose and can flatter a model (LFM2.5).
+
 Method, for every validated entry:
 - **parity** — worst-case cosine between the Core ML artifact and the fp32
-  torch/sentence-transformers reference over the parity set (short pairs +
-  a ~400-token text), reported per compute path (D17): `CPU_ONLY` proves the
-  conversion is faithful (gate ≥ 0.999), `CPU_AND_NE` is what the ANE
-  actually delivers (gate ≥ 0.985; the embeddinggemma converter gates
-  ≥ 0.999 since its MLP precision rewrite, D17). Check that the long text
-  really fits the bucket: an over-length parity text is silently skipped.
+  torch/sentence-transformers reference over the converter's parity set
+  (short pairs + a ~400-token text), reported per compute path (D17):
+  `CPU_ONLY` proves the conversion is faithful (gate ≥ 0.999), `CPU_AND_NE`
+  is what the ANE delivers on those inputs (gate ≥ 0.985; the
+  embeddinggemma converter gates ≥ 0.999 since its MLP precision rewrite,
+  D17). Check that the long text really fits the bucket: an over-length
+  parity text is silently skipped.
+- **grade** — the parity suite (D26): every compute path, through sidekick's
+  own product code, on a 51-input adversarial corpus.
 - **ANE eligibility** (`cargo run -p sidekick-coreml --example ane_check`),
   the verdict: Core ML's compute plan for `.cpuAndNeuralEngine`, i.e. which
   device each operation is assigned to. It never runs the model and is
@@ -55,7 +63,9 @@ Method, for every validated entry:
 ANE ops are identical at every bucket. On every model, the operations off
 the ANE are mask and cast plumbing plus the embedding `gather` (e.g. bge:
 add, cast, expand_dims, gather, greater_equal, layer_norm, select, sub,
-tile). Nothing compute-heavy is off the ANE. Ratios re-measured on macOS 27
+tile). Nothing compute-heavy is placed off the ANE; bge's fused attention
+ops get no device at all and run correctly through a Core ML fallback (D25).
+Ratios re-measured on macOS 27
 (M1 Max, not a quiet machine):
 
 | model | 128 | 256 | 512 |
@@ -94,8 +104,9 @@ Notes per model:
   CPU_ONLY. The explicit GELU costs ~14% latency at bucket 512 and nothing
   at 128. Ratios in the table's last column predate the rewrite (re-measured
   on macOS 27 above). Live `/v1/embeddings` worst parity 0.999982 over 13
-  inputs, including a 527-token document truncated to 512. ~590 MB per
-  bucket.
+  inputs, including a 527-token document truncated to 512. The parity
+  suite grades it A on the ANE (below; it was D before the rewrite).
+  ~590 MB per bucket.
 - **LFM2.5-Embedding-350M** — the first hybrid (10 short-conv + 6
   full-attention blocks) and the model that motivated conversion
   constraint D: symmetric convs mix neighbors regardless of attention
@@ -108,7 +119,9 @@ Notes per model:
   so no range rewrite is needed despite the model being deeper than bge.
   Ships custom code (`modeling_lfm2_bidirectional.py`, ~140 benign lines —
   read before trusting). Live `/v1/embeddings` worst parity 0.9856 (a
-  483-token text); ~670 MB per bucket, 2.0 GB installed.
+  483-token text); ~670 MB per bucket, 2.0 GB installed. The parity suite
+  finds worse on the ANE: 0.954 on a 39-token URL, and similarity scores
+  moving by up to 0.19 (grade D, below). CPU and GPU stay at 0.9999.
 - **F2LLM-v2-160M** — the first **causal decoder** and first **last-token
   pooling** on the stack. A Qwen3 decoder; its QK-norm keeps activations
   tiny (max ~420), so it converts as cleanly as bge (ANE parity 0.99985). Last-token pooling is baked in-graph via the attention mask
@@ -149,6 +162,169 @@ Notes per model:
   - ~7.8 ms warm for a short text, including HTTP.
 
   ~285 MB per bucket, 0.86 GB installed.
+
+## Confidence grades: the parity suite
+
+The converter parity numbers above come from short prose. The parity suite
+(`crates/sidekick-embed/examples/parity`, D26) grades every validated model
+on every compute path against a deliberately adversarial corpus,
+[fixtures/parity/corpus.toml](../fixtures/parity/corpus.toml). Its 51
+inputs are each tagged with the failure they exist to catch:
+
+- mostly-padding inputs;
+- exact bucket boundaries and over-length truncation;
+- delimiter and special-token floods, and repeated tokens;
+- digits, URLs and code;
+- four scripts.
+
+It runs them through sidekick's product path: the same prefixes,
+tokenizer, truncation, bucketing, padding and pooling the daemon uses.
+Each run happens on `.cpuOnly`, `.cpuAndGPU` and `.cpuAndNeuralEngine`, and
+the output is compared with the model as published: sentence-transformers
+in fp32, one input at a time.
+
+A grade is the worst-case cosine over the corpus, with repeated-token
+stress inputs graded separately:
+
+| grade | worst-case cosine | meaning |
+|---|---|---|
+| **A** | ≥ 0.9999 | indistinguishable from fp32 |
+| **B** | ≥ 0.999 | |
+| **C** | ≥ 0.985 | the converters' ANE acceptance gate |
+| **D** | below 0.985 | |
+| **F** | — | a hard gate failed |
+
+Grades are a best-effort statement about these inputs on this hardware,
+not a bound on every input. How much accuracy the ANE loses depends on the
+content: LFM2.5 loses most on a URL, EmbeddingGemma on a run of digits.
+
+M1 Max, macOS 27.0, September 2026. sidekick serves the ANE column; ms is
+the median per input, ANE (CPU).
+
+| model | CPU | GPU | ANE: worst case | ANE: similarity drift (bias) | ANE: rank flips | ms |
+|---|---|---|---|---|---|---|
+| bge-small-en-v1.5 | A 0.99993 | A 0.999999 | **A** 0.99997 (empty input) | 0.002 (+0.001) | 0 | 1.9 (7.0) |
+| gte-modernbert-base | B 0.99926 | A 0.99998 | **B** 0.99940 (a Markdown list) | 0.010 (+0.003) | 0 | 6.9 (18.6) |
+| F2LLM-v2-160M | B 0.99987 | A 0.999999 | **B** 0.99966 (a run of digits) | 0.006 (0.000) | 0 | 5.3 (13.4) |
+| embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.1 (20.3) |
+| LFM2.5-Embedding-350M | B 0.99990 | A 0.999999 | **D** 0.9536 (a URL) | 0.187 (−0.010) | 1,399 | 13.0 (34.5) |
+
+- **Similarity drift** is the largest change in any pairwise similarity
+  score against fp32. **Bias** is the mean signed change: LFM2.5's ANE
+  scores run systematically low.
+- **Rank flips** counts the triples (anchor, two candidates) whose
+  candidates the reference separates by at least 0.02 and the ANE orders
+  the other way. Only one of the two orders of a pair can qualify, so
+  about 62,000 comparisons count.
+- EmbeddingGemma's Matryoshka dimensions grade the same on the ANE:
+  0.99999 at 512, 256 and 128.
+- EmbeddingGemma graded D before its MLP precision rewrite (D17): 0.975 on
+  a run of digits, drift 0.042 with scores biased +0.009 high, and 122 rank
+  flips.
+
+All five pass every hard gate on every path:
+- token ids identical to the reference pipeline's;
+- finite output;
+- exact pad invariance;
+- bucket invariance of at least 0.9965 on the ANE (LFM2.5; 0.99998 for
+  EmbeddingGemma since its rewrite) and exact on the CPU;
+- bit-identical ANE output across two processes.
+
+**What changes.** LFM2.5's 0.987 in the table above holds for prose. On
+URLs, delimiters and repeated tokens its ANE path falls to 0.954, and a
+similarity threshold calibrated on fp32 vectors can move by 0.19. Its CPU
+and GPU paths stay at 0.9999, so the loss happens on the ANE.
+EmbeddingGemma showed the same pattern until its MLP precision rewrite
+(D17), which recovered it from D to A, so LFM2.5's SwiGLU MLP is the first
+suspect. Until it's fixed, if inputs like these matter, prefer
+bge-small, EmbeddingGemma, gte-modernbert or F2LLM, which are all B or
+better on the ANE.
+
+**Reading a report.** For each model the report prints its lowest cases
+with the CPU, GPU and ANE cosines side by side. The pattern points at a
+layer:
+- every path low: the conversion (the graph isn't the model);
+- the CPU fine but the GPU and ANE low: reduced-precision arithmetic;
+- the CPU and GPU fine but the ANE low: the ANE's execution of a faithful
+  graph;
+- a failed pad- or bucket-invariance gate: masking or padding.
+
+On this hardware the GPU path runs at close to fp32 accuracy (A on every
+model), so "GPU fine, ANE low" isolates the ANE, not fp16 arithmetic in
+general. No rule is automatic. The fused-attention ModernBERT control below
+shows three things at once:
+- GPU 0.99998: the graph is faithful;
+- ANE 0.71, with pad invariance 0.61: the dropped mask;
+- CPU NaN: a separate CPU bug in the same fused op.
+
+"The CPU fails, so it's the conversion" would have misread it, as the
+original diagnosis did (D25).
+
+**Negative controls.** The suite was accepted only after it failed each
+known-bad artifact on the gate that targets it:
+
+| artifact | built with | what fails |
+|---|---|---|
+| flexible-shape bge-small | `convert_bge_small.py --enumerated-shapes` | compute plan: 0 of 362 ops on the ANE. Nothing predicts, so nothing aborts. |
+| fused-attention gte-modernbert | `convert_gte_modernbert.py --attn sdpa` | CPU output non-finite on 43 of 51 inputs; ANE pad invariance 0.61, bucket invariance 0.40, worst case 0.71 |
+| LFM2.5 without pad zeroing | `convert_lfm25_embedding.py --no-pad-zeroing` | pad invariance 0.33–0.39 on every path; worst case 0.46–0.54 |
+| naive truncation, on F2LLM | the daemon with `take(max)` truncation | token ids differ on both over-length inputs; cosine 0.23 |
+
+**ONNX oracles.** Where a model's publisher, or onnx-community, ships ONNX
+exports, the reference generator also runs them in ONNX Runtime on the same
+token ids. The report shows them as report-only columns, never gated. They
+measure the ecosystem, not sidekick:
+- bge-small's and gte-modernbert's fp32 exports match torch at 1.000000,
+  and gte-modernbert's fp16 export at 0.999994.
+- gte-modernbert's published int8 export reaches only 0.892, on a
+  repeated-syllable input. sidekick's ANE path is 0.9994.
+- onnx-community's EmbeddingGemma exports, fp32 and fp16 alike, differ from
+  sentence-transformers at 0.9936 on inputs of 400 tokens or more, and match
+  below about 200. That fits the export applying Gemma's full 512-token
+  window, which leaves no band within 512 tokens. transformers halves the
+  window for bidirectional models (D17), and in fp32, no band against the
+  halved window measures 0.997 on a 394-token text. It's a convention
+  difference, not an error in either. sidekick follows
+  sentence-transformers: its CPU path scores 0.99989 on the same inputs.
+  The export's q8 variant reaches 0.972.
+
+**Running it.**
+
+```sh
+# Once per converted model: reference vectors (Python; ONNX exports optional).
+python tools/parity_reference.py "<data dir>/models/gte-modernbert-base" \
+    --source Alibaba-NLP/gte-modernbert-base \
+    --onnx Alibaba-NLP/gte-modernbert-base:onnx/model_int8.onnx
+# The suite: every model that has a reference (about 10 minutes for five).
+cargo run --release -p sidekick-embed --features coreml --example parity
+```
+
+- Each model runs on each path in its own process, after its compute plan
+  is checked, so an artifact that aborts inside Core ML costs one cell of
+  the report, not the run.
+- [fixtures/parity/expectations.toml](../fixtures/parity/expectations.toml)
+  holds the hard gates and, per chip, floors set at 1.5x the measured error.
+  Floors turn this table into a regression test; `--suggest-floors` prints
+  them from a run.
+- On a chip with no floors, the suite enforces the gates and reports
+  accuracy without judging it. Other Apple Silicon generations have their
+  own ANE and will measure differently.
+- Re-run after every macOS update, because the ANE's numerics come with the
+  OS.
+
+### Confidence by architecture family
+
+For a model that isn't validated yet, the closest validated relative is the
+best available prior. Each family has one validated model so far, so treat
+its grade as a starting expectation, not a promise, and run the suite.
+
+| family | validated | ANE grade | risks seen | inputs that find them |
+|---|---|---|---|---|
+| BERT (bge, MiniLM, e5) | bge-small-en-v1.5 | A | none | — |
+| ModernBERT | gte-modernbert-base; laya's encoder (CLS ≥ 0.997) | B | fused attention drops the mask on the ANE (convert eager); the vectors of delimiter tokens are a little less accurate | pad and bucket invariance; delimiters |
+| Qwen3 decoder, last-token pooling | F2LLM-v2-160M | B | truncation must keep the final token | over-length; the ids gate |
+| Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
+| LFM2 hybrid (conv + attention) | LFM2.5-Embedding-350M | D | convolutions read pad states unless they're zeroed; up to 4.6% ANE loss on URLs and delimiters (suspected: SwiGLU MLP precision, D17) | pad invariance; delimiters, numbers |
 
 ## Incompatible / not integrated
 
@@ -295,7 +471,11 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
 Gates to pass, in order: fp32 rewrite parity ≥ 0.9999 (only if rewriting),
 `CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.985, `ane_check` per bucket (compute
 plan eligible and pad invariance on both paths; its ratio should be clearly
-above 1.0 on a quiet machine), then a live `/v1/embeddings` parity check.
+above 1.0 on a quiet machine). Then generate a reference with
+`tools/parity_reference.py` and run the parity suite. It repeats those gates
+through the product code on every path and adds the adversarial corpus. Its
+grade is the one to publish, and `--suggest-floors` records it for the
+chip.
 
 Flexible input shapes are ruled out (D15), and on macOS 27 they became
 dangerous. A single enumerated-shapes artifact used to run slowly on the
@@ -317,8 +497,10 @@ treat `E5RT ... ANECCompile() FAILED` stderr lines as *possibly transient
 service state*, not proof of a bad artifact — the same file measured 1.48x
 with failures and 2.63x clean forty minutes apart. Re-measure before
 re-converting. Likewise, a compute plan with *every* operation unassigned
-("no operations are assigned to any compute device") can be Core ML state
-tied to the model's path. After many loads in one session, an
-embeddinggemma artifact read that way repeatedly while still predicting
-at ANE speed, and the same file copied to another path read normally
-(2015/2024).
+("no operations are assigned to any compute device"), or "internal
+failure", can be a broken entry in Core ML's compiled-bundle cache for that
+path (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`, D24).
+An embeddinggemma artifact read that way repeatedly while predicting at ANE
+speed, and the same file copied to another path read normally (2015/2024).
+Those caches grow large: the parity suite's reached 40 GB and ane_check's
+25 GB. They're safe to delete.

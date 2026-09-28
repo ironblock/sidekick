@@ -229,7 +229,7 @@ the problem.
   1.0000000 on both paths;
 - live `/v1/embeddings` worst parity 0.999982 over 13 inputs, including
   the long text and a 527-token document truncated to 512;
-- on a separate 51-input adversarial corpus (runs of digits, URLs,
+- on the parity suite's 51-input adversarial corpus (D26: runs of digits, URLs,
   repeated tokens, code, 512-token and over-length inputs), run through
   sidekick's own embedding path: the ANE's worst case went from 0.975 to
   0.99999, pairwise-similarity drift from 0.042 to 0.001, and rank flips at
@@ -290,6 +290,8 @@ offloads (tools/smoke_lfm25_colbert.py), so a late-interaction API surface
 remains possible if wanted. Measured results and a
 "will a new model convert?" checklist live in docs/MODELS.md, which is now
 the registry of validated/incompatible models.
+*Qualified by D26:* 0.987 is LFM2.5's ANE parity on prose. On URLs and
+delimiters the ANE reaches 0.954, and similarity scores move by up to 0.19.
 
 ## D20 — Two more architecture classes: ModernBERT rejected, Qwen3 decoder validated
 Triaged the MTEB/CoIR leaderboards and validated the two families sidekick
@@ -495,6 +497,17 @@ A failing plan ends the run before any prediction. That matters on
 macOS 27, where predicting with that flexible-shape artifact aborts the
 process with an Objective-C exception, whatever the compute units.
 
+A plan can come back empty (every operation unassigned) or fail with
+"internal failure" while the artifact is fine. Core ML caches compiled
+bundles per executable (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`),
+keyed by artifact path. A broken entry makes every plan read for that path
+fail the same way, until the entry is gone. A copy of the artifact at
+another path reads normally, and so does the same path read by a
+differently named executable. On macOS 27 this hit 4 of 15 buckets, in a
+cache that had grown to 40 GB. `verdict` fails an empty plan, so don't read
+it as "ineligible". The parity suite (D26) re-reads an unavailable plan from
+an APFS clone before failing the model.
+
 The latency ratio is still measured and reported, as runtime evidence.
 The plan is the compiler's intent and can't see a runtime ANE compile
 failure; a ratio near 1.0 would. `ane_check` warns below 1.1x but doesn't
@@ -644,6 +657,112 @@ Consequences:
   parity 0.999787, pad invariance 1.0, and CPU output that stays finite.
 - Fused-attention models keep the macOS15 target, and pad invariance stays
   the run-time gate.
+
+## D26 — A parity suite grades every model on every compute path
+Before this, a model's accuracy was checked by its converter, on short
+prose, through coremltools rather than sidekick's own code. Two bugs got
+through that way:
+- ModernBERT's dropped attention mask (D25) hid behind mostly-padding
+  parity inputs and a NaN swallowed by `min`.
+- F2LLM's truncation bug lived in the server, not in the model.
+
+**What.** `crates/sidekick-embed/examples/parity`, with a shared corpus
+(`fixtures/parity/corpus.toml`: 51 inputs, each tagged with the failure it
+targets) and references from `tools/parity_reference.py`.
+- **Reference.** sentence-transformers in fp32, one input at a time, using
+  the model's own prompts. The manifest's prefix is used only where the
+  model publishes none (bge-small).
+- **Product path.** Every path goes through `CoremlEmbedder`: prefix,
+  tokenizer, truncation, bucketing, padding with id 0, pooling,
+  normalization. Its `prepare`/`run` split is public but `doc(hidden)`, so
+  the suite can check token ids and re-run the same ids in larger buckets.
+- **Gates.** The suite fails a model on:
+  - a failing compute plan, read on every bucket before anything predicts;
+  - non-finite output, including a zero vector;
+  - token ids that differ from the reference pipeline's;
+  - bucket invariance below 0.999999 on the CPU, 0.9999 on the GPU or 0.995
+    on the ANE (each bucket is compiled separately there, and the ANE's
+    fp16 accumulation follows the tiling);
+  - pad invariance below 0.99999, with random pad ids from the vocabulary;
+  - output that changes when re-run, or that differs between two ANE
+    processes.
+- **Floors.** Accuracy is gated only where a floor is recorded for the chip
+  (`fixtures/parity/expectations.toml`): 1.5x the measured error, and at
+  least 1e-5 below the measurement. Each ANE generation rounds differently,
+  so a floor measured on an M1 Max would give contributors on other chips
+  false failures.
+- **Grades** (A ≥ 0.9999, B ≥ 0.999, C ≥ 0.985, D below, F for a failed
+  gate) are documentation vocabulary for MODELS.md and are never gated.
+  Every aggregate is NaN-poisoning, and a non-finite value fails instead of
+  being folded away.
+
+**Engineering choices.**
+- **An example binary, not an ignored test.** Each compute plan is read in
+  its own child process. One Core ML can't produce is re-read from an APFS
+  clone of the artifact (D24). If that fails too, the model fails, unless
+  `--allow-unverified-plans` is given. In that case the model still fails
+  if that bucket's ANE output is bit-identical to CPU_ONLY, which is a CPU
+  fallback. Each (model, path) runs in its own worker process, with a
+  timeout. An Objective-C exception in Core ML
+  (on macOS 27 a flexible-shape artifact aborts at predict under
+  `.cpuOnly`) or a stuck ANE compile then costs one cell of the report. The pure logic is unit-tested
+  by `cargo test` on every platform (`[[example]] test = true`).
+- **ONNX is report-only.** Published exports run at reference time. They
+  measure the ecosystem (gte-modernbert's int8 export: 0.892), and one
+  disagreement with sentence-transformers turned out to be a convention
+  difference, not an error (EmbeddingGemma past about 257 tokens). Neither
+  says anything about sidekick's correctness.
+- **No automatic attribution.** Rules such as "CPU fails → conversion"
+  would have misread the fused-attention ModernBERT artifact, as D25's first
+  diagnosis did. The report prints each low case's CPU, GPU and ANE results
+  side by side instead, and MODELS.md explains how to read them.
+- **References aren't committed.** They derive from weights users convert
+  themselves. They record the corpus hash (comments excluded), the
+  tokenizer.json hash, and the checkpoint's Hugging Face id and revision,
+  never a local path. The suite refuses a stale reference.
+
+**Acceptance.** An adversarial review required the suite to fail known-bad
+artifacts on the gates that target them, and it does:
+- a flexible-shape bge: compute plan, before any prediction;
+- fused-attention gte-modernbert: CPU NaN, ANE pad invariance 0.61;
+- LFM2.5 without pad zeroing: pad invariance 0.33–0.39 on every path;
+- naive truncation: token ids on both over-length inputs.
+
+The converters gained `--attn sdpa` and `--no-pad-zeroing` to rebuild the
+last two on demand.
+
+**Findings (M1 Max, macOS 27.0).**
+- On the ANE, bge-small and EmbeddingGemma grade A, and gte-modernbert and
+  F2LLM grade B.
+- LFM2.5 grades **D**: 0.954 on a URL, pairwise similarity drifting by up to
+  0.187, and 1,399 rank flips at a 0.02 margin. Its CPU and GPU paths are
+  0.9999, so the graph is faithful and the loss happens on the ANE. D19's
+  0.987 holds for prose only.
+- EmbeddingGemma graded D too (0.975 on a run of digits, drift 0.042, 122
+  flips) until its MLP precision rewrite (D17's amendment). The rewrite
+  addresses two limits of ANE arithmetic: the `linear` op loses precision on
+  small inputs, and the native GELU is coarse. It now grades A (0.99999,
+  drift 0.001, no flips), and its ANE bucket invariance rose from 0.9977 to
+  0.99998. So an ANE-only loss can be a conversion problem to fix, not just
+  something to measure. LFM2.5's SwiGLU MLP is the prime suspect for the
+  same cause.
+- The GPU path measures at fp32-like accuracy on every model (A). "GPU fine,
+  ANE low" therefore isolates the ANE, not fp16 arithmetic in general.
+
+**The 0.985 gate.** It stays the converters' acceptance gate on their own
+parity sets; the EmbeddingGemma converter now gates at 0.999. A D on the
+adversarial corpus doesn't remove a model: the grade is published, and this
+chip's floor makes it a regression test. LFM2.5 keeps the ANE default while
+its MLP is re-examined against D17's rules.
+
+**Not done.**
+- Per-token grading for models whose token vectors are the product (laya,
+  ColBERT). Every registry model pools inside its graph, so the suite can't
+  see per-token vectors.
+- Parity through the HTTP layer.
+- LFM2.5's ANE loss.
+- Tightening the ANE bucket-invariance gate (0.995, set by LFM2.5's 0.9965)
+  once LFM2.5 is fixed.
 
 ## Hardware verification status
 

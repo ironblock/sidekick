@@ -6,6 +6,13 @@ examples/manifests/lfm2.5-embedding-350m.
 
 Usage:
     python tools/convert_lfm25_embedding.py <hf-model-dir> <install-dir> [buckets...]
+    python tools/convert_lfm25_embedding.py --no-pad-zeroing <hf-model-dir> <install-dir> [buckets...]
+
+    --no-pad-zeroing:  NEGATIVE CONTROL. Skip constraint D, so the short
+                       convs read pad states (0.905 parity when measured),
+                       to prove the parity suite catches it. Parity failures
+                       are reported, not fatal. Never install the result
+                       where the daemon looks.
 
     hf-model-dir: local snapshot of LiquidAI/LFM2.5-Embedding-350M
                   (the model ships custom code — modeling_lfm2_bidirectional.py —
@@ -262,9 +269,15 @@ def convert_bucket(wrapper, seq_len, workdir):
     return pkg
 
 
-def parity_check(tokenizer, pkg, seq_len, refs):
+def parity_check(tokenizer, pkg, seq_len, refs, gate_failures=True):
     """Cosine vs the fp32 reference on BOTH Espresso compute paths — a pass
-    under .ALL alone hides fp16/plan-compilation failures (D17 constraint 9)."""
+    under .ALL alone hides fp16/plan-compilation failures (D17 constraint 9).
+    A negative control reports failures instead of stopping on them."""
+    def fail(message):
+        if gate_failures:
+            raise SystemExit(message)
+        print(f"negative control, expected: {message}")
+
     results = {}
     for label, cu, gate in (("CPU_AND_NE", ct.ComputeUnit.CPU_AND_NE, 0.985),
                             ("CPU_ONLY", ct.ComputeUnit.CPU_ONLY, 0.999)):
@@ -274,10 +287,12 @@ def parity_check(tokenizer, pkg, seq_len, refs):
             ids, mask = padded_inputs(tokenizer, DOC_PREFIX + s, seq_len)
             out = m.predict({"input_ids": ids, "attention_mask": mask})["embedding"][0]
             if not np.isfinite(out).all():
-                raise SystemExit(f"seq {seq_len} [{label}]: non-finite output — see constraint A")
+                fail(f"seq {seq_len} [{label}]: non-finite output — see constraint A")
+                worst = float("nan")
+                break
             worst = min(worst, cosine(ref, out))
         if worst < gate:
-            raise SystemExit(f"seq {seq_len} [{label}]: parity cosine {worst:.6f} < {gate}")
+            fail(f"seq {seq_len} [{label}]: parity cosine {worst:.6f} < {gate}")
         # latency, as an ANE-residency proxy (the real gate is ane_check)
         ids, mask = padded_inputs(tokenizer, DOC_PREFIX + PARITY_SENTENCES[0], seq_len)
         for _ in range(3):
@@ -301,9 +316,14 @@ def compile_to_mlmodelc(pkg, install_dir, seq_len):
 
 
 def main():
-    src = Path(sys.argv[1]).expanduser()
-    install_dir = Path(sys.argv[2]).expanduser()
-    buckets = [int(b) for b in sys.argv[3:]] or [128, 256, 512]
+    args = sys.argv[1:]
+    negative_control = args[:1] == ["--no-pad-zeroing"]
+    if negative_control:
+        args = args[1:]
+        print("NEGATIVE CONTROL: convs read pad states (constraint D skipped)")
+    src = Path(args[0]).expanduser()
+    install_dir = Path(args[1]).expanduser()
+    buckets = [int(b) for b in args[2:]] or [128, 256, 512]
     install_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = AutoTokenizer.from_pretrained(src)
@@ -320,7 +340,8 @@ def main():
     # checkpoint — assert in case a future LFM variant flips it.
     assert not getattr(model.config, "conv_bias", False), \
         "conv_bias=true would break constraint D's pad-zeroing exactness"
-    install_patches()  # after load — see install_patches() ordering note
+    # after load — see install_patches() ordering note
+    install_patches(conv_pad_zeroing=not negative_control)
 
     refs = reference_embeddings(model, tokenizer)
 
@@ -328,7 +349,7 @@ def main():
         for seq in buckets:
             wrapper = ClsWrapper(model, seq).eval()
             pkg = convert_bucket(wrapper, seq, workdir)
-            res = parity_check(tokenizer, pkg, seq, refs)
+            res = parity_check(tokenizer, pkg, seq, refs, gate_failures=not negative_control)
             dest = compile_to_mlmodelc(pkg, install_dir, seq)
             for label, (cos, ms) in res.items():
                 print(f"bucket {seq} [{label}]: parity cos={cos:.6f} {ms:.1f}ms")

@@ -1,0 +1,152 @@
+# What the parity suite (crates/sidekick-embed/examples/parity) enforces.
+# See docs/MODELS.md for how to run it and read its report.
+#
+# [gates] hold for every model on every chip: a failure means a broken
+# artifact or a broken product path, not a less accurate one.
+#
+# [[floor]] entries are regression tests for accuracy, measured per chip
+# because each generation of Neural Engine rounds differently. A floor is
+# the measured value less a margin proportional to the measured error
+# (`--suggest-floors` prints them from a run). On a chip with no floors the
+# suite enforces the gates and reports accuracy without judging it.
+
+[gates]
+# Cosine between a case's output in its natural bucket and in every larger
+# one. The CPU path is bitwise bucket-invariant; the GPU and ANE compile
+# each bucket separately. On the ANE, precision lost in a model's MLP shows
+# up here too: LFM2.5 measures 0.9965, and EmbeddingGemma measured 0.9977
+# before its MLP rewrite (D17) and 0.99998 after. A dropped attention mask
+# measured 0.40-0.94.
+bucket_invariance = { cpu = 0.999999, gpu = 0.9999, ane = 0.995 }
+# Cosine between pad ids 0 and random pad ids in the same bucket: the mask
+# hides pads, so nothing may change.
+pad_invariance = 0.99999
+# Cosine between two ANE runs of the same inputs in separate processes.
+determinism = 0.999999
+# Similarity gap below which a path may reorder two candidates (report only).
+rank_margin = 0.02
+
+# Apple M1 Max, macOS 27.0 (September 2026). The ANE floor for
+# lfm2.5-embedding-350m is grade D: see docs/MODELS.md "Confidence grades"
+# and D26. embeddinggemma-300m's are from after its MLP precision rewrite
+# (D17).
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "bge-small-en-v1.5"
+path = "cpu"
+worst = 0.999893
+stress = 0.999974
+drift = 0.003907
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "bge-small-en-v1.5"
+path = "gpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000652
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "bge-small-en-v1.5"
+path = "ane"
+worst = 0.999949
+stress = 0.999964
+drift = 0.003107
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "embeddinggemma-300m"
+path = "cpu"
+worst = 0.999838
+stress = 0.999665
+drift = 0.004762
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "embeddinggemma-300m"
+path = "gpu"
+worst = 0.999988
+stress = 0.999987
+drift = 0.000719
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "embeddinggemma-300m"
+path = "ane"
+worst = 0.999977
+stress = 0.999958
+drift = 0.001693
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "f2llm-v2-160m"
+path = "cpu"
+worst = 0.999808
+stress = 0.99995
+drift = 0.006575
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "f2llm-v2-160m"
+path = "gpu"
+worst = 0.999988
+stress = 0.999989
+drift = 0.000593
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "f2llm-v2-160m"
+path = "ane"
+worst = 0.999489
+stress = 0.99975
+drift = 0.008486
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "lfm2.5-embedding-350m"
+path = "cpu"
+worst = 0.999843
+stress = 0.999879
+drift = 0.009993
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "lfm2.5-embedding-350m"
+path = "gpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000868
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "lfm2.5-embedding-350m"
+path = "ane"
+worst = 0.930391
+stress = 0.949242
+drift = 0.279782
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "gte-modernbert-base"
+path = "cpu"
+worst = 0.99889
+stress = 0.999059
+drift = 0.006882
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "gte-modernbert-base"
+path = "gpu"
+worst = 0.999967
+stress = 0.999965
+drift = 0.001798
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "gte-modernbert-base"
+path = "ane"
+worst = 0.999106
+stress = 0.999768
+drift = 0.015093

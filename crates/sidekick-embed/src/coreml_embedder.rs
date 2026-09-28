@@ -21,6 +21,7 @@ use tokenizers::Tokenizer;
 
 pub struct CoremlEmbedder {
     id: String,
+    units: ComputeUnits,
     dims: usize,
     matryoshka: Vec<usize>,
     resolved: ResolvedModel,
@@ -57,13 +58,34 @@ fn truncate_preserving_last(raw: &[u32], max: usize) -> Vec<i32> {
     }
 }
 
+/// The token ids sidekick feeds the model for one input, and the bucket they
+/// go in. Exposed so tests can check tokenization against a reference
+/// pipeline and run the same ids through a larger bucket.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prepared {
+    /// Real token ids (prefix applied, specials included, truncated to the
+    /// largest bucket), before padding.
+    pub ids: Vec<i32>,
+    /// The smallest bucket that fits `ids`.
+    pub bucket: usize,
+}
+
 impl CoremlEmbedder {
+    /// Load for the ANE (`.cpuAndNeuralEngine`), as the daemon does.
     pub fn load(model: &ResolvedModel) -> Result<Self> {
+        Self::load_with(model, ComputeUnits::CpuAndNeuralEngine)
+    }
+
+    /// Load with an explicit compute-unit preference. sidekick only serves
+    /// from the ANE preference; the others exist so tests can compare paths.
+    pub fn load_with(model: &ResolvedModel, units: ComputeUnits) -> Result<Self> {
         let m = &model.manifest;
         let tokenizer = Tokenizer::from_file(model.tokenizer_path())
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
         let embedder = Self {
             id: m.id.clone(),
+            units,
             dims: m.dims,
             matryoshka: m.matryoshka.clone(),
             resolved: model.clone(),
@@ -91,12 +113,32 @@ impl CoremlEmbedder {
         if let Some(m) = models.get(&path) {
             return Ok(m.clone());
         }
-        let model = Arc::new(CoremlModel::load(&path, ComputeUnits::CpuAndNeuralEngine)?);
+        let model = Arc::new(CoremlModel::load(&path, self.units)?);
         models.insert(path, model.clone());
         Ok(model)
     }
 
-    fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
+    /// Sequence-length buckets, smallest first.
+    pub fn buckets(&self) -> &[usize] {
+        &self.buckets
+    }
+
+    /// Apply the purpose's prefix, tokenize, truncate, and pick a bucket.
+    /// Public for the parity suite (examples/parity), which checks the ids
+    /// against a reference pipeline.
+    #[doc(hidden)]
+    pub fn prepare(&self, text: &str, purpose: EmbedPurpose) -> Result<Prepared> {
+        let prefix = match purpose {
+            EmbedPurpose::Query => &self.prefix_query,
+            EmbedPurpose::Document => &self.prefix_document,
+        };
+        let prefixed;
+        let text = if prefix.is_empty() {
+            text
+        } else {
+            prefixed = format!("{prefix}{text}");
+            &prefixed
+        };
         let max = *self.buckets.last().expect("validated non-empty");
         let text = crate::byte_cap(text, max);
         let encoding = self
@@ -104,14 +146,38 @@ impl CoremlEmbedder {
             .encode(text, true)
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
         let ids = truncate_preserving_last(encoding.get_ids(), max);
-        let used = ids.len();
         let bucket = *self
             .buckets
             .iter()
-            .find(|&&b| b >= used)
+            .find(|&&b| b >= ids.len())
             .unwrap_or(&max);
+        Ok(Prepared { ids, bucket })
+    }
 
-        let mut input_ids = ids;
+    /// Pad `ids` to `bucket` with id 0, predict, pool, and unit-normalize.
+    /// `bucket` must be one of the model's buckets and hold all of `ids`; the
+    /// daemon always passes the one `prepare` picked. Public for the parity
+    /// suite, which also runs ids through larger buckets.
+    #[doc(hidden)]
+    pub fn run(&self, ids: &[i32], bucket: usize) -> Result<Vec<f32>> {
+        self.run_padded(ids, bucket, &[])
+    }
+
+    /// `run` with the given ids in the pad positions (id 0 past their end).
+    /// The attention mask hides pads, so the result must not change: the
+    /// parity suite's check for a dropped mask.
+    #[doc(hidden)]
+    pub fn run_padded(&self, ids: &[i32], bucket: usize, pad_ids: &[i32]) -> Result<Vec<f32>> {
+        if !self.buckets.contains(&bucket) || ids.len() > bucket {
+            return Err(Error::Inference(format!(
+                "{} tokens can't run in bucket {bucket} (buckets {:?})",
+                ids.len(),
+                self.buckets
+            )));
+        }
+        let used = ids.len();
+        let mut input_ids = ids.to_vec();
+        input_ids.extend(pad_ids.iter().take(bucket - used));
         input_ids.resize(bucket, 0);
         let mut mask = vec![1i32; used];
         mask.resize(bucket, 0);
@@ -178,18 +244,11 @@ impl Embedder for CoremlEmbedder {
     }
 
     fn embed(&self, texts: &[&str], purpose: EmbedPurpose) -> Result<Vec<Vec<f32>>> {
-        let prefix = match purpose {
-            EmbedPurpose::Query => &self.prefix_query,
-            EmbedPurpose::Document => &self.prefix_document,
-        };
         texts
             .iter()
             .map(|t| {
-                if prefix.is_empty() {
-                    self.embed_one(t)
-                } else {
-                    self.embed_one(&format!("{prefix}{t}"))
-                }
+                let p = self.prepare(t, purpose)?;
+                self.run(&p.ids, p.bucket)
             })
             .collect()
     }

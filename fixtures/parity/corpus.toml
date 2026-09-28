@@ -1,0 +1,365 @@
+# Shared parity corpus: the inputs every embedding path is compared on.
+#
+# tools/parity_reference.py materializes this file for one model (applying
+# its tokenizer, prefixes and buckets) and records the reference vectors;
+# the parity suite (crates/sidekick-embed/examples/parity) runs the same
+# inputs through sidekick and grades the result. See docs/MODELS.md.
+#
+# Each case is chosen to exercise a failure mode seen on a real model, named
+# in its tags:
+#
+#   pad-heavy      few real tokens in a large bucket. A dropped attention
+#                  mask (ModernBERT's fused attention on the ANE) or a
+#                  convolution reading pad states (LFM2.5) shows up here, and
+#                  in the suite's pad- and bucket-invariance gates.
+#   boundary       exactly bucket-1 / bucket / bucket+1 tokens: bucket
+#                  selection, and the most padding a bucket ever sees.
+#   beyond-window  longer than ModernBERT's 128-token sliding window, so the
+#                  local attention mask actually masks something.
+#   over-length    longer than the largest bucket: truncation must keep the
+#                  final token, which last-token pooling reads (F2LLM).
+#   tiny           two to five tokens: the pooled token has almost no
+#                  context.
+#   delimiters     punctuation, newlines and special-token strings, where
+#                  massive activations live (gte-modernbert ~48,000;
+#                  EmbeddingGemma ~152,000, beyond fp16).
+#   degenerate     one token repeated: attention spread evenly over
+#                  identical keys.
+#   long           deep fp16 accumulation over hundreds of tokens.
+#   multilingual, code, numbers
+#                  vocabulary and activation profiles English prose doesn't
+#                  reach.
+#   query          the query prefix path (models with asymmetric prompts).
+#   similarity     topic pairs and queries whose similarity order the paths
+#                  must preserve.
+#
+# A case has either `text` or `length`. `length` is a total token count,
+# prefix and special tokens included, reached by taking words from
+# [filler] until the tokenizer reports exactly that many: an integer, or
+# { bucket = i, offset = n } for (the model's i-th bucket) + n, where
+# i = -1 is the largest. `purpose` defaults to "document".
+#
+# Changing this file invalidates every generated reference (the suite checks
+# its hash); regenerate them with tools/parity_reference.py.
+
+# --- similarity: documents ---------------------------------------------------
+
+[[case]]
+id = "doc-cat"
+text = "A cat sat on the mat."
+tags = ["similarity", "tiny"]
+
+[[case]]
+id = "doc-cat-paraphrase"
+text = "A kitten was resting on the rug."
+tags = ["similarity"]
+
+[[case]]
+id = "doc-earnings"
+text = "Quarterly earnings exceeded analyst expectations, lifting the stock."
+tags = ["similarity"]
+
+[[case]]
+id = "doc-earnings-paraphrase"
+text = "The company's profits for the quarter beat forecasts, and its shares rose."
+tags = ["similarity"]
+
+[[case]]
+id = "doc-rain"
+text = "Heavy rain is expected across the region tomorrow afternoon."
+tags = ["similarity"]
+
+[[case]]
+id = "doc-sauce"
+text = "Simmer the tomatoes with garlic and olive oil for twenty minutes, then season with salt."
+tags = ["similarity"]
+
+[[case]]
+id = "doc-ane"
+text = "The Neural Engine runs matrix multiplications in half precision to save power."
+tags = ["similarity"]
+
+[[case]]
+id = "doc-match"
+text = "The goalkeeper saved a penalty in the final minute to win the match."
+tags = ["similarity"]
+
+# --- similarity: queries -----------------------------------------------------
+
+[[case]]
+id = "query-cat"
+purpose = "query"
+text = "where do cats like to sleep"
+tags = ["similarity", "query"]
+
+[[case]]
+id = "query-earnings"
+purpose = "query"
+text = "how did the company do financially last quarter"
+tags = ["similarity", "query"]
+
+[[case]]
+id = "query-rain"
+purpose = "query"
+text = "will it rain tomorrow"
+tags = ["similarity", "query"]
+
+[[case]]
+id = "query-sauce"
+purpose = "query"
+text = "how do I make tomato sauce"
+tags = ["similarity", "query"]
+
+[[case]]
+id = "query-ane"
+purpose = "query"
+text = "what numeric precision does Apple's neural accelerator use"
+tags = ["similarity", "query"]
+
+[[case]]
+id = "query-doc-cat"
+purpose = "query"
+text = "A cat sat on the mat."
+tags = ["query", "tiny"]
+
+# --- tiny ----------------------------------------------------------------------
+
+[[case]]
+id = "tiny-empty"
+text = ""
+tags = ["tiny", "pad-heavy"]
+
+[[case]]
+id = "tiny-letter"
+text = "a"
+tags = ["tiny", "pad-heavy"]
+
+[[case]]
+id = "tiny-greeting"
+text = "Hi."
+tags = ["tiny", "pad-heavy"]
+
+[[case]]
+id = "tiny-emoji"
+text = "🙂"
+tags = ["tiny", "pad-heavy", "multilingual"]
+
+[[case]]
+id = "tiny-cjk"
+text = "猫"
+tags = ["tiny", "pad-heavy", "multilingual"]
+
+[[case]]
+id = "tiny-number"
+text = "42"
+tags = ["tiny", "pad-heavy", "numbers"]
+
+[[case]]
+id = "short-sentence"
+text = "The meeting moved to Thursday at noon."
+tags = ["pad-heavy"]
+
+# --- delimiters ----------------------------------------------------------------
+
+[[case]]
+id = "delim-punctuation"
+text = "Wait... what?! (No, really: \"that\" isn't it.) [1] {2} <3>"
+tags = ["delimiters", "pad-heavy"]
+
+[[case]]
+id = "delim-bert-specials"
+text = "Question: what is it? [SEP] Answer: nothing at all. [CLS] [MASK] [PAD]"
+tags = ["delimiters"]
+
+[[case]]
+id = "delim-decoder-specials"
+text = "first part </s> second part <eos> third part <|endoftext|> the end"
+tags = ["delimiters"]
+
+[[case]]
+id = "delim-newlines"
+text = "line one\n\n\n\nline two\n\n\n\n\n\nline three\n"
+tags = ["delimiters"]
+
+[[case]]
+id = "delim-flood"
+text = "!!!!!!!!!!!!!!!!!!!!!!!! ???????????????????????? ........................ ;;;;;;;;;;;;"
+tags = ["delimiters"]
+
+[[case]]
+id = "delim-list"
+text = "- item one\n- item two\n  * nested item\n1. first\n2. second\n\n> quoted line"
+tags = ["delimiters"]
+
+# --- degenerate ------------------------------------------------------------------
+
+[[case]]
+id = "degenerate-word"
+text = "the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the"
+tags = ["degenerate", "beyond-window"]
+
+[[case]]
+id = "degenerate-subword"
+text = "hahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahaha"
+tags = ["degenerate"]
+
+# --- code and numbers ----------------------------------------------------------------
+
+[[case]]
+id = "code-python"
+text = "def add(a, b):\n    \"\"\"Return the sum.\"\"\"\n    return a + b  # simple helper\n\nprint(add(2, 3))\n"
+tags = ["code"]
+
+[[case]]
+id = "code-sql"
+text = "SELECT name, COUNT(*) FROM users WHERE active = 1 GROUP BY name ORDER BY 2 DESC LIMIT 10;"
+tags = ["code"]
+
+[[case]]
+id = "code-json"
+text = '{"id": 48213, "tags": ["a", "b"], "nested": {"ok": true, "value": null, "ratio": 0.25}}'
+tags = ["code", "delimiters"]
+
+[[case]]
+id = "numbers-order"
+text = "Order #48213 shipped 2026-09-14 to 1600 Amphitheatre Pkwy; track it at https://example.com/track?id=48213."
+tags = ["numbers"]
+
+[[case]]
+id = "numbers-digits"
+text = "3.14159265358979323846264338327950288419716939937510582097494459"
+tags = ["numbers"]
+
+[[case]]
+id = "numbers-url"
+text = "https://example.com/a/very/long/path/with/segments?query=string&and=more&session=abcdef0123456789#fragment"
+tags = ["numbers", "delimiters"]
+
+# --- multilingual -----------------------------------------------------------------------
+
+[[case]]
+id = "ml-german"
+text = "Der schnelle braune Fuchs springt über den faulen Hund."
+tags = ["multilingual"]
+
+[[case]]
+id = "ml-japanese"
+text = "東京は日本の首都であり、世界最大級の都市圏を形成している。"
+tags = ["multilingual"]
+
+[[case]]
+id = "ml-spanish"
+text = "El modelo convierte texto en vectores para la búsqueda semántica."
+tags = ["multilingual"]
+
+[[case]]
+id = "ml-arabic"
+text = "يعمل النموذج على تحويل النص إلى متجهات للبحث الدلالي."
+tags = ["multilingual"]
+
+[[case]]
+id = "ml-mixed"
+text = "Launch day 🚀🔥, ¡vamos! 日本語もOK. Ça marche ✅"
+tags = ["multilingual", "delimiters"]
+
+# --- lengths (materialized per tokenizer from [filler]) -------------------------------------
+
+[[case]]
+id = "len-64"
+length = 64
+tags = ["pad-heavy"]
+
+[[case]]
+id = "boundary-small-minus-1"
+length = { bucket = 0, offset = -1 }
+tags = ["boundary"]
+
+[[case]]
+id = "boundary-small"
+length = { bucket = 0, offset = 0 }
+tags = ["boundary", "beyond-window"]
+
+[[case]]
+id = "boundary-small-plus-1"
+length = { bucket = 0, offset = 1 }
+tags = ["boundary", "pad-heavy", "beyond-window"]
+
+[[case]]
+id = "len-200"
+length = 200
+tags = ["beyond-window"]
+
+[[case]]
+id = "boundary-middle-minus-1"
+length = { bucket = 1, offset = -1 }
+tags = ["boundary", "beyond-window"]
+
+[[case]]
+id = "boundary-middle-plus-1"
+length = { bucket = 1, offset = 1 }
+tags = ["boundary", "pad-heavy", "beyond-window", "long"]
+
+[[case]]
+id = "len-400"
+length = 400
+tags = ["long", "beyond-window"]
+
+[[case]]
+id = "boundary-largest"
+length = { bucket = -1, offset = 0 }
+tags = ["boundary", "long", "beyond-window"]
+
+[[case]]
+id = "over-length"
+length = { bucket = -1, offset = 188 }
+tags = ["over-length", "long"]
+
+[[case]]
+id = "over-length-query"
+purpose = "query"
+length = { bucket = -1, offset = 188 }
+tags = ["over-length", "query", "long"]
+
+# --- filler ----------------------------------------------------------------------------------
+
+# Words for `length` cases, taken in order (repeated if a target needs more).
+# Varied, ordinary prose: no special tokens, so lengths are predictable.
+[filler]
+text = """
+The lighthouse stood at the end of a narrow spit of land, and for most of the year the only
+visitors were gulls and the occasional surveyor. Its keeper kept a log of the weather, the
+ships that passed, and the small repairs that a building exposed to salt and wind always needs.
+In winter the storms came from the north and the waves broke over the lower gallery; in summer
+the fog rolled in each evening and the horn sounded every thirty seconds until dawn. Over the
+decades the log filled dozens of volumes. Historians later used it to reconstruct shipping
+patterns along the coast, because the keeper had noted not only the names of vessels but their
+cargo, their direction, and how heavily they sat in the water. A bakery in the nearby town
+still sells a bread named after the lighthouse, although few of its customers know why. The
+recipe calls for rye flour, caraway seeds, a little molasses, and a long, slow rise in a cool
+kitchen. Engineers who studied the tower found that its foundation had shifted by less than a
+centimeter in a hundred years, a result they attributed to the careful choice of granite and
+to drainage channels cut into the rock by the original builders. Modern instruments now measure
+wind speed, pressure, and visibility automatically, and the data flows to a regional forecasting
+center where models combine it with satellite images and reports from buoys offshore. The keeper
+retired long ago, but volunteers still climb the spiral staircase on weekends to polish the
+brass, wind the old clock, and show children how the great lens concentrates a small flame into
+a beam visible for twenty nautical miles. Visitors often ask how the lens works. Rings of glass
+prisms bend the light toward the horizon, so that almost none of it is wasted on the sky or the
+sea at the foot of the tower. The design was a breakthrough in its day, and variations of it are
+still used in theater spotlights, overhead projectors, and the headlights of some cars. When the
+museum opened, the town held a festival with music, a market, and a race along the beach path.
+The race has become an annual tradition. Runners start at the harbor, follow the shoreline past
+the dunes, and finish at the foot of the lighthouse, where a table of sandwiches, fruit, and
+lemonade waits for them. Some years the weather cooperates and the finish line glows in the late
+afternoon sun; other years the runners arrive soaked and laughing, their shoes full of sand.
+Either way, the event raises money for the upkeep of the tower and for a scholarship that sends
+one local student each year to study marine science at the university in the capital. Several
+former scholarship holders now work on ocean monitoring projects, measuring temperature, salinity,
+and currents with autonomous gliders that surface every few hours to transmit their readings.
+Their work has shown that the waters near the spit are warming faster than the regional average,
+which affects the fish that local boats depend on and the seabirds that nest on the cliffs.
+The town council has begun planning for higher tides, raising the harbor wall and restoring the
+salt marsh behind the dunes, which absorbs storm surges and shelters young fish. Progress is slow,
+and the budget is small, but the lighthouse remains a symbol of the idea that careful observation,
+patiently recorded, can help a community understand and adapt to the changes around it.
+"""
