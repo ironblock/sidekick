@@ -498,13 +498,15 @@ macOS 27, where predicting with that flexible-shape artifact aborts the
 process with an Objective-C exception, whatever the compute units.
 
 A plan can come back empty (every operation unassigned) or fail with
-"internal failure". On macOS 27 this happened on 2–4 of 15 buckets per run
-while other Core ML work was running on the machine, in fresh processes
-too, and the same artifacts read normally later. `verdict` fails an empty
-plan, so it must not be read as "ineligible". The parity suite (D26)
-retries an unavailable plan and then reports the bucket's eligibility as
-unverified. A plan that assigns compute-heavy operations off the ANE is
-the only plan result that fails a model.
+"internal failure" while the artifact is fine. Core ML caches compiled
+bundles per executable (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`),
+keyed by artifact path. A broken entry makes every plan read for that path
+fail the same way, until the entry is gone. A copy of the artifact at
+another path reads normally, and so does the same path read by a
+differently named executable. On macOS 27 this hit 4 of 15 buckets, in a
+cache that had grown to 40 GB. `verdict` fails an empty plan, so don't read
+it as "ineligible". The parity suite (D26) re-reads an unavailable plan from
+an APFS clone before failing the model.
 
 The latency ratio is still measured and reported, as runtime evidence.
 The plan is the compiler's intent and can't see a runtime ANE compile
@@ -658,8 +660,8 @@ Consequences:
 
 ## D26 — A parity suite grades every model on every compute path
 Before this, a model's accuracy was checked by its converter, on short
-prose, through coremltools rather than sidekick's own code. Two of the
-three bugs behind the recent corrections got through that way:
+prose, through coremltools rather than sidekick's own code. Two bugs got
+through that way:
 - ModernBERT's dropped attention mask (D25) hid behind mostly-padding
   parity inputs and a NaN swallowed by `min`.
 - F2LLM's truncation bug lived in the server, not in the model.
@@ -696,9 +698,12 @@ targets) and references from `tools/parity_reference.py`.
 
 **Engineering choices.**
 - **An example binary, not an ignored test.** Each compute plan is read in
-  its own child process. One that comes back empty is retried and then
-  reported as unverified, not failed (D24). Each (model, path) runs in its
-  own worker process, with a timeout. An Objective-C exception in Core ML
+  its own child process. One Core ML can't produce is re-read from an APFS
+  clone of the artifact (D24). If that fails too, the model fails, unless
+  `--allow-unverified-plans` is given. In that case the model still fails
+  if that bucket's ANE output is bit-identical to CPU_ONLY, which is a CPU
+  fallback. Each (model, path) runs in its own worker process, with a
+  timeout. An Objective-C exception in Core ML
   (on macOS 27 a flexible-shape artifact aborts at predict under
   `.cpuOnly`) or a stuck ANE compile then costs one cell of the report. The pure logic is unit-tested
   by `cargo test` on every platform (`[[example]] test = true`).

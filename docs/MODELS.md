@@ -63,7 +63,9 @@ Method, for every validated entry:
 ANE ops are identical at every bucket. On every model, the operations off
 the ANE are mask and cast plumbing plus the embedding `gather` (e.g. bge:
 add, cast, expand_dims, gather, greater_equal, layer_norm, select, sub,
-tile). Nothing compute-heavy is off the ANE. Ratios re-measured on macOS 27
+tile). Nothing compute-heavy is placed off the ANE; bge's fused attention
+ops get no device at all and run correctly through a Core ML fallback (D25).
+Ratios re-measured on macOS 27
 (M1 Max, not a quiet machine):
 
 | model | 128 | 256 | 512 |
@@ -201,18 +203,19 @@ the median per input, ANE (CPU).
 
 | model | CPU | GPU | ANE: worst case | ANE: similarity drift (bias) | ANE: rank flips | ms |
 |---|---|---|---|---|---|---|
-| bge-small-en-v1.5 | A 0.99993 | A 0.999999 | **A** 0.99997 (empty input) | 0.002 (+0.001) | 0 | 2.2 (8.7) |
-| gte-modernbert-base | B 0.99926 | A 0.99998 | **B** 0.99940 (a Markdown list) | 0.010 (+0.003) | 0 | 6.5 (18.5) |
-| F2LLM-v2-160M | B 0.99987 | A 0.999999 | **B** 0.99966 (a run of digits) | 0.006 (0.000) | 0 | 4.7 (14.8) |
-| embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.2 (20.6) |
-| LFM2.5-Embedding-350M | B 0.99990 | A 0.999999 | **D** 0.9536 (a URL) | 0.187 (−0.010) | 1,399 | 12.6 (37.5) |
+| bge-small-en-v1.5 | A 0.99993 | A 0.999999 | **A** 0.99997 (empty input) | 0.002 (+0.001) | 0 | 1.9 (7.0) |
+| gte-modernbert-base | B 0.99926 | A 0.99998 | **B** 0.99940 (a Markdown list) | 0.010 (+0.003) | 0 | 6.9 (18.6) |
+| F2LLM-v2-160M | B 0.99987 | A 0.999999 | **B** 0.99966 (a run of digits) | 0.006 (0.000) | 0 | 5.3 (13.4) |
+| embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.1 (20.3) |
+| LFM2.5-Embedding-350M | B 0.99990 | A 0.999999 | **D** 0.9536 (a URL) | 0.187 (−0.010) | 1,399 | 13.0 (34.5) |
 
 - **Similarity drift** is the largest change in any pairwise similarity
   score against fp32. **Bias** is the mean signed change: LFM2.5's ANE
   scores run systematically low.
 - **Rank flips** counts the triples (anchor, two candidates) whose
   candidates the reference separates by at least 0.02 and the ANE orders
-  the other way, out of about 125,000.
+  the other way. Only one of the two orders of a pair can qualify, so
+  about 62,000 comparisons count.
 - EmbeddingGemma's Matryoshka dimensions grade the same on the ANE:
   0.99999 at 512, 256 and 128.
 - EmbeddingGemma graded D before its MLP precision rewrite (D17): 0.975 on
@@ -281,8 +284,9 @@ measure the ecosystem, not sidekick:
   window, which leaves no band within 512 tokens. transformers halves the
   window for bidirectional models (D17), and in fp32, no band against the
   halved window measures 0.997 on a 394-token text. It's a convention
-  difference, not an error in either. sidekick follows sentence-transformers: its CPU path
-  scores 0.99989 on the same inputs. The export's q8 variant reaches 0.972.
+  difference, not an error in either. sidekick follows
+  sentence-transformers: its CPU path scores 0.99989 on the same inputs.
+  The export's q8 variant reaches 0.972.
 
 **Running it.**
 
@@ -493,8 +497,10 @@ treat `E5RT ... ANECCompile() FAILED` stderr lines as *possibly transient
 service state*, not proof of a bad artifact — the same file measured 1.48x
 with failures and 2.63x clean forty minutes apart. Re-measure before
 re-converting. Likewise, a compute plan with *every* operation unassigned
-("no operations are assigned to any compute device") can be Core ML state
-tied to the model's path. After many loads in one session, an
-embeddinggemma artifact read that way repeatedly while still predicting
-at ANE speed, and the same file copied to another path read normally
-(2015/2024).
+("no operations are assigned to any compute device"), or "internal
+failure", can be a broken entry in Core ML's compiled-bundle cache for that
+path (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`, D24).
+An embeddinggemma artifact read that way repeatedly while predicting at ANE
+speed, and the same file copied to another path read normally (2015/2024).
+Those caches grow large: the parity suite's reached 40 GB and ane_check's
+25 GB. They're safe to delete.
