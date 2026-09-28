@@ -193,6 +193,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "block2"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdeb9d870516001442e364c5220d3574d2da8dc765554b4a617230d33fa58ef5"
+dependencies = [
+ "objc2",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -916,6 +925,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "201b055e6acfa0f9f15568255d3f03ce2b54bc86d1814442dc69138e36813e18"
 dependencies = [
+ "block2",
  "objc2",
  "objc2-foundation",
 ]
@@ -1244,6 +1254,7 @@ dependencies = [
 name = "sidekick-coreml"
 version = "0.1.1"
 dependencies = [
+ "block2",
  "objc2",
  "objc2-core-ml",
  "objc2-foundation",

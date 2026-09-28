@@ -112,6 +112,9 @@ Hardware disagreed on both counts:
   disabled") while `.all` (GPU) tolerates it — an especially nasty trap
   given D14.
 
+*(On macOS 27 the flexible-shape artifact no longer falls back to CPU: it
+aborts the process at predict time. See D24.)*
+
 So: `artifact` supports a `{seq}` placeholder, one static-shape `.mlmodelc`
 per bucket, loaded lazily and kept resident; pooling happens inside the
 converted graph (statically-shaped `(1, dims)` output, manifest
@@ -362,6 +365,46 @@ with an error instead of silently sending different text. Apple's own
 `fm serve` carries a warning for this case. All snapshots observed on
 macOS 27 extended their predecessors.
 
+## D24 — ANE eligibility is judged by Core ML's compute plan; the latency ratio is evidence
+`ane_check`'s pass/fail used to be a latency ratio: median `.cpuOnly` over
+`.cpuAndNeuralEngine`, gated at 1.5x. On macOS 27 that gate flagged
+bge-small's 512 bucket (1.23–1.26x over five runs) as "not resident". Its
+compute plan is identical to the buckets measuring 2–3x, with 229 of 245
+operations on the ANE. The ratio moves with things other than residency:
+machine load, and a faster CPU path.
+
+`ane_check` now reads Core ML's compute plan first (`MLComputePlan`, macOS
+14.4+, exposed as `sidekick_coreml::compute_plan`). The plan reports the
+device each operation of the `main` function is assigned to, without
+running the model. The model passes when:
+- every compute-heavy operation (matmul, linear, conv, einsum, attention)
+  is on the ANE, and
+- at least 80% of assigned operations are on the ANE.
+
+Core ML reports no per-operation costs (`estimatedCost` is empty on
+macOS 27), so operation counts are unweighted; the heavy-operation rule
+covers that gap. Measured on macOS 27:
+- The four validated encoders pass at 93.5–99.6%, identically at every
+  bucket. What stays on the CPU is mask and cast plumbing plus the
+  embedding gather.
+- A flexible-shape bge artifact (the configuration D15 rules out,
+  reproducible with `convert_bge_small.py --enumerated-shapes`) scores 0%.
+
+A failing plan ends the run before any prediction. That matters on
+macOS 27, where predicting with that flexible-shape artifact aborts the
+process with an Objective-C exception, whatever the compute units.
+
+The latency ratio is still measured and reported, as runtime evidence.
+The plan is the compiler's intent and can't see a runtime ANE compile
+failure; a ratio near 1.0 would. `ane_check` warns below 1.1x but doesn't
+fail on the ratio. MODELS.md records plan shares alongside the ratios.
+
+Not done: a load-time guard in `CoremlModel::load` against flexible-shape
+artifacts. Reading the plan at load costs 1.3–18 s cold per bucket, and
+refusing such models would regress macOS 26, where they still run (slowly)
+on the CPU. A guard limited to macOS 27 that checks input shape
+constraints is a possible follow-up.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
@@ -434,8 +477,14 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
     after it survives
   - a client disconnect stops generation, seen in the daemon log
 
+- ANE eligibility on macOS 27 (September 2026, D24):
+  - compute plans for all four validated encoders at every bucket
+  - a flexible-shape negative control rejected before any prediction
+  - ratios re-measured (MODELS.md)
+
 Still open:
-- An automated ANE-residency gate in a self-hosted CI job (the example
-  exists; nothing runs it automatically).
+- An automated ANE gate in a self-hosted CI job. `ane_check` now exits
+  non-zero on an ineligible plan, so it is ready to be wired in, but nothing
+  runs it automatically yet.
 - Multifunction mlprogram weight sharing to collapse the 3x ~600MB
   per-bucket artifact duplication for large encoders (D17).

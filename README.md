@@ -26,7 +26,8 @@ All three inference paths are hardware-verified on Apple Silicon
 (macOS 26.5.1): the Foundation Models Swift shim (including constrained
 decoding), the static embedding tier, and the Core ML encoder tier with a
 locally converted bge-small running ANE-resident (3.4x over CPU at seq 128,
-verified via `cargo run -p sidekick-coreml --example ane_check`). See
+verified via `cargo run -p sidekick-coreml --example ane_check`, which judges
+ANE eligibility from Core ML's compute plan). See
 "Hardware verification status" in [docs/DECISIONS.md](docs/DECISIONS.md),
 `cargo run -p sidekick-server --bin smoke-test`, and
 [tools/convert_bge_small.py](tools/convert_bge_small.py) for the conversion

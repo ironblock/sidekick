@@ -33,4 +33,19 @@ objc2-core-ml = { version = "0.3", default-features = false, features = [
     "MLDictionaryFeatureProvider",
     "MLMultiArray",
     "MLModel_MLModelCompilation",
+    # Compute plans: which device each operation is assigned to (ane_check).
+    "MLComputePlan",
+    "MLComputePlanDeviceUsage",
+    "MLComputeDeviceProtocol",
+    "MLNeuralEngineComputeDevice",
+    "MLCPUComputeDevice",
+    "MLGPUComputeDevice",
+    "MLModelStructure",
+    "MLModelStructureProgram",
+    "MLModelStructureProgramFunction",
+    "MLModelStructureProgramBlock",
+    "MLModelStructureProgramOperation",
+    "block2",
 ] }
+# MLComputePlan loads through a completion-handler block.
+block2 = "0.6"

@@ -31,6 +31,12 @@ Both paths read the same models directory
 empty, the daemon 404s the model and `sk_pool_models` returns `[]` — treat
 either as "fall back".
 
+Install only artifacts built with the repository's converters (one
+static-shape `.mlmodelc` per bucket). On macOS 27 a flexible-shape Core ML
+artifact aborts the process at its first prediction, and with the dylib
+that process is your host app. `ane_check` rejects such an artifact
+without running it (docs/MODELS.md).
+
 ## Path 1: the daemon
 
 `POST /v1/chat/completions`-style OpenAI compatibility, documented in the

@@ -17,7 +17,7 @@ use sidekick_core::{Error, Result};
 use std::path::Path;
 
 impl ComputeUnits {
-    fn to_ml(self) -> objc2_core_ml::MLComputeUnits {
+    pub(crate) fn to_ml(self) -> objc2_core_ml::MLComputeUnits {
         use objc2_core_ml::MLComputeUnits;
         match self {
             ComputeUnits::All => MLComputeUnits::All,
