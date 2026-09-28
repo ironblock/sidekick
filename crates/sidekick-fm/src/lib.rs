@@ -24,7 +24,7 @@ pub mod shaping;
 mod ffi;
 
 pub use backend::SessionChatBackend;
-pub use engine::{EngineResponse, EngineUsage, RespondOptions, SessionEngine};
+pub use engine::{EngineResponse, EngineUsage, RespondOptions, SessionEngine, StreamedResponse};
 
 /// The macOS SDK version the Foundation Models shim was compiled against
 /// (e.g. `"27.0"`), or `"none"` in stub builds. macOS 27 features — real

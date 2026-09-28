@@ -14,7 +14,8 @@ pub mod error;
 pub mod manifest;
 
 pub use chat::{
-    ChatBackend, ChatMessage, ChatRequest, ChatResponse, FinishReason, ModelInfo, Role, Usage,
+    ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, FinishReason, ModelInfo, Role,
+    Usage,
 };
 pub use embed::{truncate_normalized, EmbedPurpose, Embedder};
 pub use error::{Error, Result};

@@ -33,6 +33,9 @@ delta. Sidekick-sized outputs finish in well under a second, so buying real
 token streaming (callback across the C ABI) wasn't worth the FFI complexity
 for v1. The shim upgrade path is noted in `bridge.swift`.
 
+*Superseded for plain text by D23* (real streaming). Schema-constrained
+replies are still sent as one delta.
+
 ## D5 — Session TTL = Foundation Models session reuse keyed by conversation prefix
 OpenAI requests are stateless; FM sessions are stateful. After each response
 the live session is filed under `sha256(instructions + full transcript incl.
@@ -318,6 +321,47 @@ could map `seed`/`top_p` in the future. This is a behavior change for
 clients that relied on those parameters being dropped, so it warrants a
 minor version bump when released.
 
+## D23 — Real streaming for plain text
+Supersedes D4 for plain text. The shim's `sk_fm_respond_stream` iterates
+`streamResponse` and hands each snapshot's cumulative text to a C callback.
+The callback can stop generation by returning nonzero; the shim then leaves
+the stream loop, which ends generation promptly on macOS 27. Rust turns
+snapshots into deltas with `StreamShaper`, the incremental form of the
+reply post-processing (speaker-label strip, stop sequences, no trailing
+U+FFFD). It holds back only text a later snapshot could still change, so
+streamed and non-streamed replies are identical.
+
+Rules, each backed by a measurement or a test:
+- **Never reuse an interrupted session.** On macOS 27, calling `respond` on
+  a session whose stream was left early, by break or by task cancellation,
+  traps the process (EXC_BREAKPOINT, uncatchable). Stopped, errored and
+  diverged streams drop their session. A session is cached only when the
+  stream finished on its own and the client holds exactly the final reply.
+- **No retry after the first delta.** The client would see the reply start
+  over. Retries on a fresh session still happen before any text is sent.
+- **Stop sequences end generation**, rather than trimming a finished reply.
+  Plain-text requests with `stop` use the streaming path internally even
+  when `stream` is false. Measured: a count stopped at "5" returned in
+  0.76 s, against 3.5 s uncut.
+- **Client disconnects stop generation.** The SSE body owns the channel
+  receiver, so when a client leaves, the next snapshot's send fails and
+  generation stops (verified live). The same happens at the request
+  timeout. A stall before the first snapshot can't be interrupted, because
+  cancellation is checked per snapshot.
+- **Errors keep their HTTP status until text is sent.** The response is
+  committed on the first delta or on completion. After that, an error
+  becomes an `{"error": …}` event, and a guardrail stop becomes a
+  `content_filter` finish.
+- **Constrained output is sent whole.** Partial JSON snapshots aren't
+  prefix-stable.
+
+Snapshots are expected to extend each other. One that rewrites
+already-sent text is skipped, and emission resumes if a later snapshot
+agrees again. If the final reply contradicts what was sent, the stream ends
+with an error instead of silently sending different text. Apple's own
+`fm serve` carries a warning for this case. All snapshots observed on
+macOS 27 extended their predecessors.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
@@ -384,6 +428,11 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   - `finish_reason` length/stop, and `stop` sequences
   - over-long prompts → ContextOverflow with real counts → HTTP 400
   - single-turn prompt token counts identical to Apple's `fm serve`
+  - real streaming (D23): 25 deltas for a 184-character reply, and deltas
+    identical to the returned content
+  - a mid-stream stop ends generation (0.76 s vs 3.5 s), and the follow-up
+    after it survives
+  - a client disconnect stops generation, seen in the daemon log
 
 Still open:
 - An automated ANE-residency gate in a self-hosted CI job (the example

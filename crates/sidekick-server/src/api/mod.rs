@@ -79,6 +79,23 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request_error", message)
     }
 
+    /// The OpenAI error body, also sent as an SSE event when a stream fails
+    /// after it started.
+    pub fn body(&self) -> serde_json::Value {
+        let kind = self.kind.unwrap_or(if self.status.is_client_error() {
+            "invalid_request_error"
+        } else {
+            "server_error"
+        });
+        serde_json::json!({
+            "error": {
+                "message": self.message,
+                "type": kind,
+                "code": self.code,
+            }
+        })
+    }
+
     pub fn model_not_found(model: &str) -> Self {
         Self::new(
             StatusCode::NOT_FOUND,
@@ -171,18 +188,7 @@ impl IntoResponse for ApiError {
         } else {
             tracing::debug!(status = %self.status, code = self.code, message = %self.message, "request rejected");
         }
-        let kind = self.kind.unwrap_or(if self.status.is_client_error() {
-            "invalid_request_error"
-        } else {
-            "server_error"
-        });
-        let body = serde_json::json!({
-            "error": {
-                "message": self.message,
-                "type": kind,
-                "code": self.code,
-            }
-        });
+        let body = self.body();
         let mut response = (self.status, Json(body)).into_response();
         if let Some(secs) = self.retry_after_secs {
             response

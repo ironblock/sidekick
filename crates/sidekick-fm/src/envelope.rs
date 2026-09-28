@@ -7,7 +7,7 @@
 //! statuses. It is platform-neutral so the mapping is tested everywhere; the
 //! FFI itself only moves bytes.
 
-use crate::engine::{EngineResponse, EngineUsage};
+use crate::engine::{EngineResponse, EngineUsage, StreamedResponse};
 use serde::Deserialize;
 use sidekick_core::{Error, Result, UnavailableReason};
 
@@ -21,6 +21,8 @@ struct Envelope {
     truncated: Option<bool>,
     #[serde(default)]
     error: Option<EnvelopeError>,
+    #[serde(default)]
+    cancelled: bool,
 }
 
 /// A classified Foundation Models error.
@@ -39,6 +41,11 @@ pub struct EnvelopeError {
 /// Parse a respond envelope. `known_limit` is the context size to report
 /// for an overflow whose error carries none (macOS 26).
 pub fn parse_response(json: &str, known_limit: usize) -> Result<EngineResponse> {
+    parse_streamed(json, known_limit).map(|streamed| streamed.response)
+}
+
+/// Parse a streamed-respond envelope (a respond envelope plus "cancelled").
+pub fn parse_streamed(json: &str, known_limit: usize) -> Result<StreamedResponse> {
     let envelope: Envelope = serde_json::from_str(json)
         .map_err(|e| Error::Inference(format!("respond: malformed shim envelope: {e}")))?;
     if let Some(error) = envelope.error {
@@ -47,7 +54,10 @@ pub fn parse_response(json: &str, known_limit: usize) -> Result<EngineResponse> 
     let text = envelope
         .text
         .ok_or_else(|| Error::Inference("respond: shim envelope has no text".into()))?;
-    Ok(EngineResponse { text, usage: envelope.usage, truncated: envelope.truncated })
+    Ok(StreamedResponse {
+        response: EngineResponse { text, usage: envelope.usage, truncated: envelope.truncated },
+        cancelled: envelope.cancelled,
+    })
 }
 
 /// Map a classified error kind to a sidekick error.
@@ -128,6 +138,15 @@ mod tests {
         assert!(matches!(case("a kind from a newer shim"), Error::Inference(_)));
         let e = err(r#"{"error":{"kind":"rate_limited","message":"m","retry_after_secs":30}}"#);
         assert!(matches!(e, Error::RateLimited { retry_after_secs: Some(30), .. }), "{e:?}");
+    }
+
+    #[test]
+    fn streamed_envelope_carries_cancelled() {
+        let r = parse_streamed(r#"{"text":"1, 2, 3","cancelled":true,"error":null}"#, 4096).unwrap();
+        assert!(r.cancelled);
+        assert_eq!(r.response.text, "1, 2, 3");
+        let r = parse_streamed(r#"{"text":"done","error":null}"#, 4096).unwrap();
+        assert!(!r.cancelled, "absent means not cancelled");
     }
 
     #[test]

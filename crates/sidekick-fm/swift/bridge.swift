@@ -416,6 +416,70 @@ private func respondEnvelope(
     }
 }
 
+/// C callback receiving the cumulative text of each streamed snapshot.
+/// Returning nonzero asks the shim to stop generating.
+public typealias SkSnapshotCallback = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, UInt) -> Int32
+
+/// Opaque callback context, carried into the generation task. The Rust side
+/// keeps it valid until sk_fm_respond_stream returns, and callbacks happen
+/// one at a time, before that return.
+private struct CallbackContext: @unchecked Sendable {
+    let pointer: UnsafeMutableRawPointer?
+}
+
+/// Streamed plain-text respond: hands each snapshot's cumulative text to
+/// `onSnapshot`, stops generating when it returns nonzero (by leaving the
+/// stream loop, which ends generation promptly — measured on macOS 27), and
+/// returns the same envelope as `respondEnvelope` plus "cancelled".
+///
+/// A session whose stream was left early must never be used again: on
+/// macOS 27 the next respond on it traps the process. The Rust side drops
+/// such sessions.
+@available(macOS 26.0, *)
+private func streamEnvelope(
+    session: LanguageModelSession,
+    prompt: String,
+    options: GenerationOptions,
+    maxTokens: Int,
+    onSnapshot: SkSnapshotCallback,
+    context: CallbackContext
+) async -> [String: Any] {
+    var text = ""
+    var usage: Any = NSNull()
+    var outputTokens: Int?
+    var cancelled = false
+    do {
+        for try await snapshot in session.streamResponse(to: prompt, options: options) {
+            text = snapshot.content
+            #if SK_SDK_27
+            if #available(macOS 27.0, *) {
+                usage = usageJSON(snapshot.usage)
+                outputTokens = snapshot.usage.output.totalTokenCount
+            }
+            #endif
+            let bytes = Array(text.utf8)
+            let rc = bytes.withUnsafeBufferPointer { buffer in
+                onSnapshot(context.pointer, buffer.baseAddress, UInt(buffer.count))
+            }
+            if rc != 0 {
+                cancelled = true
+                break
+            }
+        }
+    } catch {
+        var envelope = errorEnvelope(classify(error))
+        envelope["cancelled"] = false
+        return envelope
+    }
+    var truncated: Any = NSNull()
+    if !cancelled, maxTokens > 0,
+       let hit = await isTruncated(text: text, constrained: false, maxTokens: maxTokens, outputTokens: outputTokens)
+    {
+        truncated = hit
+    }
+    return ["text": text, "usage": usage, "truncated": truncated, "error": NSNull(), "cancelled": cancelled]
+}
+
 #endif
 
 @_cdecl("sk_fm_session_create")
@@ -492,6 +556,69 @@ public func sk_fm_respond(
                 schemaText: schemaText,
                 options: options,
                 maxTokens: Int(maxTokens)
+            )
+        }
+        semaphore.wait()
+
+        if writeJSON(envelope, out, outLen) {
+            return 0
+        }
+        setError(err, "could not encode the response envelope")
+        return 1
+    }
+    #endif
+    setError(err, "Foundation Models requires macOS 26 or later")
+    return 1
+}
+
+/// Blocking streamed respond for plain text (no schema). Calls
+/// `onSnapshot(ctx, text, len)` with the cumulative text of each snapshot,
+/// from a Swift concurrency thread, one call at a time, all before this
+/// function returns; a nonzero return stops generation. Returns 0 with the
+/// respond envelope plus "cancelled": bool in `out`, or 1 with `err` set for
+/// failures of the shim itself.
+@_cdecl("sk_fm_respond_stream")
+public func sk_fm_respond_stream(
+    _ session: UnsafeMutableRawPointer?,
+    _ prompt: UnsafePointer<UInt8>?,
+    _ promptLen: UInt,
+    _ temperature: Double,
+    _ maxTokens: Int64,
+    _ onSnapshot: SkSnapshotCallback?,
+    _ ctx: UnsafeMutableRawPointer?,
+    _ out: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>?,
+    _ outLen: UnsafeMutablePointer<UInt>?,
+    _ err: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    #if canImport(FoundationModels)
+    if #available(macOS 26.0, *) {
+        guard let session, let onSnapshot, let out, let outLen else {
+            setError(err, "null argument")
+            return 1
+        }
+        let box = Unmanaged<SessionBox>.fromOpaque(session).takeUnretainedValue()
+        let promptText = takeString(prompt, promptLen)
+        let context = CallbackContext(pointer: ctx)
+
+        var options = GenerationOptions()
+        if temperature >= 0 {
+            options = GenerationOptions(temperature: temperature)
+        }
+        if maxTokens > 0 {
+            options.maximumResponseTokens = Int(maxTokens)
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var envelope: [String: Any] = [:]
+        Task {
+            defer { semaphore.signal() }
+            envelope = await streamEnvelope(
+                session: box.session,
+                prompt: promptText,
+                options: options,
+                maxTokens: Int(maxTokens),
+                onSnapshot: onSnapshot,
+                context: context
             )
         }
         semaphore.wait()
