@@ -12,10 +12,9 @@ Usage:
 Requires: torch, transformers >= 4.51 (Qwen3), coremltools, numpy
 (arm64-native Python), plus Xcode for `xcrun coremlcompiler`.
 
-Qwen3 is the fifth architecture class EVALUATED on the stack, and the fourth
-VALIDATED (after classic BERT / bge, Gemma3 / embeddinggemma, and LFM2 hybrid;
-ModernBERT was the fifth evaluated but is a negative result — ANE-incompatible,
-see docs/MODELS.md). It is the first CAUSAL DECODER used for embeddings here.
+Qwen3 was the fourth architecture class validated on the stack (after classic
+BERT / bge, Gemma3 / embeddinggemma, and LFM2 hybrid; ModernBERT followed, see
+docs/MODELS.md). It is the first CAUSAL DECODER used for embeddings here.
 Three conversion facts, all handled below:
 
 A. CAUSAL + PADDING MASK, fp16-safe. Qwen3Model builds its mask via
@@ -46,10 +45,9 @@ C. RoPE + GQA shape arithmetic. Stock rotate_half slices with x.shape[-1]//2,
    graph, but conversion succeeds with or without it.
 
 fp16 note: NO range rewrite. Qwen3's q_norm/k_norm (QK-norm) keep activations
-tiny (measured max ~420 on F2LLM-v2-160M), so fp16 is simply safe — the
-opposite of ModernBERT, whose LayerNorm-only design let an outlier reach
-~40000 and lose the ANE (see docs/MODELS.md). Verified before converting by
-checking that PyTorch-fp16 parity is ~1.0 and no activation exceeds ~30k.
+tiny (measured max ~420 on F2LLM-v2-160M), so fp16 is simply safe. Verified
+before converting by checking that PyTorch-fp16 parity is ~1.0 and no
+activation exceeds ~30k (tools/probe_activations.py does this check).
 """
 
 import json

@@ -1,28 +1,26 @@
 """Triage a transformer encoder for the Apple Neural Engine before converting it.
 
-The ANE computes in fp16, and the models that fail there (docs/MODELS.md) fail
-because of what their *activations* look like, not their weights. This probe
-runs the model in fp32 PyTorch on the CPU — no Core ML, minutes not hours —
-hooks the input of every normalization layer (where the residual stream is
-read), and reports what decides ANE viability:
+The ANE computes in fp16. This probe runs the model in fp32 PyTorch on the
+CPU — no Core ML, minutes not hours — hooks the input of every normalization
+layer (where the residual stream is read), and reports per layer: the peak
+activation, which feature dimension carries it, how many times the median
+dimension that is, where it sits (first/last/middle token), and whether a
+mean-subtracting LayerNorm or an RMS-style norm reads it.
 
-1. fp16 range. Values above 65504 overflow fp16. With RMSNorm this is
-   fixable: EmbeddingGemma peaks at ~152,000 and converts with a power-of-two
-   range rewrite (D17). Below ~30,000 a direct convert is fine.
+Its one calibrated verdict is fp16 RANGE. Values above 65504 overflow fp16;
+EmbeddingGemma peaks at ~152,000 and converts after a power-of-two range
+rewrite (D17). Below ~30,000 a direct convert is fine.
 
-2. The ModernBERT signature: a massive activation — one feature dimension
-   tens of thousands strong, hundreds of times the median dimension, sitting
-   on a few tokens ([SEP], delimiters) — in a model whose norms are
-   mean-subtracting LayerNorms. gte-modernbert-base peaks at ~48,000 (502×)
-   and lands at 0.90 cosine on the ANE, and a range rewrite doesn't rescue it
-   (tested at 1/8 to 1/256: at most 0.93). Bisection puts the loss inside
-   attention on the ANE; the exact mechanism is not established. The same
-   outlier under RMSNorm (EmbeddingGemma) and small outliers under LayerNorm
-   (bge-small: 338, 146×) are fine.
+Massive activations — one dimension hundreds of times the rest on a few
+tokens — are reported but are NOT disqualifying. gte-modernbert-base peaks
+at ~48,000 (502x the median) under LayerNorm and converts at 0.9998 on the
+ANE with explicit attention; an earlier version of this tool called that
+pattern ANE-hostile, a misdiagnosis of a Core ML attention-mask bug (D25).
+Expect those tokens' own output vectors to be slightly less accurate on the
+ANE; pooled outputs are unaffected.
 
-Thresholds are calibrated on the models in docs/MODELS.md — three that pass
-and one that fails — so treat the verdict as a rule of thumb, and the region
-between the calibration points as unknown: convert and measure.
+The probe can't see graph-level conversion bugs. After converting, run
+ane_check: its compute-plan and pad-invariance gates are the real test.
 
 Usage:
     python tools/probe_activations.py <model-dir> [options]
@@ -49,12 +47,8 @@ import torch
 from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 FP16_MAX = 65504.0
-# Verdict thresholds, calibrated on docs/MODELS.md: bge-small (LayerNorm,
-# peak 338, 146x) passes; gte-modernbert (LayerNorm, peak ~48,000, 502x)
-# fails; EmbeddingGemma (RMSNorm, peak ~152,000) passes with a range rewrite.
-RANGE_WARN = 30000.0          # below this, convert without a range rewrite
-LN_OUTLIER_HOSTILE = 10000.0  # LayerNorm input peak at or above: ModernBERT signature
-LN_OUTLIER_UNKNOWN = 1000.0   # between bge-small and ModernBERT: untested, measure
+RANGE_WARN = 30000.0   # below this, convert without a range rewrite
+MASSIVE_RATIO = 100.0  # peak dim this many times the median: report as massive
 
 # A mixed probe corpus: short and long prose, code, numbers and URLs,
 # punctuation-heavy text, and non-English (for multilingual models). Massive
@@ -193,7 +187,6 @@ def main():
     rows = [p.summary() for p in probes.values() if p.per_dim_max is not None]
     worst_range = max(rows, key=lambda r: r["max_abs"])
     layernorms = [r for r in rows if r["centers"]]
-    worst_ln = max(layernorms, key=lambda r: r["max_abs"]) if layernorms else None
 
     print(f"\nmodel: {type(model).__name__}, {sum(p.numel() for p in model.parameters()) / 1e6:.0f}M params, "
           f"{len(rows)} norm layers ({len(layernorms)} LayerNorm, {len(rows) - len(layernorms)} RMS-style)")
@@ -204,35 +197,28 @@ def main():
         print(f"{r['norm'][-44:]:<44} {kind:<5} {r['max_abs']:>10.1f} {r['outlier_ratio']:>9.1f}  {dims}")
 
     print("\nverdict:")
-    verdict, reasons = "likely ANE-compatible", []
-    where = lambda r: max(r["top_positions"], key=r["top_positions"].get)
-    if worst_ln and worst_ln["max_abs"] >= LN_OUTLIER_HOSTILE:
-        verdict = "ANE-hostile (ModernBERT signature)"
-        reasons.append(
-            f"a massive activation of {worst_ln['max_abs']:.0f} (dim {worst_ln['top_dims'][0][0]}, "
-            f"{worst_ln['outlier_ratio']:.0f}x the median dim, mostly on the {where(worst_ln)} token) feeds "
-            f"mean-subtracting LayerNorms ({worst_ln['norm']}); gte-modernbert (~48,000) gives 0.90 cosine "
-            "on the ANE and a range rewrite doesn't fix it")
-    elif worst_ln and worst_ln["max_abs"] >= LN_OUTLIER_UNKNOWN:
-        verdict = "unknown: convert and measure"
-        reasons.append(
-            f"LayerNorm inputs reach {worst_ln['max_abs']:.0f} ({worst_ln['outlier_ratio']:.0f}x the median "
-            f"dim) at {worst_ln['norm']}: between bge-small (338, fine) and ModernBERT (~48,000, fails)")
+    verdict, notes = "no fp16 range issue", []
     if worst_range["max_abs"] >= FP16_MAX:
-        if verdict == "likely ANE-compatible":
-            verdict = "convertible with a range rewrite"
-        reasons.append(f"values reach {worst_range['max_abs']:.0f} (> fp16 max 65504) at {worst_range['norm']}: "
-                       "needs a power-of-two range rewrite before conversion (D17)")
+        verdict = "needs a range rewrite"
+        notes.append(f"values reach {worst_range['max_abs']:.0f} (> fp16 max 65504) at {worst_range['norm']}: "
+                     "apply a power-of-two range rewrite before converting (D17)")
     elif worst_range["max_abs"] >= RANGE_WARN:
-        reasons.append(f"values reach {worst_range['max_abs']:.0f} at {worst_range['norm']}: little fp16 "
-                       "headroom; calibrate on your real inputs")
+        notes.append(f"values reach {worst_range['max_abs']:.0f} at {worst_range['norm']}: little fp16 "
+                     "headroom; calibrate on your real inputs")
+    massive = max(rows, key=lambda r: r["outlier_ratio"])
+    if massive["outlier_ratio"] >= MASSIVE_RATIO and massive["max_abs"] >= 100:
+        where = max(massive["top_positions"], key=massive["top_positions"].get)
+        notes.append(f"massive activation: dim {massive['top_dims'][0][0]} reaches {massive['max_abs']:.0f} "
+                     f"({massive['outlier_ratio']:.0f}x the median dim, mostly on the {where} token). Not "
+                     "disqualifying (gte-modernbert: ~48,000, 0.9998 on the ANE); those tokens' own output "
+                     "vectors will be slightly less accurate")
     print(f"  {verdict}")
-    for r in reasons:
-        print(f"  - {r}")
-    print("  (a probe, not a gate: convert and check CPU_AND_NE parity and ane_check to be sure)")
+    for n in notes:
+        print(f"  - {n}")
+    print("  next: convert with explicit attention and run ane_check (compute plan + pad invariance)")
 
     if args.json:
-        Path(args.json).write_text(json.dumps({"verdict": verdict, "reasons": reasons, "norms": rows}, indent=2))
+        Path(args.json).write_text(json.dumps({"verdict": verdict, "notes": notes, "norms": rows}, indent=2))
 
 
 if __name__ == "__main__":

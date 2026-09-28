@@ -45,7 +45,9 @@ Which encoders are known to convert cleanly and achieve full ANE offload —
 and which don't, and why — is tracked with measured numbers in
 [docs/MODELS.md](docs/MODELS.md), along with a "will a new model convert?"
 checklist. Validated so far: bge-small-en-v1.5, EmbeddingGemma-300m,
-LFM2.5-Embedding-350M.
+LFM2.5-Embedding-350M, F2LLM-v2-160M, gte-modernbert-base.
+`tools/probe_activations.py` triages a candidate in minutes before any
+conversion.
 
 Embeddings are also available in-process via `libsidekick.dylib`
 (`cargo build --release -p sidekick-embed-ffi`) for hosts that can't or

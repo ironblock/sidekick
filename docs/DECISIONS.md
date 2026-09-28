@@ -213,10 +213,16 @@ hadn't covered, one of each verdict:
   CPU_AND_NE vs PyTorch-fp16 (not just fp32) — a gap is the outlier
   signature. QK-norm models avoid this by construction.
 
+  *Superseded by D25:* the root cause was Core ML's fused attention op
+  dropping ModernBERT's attention mask on the ANE, not the outlier. With
+  explicit attention, gte-modernbert-base converts at 0.9998 and is
+  validated. The two checklist rules above are withdrawn.
+
 - **Qwen3 causal decoder (F2LLM-v2-160M) validated** — the first decoder and
   first last-token pooling on the stack (tools/convert_qwen3_embedding.py).
   QK-norm keeps activations tiny (max ~420), so ANE parity is 0.99985 — as
-  clean as bge, vindicating the ModernBERT lesson. Last-token pooling is
+  clean as bge. (That this "vindicated the ModernBERT lesson" is withdrawn:
+  see D25.) Last-token pooling is
   baked in-graph via the attention mask (last_onehot = mask·(1−shift_left(
   mask)), masked sum → (1, dims)); no server pooling change. It did require
   one server fix: naive take(max) truncation dropped the trailing EOS that
@@ -405,6 +411,67 @@ refusing such models would regress macOS 26, where they still run (slowly)
 on the CPU. A guard limited to macOS 27 that checks input shape
 constraints is a possible follow-up.
 
+## D25 — ModernBERT validated: its rejection was a Core ML attention-mask bug
+Supersedes D20's ModernBERT verdict. Found by an adversarial review of the
+macOS 27 re-investigation (September 2026, M1 Max, macOS 27.0), then
+reproduced independently.
+
+**What happens.** Converted with PyTorch `sdpa` attention, ModernBERT lowers
+to Core ML's fused `scaled_dot_product_attention` op. In this graph, on the
+ANE, that op ignores its attention mask: pads are attended and the sliding
+window is dropped. Evidence:
+- The ANE output matches an *unmasked* fp32 reference at 0.99998, but the
+  intended one at only 0.87–0.975.
+- The output depends on the content of the masked pad positions (pad ids
+  0 vs random: cosine 0.61–0.94). A correctly masked model can't see its
+  pads.
+- The same op on the CPU returns NaN whenever fewer than 64 of 128
+  positions are real (a query whose whole sliding window is masked).
+
+The trigger isn't isolated. A single synthetic fused-SDPA layer honours its
+mask, while ModernBERT cut down to one layer doesn't. bge-small's fused SDPA
+passes the same pad-invariance check.
+
+**The fix** is to convert with `attn_implementation="eager"`, so attention
+becomes explicit matmul → softmax → matmul:
+- the graph stays on the ANE (794/805 ops);
+- parity is CPU_AND_NE 0.999793 / CPU_ONLY 0.999919 at every bucket, and
+  pad invariance is exact;
+- live `/v1/embeddings` worst parity is 0.99896;
+- the ANE is 2.9x/2.0x/1.55x over the CPU.
+
+gte-modernbert-base is the fifth validated ANE model. laya's
+ModernBERT-large encoder also converts accurately (CLS ≥ 0.997); its earlier
+CLS 0.07 on the ANE was the same bug.
+
+**What was wrong before.** D20 blamed the massive activation (dimension 251,
+~48,000 on delimiter tokens) for crushing fp16 LayerNorm precision. The
+macOS 27 follow-ups narrowed the loss to attention, but still read it as
+fp16 precision:
+- a range rewrite at 1/8–1/256 gave at most 0.93;
+- fp32 LayerNorm changed nothing;
+- fp32 attention gave 0.9998.
+
+The "CPU parity 1.000000" controls behind those readings were NaN outputs
+hidden by `min(worst, nan)`, and every short-text parity input was mostly
+padding. The same outlier is harmless with explicit attention. Its only cost
+is a small per-token effect on those tokens' own output vectors, while
+pooled outputs are unaffected.
+
+**Consequences.**
+- `ane_check` gates pad invariance on the ANE and CPU paths. It rejects the
+  fused artifact (cosine 0.27) and passes every validated model. The
+  ModernBERT converter gates it too.
+- Parity metrics must fail on non-finite output.
+- `tools/probe_activations.py` no longer calls massive activations hostile;
+  fp16 range is its only calibrated verdict.
+- D20's rules "a CPU_AND_NE vs PyTorch-fp16 gap is the outlier signature"
+  and "QK-norm models avoid this by construction" are withdrawn. QK-norm
+  does keep activations small, which spares a range rewrite.
+
+**Not done:** a minimal reproduction of the fused-op mask drop, which would
+yield a precise checklist rule and material for an Apple Feedback report.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
@@ -459,9 +526,9 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   0.9999 / CPU_AND_NE 0.99985 (bucket-invariant), live /v1/embeddings worst
   parity 0.99850 over the reference set including a 512-token doc (the case
   that exposed the EOS-truncation bug), unit norms, asymmetric query/document
-  prefixes, and preserved similarity structure. gte-modernbert-base tested
-  and rejected as ANE-incompatible (massive-activation outlier) — negative
-  result in docs/MODELS.md.
+  prefixes, and preserved similarity structure. gte-modernbert-base was
+  tested and rejected at the time; that verdict was a Core ML
+  attention-mask bug and is superseded (D25).
 
 - macOS 27 (September 2026, D21): M1 Max, macOS 27.0, Xcode 27.0.
   Verified with the smoke test and a live `sidekickd`:
@@ -481,6 +548,16 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   - compute plans for all four validated encoders at every bucket
   - a flexible-shape negative control rejected before any prediction
   - ratios re-measured (MODELS.md)
+
+- gte-modernbert-base end-to-end (September 2026, macOS 27, D25). Conversion
+  via tools/convert_gte_modernbert.py with explicit attention:
+  - parity CPU_ONLY 0.999919 / CPU_AND_NE 0.999793 at every bucket
+  - 794/805 ops on the ANE
+  - pad invariance 1.0000000 on both paths (the old fused artifact: 0.27)
+  - ANE ratios 2.9x/2.0x/1.55x
+  - live /v1/embeddings worst parity 0.99896 over nine texts, including a
+    722-token input
+  - unit norms, and similarity structure matching fp32
 
 Still open:
 - An automated ANE gate in a self-hosted CI job. `ane_check` now exits

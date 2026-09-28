@@ -1,9 +1,6 @@
-# DOCUMENTED NEGATIVE RESULT — NOT a validated ANE model. gte-modernbert-base
-# converts faithfully but the whole ModernBERT family lands at ~0.90 parity on
-# the ANE (massive-activation outlier; see docs/MODELS.md "Incompatible" and
-# tools/convert_gte_modernbert.py OUTCOME). This manifest is retained only so
-# the converter/reproduction and an off-ANE fp32 artifact can be built. Do not
-# ship it as ANE-resident.
+# Validated on the ANE (docs/MODELS.md, D25): parity 0.9998 at every bucket.
+# Convert with tools/convert_gte_modernbert.py, which uses explicit attention;
+# Core ML's fused attention op drops this model's attention mask on the ANE.
 #
 # Alibaba-NLP/gte-modernbert-base as Core ML artifacts: one static-shape model
 # per sequence-length bucket ({seq} resolves against `buckets`), with CLS
