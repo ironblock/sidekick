@@ -55,6 +55,8 @@ Light, trunk-based git-flow:
   release, in the same change that bumps the version. The release workflow
   refuses a tag without them, or one that doesn't match the workspace
   version. It publishes them as the GitHub release's body and ships them in
-  the archive as `RELEASE_NOTES.md`.
+  the archive as `RELEASE_NOTES.md`. Don't hard-wrap them: GitHub renders
+  every newline in a release body as a line break, so keep each paragraph
+  and list item on one line.
 - Bump `[workspace.package] version` in the root `Cargo.toml` to match the tag
   so `sidekickd --version` stays honest.
