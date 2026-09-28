@@ -24,6 +24,22 @@ pub struct ChatCompletionRequest {
     pub response_format: Option<ResponseFormat>,
     #[serde(default)]
     pub stop: Option<StopSequences>,
+    // Fields this daemon can't honor. Parsed only so a request that depends
+    // on them is rejected instead of silently answered without them (D22).
+    #[serde(default)]
+    pub n: Option<u32>,
+    #[serde(default)]
+    pub tools: Option<Vec<Value>>,
+    #[serde(default)]
+    pub functions: Option<Vec<Value>>,
+    #[serde(default)]
+    pub tool_choice: Option<Value>,
+    #[serde(default)]
+    pub function_call: Option<Value>,
+    #[serde(default)]
+    pub logprobs: Option<bool>,
+    #[serde(default)]
+    pub top_logprobs: Option<u32>,
 }
 
 /// OpenAI's `stop`: one string or up to four.

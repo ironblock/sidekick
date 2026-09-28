@@ -300,6 +300,24 @@ classification in CI on both SDKs, without a model.
   - It is useful as a conformance reference, and the token counts above were
     checked against it.
 
+## D22 — Reject request parameters the daemon can't honor
+Extends D8's fail-loudly rule from `response_format` to the rest of the chat
+request. Silently answering as if a parameter weren't there gives the client
+a wrong answer that looks right. So a request that depends on something
+sidekick can't do now gets a 400:
+- `n` > 1
+- non-empty `tools` / `functions`
+- a `tool_choice` / `function_call` that requires a tool or names one
+- `logprobs: true`, or `top_logprobs` > 0
+
+The harmless forms that OpenAI SDKs send by default are still accepted:
+`n: 1`, empty tools, `tool_choice` `"auto"`/`"none"`/null, `logprobs:
+false`. Everything else unknown is still ignored on purpose, including
+`seed`, `top_p`, penalties and `user`. Foundation Models' sampling options
+could map `seed`/`top_p` in the future. This is a behavior change for
+clients that relied on those parameters being dropped, so it warrants a
+minor version bump when released.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

@@ -517,3 +517,40 @@ async fn stop_is_accepted_as_string_or_list_and_validated() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn parameters_that_cannot_be_honored_are_rejected() {
+    let chat = |extra: Value| {
+        let mut body = json!({"model": "apple-fm", "messages": [{"role": "user", "content": "hi"}]});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        post_json("/v1/chat/completions", body)
+    };
+    // What SDKs commonly send by default must keep working.
+    for ok in [
+        json!({"n": 1}),
+        json!({"tools": []}),
+        json!({"tool_choice": "auto"}),
+        json!({"tool_choice": "none"}),
+        json!({"tool_choice": null}),
+        json!({"function_call": "none"}),
+        json!({"logprobs": false}),
+        json!({"top_logprobs": 0}),
+        json!({"seed": 7, "top_p": 0.9, "presence_penalty": 0, "user": "x"}),
+    ] {
+        let (status, body) = call(test_state(true, None), chat(ok.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{ok}: {body}");
+    }
+    for bad in [
+        json!({"n": 2}),
+        json!({"tools": [{"type": "function", "function": {"name": "f"}}]}),
+        json!({"functions": [{"name": "f"}]}),
+        json!({"tool_choice": "required"}),
+        json!({"tool_choice": {"type": "function", "function": {"name": "f"}}}),
+        json!({"function_call": {"name": "f"}}),
+        json!({"logprobs": true}),
+        json!({"top_logprobs": 3}),
+    ] {
+        let (status, body) = call(test_state(true, None), chat(bad.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
+}
