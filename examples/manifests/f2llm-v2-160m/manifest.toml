@@ -9,8 +9,7 @@
 # in-graph last-token pooling, and RoPE/GQA conversion constraints, and
 # docs/MODELS.md for measured parity/residency.
 #
-# QK-norm keeps activations tiny, so no range rewrite is needed (contrast
-# ModernBERT, which is ANE-incompatible for the opposite reason).
+# QK-norm keeps activations tiny, so no range rewrite is needed.
 #
 # No matryoshka: the model card documents a single 640-dim output.
 #

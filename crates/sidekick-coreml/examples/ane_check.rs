@@ -9,7 +9,14 @@
 //!    80% of assigned operations are. Failing exits non-zero *before* any
 //!    prediction: an artifact the ANE rejects can abort the process at
 //!    predict time (flexible-shape models do on macOS 27).
-//! 2. **Latency ratio** — runtime evidence. Median `.cpuOnly` over
+//! 2. **Pad invariance** — a gate. The same half-full input is run twice,
+//!    with pad ids 0 and with pseudo-random pad ids; the attention mask hides
+//!    the pads, so the real tokens' output must be identical (cosine
+//!    ≥ 0.99999) and finite, on both `.cpuAndNeuralEngine` and `.cpuOnly`.
+//!    This catches a dropped attention mask, which the compute plan can't
+//!    see: Core ML's fused attention op dropped ModernBERT's mask on the
+//!    ANE, costing ~10% cosine while every op sat on the ANE.
+//! 3. **Latency ratio** — runtime evidence. Median `.cpuOnly` over
 //!    `.cpuAndNeuralEngine` latency. The plan is what the compiler intends
 //!    and can't see failures that only happen at run time (a transient ANE
 //!    compile failure); a ratio near 1.0 would. The ratio is only a
@@ -69,7 +76,52 @@ fn main() {
     }
     println!("ANE eligibility (compute plan): OK");
 
-    // 2. Latency ratio as runtime evidence.
+    // 2. Pad invariance: the real tokens' output must not depend on what
+    // sits in the masked pad positions.
+    let real = seq_len / 2;
+    let pad_run = |units: ComputeUnits, noisy_pads: bool| -> Vec<f32> {
+        let ids: Vec<i32> = (0..seq_len)
+            .map(|i| match (i < real, noisy_pads) {
+                (true, _) => 1000 + (i as i32 * 7) % 20000,
+                (false, false) => 0,
+                (false, true) => 1000 + (i as i32 * 7919) % 20000,
+            })
+            .collect();
+        let mask: Vec<i32> = (0..seq_len).map(|i| i32::from(i < real)).collect();
+        let model = CoremlModel::load(&path, units).expect("model load");
+        let out = model
+            .predict_int32(
+                &[
+                    Int32Input { name: &ids_name, shape: vec![1, seq_len], data: ids },
+                    Int32Input { name: &mask_name, shape: vec![1, seq_len], data: mask },
+                ],
+                &output_name,
+            )
+            .expect("predict");
+        // Per-token outputs: compare only the real positions (a pad query's
+        // own output legitimately depends on its input).
+        match out.shape.as_slice() {
+            [1, s, d] if *s == seq_len => out.data[..real * d].to_vec(),
+            _ => out.data,
+        }
+    };
+    for (label, units) in [("cpuAndNeuralEngine", ComputeUnits::CpuAndNeuralEngine), ("cpuOnly", ComputeUnits::CpuOnly)] {
+        let (a, b) = (pad_run(units, false), pad_run(units, true));
+        let finite = a.iter().chain(&b).all(|x| x.is_finite());
+        let dot: f64 = a.iter().zip(&b).map(|(x, y)| f64::from(*x) * f64::from(*y)).sum();
+        let norm = |v: &[f32]| v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
+        let cos = dot / (norm(&a) * norm(&b));
+        if !finite || cos.is_nan() || cos < 0.99999 {
+            eprintln!(
+                "FAIL: {label}: output depends on pad content or is non-finite \
+                 (finite: {finite}, cosine {cos:.6}); the attention mask is not being honoured"
+            );
+            std::process::exit(1);
+        }
+        println!("pad invariance ({label}): OK (cosine {cos:.7})");
+    }
+
+    // 3. Latency ratio as runtime evidence.
     // Deterministic pseudo-token ids: content doesn't matter for latency,
     // but keep them in a small-vocab-safe range and identical across runs.
     let ids: Vec<i32> = (0..seq_len).map(|i| 1000 + (i as i32 * 7) % 20000).collect();

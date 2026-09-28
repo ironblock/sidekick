@@ -19,6 +19,13 @@ Method, for every validated entry:
   of assigned operations are. The table's "ANE ops" column is that share.
   The plan is the compiler's intent, so it can't see failures that only
   happen at run time. That is what the ratio below is for.
+- **pad invariance** (same tool), a gate: a half-full input is run with pad
+  ids 0 and with random pad ids; the attention mask hides the pads, so the
+  output must be identical (cosine ≥ 0.99999) and finite on both the ANE and
+  CPU paths. It catches a dropped attention mask, which neither the compute
+  plan nor a parity set of short texts reliably exposes. Core ML's fused
+  attention op dropped ModernBERT's mask on the ANE while every op sat on
+  the ANE (see gte-modernbert-base below).
 - **residency ratio**, runtime evidence, reported by the same tool: the
   median-latency ratio of `.cpuOnly` over `.cpuAndNeuralEngine` per bucket.
   A ratio near 1.0 on an eligible model points at a runtime fallback, so
@@ -41,6 +48,7 @@ Method, for every validated entry:
 | [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma.py](../tools/convert_embeddinggemma.py) | 0.9999 | 0.9905 | 2015/2024 (99.6%) | 3.4x / 3.1x / 2.9x |
 | [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.9999 | 0.9870 | 693/698 (99.3%) | 2.49x / 1.91x / 1.66x |
 | [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.9999 | 0.99985 | 612/617 (99.2%) | 2.02x / 1.77x / 1.59x |
+| [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | 768 | CLS | [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py) | 0.999919 | 0.999793 | 794/805 (98.6%) | validated on macOS 27 (below) |
 
 ANE ops are identical at every bucket. On every model, the operations off
 the ANE are mask and cast plumbing plus the embedding `gather` (e.g. bge:
@@ -54,6 +62,7 @@ tile). Nothing compute-heavy is off the ANE. Ratios re-measured on macOS 27
 | embeddinggemma | 2.5x | 2.5x | 1.9x |
 | LFM2.5 | 2.4x | 2.0x | 1.7x |
 | F2LLM | 2.3x | 2.0x | 1.5x |
+| gte-modernbert | 2.9x | 2.0x | 1.55x |
 
 Notes per model:
 
@@ -87,15 +96,42 @@ Notes per model:
   483-token text); ~670 MB per bucket, 2.0 GB installed.
 - **F2LLM-v2-160M** — the first **causal decoder** and first **last-token
   pooling** on the stack. A Qwen3 decoder; its QK-norm keeps activations
-  tiny (max ~420), so it converts as cleanly as bge (ANE parity 0.99985) —
-  the exact opposite of ModernBERT, and the reason we chose it after that
-  failure. Last-token pooling is baked in-graph via the attention mask
+  tiny (max ~420), so it converts as cleanly as bge (ANE parity 0.99985). Last-token pooling is baked in-graph via the attention mask
   (no data-dependent index): `last_onehot = mask · (1 − shift_left(mask))`,
   then a masked sum. Validating it surfaced and fixed a real server bug:
   naive `take(max)` truncation dropped the trailing EOS that last-token
   pooling reads, collapsing over-length-doc parity to 0.36 — the server now
   preserves the final token on truncation (harmless for CLS/mean).
   ~950 MB installed; a 640-dim decoder for ~0.95 GB.
+
+- **gte-modernbert-base** — validated September 2026, on macOS 27, after
+  being documented ANE-incompatible (D20, D25). ModernBERT alternates
+  sliding-window and global attention and has per-layer-type RoPE (see the
+  converter). **Convert attention explicitly** (`attn_implementation="eager"`,
+  i.e. matmul → softmax → matmul). With `sdpa`, Core ML's fused
+  `scaled_dot_product_attention` op drops the attention mask on the ANE in
+  this graph:
+  - pads are attended and the sliding window vanishes (parity 0.87–0.975,
+    matching an *unmasked* reference at 0.99998);
+  - the output changes with pad content (pad ids 0 vs random: 0.61–0.94);
+  - the same op on the CPU returns NaN below 64 of 128 real tokens.
+
+  The earlier diagnosis blamed ModernBERT's massive activation (dimension
+  251, ~48,000 on delimiter tokens) crushing fp16 precision. It doesn't:
+  with explicit attention the same activations convert at 0.9998. They
+  leave a small per-token effect: the lowest per-token cosines, 0.98–0.99
+  on the ANE, sit on those tokens' own output vectors. Pooled CLS isn't
+  affected.
+
+  Results:
+  - parity is bucket-invariant (CPU_ONLY 0.999919, CPU_AND_NE 0.999793) and
+    pad invariance is 1.0000000 on both paths;
+  - live `/v1/embeddings` worst parity is 0.99896 over nine texts, including
+    a 722-token input truncated to 512;
+  - similarity structure matches fp32 (unrelated pair 0.417 vs 0.416);
+  - ~7.8 ms warm for a short text, including HTTP.
+
+  ~285 MB per bucket, 0.86 GB installed.
 
 ## Incompatible / not integrated
 
@@ -105,7 +141,52 @@ Notes per model:
 | Apple NLContextualEmbedding | OS-provided contextual | Mean-pooled MLM states, strongly anisotropic (unrelated-pair cosine ~0.75) — unusable for similarity thresholds without post-hoc calibration sidekick doesn't own (D16). Re-measured on macOS 27: same model revision, same cosines (0.96/0.89 vs 0.75), faster (~11 ms). |
 | Apple NLEmbedding.sentenceEmbedding | OS-provided static-ish | 2020-era quality, measurably weaker than bge-small on the same pairs; no prefixes, no control over dims (D16). Unchanged on macOS 27 (revision 1; 0.74/0.44 vs 0.14). |
 | Apple FoundationModels | LLM | Has **no embedding API at all** (verified against macOS 26 SDK docs/headers, D16) — chat only. Still none in the macOS 27 SDK; 27's Spotlight integration is a search tool for sessions, not vectors. |
-| [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) **and the ModernBERT family** (incl. granite-embedding-r2, nomic-modernbert-embed) | ModernBERT encoder | Converts faithfully (Core ML **fp32 parity 1.000000**) and **PyTorch fp16 is perfect (0.999999)** — but **Core ML's ANE fp16 gives only 0.9038**. Root cause: a **massive-activation outlier** (dim 251 reaches ~40000 in the residual stream) dominates every LayerNorm's variance (40000² ≈ 1.6e9), dividing all other dims by ~1400 and crushing them below fp16's between-op storage precision *on the ANE*. PyTorch survives via fp32-internal reductions; the ANE stores fp16 between every op and can't recover them. Forcing sensitive ops to fp32 restores 0.9998 but relocates the graph off the ANE (~41ms, ~5× slower, no ANE benefit); macOS26's newer ANE compiler is identical; a D17 global 1/K range rewrite can't win (K≥156 needed to bound the square, at which point the compensated eps/K² underflows fp16). At 0.90 the space compresses (an unrelated pair rose 0.38→0.53), hurting retrieval. Full diagnosis + reproduction in [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py). **Re-tested on macOS 27 (M1 Max): unchanged.** ANE parity 0.903807 with 98.5% of operations on the ANE (3.2x over CPU): placement is fine, the ANE's fp16 arithmetic is not. Keeping LayerNorm and reductions in fp32 moves all 45 LayerNorms to the CPU; the ANE↔CPU hand-offs make the ANE path slower than CPU-only (0.75x), and parity doesn't improve (0.9039) because the damage is in the fp16 residual stream. The macOS 26 opset behaves identically. |
+| [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) | ModernBERT-large encoder + decision head (classifier) | **Not an embedding model:** it scores options through a head that reads [MASK] marker tokens and CLS, so it would need its own endpoint. Its encoder converts like gte-modernbert (explicit attention; pad invariance 1.0). Seq 128, M1 Max, macOS 27: CLS ≥ 0.997 and per-token mean ≥ 0.983. Individual token vectors on short inputs can deviate on the ANE (worst 0.80–0.90 at 12 tokens; 0.16 on one test input), and that matters here because the head reads individual tokens. Validate end-to-end decisions before running it on the ANE; the GPU path is essentially exact (CLS 0.99999, 19 ms). An earlier CLS 0.07 on the ANE was the fused-attention mask bug. |
+
+## Quick triage: is a model worth converting?
+
+Most rejections are visible long before a conversion. Cheapest first:
+
+1. **`config.json` (seconds).**
+   - `model_type` / `architectures` is the strongest signal. Validated:
+     `bert`, `gemma3_text` (with a range rewrite), `lfm2`, `qwen3`,
+     `modernbert` (with explicit attention). A checkpoint can wrap one of
+     these, as laya's `encoder/config.json` does.
+   - Also check:
+     - **QK-norm** (`q_norm`/`k_norm` in the modeling code): keeps
+       activations small (LFM2.5 ~25, F2LLM ~420), so no range rewrite.
+     - **bf16 training**: nothing kept its activations in fp16 range.
+     - **Size**: validated up to 350M parameters, and each bucket stores the
+       whole model at ~2 bytes/param.
+     - **Needed sequence length**: buckets are ≤512, and the ANE's advantage
+       shrinks with length.
+     - **Output shape**: one vector per input fits `/v1/embeddings`;
+       classifiers, rerankers and multi-vector models need a new API.
+2. **The modeling code (minutes).** See the checklist below: data-dependent
+   shapes, attention that can't run as SDPA, and non-attention token mixers.
+3. **`tools/probe_activations.py` (minutes, PyTorch on the CPU, no Core
+   ML).** It hooks every normalization layer's input and reports peak
+   activation, which dimension carries it, how many times the median
+   dimension it is, and which norm type reads it. Its one calibrated verdict
+   is fp16 range: over 65504 needs a range rewrite (EmbeddingGemma), and
+   under ~30,000 is safe to convert directly.
+
+   | model | norms | peak (dim) | × median | probe says | measured on ANE |
+   |---|---|---|---|---|---|
+   | bge-small-en-v1.5 | LayerNorm | 338 (99) | 146× | no range issue | 0.99998 |
+   | LFM2.5-Embedding-350M | RMSNorm | 1.9 | 17× | no range issue | 0.987 |
+   | embeddinggemma-300m | RMSNorm | 152,485 (731) | 313× | range rewrite | 0.9905 after rewrite |
+   | gte-modernbert-base | LayerNorm | 47,973 (251) | 502× | no range issue | 0.9998 (explicit attention) |
+   | laya (ModernBERT-large) | LayerNorm | 27,296 (379) | 556× | no range issue | CLS ≥ 0.997 (explicit attention) |
+
+   Massive activations, one dimension hundreds of times the rest on a few
+   tokens, are common, and they are not by themselves an ANE problem. The
+   ModernBERT failure once blamed on them was a Core ML attention bug. Expect
+   those tokens' own output vectors to be slightly less accurate, which
+   matters only when you read individual token vectors.
+4. **Convert with explicit attention, then gate (hours):** the gates at the
+   end of the checklist. Pad invariance in `ane_check` catches a dropped
+   attention mask in seconds.
 
 ## Will a new model convert? A checklist
 
@@ -121,8 +202,14 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   token, so truncation must preserve it — the server keeps `[first max-1,
   last]` for exactly this reason. A short-input-only parity gate misses
   both; test an over-length input that fills the largest bucket.
-- **SDPA-capable attention** — the conversion forces `sdpa`; eager-only
-  mask code tends to materialize -inf constants that NaN in fp16 (D15).
+- **Explicit attention with fp16-safe masks.** Masks must use a finite
+  constant such as -30000, not `-inf`/`finfo.min`, which NaN in fp16 (D15).
+  The converters patch the mask builders to do this. Then prefer attention
+  that converts to explicit matmul → softmax → matmul (gemma, F2LLM,
+  ModernBERT via `attn_implementation="eager"`). Core ML's fused
+  `scaled_dot_product_attention` op dropped ModernBERT's mask on the ANE.
+  bge's fused attention is fine, so this is graph-specific, not universal.
+  Whatever the form, `ane_check`'s pad-invariance gate must pass.
 - **Static-shape-friendly graph** — no data-dependent shapes. Stock
   `rotate_half`/`repeat_kv` and any `F.conv1d(padding=shape-derived)`
   need the traceable rewrites (D17 constraint 8, LFM2.5 constraint B).
@@ -130,17 +217,12 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   on a mixed corpus). Under ~30k: convert directly (bge, LFM2.5). Over:
   apply the D17 power-of-two range rewrite (gemma). Watch for `-1e9` mask
   constants (rewrite at -30000) and rmsnorm eps below ~1e-4.
-- **Massive-activation outliers are an ANE killer, and calibration alone
-  won't warn you** — a *single* feature dimension in the tens of thousands
-  (common in models trained without QK-norm; ModernBERT's dim 251 hits 40k)
-  passes an fp16 convert, matches in fp32, and is even perfect in *PyTorch*
-  fp16 — then lands at ~0.90 on the ANE, because that dim dominates every
-  LayerNorm/RMSNorm variance and crushes the rest below the ANE's fp16
-  between-op storage. A global range rewrite can't fix it (it's the outlier's
-  *ratio* to other dims, not the absolute scale). QK-norm models (LFM2.5,
-  Qwen3) avoid it by construction; LayerNorm-only models (ModernBERT) are the
-  risk. Test this specifically: compare **CPU_AND_NE vs PyTorch-fp16** parity,
-  not just vs fp32 — a gap there is the outlier signature.
+- **Massive activations are not disqualifying.** A few feature dimensions
+  reaching tens of thousands on delimiter/[SEP] tokens (ModernBERT ~48,000,
+  EmbeddingGemma ~152,000) convert fine once attention is explicit and values
+  fit fp16. Their cost is a small per-token effect on those tokens. An
+  earlier version of this checklist called them an "ANE killer" under
+  LayerNorm; that was the fused-attention mask bug misdiagnosed (D25).
 - **Token mixing other than attention** (convs, SSMs): decide the padding
   semantics explicitly. Attention masks silence pad *keys*, but anything
   convolutional reads pad *states* — zero them per layer if the reference
@@ -150,9 +232,9 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   buckets. Fine on disk, but mind the install footprint.
 
 Gates to pass, in order: fp32 rewrite parity ≥ 0.9999 (only if rewriting),
-`CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.985, `ane_check` eligibility OK per
-bucket (its ratio should be clearly above 1.0 on a quiet machine), then a
-live `/v1/embeddings` parity check.
+`CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.985, `ane_check` per bucket (compute
+plan eligible and pad invariance on both paths; its ratio should be clearly
+above 1.0 on a quiet machine), then a live `/v1/embeddings` parity check.
 
 Flexible input shapes are ruled out (D15), and on macOS 27 they became
 dangerous. A single enumerated-shapes artifact used to run slowly on the
@@ -162,6 +244,11 @@ Objective-C exception Rust can't catch. It takes down `sidekickd` or the
 host app linking `libsidekick.dylib`. Always ship one static-shape artifact
 per bucket, and run `ane_check` on each: it reads the compute plan without
 predicting, so it rejects such an artifact instead of crashing.
+
+Make every parity metric NaN-safe. `min(worst, cos)` returns the old value
+when `cos` is NaN, which hid a NaN-producing CPU path behind "parity
+1.000000" during the ModernBERT investigation; fail on non-finite output
+instead, as the converters' parity checks do.
 
 Two hard-won measurement gotchas: run residency checks on a quiet machine
 (see the method note — concurrent GPU load makes ratios swing 2x), and

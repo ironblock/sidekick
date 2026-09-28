@@ -1,41 +1,35 @@
-"""Convert Alibaba-NLP/gte-modernbert-base to Core ML — a DOCUMENTED NEGATIVE
-RESULT for the ANE (see OUTCOME below). Kept as the reproduction and as a
-correct off-ANE / fp32 converter.
+"""Convert Alibaba-NLP/gte-modernbert-base into ANE-resident Core ML artifacts.
 
 Produces one static-shape .mlmodelc per sequence-length bucket, with CLS
 pooling baked into the graph, matching examples/manifests/gte-modernbert-base.
 
-================================ OUTCOME ================================
-ModernBERT does NOT achieve accurate full ANE offload, and this is intrinsic
-to the architecture, not a conversion bug. Measured on M-series (macOS 26):
+============================== KEY CONSTRAINT ==============================
+EXPLICIT ATTENTION, NOT THE FUSED SDPA OP. Load the model with
+attn_implementation="eager", so attention converts to explicit
+matmul -> softmax -> matmul. With "sdpa" it converts to Core ML's fused
+scaled_dot_product_attention op, and in this graph that op DROPS ITS MASK on
+the Neural Engine (macOS 27, M1 Max): pad tokens are attended and the
+sliding window disappears. The ANE output then matches an unmasked fp32
+reference at 0.99998 and the intended one at only 0.87-0.975; it changes
+with the *content* of the pad positions (pad ids 0 vs random: cosine
+0.61-0.94); and the same fused op on the CPU returns NaN whenever fewer than
+64 of 128 positions are real (a query whose whole sliding window is masked).
+A synthetic single-layer fused SDPA does honour its mask, so the trigger is
+specific to this graph and not yet isolated. bge-small's fused SDPA passes
+the same pad-invariance check.
 
-  compute path           worst parity vs fp32     latency
-  torch fp16 (oracle)    0.999999                 —
-  Core ML fp32           1.000000                 (off-ANE)
-  Core ML fp16, full ANE 0.9038                   7.9ms   <- what the ANE gives
-  Core ML fp16, any op fp32  ~0.9998              ~41ms   <- falls off the ANE
+With explicit attention the whole graph stays on the ANE and parity is
+0.9999 at every bucket (docs/MODELS.md). This file used to document
+ModernBERT as ANE-incompatible, blaming its massive activation (dim 251,
+~48,000 in the residual stream) crushing LayerNorm precision. That was the
+mask bug misdiagnosed: the same outlier is harmless once attention is
+explicit.
 
-Root cause: ModernBERT has an outlier feature (dimension 251) that reaches
-~40000 in the residual stream (layers.15.mlp), the well-known "massive
-activation" phenomenon. That single dim dominates every LayerNorm's variance
-(40000^2 ~ 1.6e9), so all other dims are divided by ~1400 and crushed toward
-fp16's precision floor. PyTorch fp16 survives because it keeps LayerNorm and
-softmax reductions in fp32; the ANE stores fp16 between every op, so the
-crushed values cannot be recovered downstream. Forcing the sensitive ops to
-fp32 restores parity but relocates the graph off the ANE (~5x slower, no ANE
-benefit) — the newer macOS26 ANE compiler behaves identically. A global 1/K
-range rewrite (the D17 gemma trick) does not help: cooling 40000 below the
-fp16 square limit needs K>=156, at which point the compensated LayerNorm eps
-(eps/K^2) underflows fp16 to zero. The degradation is not cosmetic: at 0.90
-parity the embedding space compresses (an unrelated pair rose 0.38 -> 0.53),
-which hurts retrieval discrimination.
-
-Consequence: the entire ModernBERT embedding family (this model, granite-r2,
-nomic-modernbert-embed) is documented ANE-incompatible in docs/MODELS.md. The
-converter below is correct (fp32 parity 1.0) and is retained to reproduce the
-finding and to build an accurate off-ANE/fp32 artifact if a host ever wants
-one. It is NOT installed as a validated ANE model.
-=========================================================================
+parity_check() therefore also gates PAD INVARIANCE: the same text with
+different pad ids must give the same output (cosine >= 0.99999). A correctly
+masked model can't see its pads, so this check catches a dropped mask in
+seconds.
+============================================================================
 
 Usage:
     python tools/convert_gte_modernbert.py <hf-model-dir> <install-dir> [buckets...]
@@ -49,10 +43,9 @@ Usage:
 Requires: torch, transformers >= 4.48 (native ModernBERT), coremltools, numpy
 (arm64-native Python), plus Xcode for `xcrun coremlcompiler`.
 
-ModernBERT is the fourth architecture class validated on the stack (after
-classic BERT / bge, Gemma3 / embeddinggemma, and the LFM2 hybrid). It is an
-encoder-only bidirectional transformer with three features that make it a
-NEW conversion path, all handled here without a full re-derivation:
+ModernBERT is an encoder-only bidirectional transformer with three features
+that make it a new conversion path, all handled here without a full
+re-derivation:
 
 A. ALTERNATING LOCAL/GLOBAL ATTENTION. Every `global_attn_every_n_layers`-th
    layer (here every 3rd) attends globally; the rest use a symmetric sliding
@@ -72,10 +65,10 @@ B. RoPE with per-layer-type theta (global 160000 / local 10000). The theta
    chunk(2)-based replacement as the gemma/LFM recipes.
 
 C. UNPADDING. ModernBERT unpads sequences only on the flash_attention_2
-   path; sdpa keeps full static shapes, so loading with
-   attn_implementation="sdpa" avoids the data-dependent shapes that would
-   push the encoder off the ANE (D15 constraint 1). Explicit position_ids
-   are passed for the same static-shape reason as bge (D15 constraint 4).
+   path; eager (and sdpa) keep full static shapes, which avoids the
+   data-dependent shapes that would push the encoder off the ANE (D15
+   constraint 1). Explicit position_ids are passed for the same static-shape
+   reason as bge (D15 constraint 4). Use eager: see KEY CONSTRAINT above.
 
 Pooling: raw CLS (position 0) reshaped to a literal (1, dims), exactly like
 bge — no in-graph L2 normalize. The server normalizes pooled vectors in f32
@@ -83,10 +76,11 @@ bge — no in-graph L2 normalize. The server normalizes pooled vectors in f32
 sum-of-squares overflow the L2 would hit (|CLS| ~= 22, 768 dims -> ~3.9e5).
 Cosine parity is normalization-invariant, so the gate is unaffected.
 
-fp16 note: no range rewrite. ModernBERT's residual stream is hot (~4e4 peak,
-measured) but under the fp16 max (65504), and it uses LayerNorm (numerically
-stable) rather than the scale-sensitive RMSNorm the gemma rewrite targeted.
-The per-path parity gate is the real check; measured results in docs/MODELS.md.
+fp16 note: no range rewrite. ModernBERT's residual stream is hot (~48,000
+peak on a few tokens, measured with tools/probe_activations.py) but under the
+fp16 max (65504), and with explicit attention it converts at 0.9999 as is.
+The per-path parity and pad-invariance gates are the real check; measured
+results in docs/MODELS.md.
 """
 
 import shutil
@@ -242,6 +236,17 @@ def parity_check(tokenizer, pkg, seq_len, refs):
             worst = min(worst, cosine(ref, out))
         if worst < gate:
             raise SystemExit(f"seq {seq_len} [{label}]: parity cosine {worst:.6f} < {gate}")
+        # Pad invariance: a correctly masked model can't see its pad
+        # positions, so their content must not change the output.
+        ids, mask = padded_inputs(tokenizer, PARITY_SENTENCES[0], seq_len)
+        noisy = ids.copy()
+        pads = mask[0] == 0
+        noisy[0, pads] = np.random.default_rng(0).integers(1000, 40000, int(pads.sum()))
+        a = m.predict({"input_ids": ids, "attention_mask": mask})["embedding"][0]
+        b = m.predict({"input_ids": noisy, "attention_mask": mask})["embedding"][0]
+        if not (np.isfinite(a).all() and np.isfinite(b).all()) or cosine(a, b) < 0.99999:
+            raise SystemExit(f"seq {seq_len} [{label}]: output depends on pad content "
+                             f"(cos {cosine(a, b):.6f}); the attention mask is being dropped")
         ids, mask = padded_inputs(tokenizer, PARITY_SENTENCES[0], seq_len)
         for _ in range(3):
             m.predict({"input_ids": ids, "attention_mask": mask})
@@ -270,7 +275,8 @@ def main():
     install_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = AutoTokenizer.from_pretrained(src)
-    model = AutoModel.from_pretrained(src, dtype=torch.float32, attn_implementation="sdpa")
+    # eager, not sdpa: see KEY CONSTRAINT in the module docstring.
+    model = AutoModel.from_pretrained(src, dtype=torch.float32, attn_implementation="eager")
     model.eval()
     install_patches()
 
