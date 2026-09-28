@@ -141,17 +141,19 @@ measured on-device against the same sentence set as the bge parity check:
 Not worth a third backend; revisit only if Apple ships a retrieval-tuned
 embedding API.
 
-## D17 — EmbeddingGemma ships ANE-default at ~0.990 parity
+## D17 — EmbeddingGemma ships ANE-default (amended: full parity after an MLP precision rewrite)
 Gemma3's 300m encoder needed real conversion engineering
 (tools/convert_embeddinggemma.py): a calibrated power-of-two fp16 range
 rewrite (the residual stream reaches ~1.5e5, past fp16 max — scale-invariant
 RMSNorm rewrites make it exact; fp32 parity gates at 1.000000), hand-built
 attention masks (transformers halves config.json's sliding_window to 257
 for bidirectional models; the 512 bucket has a live band, so the parity
-gates include a ~400-token text), and shape-arithmetic-free rotate_half /
-repeat_kv rewrites for coremltools' static-shape 'int' op crash.
+gates include a ~400-token text — which, the amendment found, never ran),
+and shape-arithmetic-free rotate_half / repeat_kv rewrites for
+coremltools' static-shape 'int' op crash.
 
-After all of that, the ANE itself costs ~1% cosine — intrinsic fp16
+*The next paragraph is superseded by the amendment below.* After all of
+that, the ANE itself costs ~1% cosine — intrinsic fp16
 accumulation across 24 layers, insensitive to residual scale and not
 attributable to softmax (measured; see the script docstring). The matrix at
 bucket 128, worst-of-parity vs fp32 sentence-transformers reference:
@@ -163,6 +165,99 @@ CpuOnly. Conversion gates are per-path: CPU_ONLY >= 0.999 (conversion is
 faithful), CPU_AND_NE >= 0.985 (what the ANE delivers). Artifact cost:
 ~600MB per bucket; multifunction weight sharing is a possible future
 optimization.
+
+**Amendment (September 2026, macOS 27.0, M1 Max): the ~1% was not
+intrinsic.** It came from two ANE arithmetic limits inside the MLP, and a
+converter rewrite removes it. Re-examined after D25 found ModernBERT's
+"intrinsic" loss to be a Core ML bug.
+
+Ruled out first:
+- *fp16 itself.* The same range-rewritten graph in fp16 scores 0.999998 in
+  PyTorch (CPU and MPS) and 0.999999 on Core ML's GPU path.
+- *A slightly different model.* The ANE output isn't closer to any
+  variant: sliding window 256 instead of 257, no window, exact-erf GELU,
+  pooling over pads, or attended pads. It scores 0.9905 against every
+  plausible one, and the pad variants are far worse. Pad invariance is
+  exact. The attention is explicit (Gemma's SDPA call passes a scale, so
+  coremltools doesn't fuse it), so D25's mask bug doesn't apply.
+
+Located:
+- *By layer, teacher-forced* (each layer converted alone and fed the exact
+  fp32 residual): attention adds at most 0.3% local error on the ANE, less
+  than the CPU path's 0.4–0.9%. The MLP adds up to 19% (most layers 1–5%),
+  worst in layers 19–21. The loss is injected by one sub-block, not
+  accumulated evenly.
+- *By op class kept in fp32* (which moves it to the CPU): attention 0.9905
+  (no change), the MLP 0.99996, GELU alone 0.9913.
+
+The two causes, measured:
+- **The ANE's `linear` op has an absolute precision floor on its input.**
+  Relative error ≈ 3e-4 / rms(input): on a synthetic 1152→768 projection,
+  0.04% at rms 1, 0.4% at 0.06, 2% at 0.016 and 10% at 0.004; the GPU is
+  0.036% at every scale. Scaling the weights, i.e. the output, changes
+  nothing. Gemma's down_proj input, gelu(gate)·up, has rms 0.004–0.03 in
+  layers 18–23. Teacher-forced, layer 20's down projection alone loses
+  11.5% at natural scale and 0.16% with its input scaled ×64.
+- **Core ML's `gelu` op is coarse on the ANE:** ~6e-3 absolute error on
+  [-1, 1] (GPU ~7e-5), which is where most gate activations lie. SiLU is
+  worse (~1.5e-2); tanh (1.6e-3), sigmoid (3e-3) and exp (within a few
+  ulp) are better; mul and relu are exact.
+
+Each effect hides the other: fixing GELU alone gives 0.9913, fixing the
+magnitude alone 0.9997 (0.9992 at bucket 512). This also explains the
+original observations. The residual scale K never reaches the normalized
+MLP interior, and fp32 softmax couldn't help because attention was never
+the problem.
+
+**The fix** (tools/convert_embeddinggemma.py, constraint 9):
+- fold a calibrated power-of-two scale into each up_proj so the down_proj
+  input has rms ~1 (totals 2–256 across layers). It is divided out exactly
+  in the scale-invariant post-feedforward RMSNorm, the constraint-5
+  machinery;
+- build GELU from tanh, mul and add (≤ 9e-4 on [-1, 1] on the ANE);
+- pool at natural scale before the dense head, whose inputs had been at
+  1/32 scale (rms 0.015–0.05). This is a small gain, worst 0.999982 →
+  0.999989 at bucket 512 and none at 128.
+
+**Results**, buckets 128/256/512, worst over the parity set:
+- CPU_AND_NE 0.999996 / 0.999996 / 0.999989 (was 0.9905, and 0.981 on the
+  long text at 512);
+- CPU_ONLY 0.999940 / 0.999940 / 0.999933, so the ANE is now the more
+  accurate path; GPU 0.999999;
+- the fp32 rewrite gate is exact (1.000000);
+- 2161/2170 operations on the ANE (was 2015/2024), and pad invariance
+  1.0000000 on both paths;
+- live `/v1/embeddings` worst parity 0.999982 over 13 inputs, including
+  the long text and a 527-token document truncated to 512;
+- on a separate 51-input adversarial corpus (runs of digits, URLs,
+  repeated tokens, code, 512-token and over-length inputs), run through
+  sidekick's own embedding path: the ANE's worst case went from 0.975 to
+  0.99999, pairwise-similarity drift from 0.042 to 0.001, and rank flips at
+  a 0.02 margin from 122 to 0.
+
+The rescale is free. The explicit GELU costs nothing at bucket 128 and
+~14% at 512 (34.8 → 39.6 ms, interleaved on the same loaded machine);
+`ane_check` ratios are 2.6x/2.4x/1.7x.
+
+**The parity gate had a hole.** The "~400-token" text was 527 tokens with
+the document prefix, so `fitting_pairs()` dropped it at every bucket and
+the sliding band was never gated. Against it, the old 512 artifact scored
+0.981, below its own 0.985 gate. The text is now 394 tokens. The converter
+fails if no parity text reaches the band where the band is live. It also
+gates pad invariance, rejects fused attention and native `gelu` ops, treats
+NaN as failure, and gates the ANE path at 0.999.
+
+**Consequences.**
+- For this model the D14 trade-off is gone: CpuOnly is no longer the
+  route to exact parity.
+- Two conversion rules, now in docs/MODELS.md: keep every linear-layer
+  input near rms 1 on the ANE, and don't use Core ML's native GELU/SiLU
+  ops there.
+
+**Not done:** the other validated models haven't been checked against
+these rules. LFM2.5 (SwiGLU MLPs, ANE parity 0.987) is the obvious
+candidate, and its converter has the same gate hole: its "~480-token"
+text is 523 tokens with the `document: ` prefix, so it never ran.
 
 ## D18 — Embeddings get a C ABI dylib; chat stays daemon-only
 Amends D1 with the use case it was waiting for: a host app that wants
@@ -508,7 +603,12 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   vs fp32 sentence-transformers (matching the ANE gate exactly — the Rust
   tokenizer path is token-identical), matryoshka dimensions 512/256/128
   with unit norms and 400 on undeclared dims, query/document prefixes,
-  and a 831-token input through the 512 bucket (47ms warm).
+  and a 831-token input through the 512 bucket (47ms warm). Re-converted
+  in September 2026 with the MLP precision rewrite (D17 amendment, macOS
+  27): parity CPU_AND_NE 0.999996/0.999996/0.999989, CPU_ONLY 0.99994,
+  2161/2170 operations on the ANE, pad invariance 1.0000000, ane_check
+  ratios 2.6x/2.4x/1.7x, live /v1/embeddings worst parity 0.999982 over 13
+  inputs (394-token text, 527-token doc truncated to 512, query prefix).
 
 - LFM2.5-Embedding-350M end-to-end (July 2026, D19): conversion via
   tools/convert_lfm25_embedding.py, ANE residency 2.49x/1.91x/1.66x at
