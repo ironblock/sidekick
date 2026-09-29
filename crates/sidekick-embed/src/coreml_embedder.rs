@@ -77,8 +77,15 @@ impl CoremlEmbedder {
     /// from the ANE preference; the others exist so tests can compare paths.
     pub fn load_with(model: &ResolvedModel, units: ComputeUnits) -> Result<Self> {
         let m = &model.manifest;
-        let tokenizer = Tokenizer::from_file(model.tokenizer_path())
+        let mut tokenizer = Tokenizer::from_file(model.tokenizer_path())
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
+        // A tokenizer.json may pad every input to a fixed length
+        // (all-MiniLM ships padding to 128), and every returned token is
+        // marked real in the attention mask: the pads would be read as
+        // text. One input is never padded; `run` pads to the bucket.
+        // Truncation stays as shipped: models' parity references were
+        // graded with it (LFM2.5 truncates at 512 in its tokenizer.json).
+        tokenizer.with_padding(None);
         let embedder = Self {
             id: m.id.clone(),
             dims: m.dims,
