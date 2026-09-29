@@ -10,6 +10,7 @@ use axum::http::{Request, StatusCode};
 use common::*;
 use serde_json::{json, Value};
 use sidekick_core::{activate, ProblemType, TruncationSide};
+use std::time::Duration;
 
 fn classify(body: Value) -> Request<Body> {
     post_json("/v1/classify", body)
@@ -89,8 +90,67 @@ async fn input_and_vllm_fields_are_honored_or_rejected() {
     .await;
     classify_400(json!({"model": "sentiment", "input": "a", "add_special_tokens": false}), "add_special_tokens").await;
     classify_ok(json!({"model": "sentiment", "input": "a", "add_special_tokens": true})).await;
-    // Fields vLLM doesn't define are ignored (D22).
-    classify_ok(json!({"model": "sentiment", "input": "a", "priority": 3, "encoding_format": "float"})).await;
+    // Fields vLLM's classify request doesn't define are ignored (D22).
+    classify_ok(json!({"model": "sentiment", "input": "a", "encoding_format": "float", "dimensions": 3})).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn vllm_pooling_fields_are_honored_or_rejected() {
+    let ok = |extra: Value| {
+        let mut body = json!({"model": "sentiment", "input": "a"});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        classify_ok(body)
+    };
+    let bad = |extra: Value, needle: &'static str| {
+        let mut body = json!({"model": "sentiment", "input": "a"});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        classify_400(body, needle)
+    };
+
+    // request_id becomes the response id, as in vLLM; X-Request-Id wins.
+    let body = ok(json!({"request_id": "abc-1"})).await;
+    assert_eq!(body["id"], "classify-abc-1");
+    let req = Request::post("/v1/classify")
+        .header("content-type", "application/json")
+        .header("x-request-id", "from-header")
+        .body(Body::from(json!({"model": "sentiment", "input": "a", "request_id": "abc-1"}).to_string()))
+        .unwrap();
+    let (status, body) = call(test_state(true, None), req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"], "classify-from-header");
+    bad(json!({"request_id": 7}), "`request_id` must be a string").await;
+
+    // The forms that change nothing are accepted.
+    for harmless in [
+        json!({"priority": 0}),
+        json!({"priority": null}),
+        json!({"padding": "do_not_pad"}),
+        json!({"padding": null}),
+        json!({"cache_salt": "c2FsdA-random"}),
+        json!({"cache_salt": null}),
+        json!({"mm_processor_kwargs": {}}),
+        json!({"mm_processor_kwargs": null}),
+        json!({"task": "classify"}),
+        json!({"user": "someone"}),
+    ] {
+        ok(harmless).await;
+    }
+    // Everything else is a 400.
+    bad(json!({"priority": 1}), "priority scheduling").await;
+    bad(json!({"priority": -5}), "priority scheduling").await;
+    bad(json!({"priority": "high"}), "must be an integer").await;
+    bad(json!({"padding": "max_length"}), "`padding: max_length` isn't supported").await;
+    bad(json!({"padding": "longest"}), "`max_length` or `do_not_pad`").await;
+    for salt in [json!(""), json!("a/b"), json!("x".repeat(129)), json!(5)] {
+        bad(json!({"cache_salt": salt}), "cache_salt").await;
+    }
+    bad(json!({"mm_processor_kwargs": {"size": 3}}), "text only").await;
+    // vLLM rejects `normalize` in any form, and the removed pooling tasks.
+    for v in [json!(true), json!(false), Value::Null] {
+        bad(json!({"normalize": v}), "`normalize` was removed; use `use_activation` instead").await;
+    }
+    bad(json!({"task": "score"}), "`score` task was removed").await;
+    bad(json!({"task": "encode"}), "`encode` task was removed").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -127,9 +187,15 @@ async fn extensions_a_fixed_label_model_does_not_take_are_400s() {
         body[field] = value;
         classify_400(body, &format!("`{field}` isn't supported by model `sentiment` (a text-classification model)")).await;
     }
-    classify_400(json!({"model": "sentiment", "input": "a", "calibration": "model"}), "no calibration temperature").await;
-    classify_400(json!({"model": "sentiment", "input": "a", "calibration": "platt"}), "unsupported calibration").await;
-    classify_ok(json!({"model": "sentiment", "input": "a", "calibration": "none"})).await;
+    // Calibration is an extension of models that declare temperatures,
+    // and /v1/models lists it for exactly those: any value is a 400 here.
+    for c in ["model", "none", "platt"] {
+        classify_400(
+            json!({"model": "sentiment", "input": "a", "calibration": c}),
+            "`calibration` isn't supported by model `sentiment`",
+        )
+        .await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -173,6 +239,44 @@ async fn calibration_applies_the_manifest_temperature_for_the_question() {
         "question_type": "noul", "calibration": "model",
     }))
     .await;
+    // Raw logits need no temperature, so none is missing.
+    let raw = classify_ok(json!({
+        "model": "decider", "input": "b", "candidate_labels": ["a", "b"], "question_type": "choice",
+        "calibration": "model", "use_activation": false,
+    }))
+    .await;
+    assert_eq!(probs(&raw["data"][0]), vec![0.0, 3.0]);
+    classify_400(json!({"model": "decider", "input": "x", "candidate_labels": ["a", "b"],
+                        "question_type": "choice", "calibration": "platt"}), "unsupported calibration").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_is_checked_in_full_before_anything_runs() {
+    // Manifest-level errors come before the model loads.
+    let (state, seen) = test_state_with(true, None);
+    let (status, _) = call(
+        state.clone(),
+        classify(json!({"model": "decider", "input": "x", "candidate_labels": ["a", "b"],
+                        "question_type": "choice", "calibration": "model"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        state.clone(),
+        classify(json!({"model": "decider", "input": "x", "candidate_labels": ["true", "false"], "question_type": "noul"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, health) = call(state.clone(), Request::get("/health").body(Body::empty()).unwrap()).await;
+    assert_eq!(health["classifiers"]["resident"], 0, "nothing loaded for requests the manifest rejects");
+    assert!(seen.lock().unwrap().is_empty());
+
+    // An input that fails `prepare` stops the batch before any input runs.
+    let (state, _, runs) = test_state_probe(true, None);
+    let (status, body) = call(state, classify(json!({"model": "sentiment", "input": ["good", "reject me", "bad"]}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"]["message"].as_str().unwrap().contains("input 1: rejected by prepare"), "{body}");
+    assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 0, "no input ran");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -295,7 +399,8 @@ async fn listings_are_task_aware() {
     assert_eq!(health["embeddings"]["models"], json!(["test-static"]));
     let skipped = health["skipped_models"].as_array().unwrap();
     assert_eq!(skipped.len(), 1, "{skipped:?}");
-    assert!(skipped[0]["path"].as_str().unwrap().ends_with("broken/classifier.toml"));
+    // Relative to the models directory: /health is unauthenticated.
+    assert_eq!(skipped[0]["path"], "broken/classifier.toml");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -321,8 +426,10 @@ async fn embeddings_and_chat_carry_provenance_headers() {
     assert_eq!(headers["sidekick-compute-units"], "cpu");
 
     for stream in [false, true] {
+        let state = test_state(true, None);
+        state.refresh_chat_model().await;
         let (status, headers, _) = call_with_headers(
-            test_state(true, None),
+            state,
             post_json(
                 "/v1/chat/completions",
                 json!({"model": "apple-fm", "stream": stream, "messages": [{"role": "user", "content": "hi"}]}),
@@ -334,11 +441,47 @@ async fn embeddings_and_chat_carry_provenance_headers() {
         assert_eq!(headers["sidekick-version"], env!("CARGO_PKG_VERSION"));
         assert!(headers.get("sidekick-compute-units").is_none());
     }
-    // Without model info, the chat id.
+    // An error carries no provenance.
     let (_, headers, _) = call_with_headers(
         test_state(false, None),
         post_json("/v1/chat/completions", json!({"model": "apple-fm", "messages": [{"role": "user", "content": "hi"}]})),
     )
     .await;
     assert!(headers.get("sidekick-model").is_none(), "no provenance on an error");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_model_info_never_delays_chat() {
+    // The shim takes a minute to report its variant: requests don't wait,
+    // name the chat id until the variant is known, and start one refresh.
+    let mut state = test_state(true, None);
+    state.chat = std::sync::Arc::new(MockChat { available: true, info_delay: Duration::from_secs(60) });
+    for stream in [false, true] {
+        let request = post_json(
+            "/v1/chat/completions",
+            json!({"model": "apple-fm", "stream": stream, "messages": [{"role": "user", "content": "hi"}]}),
+        );
+        let (status, headers, _) = tokio::time::timeout(Duration::from_secs(5), call_with_headers(state.clone(), request))
+            .await
+            .expect("chat waited on model_info");
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["sidekick-model"], "apple-fm");
+    }
+    // Once known, the variant is what the header names.
+    state.chat = std::sync::Arc::new(MockChat { available: true, info_delay: Duration::ZERO });
+    state.refresh_chat_model().await;
+    assert_eq!(state.chat_model_id(), "core3");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn builds_without_core_ml_hide_classifiers() {
+    let mut state = test_state(true, None);
+    state.classifiers_supported = false;
+    let (_, models) = call(state.clone(), Request::get("/v1/models").body(Body::empty()).unwrap()).await;
+    let ids: Vec<&str> = models["data"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, vec!["apple-fm", "test-static"]);
+    let (status, body) = call(state.clone(), classify(json!({"model": "sentiment", "input": "a"}))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    let (_, health) = call(state, Request::get("/health").body(Body::empty()).unwrap()).await;
+    assert_eq!(health["classifiers"]["supported"], false);
 }

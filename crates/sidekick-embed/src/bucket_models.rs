@@ -7,18 +7,16 @@ use sidekick_core::Result;
 use sidekick_coreml::{ComputeUnits, CoremlModel};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
-/// Checks a freshly loaded bucket model before it's cached, e.g. that its
-/// input shapes match the manifest.
-pub(crate) type LoadCheck = Box<dyn Fn(&CoremlModel, &Path) -> Result<()> + Send + Sync>;
+/// One artifact's slot. Its own lock serializes loads of that artifact only.
+type Slot = Arc<Mutex<Option<Arc<CoremlModel>>>>;
 
 pub(crate) struct BucketModels {
     dir: PathBuf,
     artifact: String,
     units: ComputeUnits,
-    check: Option<LoadCheck>,
-    models: Mutex<BTreeMap<PathBuf, Arc<CoremlModel>>>,
+    slots: Mutex<BTreeMap<PathBuf, Slot>>,
 }
 
 impl BucketModels {
@@ -27,34 +25,38 @@ impl BucketModels {
             dir: dir.to_path_buf(),
             artifact: artifact.to_string(),
             units,
-            check: None,
-            models: Mutex::new(BTreeMap::new()),
+            slots: Mutex::new(BTreeMap::new()),
         }
     }
 
-    pub fn with_check(mut self, check: LoadCheck) -> Self {
-        self.check = Some(check);
-        self
+    /// The artifact file name for `bucket`, relative to the model directory.
+    pub fn artifact_name(&self, bucket: usize) -> String {
+        self.artifact.replace("{seq}", &bucket.to_string())
     }
 
     pub fn path(&self, bucket: usize) -> PathBuf {
-        self.dir.join(self.artifact.replace("{seq}", &bucket.to_string()))
+        self.dir.join(self.artifact_name(bucket))
     }
 
-    /// The model for `bucket`, loading it on first use. The lock is held
-    /// across the load so concurrent first uses don't load twice.
+    /// The model for `bucket`, loading it on first use. Concurrent first uses
+    /// of one bucket load it once. Only that bucket's slot is locked during
+    /// the load, so the other buckets keep serving, and a load that fails
+    /// leaves the slot empty for the next call to retry.
     pub fn get(&self, bucket: usize) -> Result<Arc<CoremlModel>> {
         let path = self.path(bucket);
-        let mut models = self.models.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(m) = models.get(&path) {
-            return Ok(m.clone());
+        let slot = self
+            .slots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(path.clone())
+            .or_default()
+            .clone();
+        let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(model) = slot.as_ref() {
+            return Ok(model.clone());
         }
-        let model = CoremlModel::load(&path, self.units)?;
-        if let Some(check) = &self.check {
-            check(&model, &path)?;
-        }
-        let model = Arc::new(model);
-        models.insert(path, model.clone());
+        let model = Arc::new(CoremlModel::load(&path, self.units)?);
+        *slot = Some(model.clone());
         Ok(model)
     }
 }

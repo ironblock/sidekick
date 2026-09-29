@@ -17,17 +17,70 @@ use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, ResolvedClassi
 use sidekick_core::{
     Classifier, ClassifyParams, ClassifyTask, Error, Prepared, ProblemType, Result, Source,
 };
-use sidekick_coreml::{ComputeUnits, Int32Input};
+use sidekick_coreml::{ComputeUnits, Int32Input, ShapeVerdict};
 
 pub struct CoremlClassifier {
     manifest: ClassifierManifest,
     inputs: InputBuilder,
     models: BucketModels,
+    io: Io,
+}
+
+/// Core ML feature names, resolved from `[classify.io]` for the format.
+struct Io {
     input_ids: String,
     attention_mask: String,
     marker_pos: Option<String>,
     qtype: Option<String>,
     output: String,
+}
+
+/// Check one bucket's artifact against the manifest: `input_ids` and
+/// `attention_mask` are `[1, bucket]` (for per-bucket `{seq}` artifacts;
+/// a shared artifact must only have them); laya's `marker_pos` is
+/// `[1, max_labels]` and `qtype` is `[1]`; the output has one slot per label
+/// (`max_labels` for laya); and the inputs pass the flexible-shape guard
+/// (D27). Errors name the artifact relative to the model directory.
+fn check_interface(
+    m: &ClassifierManifest,
+    io: &Io,
+    bucket: usize,
+    name: &str,
+    path: &std::path::Path,
+) -> Result<()> {
+    let fail = |message: String| Err(Error::Inference(format!("model `{}`, {name}: {message}", m.id)));
+    let iface = match sidekick_coreml::interface(path) {
+        Ok(iface) => iface,
+        Err(e) => return fail(format!("can't read the artifact: {e}")),
+    };
+    if let ShapeVerdict::Refuse(reason) = sidekick_coreml::load_verdict(&iface.constraints) {
+        return fail(reason);
+    }
+    let per_bucket = m.artifact.contains("{seq}");
+    let seq = per_bucket.then(|| vec![1, bucket]);
+    let mut expect = vec![(&io.input_ids, seq.clone()), (&io.attention_mask, seq)];
+    if let (Some(marker), Some(qtype)) = (&io.marker_pos, &io.qtype) {
+        expect.push((marker, Some(vec![1, m.max_labels()])));
+        expect.push((qtype, Some(vec![1])));
+    }
+    for (input, shape) in expect {
+        match (iface.inputs.get(input), shape) {
+            (None, _) => return fail(format!("no int32 multi-array input `{input}`")),
+            (Some(got), Some(shape)) if *got != shape => {
+                return fail(format!("input `{input}` is {got:?}, expected {shape:?}"))
+            }
+            _ => {}
+        }
+    }
+    let labels = m.max_labels();
+    match iface.outputs.get(&io.output) {
+        None => fail(format!("no multi-array output `{}`", io.output)),
+        Some(shape) if !shape.is_empty() && shape.last() != Some(&labels) => fail(format!(
+            "output `{}` is {shape:?}, expected {labels} slots (one per label)",
+            io.output
+        )),
+        Some(_) => Ok(()),
+    }
 }
 
 fn io_name(name: &Option<String>, what: &str) -> Result<String> {
@@ -50,50 +103,36 @@ impl CoremlClassifier {
         let marker_pos = if laya { Some(io_name(&io.marker_pos, "marker_pos")?) } else { None };
         let output = io_name(&io.output, "output")?;
 
-        // Checked on every bucket as it loads: each is its own artifact.
-        let max_labels = m.max_labels();
-        let check_marker = marker_pos.clone();
-        let check_output = output.clone();
-        let fixed_labels = m.task == ClassifyTask::TextClassification;
-        let models = BucketModels::new(&model.dir, &m.artifact, units).with_check(Box::new(
-            move |model, path| {
-                if let Some(name) = &check_marker {
-                    let width = model.input_shape(name).and_then(|s| s.last().copied());
-                    if width != Some(max_labels) {
-                        return Err(Error::Inference(format!(
-                            "{}: `max_labels` is {max_labels} but input `{name}` is {}",
-                            path.display(),
-                            match model.input_shape(name) {
-                                Some(shape) => format!("{shape:?} wide"),
-                                None => "missing".into(),
-                            }
-                        )));
-                    }
-                }
-                if fixed_labels {
-                    if let Some(shape) = model.output_shape(&check_output) {
-                        if shape.last() != Some(&max_labels) {
-                            return Err(Error::Inference(format!(
-                                "{}: output `{check_output}` has shape {shape:?} for {max_labels} labels",
-                                path.display()
-                            )));
-                        }
-                    }
-                }
-                Ok(())
-            },
-        ));
-
-        let classifier = Self {
-            manifest: m.clone(),
-            inputs: InputBuilder::load(model)?,
-            models,
+        let models = BucketModels::new(&model.dir, &m.artifact, units);
+        let io = Io {
             input_ids: io_name(&io.input_ids, "input_ids")?,
             attention_mask: io_name(&io.attention_mask, "attention_mask")?,
             marker_pos,
             qtype: if laya { Some(io_name(&io.qtype, "qtype")?) } else { None },
             output,
         };
+        // Every bucket is its own artifact: check each one's interface now,
+        // from its description (a CPU-only load that never predicts), so a
+        // bad bucket fails the load instead of only the requests long
+        // enough to reach it. A cold read of a large artifact takes about 2 s
+        // (measured on 600 MB buckets), so the buckets are read in parallel.
+        std::thread::scope(|scope| {
+            let checks: Vec<_> = m
+                .buckets
+                .iter()
+                .map(|&bucket| {
+                    let (io, models) = (&io, &models);
+                    scope.spawn(move || {
+                        check_interface(m, io, bucket, &models.artifact_name(bucket), &models.path(bucket))
+                    })
+                })
+                .collect();
+            checks.into_iter().try_for_each(|c| {
+                c.join().unwrap_or_else(|_| Err(Error::Inference("bucket check panicked".into())))
+            })
+        })?;
+
+        let classifier = Self { manifest: m.clone(), inputs: InputBuilder::load(model)?, models, io };
         // Load the smallest bucket eagerly so a broken artifact fails at
         // load time, not on the first request.
         classifier.models.get(*m.buckets.first().expect("validated non-empty"))?;
@@ -132,11 +171,11 @@ impl CoremlClassifier {
         let mut mask = vec![1i32; used];
         mask.resize(bucket, 0);
         let mut inputs = vec![
-            Int32Input { name: &self.input_ids, shape: vec![1, bucket], data: input_ids },
-            Int32Input { name: &self.attention_mask, shape: vec![1, bucket], data: mask },
+            Int32Input { name: &self.io.input_ids, shape: vec![1, bucket], data: input_ids },
+            Int32Input { name: &self.io.attention_mask, shape: vec![1, bucket], data: mask },
         ];
 
-        let k = match (&self.marker_pos, &self.qtype) {
+        let k = match (&self.io.marker_pos, &self.io.qtype) {
             (Some(marker_name), Some(qtype_name)) => {
                 let kmax = self.manifest.max_labels();
                 let k = prepared.markers.len();
@@ -156,13 +195,13 @@ impl CoremlClassifier {
         };
 
         let model = self.models.get(bucket)?;
-        let out = model.predict_int32(&inputs, &self.output)?;
+        let out = model.predict_int32(&inputs, &self.io.output)?;
         let width = out.shape.last().copied().unwrap_or(0);
-        let expected = if self.marker_pos.is_some() { self.manifest.max_labels() } else { k };
+        let expected = if self.io.marker_pos.is_some() { self.manifest.max_labels() } else { k };
         if out.data.len() != expected || width != expected {
             return Err(Error::Inference(format!(
                 "output `{}` has shape {:?}, expected [1, {expected}]",
-                self.output, out.shape
+                self.io.output, out.shape
             )));
         }
         let mut logits = out.data;

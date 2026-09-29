@@ -27,7 +27,10 @@ typedef struct sk_pool sk_pool;
 
 /* Open a pool over a models directory (NULL -> the daemon's default).
  * Returns NULL on failure with *err set (free with sk_string_free).
- * An empty/missing directory is not an error: sk_pool_models returns "[]". */
+ * An empty/missing directory is not an error: sk_pool_models returns "[]".
+ * Neither is a manifest that doesn't parse or validate, or that repeats
+ * another's id: the pool skips it, opens with the rest, and lists it in
+ * sk_pool_skipped. (Before 0.3.0 such a manifest failed the whole open.) */
 sk_pool *sk_pool_open(const char *models_dir, char **err);
 
 /* Drop every resident model. pool may be NULL. */
@@ -35,9 +38,18 @@ void sk_pool_close(sk_pool *pool);
 
 /* JSON array of embedding model ids, e.g. ["bge-small-en-v1.5","static-floor"].
  * Classifiers (classifier.toml) aren't served by this ABI and aren't
- * listed; the daemon's /v1/classify serves them. Free with sk_string_free. Returns NULL on failure with *err set;
- * an empty models directory is "[]", not NULL. */
+ * listed; the daemon's /v1/classify serves them. Free with sk_string_free.
+ * Returns NULL on failure with *err set; an empty models directory is
+ * "[]", not NULL. */
 char *sk_pool_models(const sk_pool *pool, char **err);
+
+/* JSON array of the manifests skipped when the pool opened, and why:
+ *   [{"path": "<model dir>/manifest.toml", "reason": "..."}]
+ * Paths are relative to the models directory; "[]" when none was skipped.
+ * Free with sk_string_free. Returns NULL on failure with *err set.
+ * Added in 0.3.0 without an ABI version bump (additive): resolve it with
+ * dlsym if the host must also run against older libraries. */
+char *sk_pool_skipped(const sk_pool *pool, char **err);
 
 /* JSON description of one embedding model from its manifest (not loaded):
  *   {"id","backend","dims","matryoshka","max_seq_len"}
