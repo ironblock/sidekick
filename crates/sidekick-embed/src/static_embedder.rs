@@ -55,8 +55,12 @@ impl StaticEmbedder {
                 )))
             }
         };
-        let tokenizer = Tokenizer::from_file(model.tokenizer_path())
+        let mut tokenizer = Tokenizer::from_file(model.tokenizer_path())
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
+        // A tokenizer.json may pad every input to a fixed length
+        // (all-MiniLM ships padding to 128): the pads would be averaged in
+        // as text. One input is never padded.
+        tokenizer.with_padding(None);
         Ok(Self {
             id: m.id.clone(),
             dims: m.dims,
@@ -139,11 +143,15 @@ mod tests {
 
     /// Build a tiny WordLevel tokenizer + embedding table fixture on disk.
     fn fixture(dir: &PathBuf) -> ResolvedModel {
+        fixture_with_padding(dir, serde_json::Value::Null)
+    }
+
+    fn fixture_with_padding(dir: &PathBuf, padding: serde_json::Value) -> ResolvedModel {
         std::fs::create_dir_all(dir).unwrap();
         let tokenizer_json = serde_json::json!({
             "version": "1.0",
             "truncation": null,
-            "padding": null,
+            "padding": padding,
             "added_tokens": [],
             "normalizer": {"type": "Lowercase"},
             "pre_tokenizer": {"type": "Whitespace"},
@@ -212,6 +220,20 @@ mod tests {
         let dot: f32 = a[0].iter().zip(&b[0]).map(|(x, y)| x * y).sum();
         assert!((dot - 1.0).abs() < 1e-6);
 
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_tokenizer_that_pads_to_a_fixed_length_changes_nothing() {
+        // As all-MiniLM-L6-v2's tokenizer.json ships it (pads to 128), here
+        // with the pad id of a real row, so any pad averaged in would show.
+        let dir = std::env::temp_dir().join(format!("sk-static-pad-{}", std::process::id()));
+        let padding = serde_json::json!({
+            "strategy": {"Fixed": 8}, "direction": "Right", "pad_to_multiple_of": null,
+            "pad_id": 1, "pad_type_id": 0, "pad_token": "world"
+        });
+        let e = StaticEmbedder::load(&fixture_with_padding(&dir, padding)).unwrap();
+        assert_eq!(e.embed(&["hello"], EmbedPurpose::Document).unwrap()[0], vec![1.0, 0.0, 0.0, 0.0]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
