@@ -21,6 +21,8 @@ use tower::ServiceExt;
 
 pub struct MockChat {
     pub available: bool,
+    /// How long `model_info` takes: a slow Swift shim.
+    pub info_delay: Duration,
 }
 
 #[async_trait::async_trait]
@@ -34,6 +36,7 @@ impl ChatBackend for MockChat {
     }
 
     async fn model_info(&self) -> Option<ModelInfo> {
+        tokio::time::sleep(self.info_delay).await;
         self.available.then(|| ModelInfo {
             variant: Some("AFM 3 Core".into()),
             variant_id: Some("core3".into()),
@@ -234,10 +237,13 @@ output = "logits"
 /// - zero-shot: labels are rendered by laya's own `render_options` (so bad
 ///   noul labels are a 400), and a label's logit is 3 if the input
 ///   contains it, else 0;
-/// - an input containing "nan" returns NaN logits; "fail" fails the run.
+/// - an input containing "nan" returns NaN logits; "fail" fails the run;
+///   "reject" fails `prepare` with a client error.
 pub struct MockClassifier {
     pub manifest: ClassifierManifest,
     pub seen: Arc<Mutex<Vec<ClassifyParams>>>,
+    /// Inputs run so far.
+    pub runs: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Classifier for MockClassifier {
@@ -268,6 +274,9 @@ impl Classifier for MockClassifier {
 
     fn prepare(&self, input: &str, params: &ClassifyParams) -> Result<Prepared> {
         self.seen.lock().unwrap().push(params.clone());
+        if input.contains("reject") {
+            return Err(Error::InvalidRequest("rejected by prepare".into()));
+        }
         let mut ids: Vec<i32> = input.bytes().map(i32::from).collect();
         if let Some(n) = params.truncate_prompt_tokens {
             ids.truncate(n);
@@ -285,6 +294,7 @@ impl Classifier for MockClassifier {
     }
 
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {
+        self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let text: String = prepared.ids.iter().map(|&b| b as u8 as char).collect();
         if text.contains("fail") {
             return Err(Error::Inference("mock failure".into()));
@@ -319,6 +329,15 @@ pub fn test_state_with(
     chat_available: bool,
     api_key: Option<&str>,
 ) -> (AppState, Arc<Mutex<Vec<ClassifyParams>>>) {
+    let (state, seen, _) = test_state_probe(chat_available, api_key);
+    (state, seen)
+}
+
+/// Also returns how many inputs the mock classifiers have run.
+pub fn test_state_probe(
+    chat_available: bool,
+    api_key: Option<&str>,
+) -> (AppState, Arc<Mutex<Vec<ClassifyParams>>>, Arc<std::sync::atomic::AtomicUsize>) {
     // A process-wide counter, not a timestamp: `Instant::now().elapsed()` is
     // ~0ns and collided across concurrently-running tests, letting one test
     // scan another's half-written fixture (observed as a ~1-in-5 flake).
@@ -335,24 +354,27 @@ pub fn test_state_with(
     }
     let registry = Arc::new(ModelRegistry::scan(&dir).unwrap());
     let seen = Arc::new(Mutex::new(Vec::new()));
+    let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let classifiers = {
         let registry = registry.clone();
-        let seen = seen.clone();
+        let (seen, runs) = (seen.clone(), runs.clone());
         ClassifierPool::new("classifier", Duration::from_secs(60), move |id| {
             let manifest = registry.classifier(id)?.manifest.clone();
-            Ok(Arc::new(MockClassifier { manifest, seen: seen.clone() }) as Arc<dyn Classifier>)
+            Ok(Arc::new(MockClassifier { manifest, seen: seen.clone(), runs: runs.clone() }) as Arc<dyn Classifier>)
         })
     };
     let state = AppState {
-        chat: Arc::new(MockChat { available: chat_available }),
+        chat: Arc::new(MockChat { available: chat_available, info_delay: Duration::ZERO }),
         embedders: Arc::new(EmbedderPool::embedders(registry.clone(), Duration::from_secs(60))),
         classifiers: Arc::new(classifiers),
         registry,
+        classifiers_supported: true,
+        chat_model: Default::default(),
         api_key: api_key.map(Arc::from),
         started_at: Instant::now(),
         request_timeout: Duration::from_secs(60),
     };
-    (state, seen)
+    (state, seen, runs)
 }
 
 /// `call` that also returns the response headers.

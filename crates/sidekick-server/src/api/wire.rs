@@ -271,6 +271,23 @@ pub struct ClassifyRequest {
     /// vLLM's chat-form input; not supported.
     #[serde(default)]
     pub messages: Option<Value>,
+    // vLLM's other pooling fields (vllm/entrypoints/pooling/base/protocol.py).
+    #[serde(default)]
+    pub request_id: Option<Value>,
+    #[serde(default)]
+    pub priority: Option<Value>,
+    #[serde(default)]
+    pub padding: Option<Value>,
+    #[serde(default)]
+    pub cache_salt: Option<Value>,
+    #[serde(default)]
+    pub mm_processor_kwargs: Option<Value>,
+    /// Removed from vLLM, which rejects it in any form, `null` included.
+    #[serde(default, deserialize_with = "present")]
+    pub normalize: Option<Value>,
+    /// vLLM rejects the removed pooling tasks `score` and `encode`.
+    #[serde(default)]
+    pub task: Option<Value>,
     // Extensions.
     #[serde(default)]
     pub candidate_labels: Option<Vec<String>>,
@@ -280,6 +297,12 @@ pub struct ClassifyRequest {
     pub question_type: Option<String>,
     #[serde(default)]
     pub instructions: Option<String>,
+}
+
+/// `Some` whenever the field is present, `null` included (serde's `Option`
+/// reads `null` as absent).
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 
 #[derive(Debug, Serialize)]

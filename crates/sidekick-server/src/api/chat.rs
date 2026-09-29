@@ -23,13 +23,10 @@ pub async fn chat_completions(
             None => ApiError::model_not_found(&req.model),
         });
     }
-    // Provenance names the Foundation Models variant serving the request,
-    // when it reports one; asked alongside the completion, not after it.
-    let (response, info) = tokio::join!(complete(&state, req), state.chat.model_info());
-    let model = info
-        .and_then(|i| i.variant_id)
-        .unwrap_or_else(|| state.chat.id().to_string());
-    Ok(Provenance { model, compute_units: None }.apply(response?))
+    // Provenance names the Foundation Models variant, from a cache: asking
+    // the backend is a blocking call that must not delay the reply.
+    let response = complete(&state, req).await?;
+    Ok(Provenance { model: state.chat_model_id(), compute_units: None }.apply(response))
 }
 
 async fn complete(state: &AppState, req: ChatCompletionRequest) -> Result<Response, ApiError> {

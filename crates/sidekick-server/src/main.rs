@@ -71,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
     let state = build_state(&config)?;
     let availability = state.chat.availability().await;
     let model = state.chat.model_info().await.unwrap_or_default();
+    state.chat_model.set(model.variant_id.clone());
     tracing::info!(
         addr = %config.addr,
         models_dir = %config.models_dir().display(),

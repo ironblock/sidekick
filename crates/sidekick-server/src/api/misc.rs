@@ -26,7 +26,9 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
     }
 
     // Classifiers, from their manifests: nothing is loaded to list them.
-    for c in state.registry.classifiers() {
+    // A build without Core ML can't serve them, so it doesn't list them.
+    let classifiers = state.registry.classifiers().filter(|_| state.classifiers_supported);
+    for c in classifiers {
         let m = &c.manifest;
         let (task, labels, max_labels) = match m.task {
             ClassifyTask::TextClassification => {
@@ -53,6 +55,7 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let chat_availability = state.chat.availability().await;
     // Fetched before context_limit(), which it refreshes.
     let info = state.chat.model_info().await.unwrap_or_default();
+    state.chat_model.set(info.variant_id.clone());
     let embedding_models: Vec<&str> = state.registry.ids().collect();
     let classifier_models: Vec<&str> = state.registry.classifier_ids().collect();
     Json(json!({
@@ -75,6 +78,8 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "resident": state.embedders.resident().await,
         },
         "classifiers": {
+            // False on builds without Core ML: every classify request is a 503.
+            "supported": state.classifiers_supported,
             "models": classifier_models,
             "resident": state.classifiers.resident().await,
         },

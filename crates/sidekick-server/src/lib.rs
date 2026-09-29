@@ -43,6 +43,8 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         embedders: Arc::new(EmbedderPool::embedders(registry.clone(), config.model_idle_ttl())),
         classifiers: Arc::new(ClassifierPool::classifiers(registry.clone(), config.model_idle_ttl())),
         registry,
+        classifiers_supported: sidekick_embed::CLASSIFIERS_SUPPORTED,
+        chat_model: Default::default(),
         api_key: config.api_key.as_deref().map(Arc::from),
         started_at: Instant::now(),
         request_timeout: config.request_timeout(),
