@@ -119,7 +119,7 @@ jobs:
           cp target/release/sidekickd "dist/${NAME}/"
           cp target/release/libsidekick.dylib "dist/${NAME}/"
           cp crates/sidekick-embed-ffi/include/sidekick.h "dist/${NAME}/"
-          cp LICENSE README.md docs/INTEGRATING.md "dist/${NAME}/"
+          cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/INTEGRATING.md "dist/${NAME}/"
           cp "docs/releases/${{ needs.notes.outputs.version }}.md" "dist/${NAME}/RELEASE_NOTES.md"
           tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
           (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
