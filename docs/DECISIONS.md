@@ -1199,8 +1199,20 @@ fp32):
 Pad invariance is exact on every path. laya's bucket invariance on the
 ANE is 0.045 in logits; on the CPU and GPU it is 0.
 
-laya on the ANE is a usable decision model but not an A. One case in 500
-flips a decision whose fp32 margin is under 0.12 logits. Clients deciding
+The parity suite, through sidekick's own product path, measures the same
+accuracy and grades nlptown-sentiment B on the ANE (A on the GPU). It
+grades laya-en F on the GPU and the ANE: an input's probabilities move by
+up to 0.018 (GPU) or 0.038 (ANE) in the next larger bucket, against the
+1e-3 bucket-invariance gate. The CPU path is exact across buckets, pads
+change nothing on any path, and two ANE processes agree exactly, so the
+graph is invariant and the failure is fp16 rounding that differs per
+compiled shape. Localized, the loss is all in laya's ModernBERT-large
+encoder, not its head.
+
+**laya-en ships as a preview.** The gate is not loosened for it; the
+suite keeps reporting the failure, and docs/MODELS.md states it. As a
+decision model it is usable now: one case in 500 flips a decision, and
+only decisions whose fp32 margin is under 0.12 logits. Clients deciding
 on close calls should read `probs`, not just `label`. The GPU is laya's
 most accurate path, and Core ML's fp16 CPU backend its least. On one
 512-token `noul` item the CPU backend moves both logits by about 0.46 and
