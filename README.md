@@ -14,6 +14,9 @@ at an OpenAI-compatible base URL (OpenCode, editors, scripts) can use it:
 POST /v1/chat/completions   Apple Foundation Models (macOS 26+, Apple Intelligence)
 POST /v1/embeddings         Core ML / ANE encoders + static floor models
 POST /v1/classify           Core ML / ANE classifiers (vLLM's /classify contract)
+POST /v1/rerank, /rerank    Core ML / ANE cross-encoder rerankers (vLLM's / Jina's shape)
+POST /v2/rerank             the same, in Cohere's v2 shape
+POST /v2/embed              the embedders, in Cohere's v2 embed shape
 GET  /v1/models             what this machine can serve
 GET  /health                availability per tier, and why when unavailable
 ```
@@ -169,9 +172,44 @@ temperatures, labels or `max_labels`, `max_batch`, and the extension fields
 it accepts. The full contract is in
 [docs/design/classify.md](docs/design/classify.md).
 
-Inference responses carry provenance headers: `sidekick-version`,
-`sidekick-model` (`<id>@<revision>` when the manifest records the source
-revision; for chat, the Foundation Models variant) and
+### Rerank
+
+`POST /v1/rerank` (also `/rerank`) is vLLM's rerank, the Jina shape that
+vLLM, llama.cpp, LocalAI and Infinity serve. It scores each document
+against the query with a cross-encoder and returns them best first:
+
+```sh
+curl -s localhost:8790/v1/rerank -H 'content-type: application/json' -d '{
+  "model": "ms-marco-minilm-l6-v2", "query": "Will it rain tomorrow?",
+  "documents": ["It rained all day yesterday.", "Tomorrow brings heavy showers."],
+  "top_n": 1
+}'
+```
+
+```json
+{"id": "score-…", "model": "ms-marco-minilm-l6-v2",
+ "usage": {"prompt_tokens": 31, "total_tokens": 31},
+ "results": [{"index": 1, "document": {"text": "Tomorrow brings heavy showers."}, "relevance_score": 2.28}]}
+```
+
+(Values illustrative.) `relevance_score` is on the scale vLLM reports for
+the model: a raw logit for the ms-marco cross-encoders, a sigmoid
+probability for most others. vLLM's `truncate_prompt_tokens`,
+`max_tokens_per_query` and `max_tokens_per_doc` truncate. Without them, a
+pair longer than the model is a 400, as in vLLM. `return_documents: false`
+leaves the texts out.
+
+`POST /v2/rerank` takes Cohere's v2 request and truncates long documents,
+as Cohere does, keeping the query whole. Its response parses as both
+Cohere's and vLLM's. `POST /v2/embed` serves the embedders in Cohere's v2
+shape: `input_type` (`search_query` / `search_document`),
+`embedding_types` (`float`, `base64`, `binary`, `ubinary`),
+`output_dimension`, and `truncate`. The full contract is in
+[docs/design/rerank.md](docs/design/rerank.md).
+
+Inference responses (every route above) carry provenance headers:
+`sidekick-version`, `sidekick-model` (`<id>@<revision>` when the manifest
+records the source revision; for chat, the Foundation Models variant) and
 `sidekick-compute-units` (`cpu_and_ne` for Core ML models, `cpu` for static
 ones).
 

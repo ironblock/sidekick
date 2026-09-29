@@ -52,7 +52,15 @@ pub struct ClassifyCase {
     pub id: String,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// The text; for a reranker, the document.
     pub input: String,
+    /// Rerank: the query `input` is paired with.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Rerank: the (query, documents) group the case belongs to; rank flips
+    /// are counted within a group.
+    #[serde(default)]
+    pub group: Option<String>,
     #[serde(default)]
     pub candidate_labels: Vec<String>,
     #[serde(default)]
@@ -60,6 +68,9 @@ pub struct ClassifyCase {
     #[serde(default)]
     pub instructions: Option<String>,
     pub ids: Vec<i32>,
+    /// Rerank: segment ids, when the model takes them.
+    #[serde(default)]
+    pub type_ids: Vec<i32>,
     #[serde(default)]
     pub markers: Vec<i32>,
     #[serde(default)]
@@ -76,6 +87,15 @@ pub struct ClassifyCase {
 pub const TRUNCATED_TAG: &str = "truncated";
 
 impl ClassifyCase {
+    /// The rerank request this case stands for: the pair, truncated like
+    /// `params` when tagged `truncated`.
+    pub fn pair_params(&self, max_seq_len: usize) -> sidekick_core::PairParams {
+        sidekick_core::PairParams {
+            truncate_prompt_tokens: self.params(max_seq_len).truncate_prompt_tokens,
+            ..Default::default()
+        }
+    }
+
     /// The request this case stands for. A case tagged `truncated` sends
     /// `truncate_prompt_tokens: max_seq_len` (HF truncation: special tokens
     /// kept, `max_seq_len` in total), since without it an over-length input
@@ -115,6 +135,7 @@ pub fn corpus_path(manifest: &ClassifierManifest) -> PathBuf {
         ClassifyTask::ZeroShotClassification => {
             fixtures.join(format!("classify/{}.corpus.toml", manifest.id))
         }
+        ClassifyTask::TextRanking => fixtures.join("rerank/corpus.toml"),
     }
 }
 

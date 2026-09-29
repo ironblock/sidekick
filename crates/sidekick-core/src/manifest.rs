@@ -218,6 +218,9 @@ pub struct ClassifierIo {
     /// laya: `[1]` int32 question type.
     #[serde(default)]
     pub qtype: Option<String>,
+    /// `[1, S]` int32 segment ids, for models that take them (BERT pairs).
+    #[serde(default)]
+    pub token_type_ids: Option<String>,
     #[serde(default)]
     pub output: Option<String>,
 }
@@ -244,7 +247,9 @@ impl ClassifierManifest {
     /// text-classification, `[classify] max_labels` for zero-shot.
     pub fn max_labels(&self) -> usize {
         match self.task {
-            ClassifyTask::TextClassification => self.classify.labels.len(),
+            ClassifyTask::TextClassification | ClassifyTask::TextRanking => {
+                self.classify.labels.len()
+            }
             ClassifyTask::ZeroShotClassification => self.classify.max_labels.unwrap_or(0),
         }
     }
@@ -253,6 +258,10 @@ impl ClassifierManifest {
     /// (docs/design/classify.md), for `/v1/models`.
     pub fn extension_fields(&self) -> Vec<&'static str> {
         let mut fields = Vec::new();
+        if self.task == ClassifyTask::TextRanking {
+            // Jina's and Cohere v1's; vLLM doesn't define it.
+            fields.push("return_documents");
+        }
         if self.task == ClassifyTask::ZeroShotClassification {
             fields.push("candidate_labels");
         }
@@ -550,6 +559,23 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                 return Err("`[classify.calibration]` is for zero-shot formats".into());
             }
         }
+        ClassifyTask::TextRanking => {
+            if c.format.is_some() || c.laya.is_some() {
+                return Err("`format` and `[classify.laya]` are for zero-shot models".into());
+            }
+            if c.labels.len() != 1 {
+                return Err("a text-ranking model has one output: `labels` names it (e.g. [\"score\"])".into());
+            }
+            if matches!(c.max_labels, Some(n) if n != 1) {
+                return Err("a text-ranking model's `max_labels` is 1".into());
+            }
+            if io.marker_pos.is_some() || io.qtype.is_some() {
+                return Err("text-ranking's [classify.io] has input_ids, attention_mask, token_type_ids and output only".into());
+            }
+            if !c.calibration.is_empty() {
+                return Err("`[classify.calibration]` is for zero-shot formats".into());
+            }
+        }
         ClassifyTask::ZeroShotClassification => {
             if !c.labels.is_empty() {
                 return Err("`labels` is for text-classification; zero-shot labels come with each request".into());
@@ -574,6 +600,9 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                     }
                     require("marker_pos", &io.marker_pos)?;
                     require("qtype", &io.qtype)?;
+                    if io.token_type_ids.is_some() {
+                        return Err("the laya format takes no `token_type_ids`".into());
+                    }
                 }
             }
             for (key, &t) in &c.calibration {
@@ -728,6 +757,53 @@ source = { repo = "BAAI/bge-small-en-v1.5", revision = "abc" }
         assert!(s.extension_fields().is_empty());
         assert!(reg.classifier("sentiment").unwrap().artifact_path_for_bucket(128).ends_with("sentiment/model_128.mlmodelc"));
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    const RERANKER: &str = r#"
+id = "ms-marco"
+task = "text-ranking"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 512]
+max_seq_len = 512
+max_batch = 128
+problem_type = "regression"
+
+[classify]
+labels = ["score"]
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+token_type_ids = "token_type_ids"
+output = "logits"
+"#;
+
+    #[test]
+    fn rerankers_are_one_output_classifiers() {
+        let tmp = tmp_dir("rank");
+        write_classifier(&tmp, "rank", RERANKER);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped());
+        let m = &reg.classifier("ms-marco").unwrap().manifest;
+        assert_eq!(m.task, ClassifyTask::TextRanking);
+        assert_eq!(m.max_labels(), 1);
+        assert_eq!(m.problem_type, ProblemType::Regression);
+        assert_eq!(m.classify.io.token_type_ids.as_deref(), Some("token_type_ids"));
+        assert_eq!(m.extension_fields(), vec!["return_documents"]);
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        for (name, body, want) in [
+            ("two-labels", RERANKER.replace("[\"score\"]", "[\"a\", \"b\"]"), "one output"),
+            ("format", RERANKER.replace("[classify]\n", "[classify]\nformat = \"laya\"\n"), "zero-shot"),
+            ("marker", RERANKER.replace("output = ", "marker_pos = \"m\"\noutput = "), "token_type_ids and output only"),
+        ] {
+            let tmp = tmp_dir(&format!("rank-{name}"));
+            write_classifier(&tmp, name, &body);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
+            std::fs::remove_dir_all(&tmp).unwrap();
+        }
     }
 
     #[test]

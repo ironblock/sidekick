@@ -44,8 +44,10 @@ Principles, as for classification:
 | `instruction`, `chat_template_kwargs` | vLLM | 400: they feed a chat template, and cross-encoders have none |
 | `request_id`, `priority`, `cache_salt`, `mm_processor_kwargs`, `padding`, `normalize`, `task`, `user` | vLLM | exactly as for `/v1/classify` |
 
-- `results` is sorted by `relevance_score`, highest first. `index` is the
-  document's position in the request. vLLM sorts the same way.
+- `results` is sorted highest first, as vLLM sorts, by the raw logit:
+  every activation is monotonic, and a sigmoid saturates to 1.0 above a
+  logit of about 17, where it would tie strong matches. Ties keep request
+  order. `index` is the document's position in the request.
 - The response `id` is `score-<X-Request-Id or request_id or random>`: vLLM
   serves rerank from its scoring handler, whose prefix is `score`.
 - `documents` holds strings only. vLLM's multimodal documents and Jina's
@@ -82,7 +84,8 @@ Verified against both clients' types:
   extra fields. `model`, `usage` and `document` are extra to it.
 
 So `document` is always present on `/v2/rerank`: vLLM requires it, and
-Cohere tolerates it.
+Cohere tolerates it. The route ignores `return_documents`, which neither
+Cohere v2 nor vLLM defines.
 
 ## `POST /v2/embed`
 
@@ -94,29 +97,45 @@ Cohere's v2 embed shape over the existing embedders, as vLLM serves it:
 | `input_type` | `search_query` / `query` → the manifest's query prefix; `search_document` / `document` → the document prefix. `classification` and `clustering` are 400s: no embedder declares a prompt for them. Absent: the document prefix, as `/v1/embeddings` does. Cohere v2 requires `input_type` and vLLM treats it as optional; the default is deliberate, so both embed routes agree for a given model. |
 | `embedding_types` (default `["float"]`) | `float`, `base64` (little-endian f32), `binary` and `ubinary` (sign bits packed MSB-first, signed or not; dims must be a multiple of 8). `int8` and `uint8` are 400s, as in vLLM: they need calibration ranges. |
 | `output_dimension` | a Matryoshka dimension, as `dimensions` on `/v1/embeddings` |
-| `truncate` (`END` default, `START`, `NONE`) and `max_tokens` | `END` truncates to `max_tokens` or the model's maximum, which is what embedders already do. `NONE` is a 400 for an over-length input. `START` keeps the end. |
+| `truncate` (`END` default, `START`, `NONE`) and `max_tokens` | `END` truncates to `max_tokens` or the model's maximum, which is what embedders already do. `NONE` is a 400 for an over-length input. `START` keeps the end of the text and the model's prompt prefix whole (deviation below). `max_tokens` above the model's maximum is a 400, as in vLLM. |
 | `images`, `inputs` | 400: text only |
 | `priority` | as for `/v1/classify` |
 
 The response is `{id: "embd-<uuid>", embeddings: {<type>: [...]}, texts,
 meta: {api_version: {version: "2"}, billed_units: {input_tokens}},
-response_type: "embeddings_by_type"}`, as vLLM returns it.
+response_type: "embeddings_by_type"}`, vLLM's shape. `input_tokens` is the
+same ~4-characters-per-token estimate `/v1/embeddings` reports (D7);
+vLLM's is a real count.
 
 ## Over-length input
 
 A pair is tokenized as the model's tokenizer pairs text: `[CLS] q [SEP] d
 [SEP]` with `token_type_ids` 0 then 1 for BERT, and `<s> q </s></s> d </s>`
 for XLM-R. That's also what `CrossEncoder` and vLLM feed the model.
-- `max_tokens_per_query` / `max_tokens_per_doc` cut each text first, as
-  vLLM does.
+- `max_tokens_per_query` / `max_tokens_per_doc` cut each text first,
+  keeping its start, as vLLM does.
 - Then, on `/v1/rerank`, a pair longer than the model's maximum is a 400
-  unless `truncate_prompt_tokens` is set, as in vLLM. Truncation is
-  tokenizers' `longest_first` over the pair, keeping the special tokens (as
-  classify does).
+  unless `truncate_prompt_tokens` is set, as in vLLM. The pair is truncated
+  with tokenizers' `longest_first`, vLLM's default, or only in the
+  document when `max_tokens_per_doc` is also set, as vLLM does.
 - On `/v2/rerank`, documents are cut to `max_tokens_per_doc` (default
   4096), then pairs still too long are truncated `only_second`, keeping the
   query whole. That matches Cohere's "documents are truncated" contract.
-  A query that alone fills the model is a 400.
+- A query that alone fills the model is a 400 wherever only the document
+  may be truncated.
+
+**Deviations from vLLM**, each so that a model is never fed a sequence
+unlike what it was trained on:
+- **Special tokens are always kept.** With `truncation_side`, vLLM slices
+  the paired sequence and can drop `[CLS]` or the last `[SEP]`; sidekick
+  truncates the texts and keeps them, as `/v1/classify` does.
+- **An empty document is paired.** transformers' single-pair tokenizer
+  call reads `text_pair=""` as no pair and encodes the query alone.
+  `CrossEncoder`, the reference, tokenizes pairs in a batch, which keeps
+  the empty document as `[CLS] q [SEP] [SEP]`, and so does sidekick.
+- **`/v2/embed`'s `START` keeps the prompt prefix.** It truncates the text
+  from its start but keeps the model's prefix (e5's `query: `) whole;
+  vLLM's left slice would cut it off.
 
 ## Manifest
 
@@ -168,9 +187,12 @@ directory loads (D28's skip-and-warn registry). 0.3.0 *ignores* an unknown
 text-classification manifest naming `token_type_ids` would load on 0.3.0,
 feed the model no segment ids, and fail every prediction. Converters
 therefore write `token_type_ids` only for `text-ranking` models, which
-0.3.0 skips whole. From this release, loading also refuses an artifact
-with an input its manifest doesn't name, so a mismatch fails at load
-everywhere.
+0.3.0 skips whole. From this release, loading a classifier also refuses
+an artifact with a multi-array input its manifest doesn't name, so the
+mismatch fails at load. The check reads the artifact's description, sees
+multi-array inputs only, runs for classifiers only (embedders don't read
+their interfaces at load), and refuses an unnamed input even when the
+model marks it optional.
 
 ## Core ML interface
 
@@ -209,9 +231,17 @@ grader with k = 1:
   reference's, bucket and pad invariance (|Δscore| after the activation).
 - **Graded:** worst |Δ relevance_score|, and rank flips within each query's
   documents where the reference's score gap is at least a margin (the
-  classify flip rule, applied per group).
+  classify flip rule, applied per group). A gap sidekick collapses to an
+  exact tie counts as a flip.
+- **Reference:** `tools/rerank_reference.py`. It encodes pairs from the
+  install dir's tokenizer.json (the file sidekick reads, not
+  AutoTokenizer), runs fp32, checks the manifest's `problem_type` against
+  the activation vLLM derives, and checks `CrossEncoder.predict` against
+  the result. Segment ids are compared only for models whose manifest
+  names `token_type_ids`.
 - **First model:** `cross-encoder/ms-marco-MiniLM-L6-v2` (BERT, 22.7M,
-  Apache-2.0), on the same recipe as the small embedders (#8). An XLM-R
+  Apache-2.0), on the same BERT recipe as the small sentence-transformers
+  embedders (all-MiniLM, e5-small). An XLM-R
   reranker (bge-reranker-base, 278M) follows, after the XLM-R position-id
   offset is validated.
 
@@ -221,18 +251,5 @@ grader with k = 1:
   collides with SGLang's unrelated route.
 - Late interaction (ColBERT through rerank, MaxSim server-side): it needs a
   multi-vector embedder path first.
-- LLM-based rerankers (Qwen3-Reranker, chat-template scoring): the decoder
-  family's, with `instruction` support then.
-
-## Open questions
-
-1. `/v2/rerank`'s default truncation: Cohere's (truncate documents), as
-   proposed, or vLLM's (400 unless asked)? Proposed: Cohere's, since that
-   route is Cohere's contract.
-2. `return_documents` default `true` (vLLM's behavior, Jina's default) or
-   `false` (Cohere v1's)? Proposed: `true`.
-3. The response `id` prefix: vLLM's `score-`, or `rerank-`? Proposed:
-   vLLM's.
-4. `/v2/embed` `input_type` absent: vLLM's (no prefix) or `/v1/embeddings`'
-   (document prefix)? Proposed: the document prefix, so the two embed
-   routes agree for a given model.
+- LLM-based rerankers (Qwen3-Reranker, chat-template scoring): they need
+  decoder support and `instruction`/chat-template handling.

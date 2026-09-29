@@ -19,10 +19,11 @@ pub use chat::{
     Usage,
 };
 pub use classify::{
-    activate, ClassifyParams, ClassifyTask, Classifier, Prepared, ProblemType, QuestionType, Source,
+    activate, ClassifyParams, ClassifyTask, Classifier, PairParams, Prepared, ProblemType, QuestionType,
+    Source,
     TruncationSide,
 };
-pub use embed::{truncate_normalized, EmbedPurpose, Embedder};
+pub use embed::{truncate_normalized, EmbedLimits, EmbedPurpose, Embedder, Truncate};
 pub use error::{Error, Result};
 pub use manifest::{
     calibration_key, ClassifierManifest, ClassifyFormat, EmbeddingBackendKind, ModelManifest,

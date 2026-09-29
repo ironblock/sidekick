@@ -271,7 +271,24 @@ pub struct ClassifyRequest {
     /// vLLM's chat-form input; not supported.
     #[serde(default)]
     pub messages: Option<Value>,
-    // vLLM's other pooling fields (vllm/entrypoints/pooling/base/protocol.py).
+    #[serde(flatten)]
+    pub pooling: PoolingFields,
+    // Extensions.
+    #[serde(default)]
+    pub candidate_labels: Option<Vec<String>>,
+    #[serde(default)]
+    pub calibration: Option<String>,
+    #[serde(default)]
+    pub question_type: Option<String>,
+    #[serde(default)]
+    pub instructions: Option<String>,
+}
+
+/// vLLM's pooling fields that classify and rerank share
+/// (vllm/entrypoints/pooling/base/protocol.py), checked by
+/// `super::pooling::check`.
+#[derive(Debug, Default, Deserialize)]
+pub struct PoolingFields {
     #[serde(default)]
     pub request_id: Option<Value>,
     #[serde(default)]
@@ -288,15 +305,6 @@ pub struct ClassifyRequest {
     /// vLLM rejects the removed pooling tasks `score` and `encode`.
     #[serde(default)]
     pub task: Option<Value>,
-    // Extensions.
-    #[serde(default)]
-    pub candidate_labels: Option<Vec<String>>,
-    #[serde(default)]
-    pub calibration: Option<String>,
-    #[serde(default)]
-    pub question_type: Option<String>,
-    #[serde(default)]
-    pub instructions: Option<String>,
 }
 
 /// `Some` whenever the field is present, `null` included (serde's `Option`
@@ -321,6 +329,145 @@ pub struct ClassifyData {
     pub label: String,
     pub probs: Vec<f32>,
     pub num_classes: usize,
+}
+
+// ---------- rerank ----------
+
+/// vLLM's `RerankRequest` (the Jina shape), which `/v1/rerank`, `/rerank`
+/// and (with Cohere's defaults) `/v2/rerank` read. docs/design/rerank.md.
+#[derive(Debug, Deserialize)]
+pub struct RerankRequest {
+    pub model: String,
+    #[serde(default)]
+    pub query: Option<Value>,
+    #[serde(default)]
+    pub documents: Option<Value>,
+    #[serde(default)]
+    pub top_n: Option<Value>,
+    #[serde(default)]
+    pub use_activation: Option<bool>,
+    #[serde(default)]
+    pub truncate_prompt_tokens: Option<i64>,
+    #[serde(default)]
+    pub truncation_side: Option<String>,
+    #[serde(default)]
+    pub max_tokens_per_query: Option<i64>,
+    #[serde(default)]
+    pub max_tokens_per_doc: Option<i64>,
+    /// Extension (Jina; Cohere v1).
+    #[serde(default)]
+    pub return_documents: Option<bool>,
+    /// vLLM feeds these to a chat template; cross-encoders have none.
+    #[serde(default)]
+    pub instruction: Option<Value>,
+    #[serde(default)]
+    pub chat_template_kwargs: Option<Value>,
+    #[serde(flatten)]
+    pub pooling: PoolingFields,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RerankResponse {
+    pub id: String,
+    pub model: String,
+    pub usage: RerankUsage,
+    pub results: Vec<RerankResult>,
+    /// `/v2/rerank` only: Cohere's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<CohereMeta>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RerankUsage {
+    pub prompt_tokens: u32,
+    pub total_tokens: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RerankResult {
+    pub index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<RerankDocument>,
+    pub relevance_score: f32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RerankDocument {
+    pub text: String,
+}
+
+/// Cohere's v2 `meta`.
+#[derive(Debug, Serialize)]
+pub struct CohereMeta {
+    pub api_version: CohereApiVersion,
+    pub billed_units: CohereBilledUnits,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CohereApiVersion {
+    pub version: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CohereBilledUnits {
+    pub input_tokens: u32,
+}
+
+impl CohereMeta {
+    pub fn v2(input_tokens: u32) -> Self {
+        Self {
+            api_version: CohereApiVersion { version: "2" },
+            billed_units: CohereBilledUnits { input_tokens },
+        }
+    }
+}
+
+// ---------- Cohere v2 embed ----------
+
+/// Cohere's `/v2/embed` request, as vLLM serves it.
+#[derive(Debug, Deserialize)]
+pub struct CohereEmbedRequest {
+    pub model: String,
+    #[serde(default)]
+    pub texts: Option<Vec<String>>,
+    #[serde(default)]
+    pub images: Option<Value>,
+    #[serde(default)]
+    pub inputs: Option<Value>,
+    #[serde(default)]
+    pub input_type: Option<String>,
+    #[serde(default)]
+    pub embedding_types: Option<Vec<String>>,
+    #[serde(default)]
+    pub output_dimension: Option<usize>,
+    #[serde(default)]
+    pub truncate: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<i64>,
+    #[serde(default)]
+    pub priority: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CohereEmbedResponse {
+    pub id: String,
+    pub embeddings: CohereEmbeddings,
+    pub texts: Vec<String>,
+    pub meta: CohereMeta,
+    pub response_type: &'static str,
+}
+
+/// Embeddings by type; only the requested types are present.
+#[derive(Debug, Default, Serialize)]
+pub struct CohereEmbeddings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub float: Option<Vec<Vec<f32>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base64: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary: Option<Vec<Vec<i32>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ubinary: Option<Vec<Vec<u8>>>,
 }
 
 // ---------- models ----------

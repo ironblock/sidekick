@@ -278,6 +278,34 @@ pub fn grade(
         }
     }
 
+    // Rerankers: one score per case, so the flips that matter are order
+    // changes between documents of one query. A pair counts where the
+    // reference's score gap (after the activation) is at least the margin.
+    let score = |l: &[f32]| activate(problem, l, None).first().copied().unwrap_or(f32::NAN) as f64;
+    for i in 0..n {
+        for j in i + 1..n {
+            let (Some(gi), Some(gj)) = (&cases[i].group, &cases[j].group) else { continue };
+            let (ci, cj) = (&result.cases[i], &result.cases[j]);
+            if gi != gj || !ci.finite || !cj.finite || torch[i].len() != 1 {
+                continue;
+            }
+            let gap = score(&torch[i]) - score(&torch[j]);
+            let now = score(&ci.logits) - score(&cj.logits);
+            // Same order, or no reference order to keep. A reference gap
+            // that sidekick collapses to an exact tie counts: the order
+            // is lost.
+            if gap == 0.0 || gap * now > 0.0 {
+                continue;
+            }
+            let what = format!("{gi}: {} vs {} reordered (reference gap {:.4})", cases[i].id, cases[j].id, gap.abs());
+            if gap.abs() >= gates.flip_margin {
+                flips.push(what);
+            } else {
+                near_ties.push(what);
+            }
+        }
+    }
+
     let calibrated: Vec<Option<f64>> = (0..n)
         .filter_map(|i| {
             let t = manifest.temperature(cases[i].question_type, cases[i].k)?;
@@ -507,5 +535,49 @@ mod tests {
         assert_eq!(d.max, Some(2e-4));
         d.add(None);
         assert!(!d.within(1.0));
+    }
+
+    #[test]
+    fn rerank_flips_count_within_a_group_above_the_margin() {
+        let json = serde_json::json!({
+            "format": 1, "corpus_sha256": "c", "tokenizer_sha256": "t",
+            "model": {"id": "r", "task": "text-ranking", "buckets": [128], "max_seq_len": 128, "max_labels": 1, "labels": ["score"]},
+            "source": {"repo": "org/r", "revision": null}, "oracles": ["torch"],
+            "cases": [
+                {"id": "a0", "group": "a", "query": "q", "input": "x", "ids": [1], "k": 1},
+                {"id": "a1", "group": "a", "query": "q", "input": "y", "ids": [1], "k": 1},
+                {"id": "a2", "group": "a", "query": "q", "input": "z", "ids": [1], "k": 1},
+                {"id": "b0", "group": "b", "query": "p", "input": "x", "ids": [1], "k": 1},
+            ],
+        })
+        .to_string();
+        // Raw scores (regression): a0 3.0, a1 1.0, a2 1.02, b0 0.0.
+        let data: Vec<u8> = [3.0f32, 1.0, 1.02, 0.0].iter().flat_map(|f| f.to_le_bytes()).collect();
+        let view = safetensors::tensor::TensorView::new(safetensors::Dtype::F32, vec![4, 1], &data).unwrap();
+        let st = safetensors::serialize([("torch", view)], &None).unwrap();
+        let reference = ClassifyReference::parse(&json, &st).unwrap();
+        let mut m = manifest();
+        m.task = sidekick_core::ClassifyTask::TextRanking;
+        m.problem_type = ProblemType::Regression;
+        m.classify.labels = vec!["score".into()];
+        // a1 and a2 swap (gap 0.02: a near tie); a0 falls below a2 (gap
+        // 1.98: a flip); b0 is another query, never compared with a.
+        let got = [0.9f32, 1.05, 1.0, 5.0];
+        // (Below: a0 tied with a1 exactly also loses a0's order.)
+        let cases = reference.cases.iter().zip(got).map(|(c, s)| case(&c.id, vec![s])).collect();
+        let result = ClassifyWorkerResult { model: "r".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
+        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &m);
+        assert_eq!(g.flips.len(), 2, "{:?}", g.flips);
+        assert!(g.flips.iter().all(|f| f.starts_with("a: a0 vs")), "{:?}", g.flips);
+        assert_eq!(g.near_ties.len(), 1, "{:?}", g.near_ties);
+        assert!(g.near_ties[0].starts_with("a: a1 vs a2"));
+        assert!(g.letter >= 'C');
+
+        // A 2.0 reference gap collapsed to an exact tie is a flip.
+        let tied = [1.0f32, 1.0, 1.02, 5.0];
+        let cases = reference.cases.iter().zip(tied).map(|(c, s)| case(&c.id, vec![s])).collect();
+        let result = ClassifyWorkerResult { model: "r".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
+        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &m);
+        assert!(g.flips.iter().any(|f| f.starts_with("a: a0 vs a1")), "{:?}", g.flips);
     }
 }
