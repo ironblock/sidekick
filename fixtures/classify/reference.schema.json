@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Classifier parity reference",
+  "description": "reference.json written by the classifier reference generator; logits are in the sibling reference.safetensors as one float32 [cases, max_labels] tensor per oracle (\"torch\" required), padded with NaN beyond each case's label count. Not committed (derived from model weights, as in D26). See docs/design/classify.md.",
+  "type": "object",
+  "required": ["format", "corpus_sha256", "tokenizer_sha256", "model", "source", "oracles", "cases"],
+  "properties": {
+    "format": {"const": 1},
+    "corpus_sha256": {"type": "string", "description": "hash of the classifier corpus, comment lines excluded, as D26"},
+    "tokenizer_sha256": {"type": "string"},
+    "model": {
+      "type": "object",
+      "required": ["id", "task", "buckets", "max_seq_len", "max_labels"],
+      "properties": {
+        "id": {"type": "string"},
+        "task": {"enum": ["text-classification", "zero-shot-classification"]},
+        "format": {"type": ["string", "null"]},
+        "buckets": {"type": "array", "items": {"type": "integer"}},
+        "max_seq_len": {"type": "integer"},
+        "max_labels": {"type": "integer"},
+        "labels": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["repo", "revision"],
+      "properties": {"repo": {"type": "string"}, "revision": {"type": ["string", "null"]}}
+    },
+    "oracles": {"type": "array", "items": {"type": "string"}},
+    "versions": {"type": "object"},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "input", "ids", "k"],
+        "properties": {
+          "id": {"type": "string"},
+          "tags": {"type": "array", "items": {"type": "string"}},
+          "input": {"type": "string"},
+          "candidate_labels": {"type": "array", "items": {"type": "string"}},
+          "question_type": {"enum": ["choice", "score", "noul"]},
+          "instructions": {"type": ["string", "null"]},
+          "ids": {"type": "array", "items": {"type": "integer"}},
+          "markers": {"type": "array", "items": {"type": "integer"}},
+          "qtype": {"type": ["integer", "null"]},
+          "k": {"type": "integer", "description": "label count for this case"},
+          "gold": {"type": ["array", "null"], "items": {"type": "string"}, "description": "gold labels when the corpus has them (reported, never graded)"}
+        }
+      }
+    }
+  }
+}

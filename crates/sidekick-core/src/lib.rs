@@ -4,11 +4,12 @@
 //! embeddings, extraction) on Apple Silicon, preferring the Apple Neural
 //! Engine and Apple's Foundation Models where available, with graceful
 //! degradation elsewhere. This crate holds the backend-neutral vocabulary:
-//! chat and embedding traits, availability states, and the on-disk model
+//! chat, embedding and classification traits, availability states, and the on-disk model
 //! manifest format. It is deliberately free of any Apple dependency so that
 //! consumers (and CI) can build it anywhere.
 
 pub mod chat;
+pub mod classify;
 pub mod embed;
 pub mod error;
 pub mod manifest;
@@ -17,9 +18,16 @@ pub use chat::{
     ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, FinishReason, ModelInfo, Role,
     Usage,
 };
+pub use classify::{
+    activate, ClassifyParams, ClassifyTask, Classifier, Prepared, ProblemType, QuestionType, Source,
+    TruncationSide,
+};
 pub use embed::{truncate_normalized, EmbedPurpose, Embedder};
 pub use error::{Error, Result};
-pub use manifest::{EmbeddingBackendKind, ModelManifest, ModelRegistry, Pooling};
+pub use manifest::{
+    calibration_key, ClassifierManifest, ClassifyFormat, EmbeddingBackendKind, ModelManifest,
+    ModelRegistry, Pooling, ResolvedClassifier,
+};
 
 use serde::{Deserialize, Serialize};
 

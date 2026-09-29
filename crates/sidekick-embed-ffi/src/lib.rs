@@ -125,8 +125,9 @@ pub unsafe extern "C" fn sk_pool_close(pool: *mut SkPool) {
     }
 }
 
-/// JSON array of available model ids, e.g.
-/// `["bge-small-en-v1.5","static-floor"]`. Free with `sk_string_free`.
+/// JSON array of available embedding model ids, e.g.
+/// `["bge-small-en-v1.5","static-floor"]`. Classifiers aren't served by this
+/// ABI and aren't listed. Free with `sk_string_free`.
 /// Returns NULL on failure with `*err` set. An empty models directory is
 /// `"[]"`, not NULL.
 ///
@@ -145,7 +146,7 @@ pub unsafe extern "C" fn sk_pool_models(
     })
 }
 
-/// JSON description of one model from its manifest (the model is not
+/// JSON description of one embedding model from its manifest (the model is not
 /// loaded): `{"id","backend","dims","matryoshka","max_seq_len"}`.
 /// `matryoshka` lists the dims values `sk_embed` accepts as
 /// `requested_dims`; empty means native dims only. Free with
@@ -393,6 +394,30 @@ max_seq_len = 16
 }"#,
         )
         .unwrap();
+        // A classifier beside it: the C ABI serves embedders only, so it
+        // must list and describe only the embedder.
+        let classifier_dir = dir.join("sentiment");
+        std::fs::create_dir_all(&classifier_dir).unwrap();
+        std::fs::write(
+            classifier_dir.join("classifier.toml"),
+            r#"
+id = "sentiment"
+task = "text-classification"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [16]
+max_seq_len = 16
+
+[classify]
+labels = ["negative", "positive"]
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
+"#,
+        )
+        .unwrap();
         dir
     }
 
@@ -412,6 +437,12 @@ max_seq_len = 16
             let json = CStr::from_ptr(models).to_str().unwrap().to_string();
             sk_string_free(models);
             assert_eq!(json, r#"["static-floor"]"#);
+
+            let classifier = CString::new("sentiment").unwrap();
+            assert!(sk_model_info(pool, classifier.as_ptr(), &mut err).is_null());
+            assert!(!err.is_null());
+            sk_string_free(err);
+            err = std::ptr::null_mut();
 
             let id = CString::new("static-floor").unwrap();
             assert_eq!(sk_embed_dims(pool, id.as_ptr(), &mut err), 3);

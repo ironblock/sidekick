@@ -1,7 +1,8 @@
 use super::wire::*;
-use super::ApiError;
+use super::{model_task, wrong_route, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::Engine as _;
 use sidekick_core::{truncate_normalized, EmbedPurpose};
@@ -11,8 +12,14 @@ const MAX_BATCH: usize = 256;
 
 pub async fn embeddings(
     State(state): State<AppState>,
-    Json(req): Json<EmbeddingsRequest>,
-) -> Result<Json<EmbeddingsResponse>, ApiError> {
+    ApiJson(req): ApiJson<EmbeddingsRequest>,
+) -> Result<Response, ApiError> {
+    match model_task(&state, &req.model) {
+        Some(task) if task != "feature-extraction" => {
+            return Err(wrong_route(&req.model, task, "/v1/embeddings"))
+        }
+        _ => {}
+    }
     let texts: Vec<String> = match req.input {
         EmbeddingsInput::One(s) => vec![s],
         EmbeddingsInput::Many(v) => v,
@@ -111,10 +118,14 @@ pub async fn embeddings(
         })
         .collect();
 
-    Ok(Json(EmbeddingsResponse {
-        object: "list",
-        data,
-        model: req.model,
-        usage: WireUsage::new(approx_tokens as u32, 0),
-    }))
+    let provenance = Provenance::embedder(&state, &req.model);
+    Ok(provenance.apply(
+        Json(EmbeddingsResponse {
+            object: "list",
+            data,
+            model: req.model,
+            usage: WireUsage::new(approx_tokens as u32, 0),
+        })
+        .into_response(),
+    ))
 }

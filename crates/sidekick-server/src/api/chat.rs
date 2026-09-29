@@ -1,5 +1,5 @@
 use super::wire::*;
-use super::ApiError;
+use super::{ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -15,12 +15,24 @@ use tokio::task::JoinHandle;
 
 pub async fn chat_completions(
     State(state): State<AppState>,
-    Json(req): Json<ChatCompletionRequest>,
+    ApiJson(req): ApiJson<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
     if req.model != state.chat.id() {
-        return Err(ApiError::model_not_found(&req.model));
+        return Err(match super::model_task(&state, &req.model) {
+            Some(task) => super::wrong_route(&req.model, task, "/v1/chat/completions"),
+            None => ApiError::model_not_found(&req.model),
+        });
     }
+    // Provenance names the Foundation Models variant serving the request,
+    // when it reports one; asked alongside the completion, not after it.
+    let (response, info) = tokio::join!(complete(&state, req), state.chat.model_info());
+    let model = info
+        .and_then(|i| i.variant_id)
+        .unwrap_or_else(|| state.chat.id().to_string());
+    Ok(Provenance { model, compute_units: None }.apply(response?))
+}
 
+async fn complete(state: &AppState, req: ChatCompletionRequest) -> Result<Response, ApiError> {
     let core_req = to_core_request(&req)?;
     let meta = StreamMeta {
         id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),

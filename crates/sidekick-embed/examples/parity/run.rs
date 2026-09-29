@@ -5,12 +5,14 @@
 //! or a stuck ANE compile then costs one cell of the report, not the whole
 //! run.
 
+mod classify;
+
 use crate::expect::{Expectations, Path3};
 use crate::grade::{fmt, grade, suggest_floor, CaseResult, Check, PathGrade, WorkerResult};
 use crate::metrics::cosine;
 use crate::reference::{corpus_sha256, sha256_hex, Reference};
 use serde::Serialize;
-use sidekick_core::manifest::{ModelRegistry, ResolvedModel};
+use sidekick_core::manifest::{ModelRegistry, ResolvedClassifier, ResolvedModel};
 use sidekick_core::{EmbedPurpose, Embedder, EmbeddingBackendKind};
 use sidekick_coreml::{compute_plan, ComputeUnits, PlanSummary};
 use sidekick_embed::CoremlEmbedder;
@@ -264,8 +266,12 @@ fn worker(args: &[String]) -> Result<(), String> {
         .map(|s| s.parse().map_err(|_| "bad limit"))
         .transpose()?;
     let path = Path3::parse(path).ok_or("bad path")?;
-    let model = load_model(Path::new(models_dir), id)?;
     let refs = (refs != "-").then(|| PathBuf::from(refs));
+    let registry = ModelRegistry::scan(Path::new(models_dir)).map_err(|e| e.to_string())?;
+    if let Ok(model) = registry.classifier(id) {
+        return classify::worker(model, refs.as_deref(), path, out, limit);
+    }
+    let model = load_model(Path::new(models_dir), id)?;
     let reference = Reference::load(&reference_dir(&model, refs.as_deref()))?;
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
         .map_err(|e| e.to_string())?
@@ -474,21 +480,101 @@ struct Report {
     chip: String,
     macos: String,
     models: Vec<ModelReport>,
+    classifiers: Vec<classify::ClassifierReport>,
+}
+
+/// What reading every bucket's compute plan found.
+struct Plans {
+    /// No bucket's plan failed its verdict.
+    ok: bool,
+    /// Buckets without a readable plan, allowed by --allow-unverified-plans.
+    unverified: Vec<usize>,
+    buckets: Vec<BucketInfo>,
+}
+
+/// Read and print every bucket's compute plan, before anything predicts:
+/// an artifact the ANE rejects can abort the process at predict.
+fn check_plans(
+    id: &str,
+    buckets: &[usize],
+    artifact_for: impl Fn(usize) -> PathBuf,
+    o: &Options,
+    scratch: &Path,
+    failures: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) -> Plans {
+    let mut plans = Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() };
+    for &b in buckets {
+        let art = artifact_for(b);
+        let plan = read_plan(&art, &format!("{id}-{b}"), o.timeout, scratch);
+        let (ane, assigned, verdict) = match &plan {
+            Ok(Some((p, _))) => (p.ane, p.assigned(), p.verdict()),
+            Ok(None) => (0, 0, Ok(())),
+            Err(e) => (0, 0, Err(format!("could not read the compute plan: {e}"))),
+        };
+        println!(
+            "  bucket {b:>4}: {}  model.mil {} weights {}",
+            match (&plan, &verdict) {
+                (Ok(None), _) => "NO COMPUTE PLAN: eligibility unverified".to_string(),
+                (Ok(Some((_, true))), Ok(())) => {
+                    format!("ANE ops {ane}/{assigned} eligible (read from a copy)")
+                }
+                (_, Ok(())) => format!("ANE ops {ane}/{assigned} eligible"),
+                (_, Err(e)) => format!("ANE ops {ane}/{assigned} NOT ELIGIBLE: {e}"),
+            },
+            file_sha(&art.join("model.mil")).unwrap_or("-".into()),
+            file_sha(&art.join("weights/weight.bin")).unwrap_or("-".into()),
+        );
+        if matches!(plan, Ok(Some((_, true)))) {
+            warnings.push(format!(
+                "bucket {b}: its compute plan read only from a copy of the artifact; \
+                 Core ML's cache entry for its path looks broken ({}, safe to delete)",
+                bundle_cache()
+            ));
+        }
+        if matches!(plan, Ok(None)) {
+            let why = format!(
+                "bucket {b}: no compute plan, from its path or a fresh copy (every operation \
+                 unassigned, or Core ML \"internal failure\"). Core ML's bundle cache for \
+                 this executable may hold broken entries: {} (safe to delete). Check the \
+                 bucket with ane_check, or pass --allow-unverified-plans",
+                bundle_cache()
+            );
+            if o.allow_unverified {
+                warnings.push(why);
+                plans.unverified.push(b);
+            } else {
+                failures.push(why);
+            }
+        }
+        if let Err(e) = &verdict {
+            plans.ok = false;
+            failures.push(format!("bucket {b}: compute plan: {e}"));
+        }
+        plans.buckets.push(BucketInfo {
+            bucket: b,
+            model_mil: file_sha(&art.join("model.mil")),
+            weights: file_sha(&art.join("weights/weight.bin")),
+            ane_ops: ane,
+            assigned_ops: assigned,
+            plan: verdict,
+        });
+    }
+    plans
 }
 
 /// Run a worker in its own process, with a timeout.
-fn spawn_worker(
-    model: &ResolvedModel,
+fn spawn_worker<T: serde::de::DeserializeOwned>(
+    id: &str,
     models_dir: &Path,
     refs: Option<&Path>,
     path: Path3,
     limit: Option<usize>,
     timeout: Duration,
     scratch: &Path,
-) -> Result<WorkerResult, String> {
+) -> Result<T, String> {
     let tag = format!(
-        "{}-{}-{}",
-        model.manifest.id,
+        "{id}-{}-{}",
         path.name(),
         limit.map_or("full".into(), |l| l.to_string())
     );
@@ -497,7 +583,7 @@ fn spawn_worker(
     let mut args: Vec<std::ffi::OsString> = vec![
         "--worker".into(),
         models_dir.into(),
-        model.manifest.id.clone().into(),
+        id.into(),
         refs.map_or("-".into(), |r| r.as_os_str().to_owned()),
         path.name().into(),
         out.clone().into(),
@@ -534,15 +620,26 @@ fn parent(args: &[String]) -> Result<bool, String> {
             }
         }
     }
+    let mut classifiers: Vec<(PathBuf, ResolvedClassifier)> = Vec::new();
+    for dir in &o.models_dirs {
+        let reg = ModelRegistry::scan(dir).map_err(|e| e.to_string())?;
+        for c in reg.classifiers() {
+            if o.models.is_empty() || o.models.contains(&c.manifest.id) {
+                classifiers.push((dir.clone(), c.clone()));
+            }
+        }
+    }
     for want in &o.models {
-        if !models.iter().any(|(_, m)| &m.manifest.id == want) {
+        if !models.iter().any(|(_, m)| &m.manifest.id == want)
+            && !classifiers.iter().any(|(_, c)| &c.manifest.id == want)
+        {
             return Err(format!("model {want} not found in any --models-dir"));
         }
     }
     let has_floors = expectations.floor.iter().any(|f| f.chip == chip);
     println!(
         "parity suite: {chip}, macOS {macos}, {} model(s)",
-        models.len()
+        models.len() + classifiers.len()
     );
     if !has_floors {
         println!("no floors recorded for this chip: enforcing gates only, reporting accuracy");
@@ -552,6 +649,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
         chip: chip.clone(),
         macos,
         models: Vec::new(),
+        classifiers: Vec::new(),
     };
     let mut ok = true;
     let mut graded = 0usize;
@@ -617,64 +715,17 @@ fn parent(args: &[String]) -> Result<bool, String> {
 
         // Compute plans first, on every bucket, before anything predicts:
         // an artifact the ANE rejects can abort the process at predict.
-        let mut plan_ok = true;
-        let mut unverified: Vec<usize> = Vec::new();
-        for &b in &model.manifest.buckets {
-            let art = model.artifact_path_for_bucket(b);
-            let plan = read_plan(&art, &format!("{id}-{b}"), o.timeout, &scratch);
-            let (ane, assigned, verdict) = match &plan {
-                Ok(Some((p, _))) => (p.ane, p.assigned(), p.verdict()),
-                Ok(None) => (0, 0, Ok(())),
-                Err(e) => (0, 0, Err(format!("could not read the compute plan: {e}"))),
-            };
-            println!(
-                "  bucket {b:>4}: {}  model.mil {} weights {}",
-                match (&plan, &verdict) {
-                    (Ok(None), _) => "NO COMPUTE PLAN: eligibility unverified".to_string(),
-                    (Ok(Some((_, true))), Ok(())) => {
-                        format!("ANE ops {ane}/{assigned} eligible (read from a copy)")
-                    }
-                    (_, Ok(())) => format!("ANE ops {ane}/{assigned} eligible"),
-                    (_, Err(e)) => format!("ANE ops {ane}/{assigned} NOT ELIGIBLE: {e}"),
-                },
-                file_sha(&art.join("model.mil")).unwrap_or("-".into()),
-                file_sha(&art.join("weights/weight.bin")).unwrap_or("-".into()),
-            );
-            if matches!(plan, Ok(Some((_, true)))) {
-                mr.warnings.push(format!(
-                    "bucket {b}: its compute plan read only from a copy of the artifact; \
-                     Core ML's cache entry for its path looks broken ({}, safe to delete)",
-                    bundle_cache()
-                ));
-            }
-            if matches!(plan, Ok(None)) {
-                let why = format!(
-                    "bucket {b}: no compute plan, from its path or a fresh copy (every operation \
-                     unassigned, or Core ML \"internal failure\"). Core ML's bundle cache for \
-                     this executable may hold broken entries: {} (safe to delete). Check the \
-                     bucket with ane_check, or pass --allow-unverified-plans",
-                    bundle_cache()
-                );
-                if o.allow_unverified {
-                    mr.warnings.push(why);
-                    unverified.push(b);
-                } else {
-                    mr.failures.push(why);
-                }
-            }
-            if let Err(e) = &verdict {
-                plan_ok = false;
-                mr.failures.push(format!("bucket {b}: compute plan: {e}"));
-            }
-            mr.buckets.push(BucketInfo {
-                bucket: b,
-                model_mil: file_sha(&art.join("model.mil")),
-                weights: file_sha(&art.join("weights/weight.bin")),
-                ane_ops: ane,
-                assigned_ops: assigned,
-                plan: verdict,
-            });
-        }
+        let plans = check_plans(
+            id,
+            &model.manifest.buckets,
+            |b| model.artifact_path_for_bucket(b),
+            &o,
+            &scratch,
+            &mut mr.failures,
+            &mut mr.warnings,
+        );
+        mr.buckets = plans.buckets;
+        let (plan_ok, unverified) = (plans.ok, plans.unverified);
         if !plan_ok {
             println!("  FAIL: not ANE-eligible; skipping predictions (such an artifact can abort at predict)");
             ok = false;
@@ -684,8 +735,8 @@ fn parent(args: &[String]) -> Result<bool, String> {
 
         let mut results: Vec<(Path3, WorkerResult)> = Vec::new();
         for &path in &o.paths {
-            match spawn_worker(
-                model,
+            match spawn_worker::<WorkerResult>(
+                id,
                 models_dir,
                 o.refs.as_deref(),
                 path,
@@ -705,8 +756,8 @@ fn parent(args: &[String]) -> Result<bool, String> {
 
         // Determinism across processes: a second, independent ANE load.
         if let Some((_, first)) = results.iter().find(|(p, _)| *p == Path3::Ane) {
-            match spawn_worker(
-                model,
+            match spawn_worker::<WorkerResult>(
+                id,
                 models_dir,
                 o.refs.as_deref(),
                 Path3::Ane,
@@ -835,6 +886,14 @@ fn parent(args: &[String]) -> Result<bool, String> {
         }
         mr.paths = grades;
         report.models.push(mr);
+    }
+
+    for (models_dir, model) in &classifiers {
+        if let Some((mr, pass)) = classify::grade_model(model, models_dir, &o, &expectations, &scratch) {
+            graded += 1;
+            ok &= pass;
+            report.classifiers.push(mr);
+        }
     }
 
     if o.suggest {

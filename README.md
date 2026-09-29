@@ -1,10 +1,11 @@
 # sidekick
 
 On-device inference for very small, asynchronous tasks on Apple Silicon —
-session titles, tags, embeddings, structured extraction — using every part of
-the silicon: Apple's Foundation Models (ANE, via Apple Intelligence) for
-generation, Core ML encoders on the Apple Neural Engine for embeddings, and a
-pure-CPU static-embedding floor tier that works anywhere.
+session titles, tags, embeddings, classification, structured extraction —
+using every part of the silicon: Apple's Foundation Models (ANE, via Apple
+Intelligence) for generation, Core ML encoders on the Apple Neural Engine for
+embeddings and classification, and a pure-CPU static-embedding floor tier
+that works anywhere.
 
 The daemon, **`sidekickd`**, speaks the OpenAI API, so anything that can point
 at an OpenAI-compatible base URL (OpenCode, editors, scripts) can use it:
@@ -12,6 +13,7 @@ at an OpenAI-compatible base URL (OpenCode, editors, scripts) can use it:
 ```
 POST /v1/chat/completions   Apple Foundation Models (macOS 26+, Apple Intelligence)
 POST /v1/embeddings         Core ML / ANE encoders + static floor models
+POST /v1/classify           Core ML / ANE classifiers (vLLM's /classify contract)
 GET  /v1/models             what this machine can serve
 GET  /health                availability per tier, and why when unavailable
 ```
@@ -122,9 +124,61 @@ for constrained output that means the JSON may be missing properties.
 `stop` (one string or up to four) is supported, except together with
 `json_schema`.
 
+### Classification
+
+`POST /v1/classify` is vLLM's `/classify` (and SGLang's `/v1/classify`),
+field for field, so vLLM and SGLang clients work unchanged:
+
+```sh
+curl -s localhost:8790/v1/classify -H 'content-type: application/json' -d '{
+  "model": "nlptown-sentiment",
+  "input": ["The battery lasts for days.", "It broke on day two."]
+}'
+```
+
+The response (values illustrative):
+
+```json
+{"id": "classify-…", "object": "list", "created": 1790663954, "model": "nlptown-sentiment",
+ "data": [{"index": 0, "label": "5 stars", "probs": [0.01, 0.01, 0.04, 0.22, 0.72], "num_classes": 5},
+          {"index": 1, "label": "1 star", "probs": [0.81, 0.14, 0.03, 0.01, 0.01], "num_classes": 5}],
+ "usage": {"prompt_tokens": 19, "completion_tokens": 0, "total_tokens": 19}}
+```
+
+`probs` follows the model's label order. vLLM's `use_activation: false`
+returns raw logits, and `truncate_prompt_tokens` (with `truncation_side`)
+truncates. Without it, an input longer than the model's maximum is a 400,
+as in vLLM. Every request field vLLM defines is honored or rejected with a
+400, never silently dropped.
+
+Zero-shot models take their labels per request, as `candidate_labels`
+(Hugging Face's name). laya, the first zero-shot model, also needs a
+`question_type`: `choice`, `score` (ordered levels) or `noul` (does a
+statement hold: labels `false`, `true`). `probs` then follows
+`candidate_labels`:
+
+```json
+{"model": "laya-en", "input": "Please reset my password, I can't log in.",
+ "question_type": "choice", "instructions": "Which team should handle this ticket?",
+ "candidate_labels": ["billing: invoices and refunds", "account: login and passwords", "other"]}
+```
+
+`calibration: "model"` applies the temperature the model declares for the
+question type and label count; `/v1/models` lists each classifier's
+temperatures, labels or `max_labels`, `max_batch`, and the extension fields
+it accepts. The full contract is in
+[docs/design/classify.md](docs/design/classify.md).
+
+Inference responses carry provenance headers: `sidekick-version`,
+`sidekick-model` (`<id>@<revision>` when the manifest records the source
+revision; for chat, the Foundation Models variant) and
+`sidekick-compute-units` (`cpu_and_ne` for Core ML models, `cpu` for static
+ones).
+
 ## Models directory
 
-Each embedding model is a directory with a `manifest.toml`:
+Each embedding model is a directory with a `manifest.toml`, and each
+classifier a directory with a `classifier.toml`:
 
 ```
 ~/Library/Application Support/sidekick/models/
@@ -138,7 +192,9 @@ See [examples/manifests/](examples/manifests/) for annotated manifests
 (EmbeddingGemma-300m on ANE, bge-small, a static floor model). Manifest rules
 that matter: Core ML models must declare enumerated sequence-length `buckets`
 (fixed shapes are what keep the model on the ANE), and `matryoshka` declares
-which `dimensions` values the OpenAI API may request.
+which `dimensions` values the OpenAI API may request. A manifest that doesn't
+parse or validate is skipped with a warning, and listed with the reason under
+`skipped_models` in `/health`; the rest of the directory still loads.
 
 ## Configuration
 
@@ -149,7 +205,7 @@ addr = "127.0.0.1:8790"        # loopback only by default
 # models_dir = "..."           # default: <data dir>/sidekick/models
 # api_key = "..."              # require Authorization: Bearer <key> on /v1
 session_ttl_secs = 300         # Foundation Models session reuse window
-model_idle_ttl_secs = 900      # embedding model residency after last use
+model_idle_ttl_secs = 900      # model residency (embedders, classifiers) after last use
 ```
 
 CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...`.
@@ -158,11 +214,12 @@ CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ..
 
 | Crate | What it is |
 |---|---|
-| `sidekick-core` | Backend-neutral traits and types: `ChatBackend`, `Embedder`, availability states, model manifest/registry. No Apple dependencies. |
+| `sidekick-core` | Backend-neutral traits and types: `ChatBackend`, `Embedder`, `Classifier`, availability states, model manifests and registry. No Apple dependencies. |
 | `sidekick-coreml` | Small safe wrapper over `objc2-core-ml`: load, compute units, int32-in/float-out predictions. macOS only; empty stub elsewhere. |
 | `sidekick-fm` | Foundation Models backend: Swift C-ABI shim built by `build.rs` (macOS 26.4+ SDK; 27 SDK for the macOS 27 features), guided generation from JSON Schema, TTL'd session reuse keyed by conversation prefix. Stub elsewhere. |
-| `sidekick-embed` | Embedding pipelines: Core ML/ANE encoder (feature `coreml`) and the static floor tier. |
+| `sidekick-embed` | Encoder pipelines: Core ML/ANE embedders and classifiers (feature `coreml`), laya's input format, and the static floor tier. |
 | `sidekick-server` | `sidekickd`, the OpenAI-compatible daemon. |
+| `sidekick-embed-ffi` | `libsidekick.dylib`, the C ABI for in-process embeddings. |
 
 ## Development
 
