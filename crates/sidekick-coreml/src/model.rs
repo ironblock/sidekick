@@ -76,6 +76,23 @@ impl CoremlModel {
         Ok(Self { model })
     }
 
+    /// The declared shape of a multi-array input (its default shape), or
+    /// `None` if the model has no such multi-array input. Static-shape
+    /// artifacts declare exactly the shape they take.
+    pub fn input_shape(&self, name: &str) -> Option<Vec<usize>> {
+        let description = unsafe { self.model.modelDescription() };
+        let inputs = unsafe { description.inputDescriptionsByName() };
+        declared_shape(&inputs, name)
+    }
+
+    /// The declared shape of a multi-array output, or `None` if the model
+    /// has no such multi-array output or doesn't declare its shape.
+    pub fn output_shape(&self, name: &str) -> Option<Vec<usize>> {
+        let description = unsafe { self.model.modelDescription() };
+        let outputs = unsafe { description.outputDescriptionsByName() };
+        declared_shape(&outputs, name).filter(|s| !s.is_empty())
+    }
+
     /// Run a prediction with named int32 inputs, returning the named float
     /// output. Fails if the output is missing or not a multiarray.
     pub fn predict_int32(&self, inputs: &[Int32Input<'_>], output: &str) -> Result<OutputTensor> {
@@ -265,6 +282,15 @@ fn read_input_shapes(model: &MLModel) -> Vec<InputShape> {
         .collect();
     inputs.sort_by(|a, b| a.name.cmp(&b.name));
     inputs
+}
+
+fn declared_shape(
+    features: &NSDictionary<NSString, objc2_core_ml::MLFeatureDescription>,
+    name: &str,
+) -> Option<Vec<usize>> {
+    let feature = features.objectForKey(&NSString::from_str(name))?;
+    let constraint = unsafe { feature.multiArrayConstraint()? };
+    Some(unsafe { constraint.shape() }.iter().map(|n| n.as_usize()).collect())
 }
 
 /// Minimal f16 -> f32 (avoids pulling `half` into this crate). Verified

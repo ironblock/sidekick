@@ -11,23 +11,19 @@
 //! time and silently runs the whole encoder on CPU — prefer per-bucket
 //! static artifacts.)
 
+use crate::bucket_models::BucketModels;
 use crate::pooling::{mean_pool, normalize_in_place};
 use sidekick_core::manifest::ResolvedModel;
 use sidekick_core::{EmbedPurpose, Embedder, Error, Pooling, Result};
-use sidekick_coreml::{ComputeUnits, CoremlModel, Int32Input};
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use sidekick_coreml::{ComputeUnits, Int32Input};
 use tokenizers::Tokenizer;
 
 pub struct CoremlEmbedder {
     id: String,
-    units: ComputeUnits,
     dims: usize,
     matryoshka: Vec<usize>,
-    resolved: ResolvedModel,
-    /// Lazily loaded per-bucket models. Without a `{seq}` placeholder every
-    /// bucket resolves to the same path and shares one entry.
-    models: Mutex<BTreeMap<std::path::PathBuf, Arc<CoremlModel>>>,
+    /// Lazily loaded per-bucket models.
+    models: BucketModels,
     tokenizer: Tokenizer,
     buckets: Vec<usize>,
     pooling: Pooling,
@@ -85,11 +81,9 @@ impl CoremlEmbedder {
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
         let embedder = Self {
             id: m.id.clone(),
-            units,
             dims: m.dims,
             matryoshka: m.matryoshka.clone(),
-            resolved: model.clone(),
-            models: Mutex::new(BTreeMap::new()),
+            models: BucketModels::new(&model.dir, &m.artifact, units),
             tokenizer,
             buckets: m.buckets.clone(),
             pooling: m.pooling,
@@ -103,19 +97,8 @@ impl CoremlEmbedder {
         // load time (matching the pool's load-error surface), not on the
         // first request.
         let smallest = *embedder.buckets.first().expect("validated non-empty");
-        embedder.model_for_bucket(smallest)?;
+        embedder.models.get(smallest)?;
         Ok(embedder)
-    }
-
-    fn model_for_bucket(&self, bucket: usize) -> Result<Arc<CoremlModel>> {
-        let path = self.resolved.artifact_path_for_bucket(bucket);
-        let mut models = self.models.lock().unwrap();
-        if let Some(m) = models.get(&path) {
-            return Ok(m.clone());
-        }
-        let model = Arc::new(CoremlModel::load(&path, self.units)?);
-        models.insert(path, model.clone());
-        Ok(model)
     }
 
     /// Sequence-length buckets, smallest first.
@@ -195,7 +178,7 @@ impl CoremlEmbedder {
             });
         }
 
-        let model = self.model_for_bucket(bucket)?;
+        let model = self.models.get(bucket)?;
         let out = model.predict_int32(&inputs, &self.output_name)?;
         let n: usize = out.shape.iter().product();
 
