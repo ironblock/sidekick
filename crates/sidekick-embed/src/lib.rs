@@ -68,6 +68,9 @@ pub fn load_embedder(model: &ResolvedModel) -> Result<Box<dyn sidekick_core::Emb
     }
 }
 
+/// Whether this build can load classifiers: they're Core ML models.
+pub const CLASSIFIERS_SUPPORTED: bool = cfg!(all(feature = "coreml", target_os = "macos"));
+
 /// Load a registry classifier. Classifiers are Core ML models; without the
 /// `coreml` feature (or off macOS) this is `Unavailable`.
 pub fn load_classifier(model: &ResolvedClassifier) -> Result<Box<dyn sidekick_core::Classifier>> {
