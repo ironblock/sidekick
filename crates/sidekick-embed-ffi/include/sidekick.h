@@ -33,12 +33,13 @@ sk_pool *sk_pool_open(const char *models_dir, char **err);
 /* Drop every resident model. pool may be NULL. */
 void sk_pool_close(sk_pool *pool);
 
-/* JSON array of model ids, e.g. ["bge-small-en-v1.5","static-floor"].
- * Free with sk_string_free. Returns NULL on failure with *err set;
+/* JSON array of embedding model ids, e.g. ["bge-small-en-v1.5","static-floor"].
+ * Classifiers (classifier.toml) aren't served by this ABI and aren't
+ * listed; the daemon's /v1/classify serves them. Free with sk_string_free. Returns NULL on failure with *err set;
  * an empty models directory is "[]", not NULL. */
 char *sk_pool_models(const sk_pool *pool, char **err);
 
-/* JSON description of one model from its manifest (not loaded):
+/* JSON description of one embedding model from its manifest (not loaded):
  *   {"id","backend","dims","matryoshka","max_seq_len"}
  * "matryoshka" lists the dims values sk_embed accepts as requested_dims;
  * empty means native dims only. Free with sk_string_free. Returns NULL on

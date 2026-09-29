@@ -1,22 +1,25 @@
 pub mod chat;
+pub mod classify;
 pub mod embeddings;
 pub mod misc;
 pub mod wire;
 
 use crate::state::AppState;
-use axum::extract::{Request, State};
-use axum::http::StatusCode;
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, Request, State};
+use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use sidekick_core::{Error, UnavailableReason};
+use sidekick_core::{EmbeddingBackendKind, Error, UnavailableReason};
 
 pub fn build_router(state: AppState) -> Router {
     let v1 = Router::new()
         .route("/models", get(misc::list_models))
         .route("/chat/completions", post(chat::chat_completions))
         .route("/embeddings", post(embeddings::embeddings))
+        .route("/classify", post(classify::classify))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
@@ -26,6 +29,107 @@ pub fn build_router(state: AppState) -> Router {
         // tokenizer cost of one embeddings request.
         .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(state)
+}
+
+/// A JSON request body. Every way a body can fail to parse (bad syntax,
+/// wrong types, a missing field, no JSON content type) is an [`ApiError`]
+/// 400, where axum's own `Json` answers a plain-text 422 or 415.
+pub struct ApiJson<T>(pub T);
+
+impl<T, S> FromRequest<S> for ApiJson<T>
+where
+    Json<T>: FromRequest<S, Rejection = JsonRejection>,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(req, state).await {
+            Ok(Json(value)) => Ok(Self(value)),
+            // Body too large (413) and failures reading it keep their status.
+            Err(JsonRejection::BytesRejection(e)) => {
+                Err(ApiError::new(e.status(), "invalid_request_error", e.body_text()))
+            }
+            Err(e) => Err(ApiError::invalid(format!("Invalid JSON body: {}", e.body_text()))),
+        }
+    }
+}
+
+/// What a model does, in Hugging Face's pipeline vocabulary, for listings
+/// and for errors that send a request to the wrong route.
+pub fn model_task(state: &AppState, id: &str) -> Option<&'static str> {
+    if let Ok(c) = state.registry.classifier(id) {
+        return Some(match c.manifest.task {
+            sidekick_core::ClassifyTask::TextClassification => "text-classification",
+            sidekick_core::ClassifyTask::ZeroShotClassification => "zero-shot-classification",
+        });
+    }
+    if state.registry.get(id).is_ok() {
+        return Some("feature-extraction");
+    }
+    (id == state.chat.id()).then_some("text-generation")
+}
+
+/// The 400 for a model sent to a route that doesn't serve its task.
+pub fn wrong_route(id: &str, task: &str, route: &str) -> ApiError {
+    let use_instead = match task {
+        "feature-extraction" => "/v1/embeddings",
+        "text-generation" => "/v1/chat/completions",
+        _ => "/v1/classify",
+    };
+    ApiError::new(
+        StatusCode::BAD_REQUEST,
+        "invalid_request_error",
+        format!("model `{id}` is a {task} model, which {route} doesn't serve; use {use_instead}"),
+    )
+}
+
+/// Provenance headers for an inference response (docs/design/classify.md):
+/// the daemon version, the model (`<id>@<revision>` when its manifest
+/// names a source revision), and the compute units the serving instance
+/// was loaded with. Chat has no compute units to report.
+pub struct Provenance {
+    pub model: String,
+    pub compute_units: Option<&'static str>,
+}
+
+/// The compute units every Core ML model is loaded with (D14).
+pub const CORE_ML_UNITS: &str = "cpu_and_ne";
+
+impl Provenance {
+    pub fn model_id(id: &str, source: Option<&sidekick_core::Source>) -> String {
+        match source.and_then(|s| s.revision.as_deref()) {
+            Some(rev) => format!("{id}@{rev}"),
+            None => id.to_string(),
+        }
+    }
+
+    pub fn embedder(state: &AppState, id: &str) -> Self {
+        let m = state.registry.get(id).ok().map(|r| &r.manifest);
+        Self {
+            model: Self::model_id(id, m.and_then(|m| m.source.as_ref())),
+            compute_units: Some(match m.map(|m| m.backend) {
+                Some(EmbeddingBackendKind::Static) => "cpu",
+                _ => CORE_ML_UNITS,
+            }),
+        }
+    }
+
+    pub fn apply(self, mut response: Response) -> Response {
+        let headers = response.headers_mut();
+        let mut set = |name: &'static str, value: &str| {
+            // A model id that isn't a valid header value just goes without.
+            if let Ok(v) = HeaderValue::from_str(value) {
+                headers.insert(HeaderName::from_static(name), v);
+            }
+        };
+        set("sidekick-version", env!("CARGO_PKG_VERSION"));
+        set("sidekick-model", &self.model);
+        if let Some(units) = self.compute_units {
+            set("sidekick-compute-units", units);
+        }
+        response
+    }
 }
 
 /// Constant-time byte comparison, so the auth check leaks length only.
