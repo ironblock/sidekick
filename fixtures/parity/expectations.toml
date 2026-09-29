@@ -14,10 +14,12 @@
 # Cosine between a case's output in its natural bucket and in every larger
 # one. The CPU path is bitwise bucket-invariant; the GPU and ANE compile
 # each bucket separately. On the ANE, precision lost in a model's MLP shows
-# up here too: LFM2.5 measures 0.9965, and EmbeddingGemma measured 0.9977
-# before its MLP rewrite (D17) and 0.99998 after. A dropped attention mask
-# measured 0.40-0.94.
-bucket_invariance = { cpu = 0.999999, gpu = 0.9999, ane = 0.995 }
+# up here too: EmbeddingGemma measured 0.9977 and LFM2.5 0.9965 before their
+# precision rewrites (D17, D19), and the ANE gate was 0.995 to admit them.
+# Since the rewrites every model measures at least 0.99998 on the ANE (M1
+# Max, macOS 27.0), so the ANE gate matches the GPU's. A dropped attention
+# mask measured 0.40-0.94.
+bucket_invariance = { cpu = 0.999999, gpu = 0.9999, ane = 0.9999 }
 # Cosine between pad ids 0 and random pad ids in the same bucket: the mask
 # hides pads, so nothing may change.
 pad_invariance = 0.99999
@@ -26,10 +28,9 @@ determinism = 0.999999
 # Similarity gap below which a path may reorder two candidates (report only).
 rank_margin = 0.02
 
-# Apple M1 Max, macOS 27.0 (September 2026). The ANE floor for
-# lfm2.5-embedding-350m is grade D: see docs/MODELS.md "Confidence grades"
-# and D26. embeddinggemma-300m's are from after its MLP precision rewrite
-# (D17).
+# Apple M1 Max, macOS 27.0 (September 2026). embeddinggemma-300m's floors
+# are from after its MLP precision rewrite (D17), lfm2.5-embedding-350m's
+# from after its precision rewrite (D19); both graded D on the ANE before.
 
 [[floor]]
 chip = "Apple M1 Max"
@@ -107,9 +108,9 @@ drift = 0.008486
 chip = "Apple M1 Max"
 model = "lfm2.5-embedding-350m"
 path = "cpu"
-worst = 0.999843
-stress = 0.999879
-drift = 0.009993
+worst = 0.999791
+stress = 0.999892
+drift = 0.01138
 
 [[floor]]
 chip = "Apple M1 Max"
@@ -117,15 +118,15 @@ model = "lfm2.5-embedding-350m"
 path = "gpu"
 worst = 0.999989
 stress = 0.999989
-drift = 0.000868
+drift = 0.001126
 
 [[floor]]
 chip = "Apple M1 Max"
 model = "lfm2.5-embedding-350m"
 path = "ane"
-worst = 0.930391
-stress = 0.949242
-drift = 0.279782
+worst = 0.999978
+stress = 0.999978
+drift = 0.005017
 
 [[floor]]
 chip = "Apple M1 Max"
