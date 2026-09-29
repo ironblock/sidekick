@@ -762,9 +762,11 @@ targets) and references from `tools/parity_reference.py`.
   - a failing compute plan, read on every bucket before anything predicts;
   - non-finite output, including a zero vector;
   - token ids that differ from the reference pipeline's;
-  - bucket invariance below 0.999999 on the CPU, 0.9999 on the GPU or 0.995
-    on the ANE (each bucket is compiled separately there, and the ANE's
-    fp16 accumulation follows the tiling);
+  - bucket invariance below 0.999999 on the CPU, or 0.9999 on the GPU or
+    the ANE (each bucket is compiled separately there). The ANE gate was
+    0.995 until the D17 and D19 precision rewrites: before them, precision
+    lost in EmbeddingGemma's and LFM2.5's MLPs varied by bucket (0.9977,
+    0.9965);
   - pad invariance below 0.99999, with random pad ids from the vocabulary;
   - output that changes when re-run, or that differs between two ANE
     processes.
@@ -829,6 +831,10 @@ last two on demand.
     0.9977 → 0.99998.
   - LFM2.5 0.99999, drift 0.003, no flips; ANE bucket invariance
     0.9965 → 0.999995.
+- With both rewrites, every model's ANE bucket invariance is at least
+  0.99998 (bge-small 0.999992, EmbeddingGemma 0.999983, F2LLM 0.999982,
+  LFM2.5 0.999995, gte-modernbert 0.999984), so the ANE gate was raised
+  from 0.995 to 0.9999, the GPU's value.
 - The GPU path measures at fp32-like accuracy on every model (A). "GPU fine,
   ANE low" therefore isolates the ANE, not fp16 arithmetic in general.
 
@@ -842,10 +848,6 @@ published, and this chip's floor makes it a regression test.
   ColBERT). Every registry model pools inside its graph, so the suite can't
   see per-token vectors.
 - Parity through the HTTP layer.
-- Tightening the ANE bucket-invariance gate (0.995, set by LFM2.5's old
-  0.9965). After both rewrites every model measures at least 0.99998:
-  bge-small 0.999992, EmbeddingGemma 0.999983, F2LLM 0.999982, LFM2.5
-  0.999995, gte-modernbert 0.999984.
 - F2LLM (SwiGLU) and gte-modernbert (GeGLU) grade B on the ANE. Neither has
   been checked against the D17/D19 rules yet.
 

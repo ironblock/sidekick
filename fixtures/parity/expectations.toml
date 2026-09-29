@@ -15,9 +15,11 @@
 # one. The CPU path is bitwise bucket-invariant; the GPU and ANE compile
 # each bucket separately. On the ANE, precision lost in a model's MLP shows
 # up here too: EmbeddingGemma measured 0.9977 and LFM2.5 0.9965 before their
-# precision rewrites (D17, D19) and 0.99998 and 0.999995 after. A dropped
-# attention mask measured 0.40-0.94.
-bucket_invariance = { cpu = 0.999999, gpu = 0.9999, ane = 0.995 }
+# precision rewrites (D17, D19), and the ANE gate was 0.995 to admit them.
+# Since the rewrites every model measures at least 0.99998 on the ANE (M1
+# Max, macOS 27.0), so the ANE gate matches the GPU's. A dropped attention
+# mask measured 0.40-0.94.
+bucket_invariance = { cpu = 0.999999, gpu = 0.9999, ane = 0.9999 }
 # Cosine between pad ids 0 and random pad ids in the same bucket: the mask
 # hides pads, so nothing may change.
 pad_invariance = 0.99999
