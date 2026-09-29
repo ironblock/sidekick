@@ -428,7 +428,9 @@ translated into laya's three question types, plus adversarial cases.
 - Its token layout is a port of laya's own code and reproduces laya's
   Python token for token on 15 cases that take every branch.
 
-The suite reports laya as FAIL until its bucket invariance is fixed.
+The suite reports laya as FAIL until its bucket invariance is fixed. Its
+CPU path takes about 20 minutes for the 2,612 cases on an M1 Max, which is
+the suite's default per-worker limit, so run it with `--timeout 3600`.
 
 ## Incompatible / not integrated
 
