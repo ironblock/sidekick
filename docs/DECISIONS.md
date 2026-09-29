@@ -375,7 +375,7 @@ bucket. The converter also gates pad invariance, rejects fused attention
 and native silu/gelu ops, treats NaN as failure, and gates the ANE path at
 0.999.
 
-## D20 — Two more architecture classes: ModernBERT rejected, Qwen3 decoder validated
+## D20 — Two more architecture classes: ModernBERT rejected, Qwen3 decoder validated (amended: F2LLM precision rewrite)
 Triaged the MTEB/CoIR leaderboards and validated the two families sidekick
 hadn't covered, one of each verdict:
 
@@ -409,6 +409,54 @@ hadn't covered, one of each verdict:
   server now preserves the final token on truncation (harmless for
   CLS/mean; unit-tested). docs/MODELS.md carries both results and the
   hardened last-token checklist.
+
+**Amendment (September 2026, macOS 27.0, M1 Max): F2LLM's remaining ANE
+loss was mostly the native SiLU.** The parity suite (D26) graded its ANE
+path B: 0.99966 on a run of digits, drift 0.006. Its CPU path grades B
+(0.99987) and its GPU path A. The D17/D19 method applied only in part:
+- *SiLU is the main cause.* Keeping only the silu ops in fp32 (on the CPU)
+  gives 0.99998. Building SiLU from tanh on the ANE gives 0.999965 at
+  bucket 128 with no latency cost.
+- *Small linear inputs mostly aren't.* F2LLM's activations are about ten
+  times LFM2.5's: median rms 0.08–0.5 into the MLP down projection, and
+  keeping the down projections in fp32 changes nothing (0.99967). Only
+  attention in the early layers is small. Those layers' input norms have
+  weights of ~0.13–0.18, so q/k/v arrive at rms 0.06–0.18 and o_proj at
+  0.02–0.35. Rescaling them lifts long inputs, from 0.99995 to 0.99998 on
+  a 512-token query.
+- *By layer, teacher-forced:* on the ANE, attention adds 0.1–0.4% local
+  error (the CPU path 0.6–0.8%) and the MLP 0.5–1.9% (the CPU path
+  0.5–1.0%). Per layer, the ANE is close to the CPU; the SiLU is the
+  difference.
+
+The converter (constraint D) builds 2·SiLU from tanh, with up_proj's
+weights taking the 1/2, so no op is added. It also rescales attention's
+inputs the way D19 does: the input norm's weight ×1–8 (q/k RMSNorm eps
+×s²), v_proj, and an explicit ×1/S before the residual add. The MLP
+rescale isn't used, since it changed nothing measurable.
+
+**Results:**
+- converter parity CPU_AND_NE 0.999979 at every bucket (was 0.99985) and
+  CPU_ONLY 0.999924; the fp32 rewrite gate is 0.9999999;
+- parity suite ANE grade **A**: worst 0.999972 (was 0.99966), mean
+  0.999986, drift 0.0019 (was 0.0057), 0 rank flips, bucket invariance
+  0.999991;
+- 648/653 operations on the ANE (was 612/617), pad invariance 1.0000000;
+- live `/v1/embeddings` over all 51 suite inputs: worst 0.999972;
+- latency unchanged (−1% to +4%); `ane_check` ratios 2.7x/2.0x/1.5x.
+
+The CPU path stays B (0.99988). Its error is the CPU path's own and
+doesn't move with the rewrite.
+
+**The converter had stopped running.** Its "traceable" repeat_kv computed
+num_kv_heads·n_rep from the traced shape. That traces to the Int op that
+crashes coremltools 9 under torch 2.13 (D17 constraint 8), and it had been
+on the SDPA path since this decision's review. It now uses the
+shape-arithmetic-free `expand(-1, …).flatten(1, 2)` of the Gemma and
+LFM2.5 converters. The converter also gained the D19 gate hardening: pad
+invariance, a rejection of surviving silu/gelu/fused-attention ops,
+NaN-safe metrics, an fp32 exactness gate, and an ANE gate of 0.999. Its
+long parity text is truncated to 512 tokens on purpose, so it already ran.
 
 ## D21 — macOS 27: real usage and model facts, typed errors; the shim stays
 macOS 27 reworked Foundation Models. This entry records what sidekick
@@ -816,8 +864,10 @@ The converters gained `--attn sdpa` and `--no-pad-zeroing` to rebuild the
 last two on demand.
 
 **Findings (M1 Max, macOS 27.0).**
-- On the ANE, bge-small and EmbeddingGemma grade A, and gte-modernbert and
-  F2LLM grade B.
+- On the ANE, bge-small and EmbeddingGemma graded A, and gte-modernbert and
+  F2LLM B. F2LLM now grades A (0.99997) after the D20 amendment's rewrite.
+  Of the D17/D19 causes, only the coarse SiLU mattered for it, plus small
+  attention inputs on long texts.
 - LFM2.5 graded **D**: 0.954 on a URL, pairwise similarity drifting by up
   to 0.187, and 1,399 rank flips at a 0.02 margin. Its CPU and GPU paths
   were 0.9999, so the graph was faithful and the loss happened on the ANE.
@@ -839,7 +889,8 @@ last two on demand.
   ANE low" therefore isolates the ANE, not fp16 arithmetic in general.
 
 **The 0.985 gate.** It stays the converters' acceptance gate on their own
-parity sets; the EmbeddingGemma and LFM2.5 converters now gate at 0.999.
+parity sets; the EmbeddingGemma, LFM2.5 and F2LLM converters now gate at
+0.999.
 A D on the adversarial corpus doesn't remove a model: the grade is
 published, and this chip's floor makes it a regression test.
 
@@ -848,8 +899,8 @@ published, and this chip's floor makes it a regression test.
   ColBERT). Every registry model pools inside its graph, so the suite can't
   see per-token vectors.
 - Parity through the HTTP layer.
-- F2LLM (SwiGLU) and gte-modernbert (GeGLU) grade B on the ANE. Neither has
-  been checked against the D17/D19 rules yet.
+- gte-modernbert (GeGLU) grades B on the ANE and hasn't been checked
+  against the D17/D19 rules yet.
 
 ## D27 — Refuse multi-shape Core ML models at load on macOS 27
 D24 said that on macOS 27 a flexible-shape artifact aborts the process at
@@ -978,7 +1029,12 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   that exposed the EOS-truncation bug), unit norms, asymmetric query/document
   prefixes, and preserved similarity structure. gte-modernbert-base was
   tested and rejected at the time; that verdict was a Core ML
-  attention-mask bug and is superseded (D25).
+  attention-mask bug and is superseded (D25). Re-converted in September
+  2026 with the precision rewrite (D20 amendment, macOS 27): parity
+  CPU_AND_NE 0.999979 at every bucket, CPU_ONLY 0.999924, 648/653
+  operations on the ANE, pad invariance 1.0000000, ane_check ratios
+  2.7x/2.0x/1.5x, parity suite ANE grade A (0.999972), and live
+  /v1/embeddings worst parity 0.999972 over all 51 suite inputs.
 
 - macOS 27 (September 2026, D21): M1 Max, macOS 27.0, Xcode 27.0.
   Verified with the smoke test and a live `sidekickd`:
