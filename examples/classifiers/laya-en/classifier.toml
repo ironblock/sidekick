@@ -1,0 +1,44 @@
+# laya (English) as an ANE-resident Core ML zero-shot classifier: a
+# ModernBERT-large encoder plus laya's decision head, which scores a [MASK]
+# marker placed before each candidate label. One static-shape artifact per
+# sequence-length bucket ({seq} resolves against `buckets`).
+#
+# Produce the artifacts with tools/convert_laya.py; the request format,
+# validation and this manifest's fields are specified in
+# docs/design/classify.md. The calibration table is laya's own post-hoc
+# temperature fit (rl_agent_config.json `temperature_by_options`), keyed by
+# its temp_bucket names; the converter checks it against laya's config.
+
+id = "laya-en"
+task = "zero-shot-classification"
+source = { repo = "convaiinnovations/laya", revision = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 32
+problem_type = "single_label"
+
+[classify]
+format = "laya"
+max_labels = 32
+labels = []
+
+[classify.laya]
+head_max_len = 192
+default_instructions = { choice = "Which option fits the text best?", score = "Which level fits the text best?", noul = "Does the statement hold for the text?" }
+
+[classify.calibration]
+"choice:2" = 1.906
+"choice:3-5" = 1.760
+"choice:6-10" = 1.000
+"score:3-5" = 1.251
+"noul:2" = 1.983
+# "choice:11+" deliberately absent: laya's single fit (T = 0.10) is too thin
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+marker_pos = "marker_pos"
+qtype = "qtype"
+output = "logits"

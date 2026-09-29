@@ -4,7 +4,10 @@
 // freshly created / just-returned array.
 #![allow(deprecated)]
 
-use crate::{shape_verdict, ComputeUnits, InputShape, Int32Input, ShapeConstraint, ShapeVerdict};
+use crate::{
+    shape_verdict, ComputeUnits, InputShape, Int32Input, ModelInterface, ShapeConstraint,
+    ShapeVerdict,
+};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{available, AnyThread};
@@ -61,7 +64,7 @@ impl CoremlModel {
     /// flexible-shape models load with a warning; they run on the CPU.
     pub fn load(path: &Path, units: ComputeUnits) -> Result<Self> {
         let model = open(path, units)?;
-        match shape_verdict(&read_input_shapes(&model), available!(macos = 27.0)) {
+        match load_verdict(&read_input_shapes(&model)) {
             ShapeVerdict::Static => {}
             ShapeVerdict::Warn(reason) => {
                 tracing::warn!(model = %path.display(), "flexible-shape Core ML model: {reason}");
@@ -192,6 +195,34 @@ pub fn input_shapes(path: &Path) -> Result<Vec<InputShape>> {
     Ok(read_input_shapes(&model))
 }
 
+/// What [`CoremlModel::load`] does with a model whose inputs have these
+/// shape constraints, on the running OS: [`shape_verdict`] with the macOS 27
+/// rule applied when it's running (D27).
+pub fn load_verdict(inputs: &[InputShape]) -> ShapeVerdict {
+    shape_verdict(inputs, available!(macos = 27.0))
+}
+
+/// A model's declared interface: input shape constraints, and the declared
+/// shape of every multi-array input and output. Like [`input_shapes`], it
+/// loads the model for the CPU only and never predicts, so it's cheap next
+/// to an ANE load and safe on artifacts [`CoremlModel::load`] refuses.
+pub fn interface(path: &Path) -> Result<ModelInterface> {
+    let model = open(path, ComputeUnits::CpuOnly)?;
+    let description = unsafe { model.modelDescription() };
+    let shapes = |features: &NSDictionary<NSString, objc2_core_ml::MLFeatureDescription>| {
+        let (names, _) = features.to_vecs();
+        names
+            .iter()
+            .filter_map(|n| Some((n.to_string(), declared_shape(features, &n.to_string())?)))
+            .collect()
+    };
+    Ok(ModelInterface {
+        constraints: read_input_shapes(&model),
+        inputs: shapes(&*unsafe { description.inputDescriptionsByName() }),
+        outputs: shapes(&*unsafe { description.outputDescriptionsByName() }),
+    })
+}
+
 /// Compile if needed, then load with the given compute units.
 fn open(path: &Path, units: ComputeUnits) -> Result<Retained<MLModel>> {
     let is_compiled = path
@@ -265,6 +296,15 @@ fn read_input_shapes(model: &MLModel) -> Vec<InputShape> {
         .collect();
     inputs.sort_by(|a, b| a.name.cmp(&b.name));
     inputs
+}
+
+fn declared_shape(
+    features: &NSDictionary<NSString, objc2_core_ml::MLFeatureDescription>,
+    name: &str,
+) -> Option<Vec<usize>> {
+    let feature = features.objectForKey(&NSString::from_str(name))?;
+    let constraint = unsafe { feature.multiArrayConstraint()? };
+    Some(unsafe { constraint.shape() }.iter().map(|n| n.as_usize()).collect())
 }
 
 /// Minimal f16 -> f32 (avoids pulling `half` into this crate). Verified

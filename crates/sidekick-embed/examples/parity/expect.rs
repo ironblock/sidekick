@@ -76,6 +76,9 @@ pub struct Floor {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Expectations {
     pub gates: Gates,
+    /// Classifier gates; built-in defaults when absent.
+    #[serde(default)]
+    pub classify_gates: crate::classify_grade::ClassifyGates,
     #[serde(default)]
     pub floor: Vec<Floor>,
 }

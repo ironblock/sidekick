@@ -10,7 +10,8 @@ pub struct Config {
     /// Listen address. Loopback by default: this daemon fronts on-device
     /// models and has no business on the network unless you say so.
     pub addr: SocketAddr,
-    /// Directory scanned for `<model>/manifest.toml` entries.
+    /// Directory scanned for `<model>/manifest.toml` (embedders) and
+    /// `<model>/classifier.toml` (classifiers) entries.
     pub models_dir: Option<PathBuf>,
     /// Require `Authorization: Bearer <key>` on /v1 routes when set.
     pub api_key: Option<String>,
@@ -20,7 +21,8 @@ pub struct Config {
     /// replay) while a resident model serves every request (expensive to
     /// reload — seconds of Core ML compile for large encoders).
     pub session_ttl_secs: u64,
-    /// How long a loaded embedding model stays resident after its last use.
+    /// How long a loaded model (embedder or classifier) stays resident after
+    /// its last use.
     pub model_idle_ttl_secs: u64,
     /// Hard cap on a single generation call. A hung Foundation Models call
     /// otherwise hangs its request forever.

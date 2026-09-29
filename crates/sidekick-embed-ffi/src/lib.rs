@@ -90,6 +90,10 @@ pub extern "C" fn sk_abi_version() -> u32 {
 /// `~/Library/Application Support/sidekick/models` on macOS). Returns NULL
 /// on failure with `*err` set (free with `sk_string_free`). An empty or
 /// missing directory is not an error — `sk_pool_models` just returns `[]`.
+/// Neither is a manifest that doesn't parse or validate, or that repeats
+/// another's id: the pool skips it and opens with the rest, and
+/// `sk_pool_skipped` lists what it skipped. (Before 0.3.0 such a manifest
+/// failed the whole open.)
 ///
 /// # Safety
 /// `models_dir` must be NULL or a valid NUL-terminated string; `err` must be
@@ -125,8 +129,9 @@ pub unsafe extern "C" fn sk_pool_close(pool: *mut SkPool) {
     }
 }
 
-/// JSON array of available model ids, e.g.
-/// `["bge-small-en-v1.5","static-floor"]`. Free with `sk_string_free`.
+/// JSON array of available embedding model ids, e.g.
+/// `["bge-small-en-v1.5","static-floor"]`. Classifiers aren't served by this
+/// ABI and aren't listed. Free with `sk_string_free`.
 /// Returns NULL on failure with `*err` set. An empty models directory is
 /// `"[]"`, not NULL.
 ///
@@ -145,7 +150,26 @@ pub unsafe extern "C" fn sk_pool_models(
     })
 }
 
-/// JSON description of one model from its manifest (the model is not
+/// JSON array of the manifests the pool skipped when it opened, and why:
+/// `[{"path": "<model dir>/manifest.toml", "reason": "..."}]`, each path
+/// relative to the models directory. `[]` when nothing was skipped. Free
+/// with `sk_string_free`. Returns NULL on failure with `*err` set.
+///
+/// # Safety
+/// Pointer rules as above.
+#[no_mangle]
+pub unsafe extern "C" fn sk_pool_skipped(
+    pool: *const SkPool,
+    err: *mut *mut c_char,
+) -> *mut c_char {
+    ffi_guard(err, std::ptr::null_mut(), || {
+        let pool = pool.as_ref().ok_or("pool is NULL")?;
+        let json = serde_json::to_string(pool.registry.skipped()).map_err(|e| e.to_string())?;
+        Ok(CString::new(json).unwrap_or_default().into_raw())
+    })
+}
+
+/// JSON description of one embedding model from its manifest (the model is not
 /// loaded): `{"id","backend","dims","matryoshka","max_seq_len"}`.
 /// `matryoshka` lists the dims values `sk_embed` accepts as
 /// `requested_dims`; empty means native dims only. Free with
@@ -393,6 +417,30 @@ max_seq_len = 16
 }"#,
         )
         .unwrap();
+        // A classifier beside it: the C ABI serves embedders only, so it
+        // must list and describe only the embedder.
+        let classifier_dir = dir.join("sentiment");
+        std::fs::create_dir_all(&classifier_dir).unwrap();
+        std::fs::write(
+            classifier_dir.join("classifier.toml"),
+            r#"
+id = "sentiment"
+task = "text-classification"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [16]
+max_seq_len = 16
+
+[classify]
+labels = ["negative", "positive"]
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
+"#,
+        )
+        .unwrap();
         dir
     }
 
@@ -412,6 +460,12 @@ max_seq_len = 16
             let json = CStr::from_ptr(models).to_str().unwrap().to_string();
             sk_string_free(models);
             assert_eq!(json, r#"["static-floor"]"#);
+
+            let classifier = CString::new("sentiment").unwrap();
+            assert!(sk_model_info(pool, classifier.as_ptr(), &mut err).is_null());
+            assert!(!err.is_null());
+            sk_string_free(err);
+            err = std::ptr::null_mut();
 
             let id = CString::new("static-floor").unwrap();
             assert_eq!(sk_embed_dims(pool, id.as_ptr(), &mut err), 3);
@@ -508,6 +562,41 @@ max_seq_len = 16
             sk_pool_close(std::ptr::null_mut());
             sk_floats_free(std::ptr::null_mut(), 0);
             sk_string_free(std::ptr::null_mut());
+            let mut err4: *mut c_char = std::ptr::null_mut();
+            assert!(sk_pool_skipped(std::ptr::null(), &mut err4).is_null());
+            sk_string_free(err4);
         }
+    }
+
+    #[test]
+    fn a_bad_or_duplicate_manifest_is_skipped_not_fatal() {
+        let dir = fixture_dir();
+        // A manifest that doesn't parse, and one that repeats an id.
+        for (name, body) in [("broken", "id = "), ("again", &std::fs::read_to_string(dir.join("floor/manifest.toml")).unwrap()[..])] {
+            std::fs::create_dir_all(dir.join(name)).unwrap();
+            std::fs::write(dir.join(name).join("manifest.toml"), body).unwrap();
+        }
+        let dir_c = CString::new(dir.to_str().unwrap()).unwrap();
+        let mut err: *mut c_char = std::ptr::null_mut();
+        unsafe {
+            let pool = sk_pool_open(dir_c.as_ptr(), &mut err);
+            assert!(!pool.is_null() && err.is_null(), "open failed");
+            let models = sk_pool_models(pool, &mut err);
+            assert_eq!(CStr::from_ptr(models).to_str().unwrap(), r#"["static-floor"]"#);
+            sk_string_free(models);
+
+            let skipped = sk_pool_skipped(pool, &mut err);
+            let json: serde_json::Value =
+                serde_json::from_str(CStr::from_ptr(skipped).to_str().unwrap()).unwrap();
+            sk_string_free(skipped);
+            let paths: Vec<&str> = json.as_array().unwrap().iter().map(|s| s["path"].as_str().unwrap()).collect();
+            // "again" sorts before "floor", so the scan keeps it and skips
+            // floor's copy of the id.
+            assert_eq!(paths, vec!["broken/manifest.toml", "floor/manifest.toml"]);
+            assert!(json[1]["reason"].as_str().unwrap().contains("duplicate model id `static-floor`"));
+            assert!(!json.to_string().contains(dir.to_str().unwrap()), "no absolute paths: {json}");
+            sk_pool_close(pool);
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

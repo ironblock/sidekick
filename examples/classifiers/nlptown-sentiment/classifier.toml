@@ -1,0 +1,28 @@
+# nlptown/bert-base-multilingual-uncased-sentiment as an ANE-resident Core ML
+# text classifier: a multilingual BERT-base fine-tuned to rate product
+# reviews from 1 to 5 stars. One static-shape artifact per sequence-length
+# bucket ({seq} resolves against `buckets`); the output is the model's five
+# logits in `labels` order (its id2label).
+#
+# Produce the artifacts with tools/convert_bert_classifier.py, which also
+# writes tokenizer.json (the checkpoint ships only vocab.txt). The request
+# format and this manifest's fields are specified in
+# docs/design/classify.md.
+
+id = "nlptown-sentiment"
+task = "text-classification"
+source = { repo = "nlptown/bert-base-multilingual-uncased-sentiment", revision = "8f6f4e3a8f70be4b65d3a4a8762b6d781cda240d" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 32
+problem_type = "single_label"
+
+[classify]
+labels = ["1 star", "2 stars", "3 stars", "4 stars", "5 stars"]
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"

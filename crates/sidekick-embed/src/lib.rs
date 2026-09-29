@@ -1,22 +1,34 @@
-//! Embedding backends.
+//! Encoder backends: embedders and classifiers.
 //!
 //! - [`StaticEmbedder`]: model2vec-style static token embeddings. Pure Rust,
 //!   runs anywhere, microsecond lookups. The unconditional floor tier.
 //! - [`CoremlEmbedder`] (feature `coreml`, macOS): a Core ML encoder
 //!   (EmbeddingGemma-300m, bge-small, MiniLM, …) targeted at the ANE.
+//! - [`CoremlClassifier`] (feature `coreml`, macOS): a Core ML classifier,
+//!   text-classification or zero-shot in laya's format. Its tokenization
+//!   ([`InputBuilder`], [`laya`]) is platform-neutral.
 
+pub mod classify_input;
+pub mod laya;
 mod pooling;
 mod static_embedder;
 
+pub use classify_input::InputBuilder;
 pub use pooling::{mean_pool, normalize_in_place};
 pub use static_embedder::StaticEmbedder;
 
 #[cfg(all(feature = "coreml", target_os = "macos"))]
+mod bucket_models;
+#[cfg(all(feature = "coreml", target_os = "macos"))]
+mod coreml_classifier;
+#[cfg(all(feature = "coreml", target_os = "macos"))]
 mod coreml_embedder;
+#[cfg(all(feature = "coreml", target_os = "macos"))]
+pub use coreml_classifier::CoremlClassifier;
 #[cfg(all(feature = "coreml", target_os = "macos"))]
 pub use coreml_embedder::{CoremlEmbedder, Prepared};
 
-use sidekick_core::manifest::ResolvedModel;
+use sidekick_core::manifest::{ResolvedClassifier, ResolvedModel};
 use sidekick_core::{EmbeddingBackendKind, Result};
 
 /// Cap input bytes before tokenization. HF `tokenizers` processes the whole
@@ -53,6 +65,25 @@ pub fn load_embedder(model: &ResolvedModel) -> Result<Box<dyn sidekick_core::Emb
                 ))
             }
         }
+    }
+}
+
+/// Whether this build can load classifiers: they're Core ML models.
+pub const CLASSIFIERS_SUPPORTED: bool = cfg!(all(feature = "coreml", target_os = "macos"));
+
+/// Load a registry classifier. Classifiers are Core ML models; without the
+/// `coreml` feature (or off macOS) this is `Unavailable`.
+pub fn load_classifier(model: &ResolvedClassifier) -> Result<Box<dyn sidekick_core::Classifier>> {
+    #[cfg(all(feature = "coreml", target_os = "macos"))]
+    {
+        Ok(Box::new(CoremlClassifier::load(model)?))
+    }
+    #[cfg(not(all(feature = "coreml", target_os = "macos")))]
+    {
+        let _ = model;
+        Err(sidekick_core::Error::Unavailable(
+            sidekick_core::UnavailableReason::NotSupportedInBuild,
+        ))
     }
 }
 

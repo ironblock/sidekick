@@ -368,10 +368,69 @@ its grade as a starting expectation, not a promise, and run the suite.
 | family | validated | ANE grade | risks seen | inputs that find them |
 |---|---|---|---|---|
 | BERT (bge, MiniLM, e5) | bge-small-en-v1.5 | A | none | — |
-| ModernBERT | gte-modernbert-base; laya's encoder (CLS ≥ 0.997) | A | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate | pad and bucket invariance; delimiters |
+| ModernBERT | gte-modernbert-base; laya-en (ModernBERT-large, classifier preview) | A (gte); D, failing bucket invariance (laya) | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate, and laya's head reads single-token vectors, where that loss isn't averaged away | pad and bucket invariance; delimiters |
 | Qwen3 decoder, last-token pooling | F2LLM-v2-160M | A | truncation must keep the final token; without the precision rewrite, the native SiLU costs ~0.03% on the ANE (graded B) | over-length; the ids gate; numbers |
 | Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
 | LFM2 hybrid (conv + attention) | LFM2.5-Embedding-350M | A | convolutions read pad states unless they're zeroed; without the precision rewrite, up to 4.6% ANE loss on URLs and delimiters (graded D) | pad invariance; delimiters, numbers |
+
+## Classifiers (`/v1/classify`)
+
+Classifiers are served by `POST /v1/classify` (D28), from a
+`classifier.toml` manifest ([examples/classifiers/](../examples/classifiers/)).
+The parity suite grades them in probability space against the model's own
+fp32 forward: A for a worst-case |Δp| ≤ 1e-3, B ≤ 5e-3, C ≤ 2e-2, D
+above; a flipped decision whose fp32 top-2 margin is at least 0.05 logits
+caps the grade at C; F is a failed hard gate. Unlike the embedders, the
+classifiers have no per-chip floors yet, so the suite reports their
+accuracy without regression-testing it.
+
+M1 Max, macOS 27.0, September 2026. ms is the median per input on that
+path.
+
+| model | task | conversion | CPU | GPU | ANE | ANE ops | ANE ms |
+|---|---|---|---|---|---|---|---|
+| [nlptown/bert-base-multilingual-uncased-sentiment](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment) as `nlptown-sentiment` | text-classification, 5 labels | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) | B 3.4e-3 | A 6.6e-4 | **B** 2.6e-3 | 294/304 | 4.2 |
+| [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` (**preview**) | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.21 (6 flips) | **F** 0.030 (bucket invariance) | **F** 0.077 (bucket invariance; 5 flips) | 1074/1090 | 38 |
+
+**nlptown-sentiment** passes every gate on every path, on D26's 51-input
+corpus: no decision changes, pad invariance exact, bucket invariance
+about 5e-4 on the ANE. Its conversion uses eager attention with a finite
+mask, since the SDPA path emits the fused op that drops masks on the ANE
+(D25).
+
+**laya-en is a preview.** Measured on 2,612 cases: fastino/fast-decisions
+translated into laya's three question types, plus adversarial cases.
+- **Decisions:** 99.81% agree with fp32 on the ANE and 100% on the GPU.
+  The 5 ANE flips all had fp32 margins of 0.12 logits or less, so read
+  `probs`, not just `label`, when a decision is close.
+- **Hard gate:** it fails bucket invariance on the GPU and the ANE. An
+  input's probabilities move by up to 0.018 (GPU) or 0.038 (ANE) when the
+  same input runs in the next larger bucket, against a 1e-3 gate. The
+  graph itself is invariant: the CPU path is exact across buckets, pad
+  invariance is exact on every path, and two ANE processes agree exactly.
+  It is fp16 rounding that differs per compiled shape. A given input
+  always runs in the same bucket, so its answer is deterministic, and the
+  accuracy above is measured in each input's own bucket, as it is served.
+- **Where the loss is:** in the ModernBERT-large encoder. On a 304-case
+  sample, the encoder run alone on the ANE, with everything else in fp32,
+  accounts for all of it;
+  laya's head and scorer on the ANE, fed the fp32 encoder's output, lose
+  |Δp| 0.0014. The encoder is fp16-sensitive on every path, and the GPU
+  is its most accurate one.
+- **CPU:** Core ML's fp16 CPU backend is laya's least accurate path (6
+  flips, |Δp| up to 0.21). The conversion is exact in fp32 (|Δlogit| ≤
+  1.2e-4 against laya's own forward), so the loss is the backend's fp16
+  arithmetic. The converter gates accuracy on the ANE, the served path,
+  and only reports the CPU.
+- **Gold accuracy** is 52.9% on the ANE and 52.8% in fp32 (reported, not
+  graded). That measures the dataset's mechanical translation, 28-way
+  intents with bare label keys, as much as laya.
+- Its token layout is a port of laya's own code and reproduces laya's
+  Python token for token on 15 cases that take every branch.
+
+The suite reports laya as FAIL until its bucket invariance is fixed. Its
+CPU path takes about 20 minutes for the 2,612 cases on an M1 Max, which is
+the suite's default per-worker limit, so run it with `--timeout 3600`.
 
 ## Incompatible / not integrated
 
@@ -381,7 +440,6 @@ its grade as a starting expectation, not a promise, and run the suite.
 | Apple NLContextualEmbedding | OS-provided contextual | Mean-pooled MLM states, strongly anisotropic (unrelated-pair cosine ~0.75) — unusable for similarity thresholds without post-hoc calibration sidekick doesn't own (D16). Re-measured on macOS 27: same model revision, same cosines (0.96/0.89 vs 0.75), faster (~11 ms). |
 | Apple NLEmbedding.sentenceEmbedding | OS-provided static-ish | 2020-era quality, measurably weaker than bge-small on the same pairs; no prefixes, no control over dims (D16). Unchanged on macOS 27 (revision 1; 0.74/0.44 vs 0.14). |
 | Apple FoundationModels | LLM | Has **no embedding API at all** (verified against macOS 26 SDK docs/headers, D16) — chat only. Still none in the macOS 27 SDK; 27's Spotlight integration is a search tool for sessions, not vectors. |
-| [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) | ModernBERT-large encoder + decision head (classifier) | **Not an embedding model:** it scores options through a head that reads [MASK] marker tokens and CLS, so it would need its own endpoint. Its encoder converts like gte-modernbert (explicit attention; pad invariance 1.0). Seq 128, M1 Max, macOS 27: CLS ≥ 0.997 and per-token mean ≥ 0.983. Individual token vectors on short inputs can deviate on the ANE (worst 0.80–0.90 at 12 tokens; 0.16 on one test input), and that matters here because the head reads individual tokens. Validate end-to-end decisions before running it on the ANE; the GPU path is essentially exact (CLS 0.99999, 19 ms). An earlier CLS 0.07 on the ANE was the fused-attention mask bug. |
 
 ## Quick triage: is a model worth converting?
 
@@ -400,8 +458,9 @@ Most rejections are visible long before a conversion. Cheapest first:
        whole model at ~2 bytes/param.
      - **Needed sequence length**: buckets are ≤512, and the ANE's advantage
        shrinks with length.
-     - **Output shape**: one vector per input fits `/v1/embeddings`;
-       classifiers, rerankers and multi-vector models need a new API.
+     - **Output shape**: one vector per input fits `/v1/embeddings`, and a
+       sequence-classification head (or laya's format) fits `/v1/classify`
+       (D28). Rerankers and multi-vector models need a new API.
 2. **The modeling code (minutes).** See the checklist below: data-dependent
    shapes, attention that can't run as SDPA, and non-attention token mixers.
 3. **`tools/probe_activations.py` (minutes, PyTorch on the CPU, no Core

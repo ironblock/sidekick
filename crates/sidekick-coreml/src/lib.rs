@@ -14,7 +14,7 @@ mod model;
 #[cfg(target_os = "macos")]
 mod plan;
 #[cfg(target_os = "macos")]
-pub use model::{input_shapes, CoremlModel, OutputTensor};
+pub use model::{input_shapes, interface, load_verdict, CoremlModel, OutputTensor};
 #[cfg(target_os = "macos")]
 pub use plan::compute_plan;
 
@@ -77,6 +77,20 @@ impl ShapeConstraint {
 pub struct InputShape {
     pub name: String,
     pub constraint: ShapeConstraint,
+}
+
+/// A model's interface as its description declares it, read without
+/// predicting ([`interface`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelInterface {
+    /// Each multi-array input's shape constraint, sorted by name (what
+    /// [`shape_verdict`] judges).
+    pub constraints: Vec<InputShape>,
+    /// Each multi-array input's declared (default) shape, by name.
+    pub inputs: BTreeMap<String, Vec<usize>>,
+    /// Each multi-array output's declared shape, by name; empty when the
+    /// model doesn't declare it.
+    pub outputs: BTreeMap<String, Vec<usize>>,
 }
 
 /// What loading does with a model, judged from its inputs' shape

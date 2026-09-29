@@ -1,5 +1,5 @@
 use super::wire::*;
-use super::ApiError;
+use super::{ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -15,12 +15,21 @@ use tokio::task::JoinHandle;
 
 pub async fn chat_completions(
     State(state): State<AppState>,
-    Json(req): Json<ChatCompletionRequest>,
+    ApiJson(req): ApiJson<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
     if req.model != state.chat.id() {
-        return Err(ApiError::model_not_found(&req.model));
+        return Err(match super::model_task(&state, &req.model) {
+            Some(task) => super::wrong_route(&req.model, task, "/v1/chat/completions"),
+            None => ApiError::model_not_found(&req.model),
+        });
     }
+    // Provenance names the Foundation Models variant, from a cache: asking
+    // the backend is a blocking call that must not delay the reply.
+    let response = complete(&state, req).await?;
+    Ok(Provenance { model: state.chat_model_id(), compute_units: None }.apply(response))
+}
 
+async fn complete(state: &AppState, req: ChatCompletionRequest) -> Result<Response, ApiError> {
     let core_req = to_core_request(&req)?;
     let meta = StreamMeta {
         id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),

@@ -3,6 +3,7 @@ use crate::state::AppState;
 use axum::extract::State;
 use axum::Json;
 use serde_json::json;
+use sidekick_core::ClassifyTask;
 
 pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
     let created = now_unix();
@@ -17,20 +18,33 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             reason: sidekick_core::UnavailableReason::NotSupportedInBuild
         }
     ) {
-        data.push(ModelObject {
-            id: state.chat.id().to_string(),
-            object: "model",
-            created,
-            owned_by: "sidekick",
-        });
+        data.push(ModelObject::new(state.chat.id().to_string(), created, "text-generation"));
     }
 
-    for id in state.embedders.registry().ids() {
+    for id in state.registry.ids() {
+        data.push(ModelObject::new(id.to_string(), created, "feature-extraction"));
+    }
+
+    // Classifiers, from their manifests: nothing is loaded to list them.
+    // A build without Core ML can't serve them, so it doesn't list them.
+    let classifiers = state.registry.classifiers().filter(|_| state.classifiers_supported);
+    for c in classifiers {
+        let m = &c.manifest;
+        let (task, labels, max_labels) = match m.task {
+            ClassifyTask::TextClassification => {
+                ("text-classification", Some(m.classify.labels.clone()), None)
+            }
+            ClassifyTask::ZeroShotClassification => {
+                ("zero-shot-classification", None, Some(m.max_labels()))
+            }
+        };
         data.push(ModelObject {
-            id: id.to_string(),
-            object: "model",
-            created,
-            owned_by: "sidekick",
+            labels,
+            max_labels,
+            max_batch: Some(m.max_batch),
+            extensions: Some(m.extension_fields()),
+            calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
+            ..ModelObject::new(m.id.clone(), created, task)
         });
     }
 
@@ -41,7 +55,9 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let chat_availability = state.chat.availability().await;
     // Fetched before context_limit(), which it refreshes.
     let info = state.chat.model_info().await.unwrap_or_default();
-    let embedding_models: Vec<&str> = state.embedders.registry().ids().collect();
+    state.chat_model.set(info.variant_id.clone());
+    let embedding_models: Vec<&str> = state.registry.ids().collect();
+    let classifier_models: Vec<&str> = state.registry.classifier_ids().collect();
     Json(json!({
         "status": "ok",
         "uptime_secs": state.started_at.elapsed().as_secs(),
@@ -61,5 +77,13 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "models": embedding_models,
             "resident": state.embedders.resident().await,
         },
+        "classifiers": {
+            // False on builds without Core ML: every classify request is a 503.
+            "supported": state.classifiers_supported,
+            "models": classifier_models,
+            "resident": state.classifiers.resident().await,
+        },
+        // Manifests the registry couldn't use, and why.
+        "skipped_models": state.registry.skipped(),
     }))
 }

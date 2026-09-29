@@ -1,7 +1,9 @@
-# Integrating sidekick embeddings into a host application
+# Integrating sidekick into a host application
 
-For an app that wants on-device embeddings when they're available without
-hard-depending on sidekick. Three situations, one probe chain:
+For an app that wants on-device embeddings or classification when they're
+available, without hard-depending on sidekick. For embeddings there are
+three situations and one probe chain (classification is daemon-only; see
+[Classification](#classification)):
 
 1. **sidekickd is running** → talk HTTP.
 2. **sidekick is installed but not running** → load `libsidekick.dylib`
@@ -46,6 +48,8 @@ them (docs/MODELS.md, D27).
 `POST /v1/chat/completions`-style OpenAI compatibility, documented in the
 README. Embeddings: `POST /v1/embeddings` with optional `input_type:
 "query"`, `dimensions` (matryoshka models), `encoding_format: "base64"`.
+Classification: `POST /v1/classify`; see [Classification](#classification)
+below.
 
 To make "installed but not running" disappear entirely, install the
 LaunchAgent from the README (`KeepAlive` keeps it warm); then path 2 only
@@ -101,8 +105,60 @@ Notes:
   Swift shim into every host, and conversational sessions want a daemon
   lifetime. If you need chat too, run sidekickd.
 
+## Classification
+
+Classifiers (`POST /v1/classify`) are served by the daemon only. The C ABI
+serves embeddings, and `sk_pool_models` and `sk_model_info` list embedding
+models only, even when the models directory holds classifiers. For a host,
+the probe chain is therefore two steps: the daemon, or your fallback.
+
+```
+try:  GET http://127.0.0.1:8790/v1/models        (timeout ~150ms)
+      -> a model with "task": "text-classification" or
+         "zero-shot-classification" -> POST /v1/classify
+else: fallback
+```
+
+The request and response are vLLM's `/classify`; a client written for vLLM
+or SGLang works unchanged. What a host needs to know beyond that:
+
+- **Discover before you send.** `/v1/models` gives each classifier's
+  `task`, and either its fixed `labels` (text-classification) or its
+  `max_labels` (zero-shot). It also gives `max_batch`, the extension fields
+  it accepts (`candidate_labels`, `question_type`, `instructions`,
+  `calibration`), and its calibration temperatures. Nothing is loaded to
+  answer.
+- **Batch up to `max_batch`.** One request with several inputs beats
+  several requests: the ANE serializes predictions anyway.
+- **Zero-shot labels are the answer space.** `probs` follows
+  `candidate_labels`, and `label` is the most probable one. laya's
+  `noul` questions take exactly `["false", "true"]`, each optionally with a
+  description (`"true: the customer wants a refund"`).
+- **Over-length input.** A text-classification input longer than the
+  model's maximum is a 400 unless you send `truncate_prompt_tokens` (`-1`
+  truncates to the model's maximum). laya truncates the text itself,
+  keeping its start, so there it's never a 400.
+- **Errors are data.** Every error, malformed JSON included, is the
+  OpenAI shape `{"error": {"message", "type", "code"}}`. A 400 names the
+  field it rejected. Sending a classifier to `/v1/embeddings`, or an
+  embedder to `/v1/classify`, is a 400 naming the model's task.
+- **Provenance.** Record the `sidekick-model` response header
+  (`<id>@<revision>`) with any stored label or score, so results from
+  different model revisions don't mix silently. The daemon also sends
+  `sidekick-version` and `sidekick-compute-units`. The embeddings route
+  sends the same headers.
+
 ## Path 3: your fallback
 
 `sk_pool_models` returning `[]`, `sk_pool_open` failing, or the daemon
 404ing your model id all mean the same thing: sidekick is present but has
 no usable model. Treat it identically to "no sidekick".
+
+A broken manifest doesn't fail either path. Since 0.3.0, a manifest that
+doesn't parse or validate, or repeats another model's id, is skipped with
+a warning, and every other model still loads; before, `sk_pool_open`
+failed on it. So a model you expect can be missing from
+`sk_pool_models` (or `/v1/models`) while the rest work. `sk_pool_skipped`
+(and `skipped_models` in the daemon's `/health`) lists each skipped
+manifest with the reason, its path relative to the models directory:
+check it when your model id isn't listed.
