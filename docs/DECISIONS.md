@@ -557,6 +557,28 @@ could map `seed`/`top_p` in the future. This is a behavior change for
 clients that relied on those parameters being dropped, so it warrants a
 minor version bump when released.
 
+**Amendment (September 2026): the same rule for `/v1/classify`, and
+malformed bodies are a 400 everywhere.** `/v1/classify` (D28) applies this
+decision to every field vLLM defines for classification. Each one is
+honored or rejected:
+- `add_special_tokens: false` is a 400;
+- chat-form `messages` and token-id input are 400s;
+- `truncation_side: "left"` is a 400 on a model whose format truncates by
+  design (laya).
+
+sidekick's own extension fields are held to a stricter rule than unknown
+fields. Sending one to a model whose task or format doesn't take it is a
+400, not ignored: `candidate_labels` on a fixed-label model, or
+`question_type` on a model that isn't in laya's format. A client that sends
+an extension is asking for it, so dropping it would give a wrong answer
+that looks right. Unknown fields outside the extension set, `user`
+included, are still ignored.
+
+Every JSON body on every route now goes through one extractor. Bad
+syntax, a missing field, a wrong type, or a missing JSON content type is an
+`ApiError` 400 in the API's usual error shape. Before, axum answered these
+with a plain-text 422 or 415. A body over the size limit is still a 413.
+
 ## D23 — Real streaming for plain text
 Supersedes D4 for plain text. The shim's `sk_fm_respond_stream` iterates
 `streamResponse` and hands each snapshot's cumulative text to a C callback.
@@ -1047,6 +1069,136 @@ Verified on the M1 Max, macOS 27.0:
   and `.all`, with no abort.
 - The range control loads with a warning and predicts.
 - The twelve installed buckets load with no warning and predict.
+
+## D28 — Classification: `POST /v1/classify`, vLLM's contract exactly
+sidekick served embeddings and chat. Classification — sentiment, intent,
+routing, "which of these options fits" — is the next most common local
+inference job, and the encoders that do it are the same size and shape as
+the embedders D26 already grades A on the ANE. The design is in
+`docs/design/classify.md`. This entry records the decisions and why.
+
+**The contract is vLLM's.** OpenAI has no classification endpoint. vLLM's
+`/classify` and SGLang's `/v1/classify` share one request and response
+shape, with the same conventions as `/v1/embeddings`, and clients already
+exist for it. sidekick follows it field for field: `{model, input}` in,
+`{id, object: "list", created, model, data[{index, label, probs,
+num_classes}], usage}` out. Hugging Face's pipeline shape was the
+alternative. It fits a Python library call, not an OpenAI-style server, and
+nothing that speaks OpenAI-family APIs sends it.
+- `probs` uses transformers' text-classification activation: none for
+  regression, sigmoid for multi-label or a single output, otherwise
+  softmax. `use_activation: false` returns the raw values.
+- vLLM's other fields are honored or rejected, never dropped (D22 and its
+  amendment). `truncate_prompt_tokens` truncates, with −1 meaning the
+  model's maximum as in vLLM. Without it, an over-length input is a 400.
+- Non-finite model output is a 500, never a response with nulls in it.
+
+**Extensions, only where no standard exists.** Zero-shot classification
+takes its labels per request as `candidate_labels`, the name Hugging Face's
+zero-shot task uses. `calibration: "model"` applies the manifest's declared
+temperature; the default is `none`, so `probs` is the model's own output
+unless a client asks. `question_type` and `instructions` serve laya's
+format (below). Each extension is a 400 on a model that doesn't take it.
+
+**Manifests: a separate file.** Classifiers use `classifier.toml`, not
+`manifest.toml`. Daemons and `libsidekick.dylib` builds from before this
+release never read the new file, so installing a classifier can't break
+them. From this release, the registry skips and warns on a manifest that
+doesn't parse or validate, instead of failing the whole scan. `/health`
+lists the skipped manifests with the reason. A classifier whose id an
+embedder already uses is skipped, so adding one never breaks a working
+embedder. `max_batch` defaults to 32. Calibration is rejected on
+fixed-label models, which have no question type to key it on.
+
+**Routes know their models' tasks.** `/v1/models` reports each model's
+`task`, using Hugging Face's pipeline names (`feature-extraction`,
+`text-classification`, `zero-shot-classification`, `text-generation`).
+Classifiers also report their labels or `max_labels`, `max_batch`, the
+extensions they take, and their calibration table. A model sent to the
+wrong route is a 400 naming its task and the route that serves it. Before,
+an embedder's id on the chat route was a 404. This is a behavior change.
+The C ABI (`sk_pool_models`, `sk_model_info`) still lists embedders only.
+The embedder pool becomes a generic `ModelPool`, with the same lazy
+loading and idle eviction for both kinds.
+
+**Provenance headers** on every inference route, in the style of OpenAI's
+`openai-model` and `openai-version`, and on successful responses only:
+- `sidekick-version`;
+- `sidekick-model`: `<id>@<revision>` when the manifest names a source
+  revision, otherwise `<id>`; for chat, the Foundation Models variant;
+- `sidekick-compute-units`: `cpu_and_ne` for Core ML models, `cpu` for
+  static ones; chat omits it. This is the configuration the model was
+  loaded with. Core ML doesn't report which device ran a prediction, and
+  reading the compute plan at load (D24) takes too long.
+
+**laya's format.** [laya](https://huggingface.co/convaiinnovations/laya)
+(Apache-2.0) is a decision model: a ModernBERT-large encoder plus a head
+that scores a `[MASK]` marker placed before each option. It answers three
+question types: `choice`, `score` (ordered levels) and `noul`
+(false/true). Its accuracy depends on its exact training layout, so
+`crates/sidekick-embed/src/laya.rs` ports laya's own `build_sequence`
+(`THIRD_PARTY_NOTICES.md`) rather than re-deriving it. The special tokens
+come from the tokenizer, so English and multilingual checkpoints both
+resolve. Token-id fixtures generated by laya's Python pin the port. It
+matches all 15 laya cases, which take every branch of `build_sequence`,
+and all 18 cases for the BERT classifier.
+
+The Core ML interface is int32 only, which the runtime already feeds:
+`marker_pos [1,32]` (−1 pads unused slots) and `qtype [1]`. The graph
+builds the one-hot selections itself. The ANE `linear` saturation rewrite
+(D25 amendment) is pinned at K = 2. K = 1 is the smallest that calibration
+allows, but it leaves 1.28× headroom under 2^15 against 2.56×. laya's
+largest measured activation is 25,431, which becomes 12.7k after the
+rewrite. laya's act (escalate) head isn't served.
+
+**Validation.** The parity suite (D26) grades classifiers in probability
+space:
+- **Gates:** finite output; ids, markers and qtype equal to the
+  reference's; bucket invariance (max |Δp| 1e-5 on the CPU, 1e-3 on the
+  GPU and ANE); pad invariance (1e-4); determinism across ANE processes.
+- **Graded:** raw Δp and Δlogit against the model's own fp32 forward. An
+  argmax flip counts only where the reference's top-2 logit margin is at
+  least 0.05; closer ones are near-ties, reported but not graded. A for
+  max Δp ≤ 1e-3, B ≤ 5e-3, C ≤ 2e-2, D above; a graded flip caps the grade
+  at C.
+- **Reported only:** calibrated Δp, and accuracy against gold labels. Gold
+  accuracy measures the corpus translation as much as the model.
+
+laya's corpus is [fastino/fast-decisions](https://huggingface.co/datasets/fastino/fast-decisions)
+(Apache-2.0), translated mechanically into laya's three question types by
+a committed table, plus adversarial cases. Fixed-label models use D26's
+51-input corpus.
+
+**Measured** (M1 Max, macOS 27.0, `tools/measure_classifier.py`, against
+fp32):
+
+| model | path | argmax agreement | graded flips | raw Δp max / p99 | ms @128/256/512 |
+|---|---|---|---|---|---|
+| laya-en (2,612 cases) | ANE | 99.81% | 5 (margins 0.055–0.12) | 0.077 / 0.030 | 20 / 38 / 107 |
+| | GPU | 100% | 0 | 0.030 / 0.008 | 20 / 32 / 58 |
+| | CPU | 99.77% | 6 (0.06–0.23) | 0.211 / 0.048 | 47 / 84 / 163 |
+| nlptown-sentiment (51) | ANE | 100% | 0 | 0.0026 | 4.3 / 10.4 / 27.3 |
+| | GPU | 100% | 0 | 0.0007 | |
+| | CPU | 100% | 0 | 0.0034 | 19 / 32 / 62 |
+
+Pad invariance is exact on every path. laya's bucket invariance on the
+ANE is 0.045 in logits; on the CPU and GPU it is 0.
+
+laya on the ANE is a usable decision model but not an A. One case in 500
+flips a decision whose fp32 margin is under 0.12 logits. Clients deciding
+on close calls should read `probs`, not just `label`. The GPU is laya's
+most accurate path, and Core ML's fp16 CPU backend its least. On one
+512-token `noul` item the CPU backend moves both logits by about 0.46 and
+flips a 0.74 margin, where the ANE moves them by 0.04. The conversion is
+exact in fp32 (max |Δlogit| 1.2e-4 against laya's own forward), so the
+loss is the CPU backend's fp16 arithmetic. laya's converter therefore
+gates accuracy on `CPU_AND_NE`, the served path, and only reports
+`CPU_ONLY`. gte-modernbert showed the same CPU-path sensitivity (D25
+amendment).
+
+**Not in this release:** choosing compute units per request; zero-shot
+classification by NLI; multi-label zero-shot; text pairs; laya's act head;
+a Hugging Face-shaped route.
 
 ## Hardware verification status
 

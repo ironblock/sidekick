@@ -196,6 +196,12 @@ which `dimensions` values the OpenAI API may request. A manifest that doesn't
 parse or validate is skipped with a warning, and listed with the reason under
 `skipped_models` in `/health`; the rest of the directory still loads.
 
+Classifier manifests are in [examples/classifiers/](examples/classifiers/):
+laya-en, from `tools/convert_laya.py`, and nlptown-sentiment, from
+`tools/convert_bert_classifier.py`. Each converter writes the artifacts and
+installs the manifest. [docs/MODELS.md](docs/MODELS.md) has their measured
+accuracy on each compute path.
+
 ## Configuration
 
 `~/.config/sidekick/config.toml`, all optional (defaults shown):
