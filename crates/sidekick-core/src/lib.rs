@@ -9,6 +9,7 @@
 //! consumers (and CI) can build it anywhere.
 
 pub mod chat;
+pub mod classify;
 pub mod embed;
 pub mod error;
 pub mod manifest;
@@ -16,6 +17,10 @@ pub mod manifest;
 pub use chat::{
     ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, FinishReason, ModelInfo, Role,
     Usage,
+};
+pub use classify::{
+    activate, ClassifyParams, ClassifyTask, Classifier, Prepared, ProblemType, QuestionType, Source,
+    TruncationSide,
 };
 pub use embed::{truncate_normalized, EmbedPurpose, Embedder};
 pub use error::{Error, Result};

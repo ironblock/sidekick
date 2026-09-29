@@ -37,6 +37,10 @@ pub enum Error {
     #[error("guided generation failed: {0}")]
     GuidedGeneration(String),
 
+    /// A request the model can't serve as asked (a client error: HTTP 400).
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
+
     #[error("tokenizer error: {0}")]
     Tokenizer(String),
 

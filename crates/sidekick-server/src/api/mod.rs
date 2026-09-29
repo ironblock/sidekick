@@ -127,6 +127,7 @@ impl From<Error> for ApiError {
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, "backend_unavailable", message)
             }
             Error::ModelNotFound(m) => Self::model_not_found(&m),
+            Error::InvalidRequest(message) => Self::invalid(message),
             Error::ContextOverflow { limit, actual } => Self::new(
                 StatusCode::BAD_REQUEST,
                 "context_length_exceeded",
