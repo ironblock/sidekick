@@ -153,3 +153,12 @@ or SGLang works unchanged. What a host needs to know beyond that:
 `sk_pool_models` returning `[]`, `sk_pool_open` failing, or the daemon
 404ing your model id all mean the same thing: sidekick is present but has
 no usable model. Treat it identically to "no sidekick".
+
+A broken manifest doesn't fail either path. Since 0.3.0, a manifest that
+doesn't parse or validate, or repeats another model's id, is skipped with
+a warning, and every other model still loads; before, `sk_pool_open`
+failed on it. So a model you expect can be missing from
+`sk_pool_models` (or `/v1/models`) while the rest work. `sk_pool_skipped`
+(and `skipped_models` in the daemon's `/health`) lists each skipped
+manifest with the reason, its path relative to the models directory:
+check it when your model id isn't listed.

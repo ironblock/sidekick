@@ -319,7 +319,10 @@ impl ResolvedClassifier {
 /// A manifest the registry skipped, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SkippedManifest {
+    /// Relative to the models directory (`<model dir>/<manifest file>`), so
+    /// reporting it never discloses where the models directory is.
     pub path: PathBuf,
+    /// Any other manifest it names is relative to the models directory too.
     pub reason: String,
 }
 
@@ -339,6 +342,8 @@ pub struct ModelRegistry {
     models: BTreeMap<String, ResolvedModel>,
     classifiers: BTreeMap<String, ResolvedClassifier>,
     skipped: Vec<SkippedManifest>,
+    /// The scanned directory.
+    root: PathBuf,
 }
 
 impl ModelRegistry {
@@ -347,7 +352,7 @@ impl ModelRegistry {
     /// down every other. A classifier whose id an embedder already uses is
     /// skipped too; the embedder keeps working.
     pub fn scan(models_dir: &Path) -> Result<Self> {
-        let mut reg = Self::default();
+        let mut reg = Self { root: models_dir.to_path_buf(), ..Self::default() };
         if !models_dir.exists() {
             return Ok(reg);
         }
@@ -367,7 +372,7 @@ impl ModelRegistry {
                 .and_then(|m| validate_embedder(&m).map(|()| m));
             match loaded {
                 Ok(manifest) => match reg.owner(&manifest.id) {
-                    Some(other) => reg.skip(&path, format!("duplicate model id `{}` (also {})", manifest.id, other.display())),
+                    Some(other) => reg.skip(&path, format!("duplicate model id `{}` (also {})", manifest.id, reg.relative(&other).display())),
                     None => {
                         reg.models.insert(manifest.id.clone(), ResolvedModel { manifest, dir: dir.clone() });
                     }
@@ -384,7 +389,7 @@ impl ModelRegistry {
                 .and_then(|m| validate_classifier(&m).map(|()| m));
             match loaded {
                 Ok(manifest) => match reg.owner(&manifest.id) {
-                    Some(other) => reg.skip(&path, format!("duplicate model id `{}` (also {})", manifest.id, other.display())),
+                    Some(other) => reg.skip(&path, format!("duplicate model id `{}` (also {})", manifest.id, reg.relative(&other).display())),
                     None => {
                         reg.classifiers.insert(manifest.id.clone(), ResolvedClassifier { manifest, dir: dir.clone() });
                     }
@@ -403,9 +408,15 @@ impl ModelRegistry {
             .or_else(|| self.classifiers.get(id).map(|c| c.dir.join(CLASSIFIER_MANIFEST)))
     }
 
+    /// `path` relative to the models directory.
+    fn relative(&self, path: &Path) -> PathBuf {
+        path.strip_prefix(&self.root).unwrap_or(path).to_path_buf()
+    }
+
     fn skip(&mut self, path: &Path, reason: String) {
         tracing::warn!(manifest = %path.display(), "skipping model: {reason}");
-        self.skipped.push(SkippedManifest { path: path.to_path_buf(), reason });
+        let path = self.relative(path);
+        self.skipped.push(SkippedManifest { path, reason });
     }
 
     /// An embedding model.
@@ -782,7 +793,8 @@ max_seq_len = 512
         assert_eq!(reg.classifier_ids().count(), 0);
         let reason = &reg.skipped()[0].reason;
         assert!(reason.contains("duplicate model id `shared`") && reason.contains("b-embedder"), "{reason}");
-        assert!(reg.skipped()[0].path.ends_with("a-classifier/classifier.toml"));
+        assert_eq!(reg.skipped()[0].path, Path::new("a-classifier/classifier.toml"));
+        assert!(!reason.contains(tmp.to_str().unwrap()), "no absolute paths: {reason}");
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
