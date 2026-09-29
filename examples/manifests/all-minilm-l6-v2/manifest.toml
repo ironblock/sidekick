@@ -1,0 +1,28 @@
+# sentence-transformers/all-MiniLM-L6-v2 as ANE-resident Core ML artifacts:
+# a 6-layer BERT (22.7M parameters, Apache-2.0), one static-shape model per
+# sequence-length bucket ({seq} resolves against `buckets`), with mask-aware
+# mean pooling inside the graph (output `embedding`, statically (1, 384)).
+# The server L2-normalizes, as the model's Normalize module does.
+#
+# Produce the artifacts with the conversion library's BERT recipe
+# (tools/sidekick_convert, docs/CONVERTING.md). The largest bucket is
+# sentence-transformers' max_seq_length for this model, 256, not the 512
+# positions BERT has: the model was trained and published at 256, and its
+# embedding of a ~450-token text at 512 is only 0.973 cosine to the one at
+# 256. tokenizer.json is the checkpoint's with its padding (to 128) and
+# truncation (at 128) removed; sidekick truncates to the largest bucket.
+
+id = "all-minilm-l6-v2"
+backend = "coreml"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+dims = 384
+pooling = "none"          # mean pooling happens inside the converted model
+buckets = [64, 128, 256]
+max_seq_len = 256
+source = { repo = "sentence-transformers/all-MiniLM-L6-v2", revision = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41" }
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "embedding"
