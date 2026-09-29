@@ -28,9 +28,9 @@ determinism = 0.999999
 # Similarity gap below which a path may reorder two candidates (report only).
 rank_margin = 0.02
 
-# Apple M1 Max, macOS 27.0 (September 2026). embeddinggemma-300m's floors
-# are from after its MLP precision rewrite (D17), lfm2.5-embedding-350m's
-# from after its precision rewrite (D19); both graded D on the ANE before.
+# Apple M1 Max, macOS 27.0 (September 2026). embeddinggemma-300m's,
+# lfm2.5-embedding-350m's and f2llm-v2-160m's floors are from after their
+# precision rewrites (D17, D19, D20 amendments).
 
 [[floor]]
 chip = "Apple M1 Max"
@@ -84,9 +84,9 @@ drift = 0.001693
 chip = "Apple M1 Max"
 model = "f2llm-v2-160m"
 path = "cpu"
-worst = 0.999808
-stress = 0.99995
-drift = 0.006575
+worst = 0.999814
+stress = 0.999934
+drift = 0.006979
 
 [[floor]]
 chip = "Apple M1 Max"
@@ -94,15 +94,15 @@ model = "f2llm-v2-160m"
 path = "gpu"
 worst = 0.999988
 stress = 0.999989
-drift = 0.000593
+drift = 0.000607
 
 [[floor]]
 chip = "Apple M1 Max"
 model = "f2llm-v2-160m"
 path = "ane"
-worst = 0.999489
-stress = 0.99975
-drift = 0.008486
+worst = 0.999957
+stress = 0.999981
+drift = 0.002838
 
 [[floor]]
 chip = "Apple M1 Max"
