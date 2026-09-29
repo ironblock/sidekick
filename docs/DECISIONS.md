@@ -1089,8 +1089,16 @@ nothing that speaks OpenAI-family APIs sends it.
   regression, sigmoid for multi-label or a single output, otherwise
   softmax. `use_activation: false` returns the raw values.
 - vLLM's other fields are honored or rejected, never dropped (D22 and its
-  amendment). `truncate_prompt_tokens` truncates, with −1 meaning the
-  model's maximum as in vLLM. Without it, an over-length input is a 400.
+  amendment), each checked against vLLM's own handling: `request_id` sets
+  the response id, `priority`, `padding`, `cache_salt` and
+  `mm_processor_kwargs` accept their no-op forms, and `normalize` is a 400.
+  `truncate_prompt_tokens` truncates, with −1 meaning the model's maximum
+  as in vLLM. Without it, an over-length input is a 400.
+- Deliberate deviations, listed in the design doc: `model` is required,
+  since sidekick serves several models where a vLLM process serves one,
+  and truncation keeps `[CLS]` and `[SEP]` where vLLM's slice drops one.
+- A request is validated in full before any input runs, so a bad input in
+  a batch costs no inference.
 - Non-finite model output is a 500, never a response with nulls in it.
 
 **Extensions, only where no standard exists.** Zero-shot classification
@@ -1104,8 +1112,12 @@ format (below). Each extension is a 400 on a model that doesn't take it.
 `manifest.toml`. Daemons and `libsidekick.dylib` builds from before this
 release never read the new file, so installing a classifier can't break
 them. From this release, the registry skips and warns on a manifest that
-doesn't parse or validate, instead of failing the whole scan. `/health`
-lists the skipped manifests with the reason. A classifier whose id an
+doesn't parse or validate, instead of failing the whole scan, and so does
+`sk_pool_open` in the C ABI, which used to fail. `/health` and the new
+`sk_pool_skipped` list the skipped manifests with the reason, by paths
+relative to the models directory, since `/health` needs no API key.
+Loading a classifier checks every bucket's artifact interface before any
+runs, so a bad bucket fails the load rather than the first long request. A classifier whose id an
 embedder already uses is skipped, so adding one never breaks a working
 embedder. `max_batch` defaults to 32. Calibration is rejected on
 fixed-label models, which have no question type to key it on.
@@ -1125,7 +1137,8 @@ loading and idle eviction for both kinds.
 `openai-model` and `openai-version`, and on successful responses only:
 - `sidekick-version`;
 - `sidekick-model`: `<id>@<revision>` when the manifest names a source
-  revision, otherwise `<id>`; for chat, the Foundation Models variant;
+  revision, otherwise `<id>`; for chat, the Foundation Models variant,
+  read in the background so no request waits on it;
 - `sidekick-compute-units`: `cpu_and_ne` for Core ML models, `cpu` for
   static ones; chat omits it. This is the configuration the model was
   loaded with. Core ML doesn't report which device ran a prediction, and

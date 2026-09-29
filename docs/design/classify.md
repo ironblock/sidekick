@@ -28,14 +28,26 @@ POST /v1/classify
 | `truncation_side` (`right` \| `left`) | vLLM | honored for text-classification; `left` is a 400 on the laya format |
 | `add_special_tokens` | vLLM | `true` is accepted; `false` is a 400 |
 | `messages` (chat-form input) | vLLM | 400 |
+| `request_id` (str) | vLLM | the response `id` is `classify-<request_id>`; an `X-Request-Id` header takes precedence, as in vLLM |
+| `priority` (int) | vLLM | `0` or null; any other value is a 400 (vLLM rejects it without priority scheduling) |
+| `padding` | vLLM | null or `"do_not_pad"`; `"max_length"` would add attended pads, so it and anything else are 400s |
+| `cache_salt` (str) | vLLM | validated as vLLM does, then accepted; sidekick has no prefix cache, so it changes nothing |
+| `mm_processor_kwargs` | vLLM | null or `{}`; anything else is a 400 |
+| `normalize` | vLLM (removed) | a 400 whenever present, with vLLM's message |
+| `task` | vLLM | `"score"` and `"encode"` are 400s with vLLM's messages; other values are ignored, as in vLLM |
 | `user` | SGLang, OpenAI | accepted and ignored |
 | `candidate_labels` ([str]) | extension (HF zero-shot's name) | required on zero-shot models; 400 on fixed-label models |
-| `calibration` (`none` \| `model`) | extension | default `none`; `model` applies the manifest's temperature |
+| `calibration` (`none` \| `model`) | extension | only on models that declare temperatures (every value, `none` included, is a 400 elsewhere); default `none`; `model` applies the manifest's temperature, and with `use_activation: false` needs none |
 | `question_type` (`choice` \| `score` \| `noul`) | extension, laya format | required on laya |
 | `instructions` (str) | extension, laya format | optional; the manifest's per-type default when absent |
 
 Any other top-level field is ignored, as D22 already does. Extension fields
 unsupported by the model's task are a 400.
+
+A request is validated in full before any input runs: every field, the
+manifest's calibration table and laya's noul labels are checked before the
+model loads, and every input is prepared before the first one runs. A
+batch input that fails is a 400 prefixed `input N: `, and nothing runs.
 
 Over-length input:
 - **text-classification:** without `truncate_prompt_tokens`, an input longer
@@ -91,7 +103,8 @@ Where sidekick deliberately differs from vLLM:
 `openai-model` / `openai-version` style:
 - `sidekick-version`.
 - `sidekick-model`: `<id>@<revision>` when the manifest has a `source`,
-  otherwise `<id>`. For chat it's the Foundation Models variant id.
+  otherwise `<id>`. For chat it's the Foundation Models variant id, read
+  in the background and cached; until it's known, the chat model's id.
 - `sidekick-compute-units`: the configuration the serving instance was
   loaded with: `cpu_and_ne` for Core ML models, `cpu` for static models.
   Chat omits it. It reports configuration, not the executing device, which
@@ -146,14 +159,26 @@ A text-classification manifest sets `task = "text-classification"`,
 
 Registry validation rejects:
 - `labels` on a zero-shot model, or `format` on a fixed-label model;
-- a `max_labels` that doesn't match the artifact;
 - a missing `[classify.io]` feature for the format.
+
+Loading a classifier checks every bucket's artifact before any runs, from
+its model description (a CPU-only load that never predicts, about 2 s cold
+for a large bucket, read in parallel): `input_ids` and `attention_mask`
+are `[1, bucket]`, `marker_pos` is `[1, max_labels]`, `qtype` is `[1]`,
+the output has one slot per label where it declares a shape, and D27's
+shape guard passes. A bad bucket fails the load, not a later request.
 
 Task-aware listings:
 - `/v1/models` gains `task`, `labels` or `max_labels`, the accepted
   extension fields, and the calibration table.
-- `/health` lists classifiers separately.
+- `/health` lists classifiers separately, with `classifiers.supported`,
+  and the manifests the registry skipped, with paths relative to the
+  models directory.
+- Builds without Core ML hide classifiers from `/v1/models`, as chat is
+  hidden without Foundation Models; `/v1/classify` is a 503 there.
 - `sk_pool_models` and `sk_model_info` in the C ABI list embedders only.
+  `sk_pool_open` skips bad or duplicate manifests too, and the new
+  `sk_pool_skipped` lists them.
 - `/v1/embeddings` on a classifier, and `/v1/classify` on an embedder, are a
   400 naming the model's task.
 
