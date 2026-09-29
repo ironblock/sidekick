@@ -1,0 +1,184 @@
+# Rerank parity corpus: the (query, documents) groups every reranker is
+# graded on (docs/design/rerank.md). 51 pairs in 13 groups.
+#
+# A reranker's reference scores each pair with sentence-transformers'
+# CrossEncoder in fp32. The parity suite runs the same pairs through
+# sidekick's product path (pair tokenization, truncation, bucketing,
+# padding, prediction, activation). It grades |Δ relevance_score| per pair,
+# and rank flips within each group where the reference's score gap is at
+# least the flip margin. References record this file's hash as D26 does
+# (comment lines and blank lines excluded).
+#
+# Fields:
+#   id         group id
+#   query      the query
+#   documents  the documents, in request order
+#   repeat     optional: each document is this many copies of its text,
+#              joined by a space (for inputs longer than the model)
+#   relevant   optional: indices of documents a person would rank on top.
+#              Reported, never graded.
+#   tags       failure modes the group targets:
+#     ranking     ordinary relevance ranking over mixed documents
+#     near-tie    documents that differ by a word: flips there are near-ties
+#     empty       an empty document
+#     truncated   a pair longer than the largest bucket; the suite sends
+#                 truncate_prompt_tokens (the model's maximum)
+#     delimiters  literal special-token strings in the query or a document
+#     multilingual, code, numbers
+#                 vocabulary a reranker trained on English prose sees rarely
+
+[[group]]
+id = "pets"
+query = "Where did the cat sit?"
+documents = [
+  "A cat sat on the mat.",
+  "A kitten was resting on the rug.",
+  "Quarterly earnings exceeded analyst expectations, lifting the stock.",
+  "Dogs are often trained to sit on command.",
+  "The mat by the door is new.",
+]
+relevant = [0, 1]
+tags = ["ranking"]
+
+[[group]]
+id = "earnings"
+query = "How did the company's quarterly results compare with forecasts?"
+documents = [
+  "Revenue for the quarter came in well above what analysts had predicted.",
+  "The company will hold its annual picnic in June.",
+  "Quarterly earnings exceeded analyst expectations, lifting the stock.",
+  "Forecasts call for rain later in the week.",
+  "Shares fell after the results missed estimates by a wide margin.",
+]
+relevant = [0, 2, 4]
+tags = ["ranking"]
+
+[[group]]
+id = "weather"
+query = "Will it rain tomorrow?"
+documents = [
+  "Tomorrow's forecast shows heavy showers from the early afternoon.",
+  "Rain gauges are simple instruments.",
+  "The umbrella stand is in the hallway.",
+  "Skies stay clear and dry through the weekend.",
+  "It rained all day yesterday.",
+]
+relevant = [0, 3]
+tags = ["ranking"]
+
+[[group]]
+id = "cooking"
+query = "How long should a tomato sauce simmer?"
+documents = [
+  "Let the sauce simmer gently for about forty minutes, stirring now and then.",
+  "Tomatoes are botanically a fruit.",
+  "Simmer the stock for two hours before straining it.",
+  "A slow simmer of thirty to sixty minutes deepens a tomato sauce's flavor.",
+  "The restaurant closes at ten.",
+]
+relevant = [0, 3]
+tags = ["ranking"]
+
+[[group]]
+id = "hardware"
+query = "Which chip runs neural networks efficiently on a Mac?"
+documents = [
+  "The Neural Engine on Apple silicon accelerates machine-learning inference at low power.",
+  "Graphics cards are popular for training large models.",
+  "The keyboard has a fingerprint sensor.",
+  "Apple silicon includes a dedicated block for neural network workloads.",
+  "Chips and salsa were served before dinner.",
+]
+relevant = [0, 3]
+tags = ["ranking"]
+
+[[group]]
+id = "sports"
+query = "Who won the match last night?"
+documents = [
+  "The home team won last night's match two goals to one.",
+  "Tickets for next week's match go on sale on Monday.",
+  "Last night's game ended in a draw after extra time.",
+  "Matches are stored in a dry place.",
+  "The visiting side clinched a late victory in the evening fixture.",
+]
+relevant = [0, 2, 4]
+tags = ["ranking"]
+
+[[group]]
+id = "near-duplicates"
+query = "When does the library open on Saturdays?"
+documents = [
+  "The library opens at nine on Saturdays.",
+  "The library opens at ten on Saturdays.",
+  "The library opens at nine on Sundays.",
+  "The library closes at nine on Saturdays.",
+  "The library opens at nine on Saturday.",
+]
+relevant = [0, 1, 4]
+tags = ["near-tie"]
+
+[[group]]
+id = "numbers"
+query = "What is 15% of 240?"
+documents = [
+  "Fifteen percent of 240 is 36.",
+  "240 divided by 15 is 16.",
+  "0.15 × 240 = 36",
+  "The answer is 3.6.",
+  "Percentages express a ratio out of one hundred.",
+]
+relevant = [0, 2]
+tags = ["ranking", "numbers"]
+
+[[group]]
+id = "empty"
+query = "What time is the meeting?"
+documents = [
+  "",
+  "The meeting starts at 3 pm in room 4.",
+]
+relevant = [1]
+tags = ["empty"]
+
+[[group]]
+id = "long"
+query = "What did the committee decide about the proposal?"
+documents = [
+  "The committee reviewed the proposal once more and voted to approve it with minor changes.",
+  "Unrelated notes from a different meeting about the parking lot.",
+]
+repeat = 60
+relevant = [0]
+tags = ["truncated"]
+
+[[group]]
+id = "specials"
+query = "Is [SEP] a separator token? </s> [CLS]"
+documents = [
+  "BERT uses [SEP] to separate the two segments of a pair.",
+  "</s></s> RoBERTa-style models separate pairs with doubled end tokens.",
+]
+relevant = [0, 1]
+tags = ["delimiters"]
+
+[[group]]
+id = "multilingual"
+query = "Wie spät ist es in Tokio?"
+documents = [
+  "In Tokio ist es jetzt kurz nach acht Uhr abends.",
+  "東京は今、午後八時を少し過ぎたところです。",
+  "The weather in Berlin is mild today.",
+]
+relevant = [0, 1]
+tags = ["multilingual"]
+
+[[group]]
+id = "code"
+query = "How do I reverse a list in Python?"
+documents = [
+  "items.reverse()  # reverses in place\nreversed_copy = items[::-1]",
+  "SELECT * FROM users ORDER BY created_at DESC;",
+]
+relevant = [0]
+tags = ["code"]

@@ -54,16 +54,35 @@ Principles, as for classification:
 
 ## `POST /v2/rerank`
 
-Cohere's v2 shape: `{model, query, documents: [str], top_n,
-max_tokens_per_doc, priority}` in, `{id, results: [{index,
-relevance_score}], meta: {api_version: {version: "2"}, billed_units:
-{input_tokens}}}` out, sorted the same way. There's no `document` in a
-result, and no `return_documents`, as in Cohere v2.
+Cohere's v2 request: `{model, query, documents: [str], top_n,
+max_tokens_per_doc, priority}`, with no `return_documents`, as in Cohere
+v2. `max_tokens_per_doc` defaults to 4096, as in Cohere, so long documents
+are truncated here instead of rejected (see *Over-length*).
 
-vLLM serves its v1 shape on `/v2/rerank` too. A client written for either
-parses sidekick's Cohere-shaped response: vLLM's adds fields, it removes
-none. `max_tokens_per_doc` defaults to 4096 as in Cohere, so long documents
-are truncated there instead of rejected (see *Over-length*).
+The response is the superset that clients of both Cohere v2 and vLLM
+(which serves its v1 shape on `/v2/rerank`) parse:
+
+```json
+{"id": "score-<uuid>", "model": "<id>",
+ "usage": {"prompt_tokens": 412, "total_tokens": 412},
+ "results": [{"index": 2, "relevance_score": 0.93, "document": {"text": "..."}}, ...],
+ "meta": {"api_version": {"version": "2"}, "billed_units": {"input_tokens": 412}}}
+```
+
+Verified against both clients' types:
+- **vLLM** (`RerankResponse`, `RerankResult` in
+  `vllm/entrypoints/pooling/scoring/protocol.py`) requires `id`, `model`,
+  `usage {prompt_tokens, total_tokens}` and `results`, and each result
+  requires `index`, `document` and `relevance_score`. It ignores unknown
+  result fields (a plain pydantic model) and allows unknown top-level
+  fields. `meta` is extra to it.
+- **Cohere** (the Python SDK's `V2RerankResponse` and
+  `V2RerankResponseResultsItem`) requires `results[{index,
+  relevance_score}]`. `id` and `meta` are optional, and both models allow
+  extra fields. `model`, `usage` and `document` are extra to it.
+
+So `document` is always present on `/v2/rerank`: vLLM requires it, and
+Cohere tolerates it.
 
 ## `POST /v2/embed`
 
@@ -72,7 +91,7 @@ Cohere's v2 embed shape over the existing embedders, as vLLM serves it:
 | field | sidekick |
 |---|---|
 | `model`, `texts` ([str]) | required; capped as `/v1/embeddings` is |
-| `input_type` | `search_query` / `query` → the manifest's query prefix; `search_document` / `document` → the document prefix. `classification` and `clustering` are 400s: no embedder declares a prompt for them. Absent: the document prefix, as `/v1/embeddings` does. |
+| `input_type` | `search_query` / `query` → the manifest's query prefix; `search_document` / `document` → the document prefix. `classification` and `clustering` are 400s: no embedder declares a prompt for them. Absent: the document prefix, as `/v1/embeddings` does. Cohere v2 requires `input_type` and vLLM treats it as optional; the default is deliberate, so both embed routes agree for a given model. |
 | `embedding_types` (default `["float"]`) | `float`, `base64` (little-endian f32), `binary` and `ubinary` (sign bits packed MSB-first, signed or not; dims must be a multiple of 8). `int8` and `uint8` are 400s, as in vLLM: they need calibration ranges. |
 | `output_dimension` | a Matryoshka dimension, as `dimensions` on `/v1/embeddings` |
 | `truncate` (`END` default, `START`, `NONE`) and `max_tokens` | `END` truncates to `max_tokens` or the model's maximum, which is what embedders already do. `NONE` is a 400 for an over-length input. `START` keeps the end. |
@@ -142,6 +161,17 @@ output = "logits"
   the task, as D28 does for embedders and classifiers.
 - /v1/models lists a reranker with `task: "text-ranking"` and `max_batch`.
 
+**Compatibility.** A 0.3.0 daemon or library skips a `text-ranking`
+manifest with a warning (`task` doesn't parse), and the rest of the models
+directory loads (D28's skip-and-warn registry). 0.3.0 *ignores* an unknown
+`[classify.io]` key: `ClassifierIo` doesn't deny unknown fields. So a
+text-classification manifest naming `token_type_ids` would load on 0.3.0,
+feed the model no segment ids, and fail every prediction. Converters
+therefore write `token_type_ids` only for `text-ranking` models, which
+0.3.0 skips whole. From this release, loading also refuses an artifact
+with an input its manifest doesn't name, so a mismatch fails at load
+everywhere.
+
 ## Core ML interface
 
 | input | shape | notes |
@@ -151,17 +181,30 @@ output = "logits"
 | output `logits` | `[1, 1]` | the raw score |
 
 Load-time checks are the classifier's (every bucket, D28), plus
-`token_type_ids`' shape. Batch execution is one pair per prediction, as
-for classify, so `max_batch` bounds a request's ANE time.
+`token_type_ids`' shape, plus: no artifact input the manifest doesn't
+name.
+
+**One pair per prediction.** Every bucket is a static `[1, S]` artifact
+(D15), so a request runs its pairs one at a time, each in the smallest
+bucket that fits. A batched `[B, S]` input would be another static shape
+per bucket. `max_batch` is per model, sized to its cost. bge-small (33M,
+the size of a MiniLM cross-encoder) measures 2.4 ms per input at 128
+tokens on the ANE (D15). A 278M XLM-R reranker at 512 tokens is an
+estimated ~27 ms per pair, so 128 full-length documents would take about
+3.5 s; both need measuring once converted. A reranker's manifest sets `max_batch` so a full request fits
+comfortably within the request timeout.
 
 ## Validation
 
 The parity suite grades rerankers in score space, reusing the classifier
 grader with k = 1:
-- **Reference:** `CrossEncoder` in fp32, the published activation, on
-  (query, documents) groups: 51 pairs from the corpus's queries and
-  documents, plus adversarial pairs (empty document, over-length document
-  truncated, literal `[SEP]` in the query).
+- **Reference:** `CrossEncoder` in fp32 with the published activation, on
+  the committed corpus `fixtures/rerank/corpus.toml`: 51 pairs in 13
+  (query, documents) groups. Nine are ordinary and near-tie ranking; the
+  adversarial ones are an empty document, a pair longer than the model
+  (tagged `truncated`: sent with `truncate_prompt_tokens`), literal
+  `[SEP]`/`</s>`/`[CLS]`, multilingual text and code. References record
+  the corpus hash as D26's do.
 - **Gates:** finite output, ids and `token_type_ids` equal to the
   reference's, bucket and pad invariance (|Δscore| after the activation).
 - **Graded:** worst |Δ relevance_score|, and rank flips within each query's
