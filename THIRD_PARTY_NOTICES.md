@@ -7,7 +7,7 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 - **Source:** [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya), revision `55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851`
 - **License:** Apache License 2.0 (full text below)
 - **What sidekick uses:** `crates/sidekick-embed/src/laya.rs` is a Rust port of `render_options` and `build_sequence` from laya's `rl_common.py`. It is compiled into `sidekickd` and `libsidekick.dylib`.
-- **Changes:** translated from Python to Rust. Tokenization goes through the `tokenizers` crate, and the special tokens are resolved from the model's `tokenizer.json`. The option, question and state budgets, cut points and default texts are unchanged. sidekick also rejects labels that become identical at the token level after shrinking.
+- **Changes:** translated from Python to Rust. Tokenization goes through the `tokenizers` crate, and the special tokens are resolved from the model's `tokenizer.json`. The option, question and state budgets, cut points and default texts are unchanged. Additions: each text is capped at 16 bytes per token of its budget before tokenizing, which bounds the tokenizer's work; noul labels are parsed from sidekick's `"false: …"` / `"true: …"` request form; and labels that become identical at the token level after shrinking are rejected.
 
 `tools/convert_laya.py` imports `rl_common.py` from a local copy of the checkpoint at the same revision. It does not vendor it.
 
@@ -15,7 +15,7 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 
 - **Source:** [fastino/fast-decisions](https://huggingface.co/datasets/fastino/fast-decisions), revision `1a33070`
 - **License:** Apache License 2.0 (full text below)
-- **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path. The dataset is fetched when a reference is generated, not committed. `fixtures/classify/laya-en.tokens.json` includes the token ids of three of its rows.
+- **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path. The dataset is fetched when a reference is generated, not committed. `fixtures/classify/laya-en.tokens.json` includes three of its rows, as text and as token ids.
 
 ---
 

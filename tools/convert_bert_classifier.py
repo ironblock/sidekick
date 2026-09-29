@@ -301,6 +301,13 @@ def main():
     labels = [model.config.id2label[i] for i in range(model.config.num_labels)]
     if manifest["classify"]["labels"] != labels:
         raise SystemExit(f"{manifest_path}: labels {manifest['classify']['labels']} != id2label {labels}")
+    # transformers' problem_type decides the pipeline's activation. Unset
+    # activates like single_label: softmax, or sigmoid for one output.
+    expected = {"multi_label_classification": "multi_label",
+                "regression": "regression"}.get(model.config.problem_type, "single_label")
+    if manifest.get("problem_type", "single_label") != expected:
+        raise SystemExit(f"{manifest_path}: problem_type {manifest.get('problem_type')!r} != "
+                         f"the checkpoint's {expected!r} (config.problem_type {model.config.problem_type!r})")
     if manifest["max_seq_len"] > model.config.max_position_embeddings:
         raise SystemExit("max_seq_len exceeds the model's position embeddings")
     tok = load_tokenizer(src, install_dir)

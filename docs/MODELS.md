@@ -400,8 +400,9 @@ Most rejections are visible long before a conversion. Cheapest first:
        whole model at ~2 bytes/param.
      - **Needed sequence length**: buckets are ≤512, and the ANE's advantage
        shrinks with length.
-     - **Output shape**: one vector per input fits `/v1/embeddings`;
-       classifiers, rerankers and multi-vector models need a new API.
+     - **Output shape**: one vector per input fits `/v1/embeddings`, and a
+       sequence-classification head (or laya's format) fits `/v1/classify`
+       (D28). Rerankers and multi-vector models need a new API.
 2. **The modeling code (minutes).** See the checklist below: data-dependent
    shapes, attention that can't run as SDPA, and non-attention token mixers.
 3. **`tools/probe_activations.py` (minutes, PyTorch on the CPU, no Core

@@ -1146,10 +1146,12 @@ and all 18 cases for the BERT classifier.
 The Core ML interface is int32 only, which the runtime already feeds:
 `marker_pos [1,32]` (−1 pads unused slots) and `qtype [1]`. The graph
 builds the one-hot selections itself. The ANE `linear` saturation rewrite
-(D25 amendment) is pinned at K = 2. K = 1 is the smallest that calibration
-allows, but it leaves 1.28× headroom under 2^15 against 2.56×. laya's
-largest measured activation is 25,431, which becomes 12.7k after the
-rewrite. laya's act (escalate) head isn't served.
+(D25 amendment) is pinned at K = 2. laya's layer-19 MLP output projection
+writes up to about 27,500 on the converter's calibration inputs. K = 1 is
+the smallest that calibration allows, but it would put that output within
+2% of the rule's 0.85 × 2^15 target and 19% under the limit itself; an
+input a little further out than the calibration set would saturate. K = 2
+halves it. laya's act (escalate) head isn't served.
 
 **Validation.** The parity suite (D26) grades classifiers in probability
 space:
