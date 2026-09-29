@@ -59,7 +59,7 @@ Method, for every validated entry:
 | [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma.py](../tools/convert_embeddinggemma.py) | 0.99993 | 0.99999 | 2161/2170 (99.6%) | 3.4x / 3.1x / 2.9x (before the MLP rewrite) |
 | [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.99991 | 0.99999 | 773/778 (99.4%) | 2.49x / 1.91x / 1.66x (before the precision rewrite) |
 | [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.99992 | 0.99998 | 648/653 (99.2%) | 2.02x / 1.77x / 1.59x (before the precision rewrite) |
-| [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | 768 | CLS | [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py) | 0.999919 | 0.999793 | 794/805 (98.6%) | validated on macOS 27 (below) |
+| [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | 768 | CLS | [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py) | 0.99992 | 0.99998 | 794/805 (98.6%) | validated on macOS 27 (below) |
 
 ANE ops are identical at every bucket. On every model, the operations off
 the ANE are mask and cast plumbing plus the embedding `gather` (e.g. bge:
@@ -75,7 +75,7 @@ Ratios re-measured on macOS 27
 | embeddinggemma | 2.6x | 2.4x | 1.7x |
 | LFM2.5 | 2.3x | 1.9x | 1.6x |
 | F2LLM | 2.7x | 2.0x | 1.5x |
-| gte-modernbert | 2.9x | 2.0x | 1.55x |
+| gte-modernbert | 2.9x | 2.0x | 1.6x |
 
 Notes per model:
 
@@ -176,6 +176,19 @@ Notes per model:
   on the ANE, sit on those tokens' own output vectors. Pooled CLS isn't
   affected.
 
+  **Range rewrite (D25 amendment).** The massive activation mattered in
+  another way. Layer 15's MLP output projection writes it at
+  35,000–51,500, and the ANE's `linear` saturates above 2^15 = 32,768 (an
+  output of 33,000 comes back inf). The artifact before the fix carried
+  -inf in those tokens' residual inside the ANE graph, and graded B
+  (0.99940) only because downstream ops saturate. The converter now runs
+  the residual stream at 1/K, with K = 2 chosen from calibration to keep
+  every linear output under 0.85 × 2^15 (1.31x headroom). That is exact in
+  fp32, because the LayerNorms are scale-invariant. The ANE now grades A
+  (0.99992, drift 0.003), the CPU path improves to 0.99951, and latency is
+  unchanged. Neither D17/D19 limit applied: GELU and small linear inputs
+  made no measurable difference.
+
   Results:
   - parity is bucket-invariant (CPU_ONLY 0.999919, CPU_AND_NE 0.999793) and
     pad invariance is 1.0000000 on both paths;
@@ -219,9 +232,9 @@ stress inputs graded separately:
 
 Grades are a best-effort statement about these inputs on this hardware,
 not a bound on every input. How much accuracy the ANE loses depends on the
-content: before their precision rewrites, LFM2.5 lost most on a URL and
-EmbeddingGemma and F2LLM on a run of digits, and gte-modernbert still does
-on delimiter lists.
+content: before their precision rewrites, LFM2.5 lost most on a URL,
+EmbeddingGemma and F2LLM on a run of digits, and gte-modernbert on
+delimiter lists.
 
 M1 Max, macOS 27.0, September 2026. sidekick serves the ANE column; ms is
 the median per input, ANE (CPU).
@@ -229,7 +242,7 @@ the median per input, ANE (CPU).
 | model | CPU | GPU | ANE: worst case | ANE: similarity drift (bias) | ANE: rank flips | ms |
 |---|---|---|---|---|---|---|
 | bge-small-en-v1.5 | A 0.99993 | A 0.999999 | **A** 0.99997 (empty input) | 0.002 (+0.001) | 0 | 1.9 (7.0) |
-| gte-modernbert-base | B 0.99926 | A 0.99998 | **B** 0.99940 (a Markdown list) | 0.010 (+0.003) | 0 | 6.9 (18.6) |
+| gte-modernbert-base | B 0.99951 | A 0.99999 | **A** 0.99992 (a delimiter flood) | 0.003 (0.000) | 0 | 6.4 (18.3) |
 | F2LLM-v2-160M | B 0.99988 | A 0.999999 | **A** 0.99997 (a run of digits) | 0.002 (0.000) | 0 | 4.6 (13.0) |
 | embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.1 (20.3) |
 | LFM2.5-Embedding-350M | B 0.99986 | A 0.999999 | **A** 0.99999 (a delimiter flood) | 0.003 (0.000) | 0 | 14.9 (33.8) |
@@ -250,12 +263,15 @@ the median per input, ANE (CPU).
   URL, drift 0.187 with scores biased −0.010 low, and 1,399 rank flips.
 - F2LLM graded B before its precision rewrite (D20 amendment): 0.99966 on
   a run of digits, drift 0.006.
+- gte-modernbert graded B before its range rewrite (D25 amendment): 0.99940
+  on a Markdown list, drift 0.010. The rewrite costs its GPU path a little
+  on one repeated-subword stress case (0.99998 → 0.99995).
 
 All five pass every hard gate on every path:
 - token ids identical to the reference pipeline's;
 - finite output;
 - exact pad invariance;
-- bucket invariance of at least 0.99998 on the ANE (it was 0.9977 for
+- bucket invariance of at least 0.99995 on the ANE (it was 0.9977 for
   EmbeddingGemma and 0.9965 for LFM2.5 before their rewrites) and exact on
   the CPU;
 - bit-identical ANE output across two processes.
@@ -266,9 +282,10 @@ repeated tokens, with drift up to 0.19; EmbeddingGemma fell to 0.975 on
 digits. Both were the ANE's `linear` precision floor plus its coarse
 native GELU/SiLU, and both now grade A after precision rewrites (D17 and
 D19 amendments). F2LLM's B had the milder version: mostly the SiLU, plus
-small attention inputs on long texts (D20 amendment). An ANE-only loss is
-worth diagnosing before it's accepted. gte-modernbert (B) hasn't been
-checked against the same rules yet.
+small attention inputs on long texts (D20 amendment). gte-modernbert's B
+was a third limit: the ANE's `linear` saturates at 2^15, which its massive
+activation crossed (D25 amendment). All five now grade A on the ANE. An
+ANE-only loss is worth diagnosing before it's accepted.
 
 **Reading a report.** For each model the report prints its lowest cases
 with the CPU, GPU and ANE cosines side by side. The pattern points at a
@@ -351,7 +368,7 @@ its grade as a starting expectation, not a promise, and run the suite.
 | family | validated | ANE grade | risks seen | inputs that find them |
 |---|---|---|---|---|
 | BERT (bge, MiniLM, e5) | bge-small-en-v1.5 | A | none | — |
-| ModernBERT | gte-modernbert-base; laya's encoder (CLS ≥ 0.997) | B | fused attention drops the mask on the ANE (convert eager); the vectors of delimiter tokens are a little less accurate | pad and bucket invariance; delimiters |
+| ModernBERT | gte-modernbert-base; laya's encoder (CLS ≥ 0.997) | A | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate | pad and bucket invariance; delimiters |
 | Qwen3 decoder, last-token pooling | F2LLM-v2-160M | A | truncation must keep the final token; without the precision rewrite, the native SiLU costs ~0.03% on the ANE (graded B) | over-length; the ids gate; numbers |
 | Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
 | LFM2 hybrid (conv + attention) | LFM2.5-Embedding-350M | A | convolutions read pad states unless they're zeroed; without the precision rewrite, up to 4.6% ANE loss on URLs and delimiters (graded D) | pad invariance; delimiters, numbers |
@@ -399,7 +416,7 @@ Most rejections are visible long before a conversion. Cheapest first:
    | bge-small-en-v1.5 | LayerNorm | 338 (99) | 146× | no range issue | 0.99998 |
    | LFM2.5-Embedding-350M | RMSNorm | 1.9 | 17× | no range issue | 0.99999 after the precision rewrite |
    | embeddinggemma-300m | RMSNorm | 152,485 (731) | 313× | range rewrite | 0.99999 after range + MLP rewrites |
-   | gte-modernbert-base | LayerNorm | 47,973 (251) | 502× | no range issue | 0.9998 (explicit attention) |
+   | gte-modernbert-base | LayerNorm | 47,973 (251) | 502× | no range issue | 0.99998 (explicit attention + 2^15 range rewrite) |
    | laya (ModernBERT-large) | LayerNorm | 27,296 (379) | 556× | no range issue | CLS ≥ 0.997 (explicit attention) |
 
    Massive activations, one dimension hundreds of times the rest on a few
@@ -482,6 +499,14 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   normalize (EmbeddingGemma, D17). Where only a residual add follows,
   cancel it with an explicit multiply rather than weights divided into
   fp16's subnormal range (LFM2.5, D19).
+- **Keep every linear-layer output under 2^15 on the ANE.** The ANE's
+  `linear` op saturates at 32,768, half of fp16's 65,504: an output of
+  33,000 comes back inf. Its add, mul and layer_norm handle the full fp16
+  range, so fp16 headroom alone doesn't protect a projection. Measure the
+  largest output of every linear in fp32 with forward hooks. Keep it at or
+  below 0.85 × 2^15 by running the residual stream at a power-of-two 1/K
+  that the norms cancel (gte-modernbert: K = 2, D25). Massive activations
+  are the usual cause: ModernBERT writes one at 35,000–51,500.
 - **Don't use Core ML's native GELU or SiLU ops on the ANE.** Measured
   absolute error on [-1, 1]: gelu ~6e-3, silu ~1.5e-2, versus tanh 1.6e-3,
   sigmoid 3e-3, and exact mul/relu. Build GELU as
