@@ -649,7 +649,7 @@ A load-time guard in `CoremlModel::load` doesn't read the plan: that costs
 instead, and refuses only on macOS 27, so macOS 26, where such models still
 run (slowly) on the CPU, doesn't regress.
 
-## D25 — ModernBERT validated: its rejection was a Core ML attention-mask bug
+## D25 — ModernBERT validated: its rejection was a Core ML attention-mask bug (amended: range rewrite for the ANE linear's 2^15 limit)
 Supersedes D20's ModernBERT verdict. Found by an adversarial review of the
 macOS 27 re-investigation (September 2026, M1 Max, macOS 27.0), then
 reproduced independently.
@@ -788,6 +788,85 @@ Consequences:
 - Fused-attention models keep the macOS15 target, and pad invariance stays
   the run-time gate.
 
+**Amendment (September 2026, macOS 27.0, M1 Max): the ANE's `linear` op
+saturates at 2^15, and ModernBERT's massive activation crossed it.** The
+parity suite (D26) graded gte-modernbert's ANE path B: 0.99940 on a
+Markdown list, drift 0.010. Its CPU path graded B (0.99926) and its GPU
+path A.
+
+It was neither of the D17/D19 limits:
+- Keeping GELU in fp32 changes nothing (0.99939).
+- An explicit erf GELU doesn't help the ANE and makes the CPU path worse.
+- Rescaling small linear inputs changes nothing (0.99940).
+
+Keeping only the MLP output projections in fp32 gives 0.99984, which
+located it. Teacher-forced, layer 15's MLP returns inf on the ANE for
+delimiter tokens.
+
+**The limit.** On a synthetic 1152→768 projection, the ANE's `linear`
+returns an output of 32,000 exactly and 33,000 as inf, whether the output
+comes from one term or 1,152. The GPU is exact to 60,000, and the ANE's add,
+mul and layer_norm handle 40,000–60,000. The massive activation (dimension
+251 on delimiter tokens, ~48,000 in the residual) is written by layer 15's
+MLP output projection, at 35,000–51,500 on every input tried. A search of
+~80 inputs, including floods of 17 delimiter types and lists of up to 500
+items, found nothing higher. Layer 11's reaches ~15,700.
+
+**The artifact before the fix produced -inf internally.** Probed through
+the full ANE graph, the residual after layer 15 held -inf at dimension 251
+of those tokens in five of six cases (the sixth read -65,504; fp32 has
+-38,600 to -50,600). Downstream saturation kept the CLS output finite, at
+0.9994–0.9998. Every input with a delimiter ran past the limit and relied
+on that undocumented saturation.
+
+**The fix** (tools/convert_gte_modernbert.py, constraint D) runs the
+residual stream at 1/K, which is exact in fp32:
+- the embedding norm's weight takes 1/K;
+- layer 0's Wqkv, which reads the embedding directly, takes K;
+- both output projections of every layer take 1/K;
+- every LayerNorm, being scale-invariant, only needs eps / K².
+
+K is the smallest power of two that keeps every calibrated linear output
+at most 0.85 × 2^15. That is K = 2, leaving 1.31x of headroom over the
+largest calibrated output and 1.27x over the largest input found. An input
+past it would reproduce the old behaviour, not something worse. The
+converter prints the headroom, and fails if no K ≤ 8 fits.
+
+Larger K costs precision on both paths, because it shrinks everything
+else: K = 4 gives ANE 0.99984 and CPU 0.99886. Shrinking output-projection
+weights hurts the CPU path in particular: layer 15's alone at ÷8 gives CPU
+0.9975. Undoing the scale with a multiply after the projection doesn't
+work, because the projection itself still overflows (0.9976).
+
+**Results:**
+- converter parity CPU_AND_NE 0.999981 at every bucket (was 0.999793) and
+  CPU_ONLY 0.99992; the fp32 rewrite gate is 0.9999998;
+- parity suite ANE grade **A**: worst 0.999915 (a delimiter flood), stress
+  0.999833, mean 0.99998, drift 0.0032 (was 0.010), 0 rank flips, bucket
+  invariance 0.999954;
+- CPU B 0.99951 (was 0.99926), and GPU A 0.999985, though its
+  repeated-subword stress case moved from 0.99998 to 0.99995;
+- 794/805 operations on the ANE, and pad invariance 1.0000000;
+- the residual after layer 15 now matches fp32 at dimension 251 (-44,896
+  against -44,903);
+- live `/v1/embeddings` over all 51 suite inputs: worst 0.999833 (the
+  repeated-word stress case), all others ≥ 0.99991;
+- latency unchanged (±1%); `ane_check` ratios 2.9x/2.0x/1.6x.
+
+The `--attn sdpa` negative control still builds, and still fails pad
+invariance (0.74) and parity (0.904). The converter also gained an fp32
+exactness gate, NaN-safe metrics, a rejection of the fused attention op
+outside the negative control, a check that its 442-token parity text fits
+the 512 bucket, and an ANE gate of 0.999.
+
+**Consequences.** A new MODELS.md checklist rule: keep calibrated linear
+outputs at or below 0.85 × 2^15 on the ANE. fp16's own 65,504 isn't the
+limit that matters there.
+
+**Not done:** tools/probe_activations.py doesn't yet report each linear's
+largest output against 32,768, so triage can't catch this class before
+converting.
+
 ## D26 — A parity suite grades every model on every compute path
 Before this, a model's accuracy was checked by its converter, on short
 prose, through coremltools rather than sidekick's own code. Two bugs got
@@ -865,9 +944,13 @@ last two on demand.
 
 **Findings (M1 Max, macOS 27.0).**
 - On the ANE, bge-small and EmbeddingGemma graded A, and gte-modernbert and
-  F2LLM B. F2LLM now grades A (0.99997) after the D20 amendment's rewrite.
-  Of the D17/D19 causes, only the coarse SiLU mattered for it, plus small
-  attention inputs on long texts.
+  F2LLM B. Both B models now grade A:
+  - F2LLM 0.99997, after the D20 amendment's rewrite. Of the D17/D19
+    causes, only the coarse SiLU mattered for it, plus small attention
+    inputs on long texts.
+  - gte-modernbert 0.99992, after the D25 amendment's range rewrite. Its
+    loss was a third ANE limit: the `linear` op saturates at 2^15, which
+    ModernBERT's massive activation crossed.
 - LFM2.5 graded **D**: 0.954 on a URL, pairwise similarity drifting by up
   to 0.187, and 1,399 rank flips at a 0.02 margin. Its CPU and GPU paths
   were 0.9999, so the graph was faithful and the loss happened on the ANE.
@@ -884,13 +967,14 @@ last two on demand.
 - With both rewrites, every model's ANE bucket invariance is at least
   0.99998 (bge-small 0.999992, EmbeddingGemma 0.999983, F2LLM 0.999982,
   LFM2.5 0.999995, gte-modernbert 0.999984), so the ANE gate was raised
-  from 0.995 to 0.9999, the GPU's value.
+  from 0.995 to 0.9999, the GPU's value. gte-modernbert measures 0.999954
+  after its later range rewrite.
 - The GPU path measures at fp32-like accuracy on every model (A). "GPU fine,
   ANE low" therefore isolates the ANE, not fp16 arithmetic in general.
 
 **The 0.985 gate.** It stays the converters' acceptance gate on their own
-parity sets; the EmbeddingGemma, LFM2.5 and F2LLM converters now gate at
-0.999.
+parity sets; the EmbeddingGemma, LFM2.5, F2LLM and gte-modernbert converters
+now gate at 0.999.
 A D on the adversarial corpus doesn't remove a model: the grade is
 published, and this chip's floor makes it a regression test.
 
@@ -899,8 +983,9 @@ published, and this chip's floor makes it a regression test.
   ColBERT). Every registry model pools inside its graph, so the suite can't
   see per-token vectors.
 - Parity through the HTTP layer.
-- gte-modernbert (GeGLU) grades B on the ANE and hasn't been checked
-  against the D17/D19 rules yet.
+- A corpus case built to maximize ModernBERT's massive activation, so the
+  suite exercises the ANE linear's 2^15 limit (D25 amendment). Adding it
+  means regenerating every reference.
 
 ## D27 — Refuse multi-shape Core ML models at load on macOS 27
 D24 said that on macOS 27 a flexible-shape artifact aborts the process at
@@ -1064,6 +1149,11 @@ Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
   - live /v1/embeddings worst parity 0.99896 over nine texts, including a
     722-token input
   - unit norms, and similarity structure matching fp32
+  - re-converted with the range rewrite (D25 amendment): parity CPU_AND_NE
+    0.999981 at every bucket, CPU_ONLY 0.99992, 794/805 operations on the
+    ANE, pad invariance 1.0000000, ane_check ratios 2.9x/2.0x/1.6x, parity
+    suite ANE grade A (0.999915), live /v1/embeddings worst 0.999833 over
+    all 51 suite inputs
 
 - Flexible-shape load guard (September 2026, macOS 27, D27):
   - the enumerated-shapes control aborts only under `.cpuOnly`, and is now

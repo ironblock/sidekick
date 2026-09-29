@@ -84,11 +84,36 @@ bge — no in-graph L2 normalize. The server normalizes pooled vectors in f32
 sum-of-squares overflow the L2 would hit (|CLS| ~= 22, 768 dims -> ~3.9e5).
 Cosine parity is normalization-invariant, so the gate is unaffected.
 
-fp16 note: no range rewrite. ModernBERT's residual stream is hot (~48,000
-peak on a few tokens, measured with tools/probe_activations.py) but under the
-fp16 max (65504), and with explicit attention it converts at 0.9999 as is.
-The per-path parity and pad-invariance gates are the real check; measured
-results in docs/MODELS.md.
+D. RESIDUAL RANGE REWRITE (docs/DECISIONS.md D25 amendment). The ANE's
+   linear op saturates above 2^15 = 32,768, half of fp16's max: an output of
+   33,000 comes back inf, while its add, mul and layer_norm handle the full
+   fp16 range. ModernBERT's massive activation (dimension 251 on delimiter
+   tokens, ~48,000 in the residual) is written by layer 15's MLP output
+   projection, at 35,000-51,500 on every input tried. On the ANE the full
+   graph then carries -inf in that token's residual. Downstream saturation
+   keeps the CLS output finite, but at 0.9994 instead of 0.9999.
+   Fix, exact in fp32: run the residual stream at 1/K. The embedding norm's
+   weight takes 1/K, layer 0's Wqkv (which reads the embedding directly)
+   takes K, both output projections of every layer take 1/K, and every
+   LayerNorm (scale-invariant) gets eps / K^2. K is the smallest power of
+   two keeping every calibrated linear output under LINEAR_HEADROOM x 2^15.
+   That is K = 2 for this checkpoint, with ~1.3x headroom over its largest
+   calibrated output. The converter prints the headroom, and fails if no
+   K <= 8 fits. Larger K costs precision on both the ANE and the CPU path
+   (K = 4: ANE 0.99984, CPU 0.99886), because it shrinks everything else,
+   so K is kept minimal. The rescale of small linear inputs from D19 and an
+   explicit GELU didn't help this model.
+
+fp16 range: ModernBERT's residual stream peaks at ~48,000 (measured with
+tools/probe_activations.py), under the fp16 max (65504), so it needs no
+fp16 range rewrite. Constraint D is about the ANE linear's narrower range,
+not fp16's.
+
+Gates, per bucket: fp32 exactness of constraint D (>= 0.99999) before
+converting; then CPU_ONLY >= 0.999 and CPU_AND_NE >= 0.999, finite output,
+and pad invariance. Every gate treats NaN as a failure, and convert_bucket()
+rejects the fused attention op outside the --attn sdpa negative control.
+Measured results in docs/MODELS.md.
 """
 
 import shutil
@@ -106,19 +131,37 @@ import transformers.models.modernbert.modeling_modernbert as _mb
 
 DIMS = 768
 MASK_ADD = -30000.0  # fp16-safe additive mask constant (constraint A)
+ANE_LINEAR_MAX = 32768.0  # the ANE's linear op saturates above 2^15 (constraint D)
+LINEAR_HEADROOM = 0.85    # keep calibrated linear outputs under this share of it
+K_MAX = 8
 
 PARITY_SENTENCES = [
     "A cat sat on the mat.",
     "A kitten rested on the rug.",
     "Quarterly financial earnings exceeded expectations.",
     "The company reported strong revenue growth this quarter.",
-    # ~440 tokens: exercises the sliding-window band (live for distances > 64)
+    # 442 tokens: exercises the sliding-window band (live for distances > 64)
     # and long-sequence fp16 accumulation. Short sentences never reach the
     # band, so a wrong window would pass every short-text parity check.
+    # main() fails if it stops fitting the 512 bucket.
     " ".join(
         f"Sentence number {i} discusses topic {i * 7 % 13} in considerable detail."
         for i in range(40)
     ),
+]
+
+# Varied text for constraint D's linear-output maxima. The massive
+# activation sits on delimiter tokens and grows with sequence length, so
+# include long, punctuated and list-like inputs.
+CALIBRATION_TEXTS = PARITY_SENTENCES + [
+    "def add(a, b):\n    return a + b  # simple helper\n",
+    "Order #48213 shipped 2026-09-14; see https://example.com/track?id=48213&ref=a1b2.",
+    "Wait... what?! (No, really — \"that\" isn't it.) [1] {2} <3>",
+    "- one\n- two\n- three\n\n| a | b |\n|---|---|\n| 1 | 2 |",
+    "Der schnelle braune Fuchs springt über den faulen Hund. 東京は日本の首都です。",
+    " ".join(["buffalo"] * 60),
+    "3.14159 2.71828 1.41421 6.02214076e23 299792458",
+    " ".join(["The quick brown fox jumps over the lazy dog."] * 40),
 ]
 
 
@@ -193,7 +236,92 @@ def padded_inputs(tokenizer, text, seq_len):
 
 
 def cosine(a, b):
+    """Cosine similarity, NaN when either side is non-finite."""
+    if not (np.isfinite(a).all() and np.isfinite(b).all()):
+        return float("nan")
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+
+def worst_of(values):
+    """min() that keeps NaN: min(worst, nan) returns worst and hides a NaN output."""
+    values = list(values)
+    return float("nan") if any(np.isnan(v) for v in values) else min(values)
+
+
+def linear_output_maxima(model, tokenizer):
+    """fp32 max |output| of every linear in the encoder, over CALIBRATION_TEXTS
+    (unpadded forwards). Keys are (layer, name); constraint D uses them."""
+    maxima = {}
+
+    def hook(key):
+        def f(mod, args, out):
+            maxima[key] = max(maxima.get(key, 0.0), float(out.detach().abs().max()))
+        return f
+
+    hooks = []
+    for i, layer in enumerate(model.layers):
+        for name, lin in (("Wqkv", layer.attn.Wqkv), ("attn.Wo", layer.attn.Wo),
+                          ("Wi", layer.mlp.Wi), ("mlp.Wo", layer.mlp.Wo)):
+            hooks.append(lin.register_forward_hook(hook((i, name))))
+    with torch.no_grad():
+        for text in CALIBRATION_TEXTS:
+            model(**tokenizer(text, return_tensors="pt", truncation=True, max_length=512))
+    for h in hooks:
+        h.remove()
+    return maxima
+
+
+def choose_k(maxima):
+    """Constraint D: the smallest power of two K <= K_MAX keeping every linear
+    output under LINEAR_HEADROOM x ANE_LINEAR_MAX. Only the output projections
+    (attn.Wo, mlp.Wo) scale with 1/K; Wqkv and Wi read scale-invariant norms."""
+    limit = LINEAR_HEADROOM * ANE_LINEAR_MAX
+    fixed = max(v for (i, n), v in maxima.items() if not n.endswith("Wo"))
+    scaled = max(v for (i, n), v in maxima.items() if n.endswith("Wo"))
+    if fixed > limit:
+        raise SystemExit(f"a Wqkv/Wi output reaches {fixed:.0f}, past the ANE linear's range")
+    k = 1
+    while scaled / k > limit:
+        k *= 2
+        if k > K_MAX:
+            raise SystemExit(f"output projections reach {scaled:.0f}; no K <= {K_MAX} fits")
+    return k, ANE_LINEAR_MAX / max(fixed, scaled / k)
+
+
+def range_rewrite(model, k):
+    """Constraint D: the residual stream at 1/k, exact in fp32."""
+    if k == 1:
+        return
+    with torch.no_grad():
+        def scale(module, factor):
+            module.weight.mul_(factor)
+            if getattr(module, "bias", None) is not None:
+                module.bias.mul_(factor)
+
+        scale(model.embeddings.norm, 1.0 / k)
+        for layer in model.layers:
+            if isinstance(layer.attn_norm, torch.nn.Identity):
+                layer.attn.Wqkv.weight.mul_(k)   # layer 0 reads the embedding directly
+            else:
+                layer.attn_norm.eps /= k * k
+            layer.mlp_norm.eps /= k * k
+            scale(layer.attn.Wo, 1.0 / k)
+            scale(layer.mlp.Wo, 1.0 / k)
+        model.final_norm.eps /= k * k
+
+
+def fp32_gate(wrapper, tokenizer, refs, seq_len):
+    """Constraint D must be ~exact in fp32 before we spend on conversion."""
+    cosines = []
+    with torch.no_grad():
+        for s, ref in fitting_pairs(tokenizer, refs, seq_len):
+            ids, mask = padded_inputs(tokenizer, s, seq_len)
+            out = wrapper(torch.from_numpy(ids), torch.from_numpy(mask))[0].numpy()
+            cosines.append(cosine(ref, out))
+    worst = worst_of(cosines)
+    if not worst >= 0.99999:  # NaN fails too
+        raise SystemExit(f"seq {seq_len}: fp32 rewrite parity {worst:.7f} < 0.99999")
+    return worst
 
 
 def fitting_pairs(tokenizer, refs, seq_len):
@@ -205,7 +333,7 @@ def fitting_pairs(tokenizer, refs, seq_len):
     return pairs
 
 
-def convert_bucket(wrapper, seq_len, workdir):
+def convert_bucket(wrapper, seq_len, workdir, allow_fused=False):
     ids = torch.zeros((1, seq_len), dtype=torch.int32)
     ids[0, 0], ids[0, 1] = 50281, 50282  # [CLS] [SEP]
     mask = torch.zeros((1, seq_len), dtype=torch.int32)
@@ -222,6 +350,11 @@ def convert_bucket(wrapper, seq_len, workdir):
         convert_to="mlprogram",
         minimum_deployment_target=ct.target.macOS15,
     )
+    ops = {op.type for fn in mlmodel.get_spec().mlProgram.functions.values()
+           for block in fn.block_specializations.values() for op in block.operations}
+    if "scaled_dot_product_attention" in ops and not allow_fused:
+        raise SystemExit(f"seq {seq_len}: converted graph contains the fused attention "
+                         "op — see the KEY CONSTRAINT")
     pkg = Path(workdir) / f"model_{seq_len}.mlpackage"
     mlmodel.save(str(pkg))
     return pkg
@@ -238,19 +371,20 @@ def parity_check(tokenizer, pkg, seq_len, refs, gate_failures=True):
         print(f"negative control, expected: {message}")
 
     results = {}
-    for label, cu, gate in (("CPU_AND_NE", ct.ComputeUnit.CPU_AND_NE, 0.985),
+    # CPU_ONLY >= 0.999: the conversion is faithful; CPU_AND_NE >= 0.999: the
+    # ANE runs it at full precision (constraint D)
+    for label, cu, gate in (("CPU_AND_NE", ct.ComputeUnit.CPU_AND_NE, 0.999),
                             ("CPU_ONLY", ct.ComputeUnit.CPU_ONLY, 0.999)):
         m = ct.models.MLModel(str(pkg), compute_units=cu)
-        worst = 1.0
+        cosines = []
         for s, ref in fitting_pairs(tokenizer, refs, seq_len):
             ids, mask = padded_inputs(tokenizer, s, seq_len)
             out = m.predict({"input_ids": ids, "attention_mask": mask})["embedding"][0]
             if not np.isfinite(out).all():
                 fail(f"seq {seq_len} [{label}]: non-finite output — see constraint A")
-                worst = float("nan")
-                break
-            worst = min(worst, cosine(ref, out))
-        if worst < gate:
+            cosines.append(cosine(ref, out))
+        worst = worst_of(cosines)
+        if not worst >= gate:  # NaN fails too
             fail(f"seq {seq_len} [{label}]: parity cosine {worst:.6f} < {gate}")
         # Pad invariance: a correctly masked model can't see its pad
         # positions, so their content must not change the output.
@@ -260,7 +394,7 @@ def parity_check(tokenizer, pkg, seq_len, refs, gate_failures=True):
         noisy[0, pads] = np.random.default_rng(0).integers(1000, 40000, int(pads.sum()))
         a = m.predict({"input_ids": ids, "attention_mask": mask})["embedding"][0]
         b = m.predict({"input_ids": noisy, "attention_mask": mask})["embedding"][0]
-        if not (np.isfinite(a).all() and np.isfinite(b).all()) or cosine(a, b) < 0.99999:
+        if not cosine(a, b) >= 0.99999:
             fail(f"seq {seq_len} [{label}]: output depends on pad content "
                  f"(cos {cosine(a, b):.6f}); the attention mask is being dropped")
         ids, mask = padded_inputs(tokenizer, PARITY_SENTENCES[0], seq_len)
@@ -304,13 +438,23 @@ def main():
     model = AutoModel.from_pretrained(src, dtype=torch.float32, attn_implementation=attn)
     model.eval()
     install_patches()
+    # the long parity text must run in the 512 bucket (see PARITY_SENTENCES)
+    longest = max(len(tokenizer(s, add_special_tokens=True)["input_ids"]) for s in PARITY_SENTENCES)
+    if not 128 < longest <= 512:
+        raise SystemExit(f"the long parity text is {longest} tokens; it must fit the 512 bucket")
 
     refs = reference_embeddings(model, tokenizer)
+    print("calibrating linear output ranges...")
+    k, headroom = choose_k(linear_output_maxima(model, tokenizer))
+    range_rewrite(model, k)
+    print(f"residual scale K={k}; largest calibrated linear output is {headroom:.2f}x "
+          f"under the ANE linear's {ANE_LINEAR_MAX:.0f}")
 
     with tempfile.TemporaryDirectory() as workdir:
         for seq in buckets:
             wrapper = ClsWrapper(model, seq).eval()
-            pkg = convert_bucket(wrapper, seq, workdir)
+            print(f"bucket {seq}: fp32 rewrite parity {fp32_gate(wrapper, tokenizer, refs, seq):.7f}")
+            pkg = convert_bucket(wrapper, seq, workdir, allow_fused=negative_control)
             res = parity_check(tokenizer, pkg, seq, refs, gate_failures=not negative_control)
             dest = compile_to_mlmodelc(pkg, install_dir, seq)
             for label, (cos, ms) in res.items():

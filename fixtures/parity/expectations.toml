@@ -16,7 +16,7 @@
 # each bucket separately. On the ANE, precision lost in a model's MLP shows
 # up here too: EmbeddingGemma measured 0.9977 and LFM2.5 0.9965 before their
 # precision rewrites (D17, D19), and the ANE gate was 0.995 to admit them.
-# Since the rewrites every model measures at least 0.99998 on the ANE (M1
+# Since the rewrites every model measures at least 0.99995 on the ANE (M1
 # Max, macOS 27.0), so the ANE gate matches the GPU's. A dropped attention
 # mask measured 0.40-0.94.
 bucket_invariance = { cpu = 0.999999, gpu = 0.9999, ane = 0.9999 }
@@ -29,8 +29,8 @@ determinism = 0.999999
 rank_margin = 0.02
 
 # Apple M1 Max, macOS 27.0 (September 2026). embeddinggemma-300m's,
-# lfm2.5-embedding-350m's and f2llm-v2-160m's floors are from after their
-# precision rewrites (D17, D19, D20 amendments).
+# lfm2.5-embedding-350m's, f2llm-v2-160m's and gte-modernbert-base's floors
+# are from after their precision rewrites (D17, D19, D20, D25 amendments).
 
 [[floor]]
 chip = "Apple M1 Max"
@@ -132,22 +132,22 @@ drift = 0.005017
 chip = "Apple M1 Max"
 model = "gte-modernbert-base"
 path = "cpu"
-worst = 0.99889
-stress = 0.999059
-drift = 0.006882
+worst = 0.999265
+stress = 0.999075
+drift = 0.006518
 
 [[floor]]
 chip = "Apple M1 Max"
 model = "gte-modernbert-base"
 path = "gpu"
-worst = 0.999967
-stress = 0.999965
-drift = 0.001798
+worst = 0.999975
+stress = 0.999921
+drift = 0.001722
 
 [[floor]]
 chip = "Apple M1 Max"
 model = "gte-modernbert-base"
 path = "ane"
-worst = 0.999106
-stress = 0.999768
-drift = 0.015093
+worst = 0.999872
+stress = 0.99975
+drift = 0.004806
