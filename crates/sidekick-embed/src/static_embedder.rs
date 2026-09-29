@@ -187,6 +187,7 @@ mod tests {
                 max_seq_len: 512,
                 io: Default::default(),
                 prefixes: Default::default(),
+                source: None,
             },
             dir: dir.clone(),
         }
