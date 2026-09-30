@@ -60,6 +60,8 @@ Method, for every validated entry:
 | [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.99991 | 0.99999 | 773/778 (99.4%) | 2.49x / 1.91x / 1.66x (before the precision rewrite) |
 | [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.99992 | 0.99998 | 648/653 (99.2%) | 2.02x / 1.77x / 1.59x (before the precision rewrite) |
 | [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | 768 | CLS | [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py) | 0.99992 | 0.99998 | 794/805 (98.6%) | validated on macOS 27 (below) |
+| [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | 384 | mean | [convert_bert_embedder.py](../tools/convert_bert_embedder.py) | 0.999982 | 0.999971 | 146/168 (86.9%) | not measured yet (buckets 64/128/256) |
+| [intfloat/e5-small-v2](https://huggingface.co/intfloat/e5-small-v2) | 384 | mean | [convert_bert_embedder.py](../tools/convert_bert_embedder.py) | 0.999974 | 0.999963 | 290/312 (92.9%) | not measured yet |
 
 ANE ops are identical at every bucket. On every model, the operations off
 the ANE are mask and cast plumbing plus the embedding `gather` (e.g. bge:
@@ -198,6 +200,27 @@ Notes per model:
   - ~7.8 ms warm for a short text, including HTTP.
 
   ~285 MB per bucket, 0.86 GB installed.
+- **all-MiniLM-L6-v2**: a 6-layer BERT (22.7M parameters, Apache-2.0),
+  validated September 2026 on macOS 27. It was the first model converted by
+  the conversion library's BERT recipe
+  ([convert_bert_embedder.py](../tools/convert_bert_embedder.py)), with
+  explicit attention and mask-aware mean pooling in the graph.
+  - Its buckets stop at 256, sentence-transformers' `max_seq_length` for
+    it, which is what the model was trained and published at. Truncated at
+    512 instead, the embedding of a ~450-token text is only 0.973 cosine to
+    the one at 256.
+  - The published tokenizer.json pads every input to 128 and truncates at
+    128. Both are removed at install, and sidekick never pads a single
+    input.
+  - The mean-pooling tail (`reduce_sum`, `real_div`, `clip`) runs on the
+    CPU after the encoder. That is one extra hand-off, and it is why its
+    ANE share (86.9%) is below bge-small's; the encoder's heavy operations
+    are all on the ANE.
+  - ~43 MB per bucket.
+- **e5-small-v2**: a 12-layer BERT (33.4M parameters, MIT), validated with
+  the same recipe. The `query: ` / `passage: ` prefixes its model card
+  requires are in the manifest, and the server applies them; the
+  checkpoint publishes no prompts. ~64 MB per bucket.
 
 ## Confidence grades: the parity suite
 
@@ -246,6 +269,8 @@ the median per input, ANE (CPU).
 | F2LLM-v2-160M | B 0.99988 | A 0.999999 | **A** 0.99997 (a run of digits) | 0.002 (0.000) | 0 | 4.6 (13.0) |
 | embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.1 (20.3) |
 | LFM2.5-Embedding-350M | B 0.99986 | A 0.999999 | **A** 0.99999 (a delimiter flood) | 0.003 (0.000) | 0 | 14.9 (33.8) |
+| all-MiniLM-L6-v2 | A 0.99992 | A 0.999998 | **A** 0.99992 (empty input) | 0.003 (+0.000) | 0 | not measured |
+| e5-small-v2 | A 0.99995 | A 0.999997 | **A** 0.99995 (a 255-token boundary case) | 0.002 (−0.001) | 0 | not measured |
 
 - **Similarity drift** is the largest change in any pairwise similarity
   score against fp32. **Bias** is the mean signed change: LFM2.5's ANE
@@ -267,7 +292,7 @@ the median per input, ANE (CPU).
   on a Markdown list, drift 0.010. The rewrite costs its GPU path a little
   on one repeated-subword stress case (0.99998 → 0.99995).
 
-All five pass every hard gate on every path:
+All seven pass every hard gate on every path:
 - token ids identical to the reference pipeline's;
 - finite output;
 - exact pad invariance;
@@ -367,7 +392,7 @@ its grade as a starting expectation, not a promise, and run the suite.
 
 | family | validated | ANE grade | risks seen | inputs that find them |
 |---|---|---|---|---|
-| BERT (bge, MiniLM, e5) | bge-small-en-v1.5 | A | none | — |
+| BERT (bge, MiniLM, e5) | bge-small-en-v1.5, all-MiniLM-L6-v2, e5-small-v2 | A | none | — |
 | ModernBERT | gte-modernbert-base; laya-en (ModernBERT-large, classifier preview) | A (gte); D, failing bucket invariance (laya) | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate, and laya's head reads single-token vectors, where that loss isn't averaged away | pad and bucket invariance; delimiters |
 | Qwen3 decoder, last-token pooling | F2LLM-v2-160M | A | truncation must keep the final token; without the precision rewrite, the native SiLU costs ~0.03% on the ANE (graded B) | over-length; the ids gate; numbers |
 | Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
