@@ -20,7 +20,14 @@ The contract, for a new family:
 - `reference(ids, token_type_ids=None)`: fp32, unpadded, the checkpoint's
   own outputs;
 - `example(seq, ports)`: an int32 feed to trace with;
-- `hidden_size`, `vocab_size`, `config`.
+- `hidden_size`, `vocab_size`, `config`;
+- `forbid_ops`: MIL ops the conversion must not contain, beyond the fused
+  attention op (a rewrite that replaces gelu adds "gelu").
+
+Rewrites that change weights or modules (activation swaps, range and
+precision rewrites) are functions of a backbone, applied by the recipe AFTER
+the evaluation references are computed from the unmodified checkpoint, so
+the fp32 gate proves each rewrite exact.
 """
 
 import dataclasses
@@ -36,6 +43,7 @@ class Backbone:
     config: object
     special_ids: tuple            # ids an empty input encodes to, e.g. [CLS] [SEP]
     attr: str = "model"
+    forbid_ops: set = dataclasses.field(default_factory=set)
 
     @property
     def hidden_size(self):

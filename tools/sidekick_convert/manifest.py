@@ -82,20 +82,45 @@ def problem_type(config):
             "regression": "regression"}.get(config.problem_type, "single_label")
 
 
+def vllm_problem_type(config):
+    """A reranker's problem_type: the activation vLLM applies to it (get_act_fn
+    in vllm/model_executor/layers/pooler/activations.py). An explicit
+    config.problem_type wins; otherwise sentence-transformers' CrossEncoder
+    activation (activation_fn, or the older sbert_ce_default_activation_function):
+    Identity is regression, Sigmoid single_label; with neither, single_label."""
+    explicit = getattr(config, "problem_type", None)
+    if explicit:
+        return {"regression": "regression", "single_label_classification": "single_label",
+                "multi_label_classification": "multi_label"}[explicit]
+    st = getattr(config, "sentence_transformers", None) or {}
+    fn = st.get("activation_fn") or getattr(config, "sbert_ce_default_activation_function", None)
+    if fn:
+        if fn.endswith("Identity"):
+            return "regression"
+        if fn.endswith("Sigmoid"):
+            return "single_label"
+        raise SystemExit(f"activation {fn} has no problem_type equivalent")
+    return "single_label"
+
+
 def check_classifier(m, *, src, buckets, backbone, head, tok, token_type_input, expected_problem_type=None,
                      strict_max_seq_len=True):
     """Classifier manifest vs the checkpoint: labels, problem_type, token types."""
     errors = []
     _common(m, errors, src=src, buckets=buckets, backbone=backbone, strict_max_seq_len=strict_max_seq_len)
     labels = m.get("classify", {}).get("labels")
-    if labels is not None:
+    ranking = m.get("task") == "text-ranking"
+    if ranking:
+        # one output, its relevance score, whatever id2label calls it (LABEL_0)
+        _check(errors, head.num_labels == 1, f"a reranker needs num_labels 1, not {head.num_labels}")
+        _check(errors, labels == ["score"], f"a reranker's labels must be ['score'], not {labels}")
+    elif labels is not None:
         _check(errors, labels == head.labels, f"labels {labels} != id2label {head.labels}")
     want = expected_problem_type or problem_type(backbone.config)
     got = m.get("problem_type", "single_label")
     _check(errors, got == want, f"problem_type {got!r} != the checkpoint's {want!r}")
     io = m.get("classify", {}).get("io", {})
     named = "token_type_ids" in io
-    ranking = m.get("task") == "text-ranking"
     if ranking:
         _, types = _tok.encode_pair(tok, "a", "b")
         _check(errors, named == any(types), f"token_type_ids named={named} but pair segment ids are "
