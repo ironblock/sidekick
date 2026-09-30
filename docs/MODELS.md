@@ -439,6 +439,47 @@ The suite reports laya as FAIL until its bucket invariance is fixed. Its
 CPU path takes about 20 minutes for the 2,612 cases on an M1 Max, which is
 the suite's default per-worker limit, so run it with `--timeout 3600`.
 
+## Rerankers (`/v1/rerank`)
+
+Rerankers are cross-encoders served by `/v1/rerank`, `/rerank` and
+`/v2/rerank` (D29), from a `classifier.toml` with `task = "text-ranking"`
+([examples/classifiers/](../examples/classifiers/)). The parity suite
+grades them on [fixtures/rerank/corpus.toml](../fixtures/rerank/corpus.toml),
+51 (query, document) pairs in 13 groups, against `CrossEncoder` in fp32:
+- **Score fidelity** is graded as a probability, |Δ sigmoid(logit)|, with
+  the classifiers' letters (A ≤ 1e-3, B ≤ 5e-3, C ≤ 2e-2). Cross-encoders
+  are trained with a sigmoid objective. A model that serves raw logits
+  reports them unsquashed, and the sigmoid compresses errors at large
+  logits, so the table also gives the largest raw |Δlogit|.
+- **Ranking** is graded on raw logits: a flip is two documents of one
+  query in the opposite order, where fp32 separates them by at least 0.05
+  logits. Any flip caps the grade at C.
+
+M1 Max, macOS 27.0, September 2026.
+
+| model | conversion | CPU | GPU | ANE | rank flips | ANE ops | ANE ms |
+|---|---|---|---|---|---|---|---|
+| [cross-encoder/ms-marco-MiniLM-L6-v2](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) as `ms-marco-minilm-l6-v2` | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) | B 2.3e-3 (Δlogit 0.082) | B 1.2e-3 (Δlogit 0.0085) | **B** 3.4e-3 (Δlogit 0.030) | 0 on every path | 150/165 | not measured |
+
+**ms-marco-MiniLM-L6-v2**: a 6-layer BERT cross-encoder (22.7M
+parameters, Apache-2.0), converted by the conversion library's BERT recipe.
+It uses explicit attention, the checkpoint's own classification head, and
+segment ids as a third int32 input (`token_type_ids`: 0 for the query, 1
+for the document).
+- Its score is the raw logit: the checkpoint pins sentence-transformers'
+  Identity activation, and vLLM serves the same.
+- It passes every hard gate on every path:
+  - ids and segment ids equal `CrossEncoder`'s for all 51 pairs,
+    including a pair truncated to 512 tokens and an empty document;
+  - pad invariance is exact;
+  - ANE bucket invariance is 8.3e-4 against the 1e-3 gate;
+  - ANE output is bit-identical across processes.
+- It ranks exactly as fp32 does, with no flips and no near-ties. That
+  includes five near-duplicate documents with fp32 logits from 7.1 to 9.7,
+  the closest two 0.24 apart.
+- The largest errors are on mid-range logits (−1 to +1), where the
+  sigmoid is steepest.
+
 ## Incompatible / not integrated
 
 | model | class | why |
