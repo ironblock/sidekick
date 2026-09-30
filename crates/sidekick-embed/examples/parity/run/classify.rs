@@ -38,7 +38,7 @@ pub fn worker(
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
         .map_err(|e| e.to_string())?
         .get_vocab_size(true) as u64;
-    let problem = model.manifest.problem_type;
+    let problem = crate::classify_grade::graded_problem(&model.manifest);
 
     let t0 = Instant::now();
     let clf = CoremlClassifier::load_with(model, units(path)).map_err(|e| e.to_string())?;
@@ -253,7 +253,7 @@ pub fn grade_model(
                 let mut d = Delta::default();
                 for (a, b) in first.cases.iter().zip(&second.cases) {
                     d.add(if a.finite && b.finite {
-                        delta_p(m.problem_type, &a.logits, &b.logits, None)
+                        delta_p(crate::classify_grade::graded_problem(m), &a.logits, &b.logits, None)
                     } else {
                         None
                     });

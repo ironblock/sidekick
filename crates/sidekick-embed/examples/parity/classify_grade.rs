@@ -71,6 +71,20 @@ impl Delta {
     }
 }
 
+/// The activation a model's outputs are graded in. A reranker's score is
+/// graded as a probability, sigmoid(logit), whatever its manifest serves:
+/// cross-encoders are trained with a sigmoid (BCE) objective, and a raw
+/// logit of magnitude ~10 against thresholds meant for probabilities would
+/// grade an fp16-exact model D. Raw |Δlogit| is reported alongside, and rank
+/// flips are judged on raw logits, which never saturate.
+pub fn graded_problem(manifest: &ClassifierManifest) -> ProblemType {
+    if manifest.task == sidekick_core::ClassifyTask::TextRanking {
+        ProblemType::SingleLabel
+    } else {
+        manifest.problem_type
+    }
+}
+
 /// max |a − b| elementwise; `None` for non-finite input or a length
 /// mismatch.
 pub fn max_abs_diff(a: &[f32], b: &[f32]) -> Option<f64> {
@@ -197,7 +211,7 @@ pub fn grade(
     gates: &ClassifyGates,
     manifest: &ClassifierManifest,
 ) -> ClassifyGrade {
-    let problem = manifest.problem_type;
+    let problem = graded_problem(manifest);
     let torch = &reference.logits["torch"];
     let cases = &reference.cases;
     let mut failures = Vec::new();
@@ -280,8 +294,9 @@ pub fn grade(
 
     // Rerankers: one score per case, so the flips that matter are order
     // changes between documents of one query. A pair counts where the
-    // reference's score gap (after the activation) is at least the margin.
-    let score = |l: &[f32]| activate(problem, l, None).first().copied().unwrap_or(f32::NAN) as f64;
+    // reference's raw-logit gap is at least the margin: every activation is
+    // monotonic, and a saturated sigmoid would hide real reorderings.
+    let score = |l: &[f32]| l.first().copied().unwrap_or(f32::NAN) as f64;
     for i in 0..n {
         for j in i + 1..n {
             let (Some(gi), Some(gj)) = (&cases[i].group, &cases[j].group) else { continue };

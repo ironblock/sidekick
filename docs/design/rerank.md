@@ -229,10 +229,14 @@ grader with k = 1:
   the corpus hash as D26's do.
 - **Gates:** finite output, ids and `token_type_ids` equal to the
   reference's, bucket and pad invariance (|Δscore| after the activation).
-- **Graded:** worst |Δ relevance_score|, and rank flips within each query's
-  documents where the reference's score gap is at least a margin (the
-  classify flip rule, applied per group). A gap sidekick collapses to an
-  exact tie counts as a flip.
+- **Graded:** worst |Δp|, the score as a probability, sigmoid(logit),
+  whatever activation the manifest serves. Cross-encoders are trained with
+  a sigmoid (BCE) objective, and a raw logit of magnitude ~10 against
+  thresholds meant for probabilities would grade an fp16-exact model D.
+  Raw |Δlogit| is reported alongside. Rank flips count within each query's
+  documents where the reference's raw-logit gap is at least a margin (the
+  classify flip rule, applied per group, on logits, which never saturate).
+  A gap sidekick collapses to an exact tie counts as a flip.
 - **Reference:** `tools/rerank_reference.py`. It encodes pairs from the
   install dir's tokenizer.json (the file sidekick reads, not
   AutoTokenizer), runs fp32, checks the manifest's `problem_type` against
