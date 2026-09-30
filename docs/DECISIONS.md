@@ -1227,6 +1227,92 @@ amendment).
 classification by NLI; multi-label zero-shot; text pairs; laya's act head;
 a Hugging Face-shaped route.
 
+**Amendment (September 2026, macOS 27.0, M1 Max): laya's ANE loss was
+Core ML's native gelu, and fp16 itself bounds its grade.**
+
+Localized by stage, then by layer:
+- The encoder alone on the ANE, with laya's head and scorer in fp32,
+  accounts for the whole loss (304-case sample: |Δp| max 0.077, 5 flips).
+  The head and scorer alone, fed the fp32 encoder's output, lose 0.0014.
+- Teacher-forced layer by layer (one layer on the ANE, fed the exact fp32
+  input, everything else in fp32), the damage comes from the first ~8 of
+  the 28 layers, whose local error was ~5× the GPU's. Split further, their
+  MLP branches were 9–15× less accurate than on the GPU.
+- The cause: Core ML's `gelu` op on the ANE is off by up to 6e-3 on
+  [-1, 1] (the GPU: 3e-4), where most of the MLP inputs lie. Rescaling small
+  linear inputs (D17, D19 amendments), LayerNorm and the softmax form made
+  no measurable difference.
+
+The fix is constraint E of `tools/convert_laya.py`. Every exact GELU (the
+encoder's MLPs and the scorer) is written as x·(1 + erf(x/√2)), twice the
+GELU, with the 0.5 folded into the gate rows of each MLP input projection
+and into the scorer's output linear. It is exact in fp32 and 9× closer to
+GELU than the native op on [-1, 1]. Written with the 0.5, coremltools
+fuses the pattern back into the native op, so the converter fails if a
+`gelu` op survives. EmbeddingGemma's tanh-built GELU (D17) remains the
+right form for tanh-approximate activations. For an erf GELU model the tanh
+form changes the function: on laya it moves Δp by up to 0.008 in fp32
+alone.
+
+Measured on the 2,612 cases, before → after:
+
+| path | graded flips | raw Δp max / p99 / mean | bucket invariance (max Δp) | ms @128/256/512 |
+|---|---|---|---|---|
+| ANE | 5 → 1 (margin 0.057) | 0.077 / 0.030 / 0.0036 → 0.039 / 0.016 / 0.0019 | 0.038 → 0.027 | 19.6 / 37.9 / 106 → 20.8 / 40.0 / 107 |
+| GPU | 0 → 0 | 0.030 / 0.008 / 0.0009 → 0.025 / 0.008 / 0.0010 | 0.018 → 0.011 | unchanged (within 2%) |
+| CPU | 6 → 16 | 0.211 / 0.048 / 0.0055 → 0.172 / 0.053 / 0.0057 | 0 → 0 | |
+
+Timings were measured interleaved, before and after on the same inputs in
+the same session (load average 3–5). The CPU gains flips because Core ML's CPU erf
+is a little coarser than its native gelu, and the CPU stays laya's least
+accurate path. The suite's verdicts don't change: ANE and GPU fail bucket
+invariance, and the CPU grades D.
+
+**The floor.** An ideal fp16 engine was simulated in PyTorch on the same
+corpus: fp32 arithmetic, with every stored tensor rounded to fp16. It
+reaches raw Δp max 0.026, p99 0.0074, mean 0.00083, with no flips.
+Rounding only the embedding output, one fp16 rounding at 3e-4 relative,
+moves Δp by up to 0.0058; rounding only the final logits moves it by up to
+0.0006. For Δp ≤ 1e-3, laya's logits (median largest |logit| 4) must be
+accurate to about 0.004, roughly one fp16 ulp. Its early layers amplify
+ulp-level perturbations into [MASK]-token errors of up to 2%, even on the
+GPU. No fp16 path can therefore grade laya above D by max Δp. The ANE now
+sits 1.5× above that floor at the max and 2× at p99. The same ANE encoder
+error, read as an embedding, has a median cosine of 0.99999 at the marker
+tokens, which D26 would grade A.
+
+**Bucket invariance, bisected.** On the ANE, `linear`, `layer_norm`,
+`matmul`, `exp` and `reduce_max` give bit-identical results for the same
+real tokens at any sequence length. `reduce_sum` does not: 63% of its
+outputs are identical, the rest one ulp off. Core ML's softmax is built on
+it. Write the softmax as exp(w − rowmax) followed by one matmul against
+[V | 1], so the numerator and denominator come from the same matmul, and
+laya on the ANE becomes exactly bucket-invariant. Measured over all 2,359
+case/bucket pairs, the max Δp is 0, and outputs also match an unpadded run
+exactly. It isn't adopted yet:
+- On the ANE it keeps the corpus p99 and mean but costs some inputs. A
+  36-token `noul` case goes from Δp 0.001 to 0.032, and the corpus max from
+  0.039 to 0.043.
+- The cost isn't the softmax's arithmetic. Layer 7's MLP, where the massive
+  activation forms, is 10× less accurate inside that graph than the same
+  MLP compiled alone and fed the same inputs.
+- The regression isn't tied to a bucket: its worst case sits in bucket
+  128. Choosing the form per bucket wouldn't avoid it, and mixing forms
+  would break invariance at the boundary between them.
+- On the GPU it costs 34% latency at 512 tokens.
+
+It exposed two CPU traps:
+- On the CPU, Core ML's `reduce_max` (and `reduce_min`) over 256 or more
+  elements returns max(x, 0), which is wrong for rows whose max is
+  negative. `tools/repro_cpu_reduce_max.py` reproduces it, and `--check`
+  lists a model's affected reductions. Taking the max in blocks of 128 is
+  exact on every compute unit.
+- In a sliding-window layer, a pad query whose whole window is padding
+  has every key masked. With the softmax written out, the CPU turns that
+  row into NaN, which spreads through the next layer. Letting every query
+  attend to itself, by clearing the mask's diagonal, prevents it and is
+  exact for real tokens.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
