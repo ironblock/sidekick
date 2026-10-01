@@ -7,9 +7,13 @@ published in fp32 on the CPU, one unpadded pair at a time, and writes
 <out>/<model id>/reference.json + reference.safetensors
 (schema: fixtures/classify/reference.schema.json). Each case is one pair:
 its `query`, the document as `input`, its `group`, the token and segment
-ids, and the raw logit ("torch", float32 [cases, 1], before any
-activation: the suite applies the manifest's). Not committed: it derives
-from model weights.
+ids, and two oracles, each the raw logit (float32 [cases, 1], before any
+activation: the suite applies the manifest's): "torch", the checkpoint as
+published in fp32, and "fp16", the same model as an ideal fp16 engine would
+run it (sidekick_convert.fp16sim; docs/CONVERTING.md), the ceiling a
+converted model is graded against. A model that overflows fp16 as
+published has no ceiling: its fp16 oracle is left out, with a warning. Not
+committed: it derives from model weights.
 
 Two traps it avoids:
 - Pairs are encoded with the install dir's tokenizer.json, the file sidekick
@@ -55,6 +59,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import parity_reference as pr  # noqa: E402  (corpus hash and source identity, D26)
+from sidekick_convert import fp16sim  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 CORPUS = REPO / "fixtures" / "rerank" / "corpus.toml"
@@ -114,7 +119,7 @@ def main():
 
     corpus_text = CORPUS.read_text()
     corpus = tomllib.loads(corpus_text)
-    cases, logits, disagreements = [], [], []
+    cases, logits, fp16_logits, disagreements = [], [], [], []
     for group in corpus["group"]:
         truncate = TRUNCATED in group.get("tags", [])
         if truncate:
@@ -139,13 +144,15 @@ def main():
                 feed["token_type_ids"] = torch.tensor([types])
             with torch.no_grad():
                 logit = model(**feed).logits[0, 0].item()
+                fp16_logit = fp16sim.run(model, **feed).logits[0, 0].item()
             case = {"id": f"{group['id']}-{i}", "tags": group.get("tags", []), "group": group["id"],
                     "query": group["query"], "input": doc, "ids": ids, "k": 1, "qtype": None, "gold": None}
             if segments:
                 case["type_ids"] = types
             cases.append(case)
             logits.append(logit)
-            print(f"  {case['id']:<20} {len(ids):>4} tokens  logit {logit:+.4f}")
+            fp16_logits.append(fp16_logit)
+            print(f"  {case['id']:<20} {len(ids):>4} tokens  logit {logit:+.4f}  fp16 {fp16_logit:+.4f}")
 
     if disagreements:
         print(f"WARNING: AutoTokenizer's ids differ from tokenizer.json's on {len(disagreements)} pairs "
@@ -177,6 +184,18 @@ def main():
         except importlib.metadata.PackageNotFoundError:
             return None
 
+    tensors = {"torch": np.array(logits, dtype=np.float32)[:, None],
+               "fp16": np.array(fp16_logits, dtype=np.float32)[:, None]}
+    lost = np.isfinite(tensors["torch"]) & ~np.isfinite(tensors["fp16"])
+    if lost.any():
+        bad = [cases[i]["id"] for i in np.nonzero(lost[:, 0])[0]]
+        print(f"WARNING: ideal fp16 is not finite on {len(bad)} pairs ({bad[:5]}): "
+              "the model overflows fp16 as published; no fp16 oracle")
+        del tensors["fp16"]
+    else:
+        delta = np.abs(tensors["fp16"] - tensors["torch"])
+        print(f"ideal fp16 vs torch, raw logits: max |Δ| {delta.max():.2e}, mean {delta.mean():.2e}")
+
     source = pr.source_identity(args.source)
     out_dir = args.out / manifest["id"] if args.out else args.model_dir / "parity"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -188,15 +207,15 @@ def main():
                   "buckets": manifest["buckets"], "max_seq_len": max_len, "max_labels": 1,
                   "labels": manifest["classify"]["labels"]},
         "source": {"repo": source["id"], "revision": source["revision"]},
-        "oracles": ["torch"],
+        "oracles": list(tensors),
         "versions": {p: version(p) for p in ("torch", "transformers", "tokenizers", "sentence-transformers")},
         "cases": cases,
     }
     (out_dir / "reference.json").write_text(json.dumps(reference, ensure_ascii=False, indent=1) + "\n")
     from safetensors.numpy import save_file
 
-    save_file({"torch": np.array(logits, dtype=np.float32)[:, None]}, str(out_dir / "reference.safetensors"))
-    print(f"wrote {len(cases)} pairs in {len(corpus['group'])} groups to {out_dir}")
+    save_file(tensors, str(out_dir / "reference.safetensors"))
+    print(f"wrote {len(cases)} pairs in {len(corpus['group'])} groups, oracles {list(tensors)}, to {out_dir}")
 
 
 if __name__ == "__main__":
