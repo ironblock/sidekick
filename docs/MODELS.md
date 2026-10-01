@@ -427,6 +427,7 @@ path.
 |---|---|---|---|---|---|---|---|
 | [nlptown/bert-base-multilingual-uncased-sentiment](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment) as `nlptown-sentiment` | text-classification, 5 labels | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) | B 3.4e-3 | A 6.6e-4 | **B** 2.6e-3 | 294/304 | 4.2 |
 | [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` (**preview**) | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.16 (13 flips; 6.1× ceiling) | **A** 0.037 (0.93× ceiling) | **C** 0.043 (1 flip caps it; 1.93× ceiling, B level) | 1701/1719 | 40 |
+| [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` (**preview**) | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -470,7 +471,33 @@ translated into laya's three question types, plus adversarial cases.
 - Its token layout is a port of laya's own code and reproduces laya's
   Python token for token on 15 cases that take every branch.
 
-The suite passes laya-en on every path. Its CPU path takes about 20 minutes for the 2,612 cases on an M1 Max, which is
+**laya-typed-decisions is a preview.** It is laya's format with a
+1,024-token input and a 256-token head, converted the same way as laya-en
+(erf GELU, the matmul softmax) in four buckets, 128 to 1,024 tokens. Its
+inputs are built by the laya package's code (`--laya-code`, checked by
+sha256). Measured on 2,641 cases: laya-en's corpus plus 29 inputs between
+587 and 1,024 tokens. The long inputs join consecutive fast-decisions rows
+of one domain and cover every question type, 32 long options, inputs that
+laya truncates at 1,024 tokens, and inputs within 16 tokens of the limit
+(fixtures/classify/laya-typed-decisions.corpus.toml).
+- **Grades:** C on the ANE, A on the GPU, D on the CPU. The ideal-fp16
+  ceiling is 0.025 at most (p99 0.0038). The ANE's worst |Δp| equals that
+  maximum (0.025), and its p99 is 2.14× the ceiling's, just short of B. It
+  changes no decision; three ties under 0.05 logits move.
+- **Long inputs** are as accurate as short ones. The worst |Δp| over the
+  inputs above 512 tokens is 0.0084 on the ANE, and 0.0024 for those laya
+  truncated.
+- **Bucket invariance:** exact on the ANE, as for laya-en; up to 0.0031 on
+  the GPU, inside the gate.
+- **CPU:** 1 flip (margin 0.17 logits), |Δp| up to 0.099: Core ML's fp16
+  CPU backend again, while the conversion is exact in fp32 (|Δlogit| ≤
+  1.6e-5 against the checkpoint in every bucket).
+- **Gold accuracy** is 55.1% in fp32 and on every path, within one input
+  (reported, not graded). The checkpoint was fine-tuned on its own
+  typed-decisions data, so this corpus checks parity, not the model's
+  accuracy.
+
+The suite passes both laya models on every path. laya-en's CPU path takes about 20 minutes for its 2,612 cases on an M1 Max, which is
 the suite's default per-worker limit, so run it with `--timeout 3600`.
 
 ## Rerankers (`/v1/rerank`)
