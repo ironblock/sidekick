@@ -207,7 +207,9 @@ Caveats:
   hand-placed rounding points and one generic, agreed on mean and p99 Δp to
   within 15% but differed 1.7x on the maximum. That sensitivity is why the
   definition lives in one function. Grades that divide by the ceiling's
-  maximum should report the p99 ratio too.
+  maximum should report the p99 ratio too. On a corpus of under 100 cases
+  the nearest-rank p99 is the maximum, so there a p99 ratio carries the
+  same sensitivity.
 
 ## Tokenizers
 
