@@ -139,7 +139,13 @@ class ClassifierGates:
     have no argmax). Paths in `gated_paths` fail on flips or on max |dp| above
     `dp_gate`; paths in `report_paths` only report. `pad_value`, when set, is
     what padded output slots must hold (laya's -1e4); a case's reference then
-    covers only its first len(ref) slots."""
+    covers only its first len(ref) slots.
+
+    `markers` grades what a per-token head serves (gliner2): a case's
+    reference covers its real tokens, and its served logits are the output
+    at case.meta["markers"], activated by case.meta["activation"] when set
+    (a multi-label request) or `activation`. Flips, |dp| and pad invariance
+    are all measured on those logits, not on every token."""
     fp32_tol: float = 1e-3
     activation: str = "softmax"
     margin: float = 0.05
@@ -148,6 +154,7 @@ class ClassifierGates:
     report_paths: tuple = ()
     pad_tol: float = 1e-3
     pad_value: float = None
+    markers: bool = False
     plan_min_ane: float = 0.8
     pad_id_range: tuple = (1000, 30000)
 
@@ -157,13 +164,24 @@ class ClassifierGates:
         slots_ok = self.pad_value is None or bool(np.all(got[k:] == self.pad_value))
         return got[:k], slots_ok
 
+    def _served(self, case, out):
+        """(served logits, slots ok, their reference) for one case's output."""
+        if not self.markers:
+            got, ok = self._split(out, case.ref)
+            return got, ok, np.asarray(case.ref, dtype=np.float64)
+        m = list(case.meta["markers"])
+        return (np.asarray(out, dtype=np.float64)[m], True, np.asarray(case.ref, dtype=np.float64)[m])
+
+    def _activation(self, case):
+        return case.meta.get("activation", self.activation) if self.markers else self.activation
+
     def torch(self, wrapper, seq, cases, ports):
         diffs = []
         for c in cases:
-            got, slots_ok = self._split(_run_torch(wrapper, c.feed(seq, ports), ports), c.ref)
+            got, slots_ok, ref = self._served(c, _run_torch(wrapper, c.feed(seq, ports), ports))
             if not slots_ok:
                 raise GateFailure(f"bucket {seq}: fp32 wrapper output malformed (padded slots)")
-            diffs.append(max_abs_diff(got, c.ref))
+            diffs.append(max_abs_diff(got, ref))
         d = largest(diffs)
         if not d <= self.fp32_tol:
             raise GateFailure(f"bucket {seq}: fp32 wrapper vs the checkpoint, max |dlogit| {d:.2e} "
@@ -180,17 +198,17 @@ class ClassifierGates:
             m = _model(compiled, path)
             flips, ties, dps, dls = 0, 0, [], []
             for c in cases:
-                got, slots_ok = self._split(m.predict(c.feed(seq, job.ports))[job.output][0], c.ref)
+                got, slots_ok, ref = self._served(c, m.predict(c.feed(seq, job.ports))[job.output][0])
                 if not (finite(got) and slots_ok):
                     raise GateFailure(f"bucket {seq} [{path}]: non-finite or unpadded logits")
-                ref = np.asarray(c.ref, dtype=np.float64)
+                activation = self._activation(c)
                 if len(ref) > 1:
                     top2 = np.sort(ref)[-2:]
                     if top2[1] - top2[0] >= self.margin:
                         flips += int(np.argmax(got) != np.argmax(ref))
                     else:
                         ties += 1
-                dps.append(max_abs_diff(activate(got, self.activation), activate(ref, self.activation)))
+                dps.append(max_abs_diff(activate(got, activation), activate(ref, activation)))
                 dls.append(max_abs_diff(got, ref))
             r = {"n": len(cases), "flips": flips, "near_ties": ties, "dp_max": largest(dps),
                  "dlogit_max": largest(dls)}
@@ -202,9 +220,9 @@ class ClassifierGates:
                     raise GateFailure(message)
                 print(f"WARNING, report only: {message}", flush=True)
             if padded is not None:
-                a, _ = self._split(m.predict(padded.feed(seq, job.ports))[job.output][0], padded.ref)
-                b, _ = self._split(m.predict(padded.feed(seq, job.ports, _pad_ids(seq, self.pad_id_range)))
-                                   [job.output][0], padded.ref)
+                a, _, _ = self._served(padded, m.predict(padded.feed(seq, job.ports))[job.output][0])
+                b, _, _ = self._served(padded, m.predict(padded.feed(seq, job.ports, _pad_ids(seq, self.pad_id_range)))
+                                       [job.output][0])
                 r["pad"] = max_abs_diff(a, b)
                 if not r["pad"] <= self.pad_tol:
                     raise GateFailure(f"bucket {seq} [{path}]: logits depend on pad content "

@@ -76,6 +76,10 @@ class Case:
     ref: np.ndarray
     extra: dict = dataclasses.field(default_factory=dict)
     label: str = ""
+    # Values the gates read but the model doesn't take, e.g. gliner2's
+    # "markers" (the positions its labels' logits are read at) and the
+    # case's "activation". `extra` stays per port: feed() reads it by port.
+    meta: dict = dataclasses.field(default_factory=dict)
 
     @property
     def n(self):

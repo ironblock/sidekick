@@ -1,4 +1,5 @@
-"""The driver's inputs, the tokenizer rule, the manifest rules, and NaN-safe metrics."""
+"""The driver's inputs, the tokenizer rule, the manifest rules, NaN-safe metrics, and the
+classifier gates' marker mode."""
 
 import json
 import tempfile
@@ -7,8 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import torch
 
-from sidekick_convert import core, manifest, metrics, tokenizer
+from sidekick_convert import core, gates, manifest, metrics, tokenizer
 
 
 def _corpus_texts():
@@ -198,3 +200,47 @@ class WrapperForward(unittest.TestCase):
         self.assertEqual(names, [p.name for p in ports])
         ids, mask = torch.ones((1, 4), dtype=torch.int32), torch.zeros((1, 4), dtype=torch.int32)
         self.assertTrue(torch.equal(direct(ids, mask), ids))
+
+
+class MarkerGates(unittest.TestCase):
+    """ClassifierGates(markers=True): a per-token head is graded on the logits
+    it serves, at each case's markers, with each case's activation."""
+
+    class PerTokenStandIn(torch.nn.Module):
+        def forward(self, input_ids, attention_mask):
+            return input_ids.float() * 0.1
+
+    ports = core.text_ports()
+
+    def case(self, ids, markers, wrong_at=None, activation=None):
+        ref = np.asarray(ids, dtype=np.float64) * 0.1
+        if wrong_at is not None:
+            ref[wrong_at] += 1.0
+        meta = {"markers": markers}
+        if activation:
+            meta["activation"] = activation
+        return core.Case(ids=ids, ref=ref, meta=meta, label="c")
+
+    def test_only_the_markers_are_graded(self):
+        g = gates.ClassifierGates(markers=True)
+        w = self.PerTokenStandIn()
+        ok = self.case([5, 1, 9, 2, 10, 2, 11, 7], [3, 5], wrong_at=6)  # wrong where no label is read
+        self.assertLess(g.torch(w, 16, [ok], self.ports)["fp32"], 1e-6)
+        bad = self.case([5, 1, 9, 2, 10, 2, 11, 7], [3, 5], wrong_at=5)
+        with self.assertRaises(core.GateFailure):
+            g.torch(w, 16, [bad], self.ports)
+
+    def test_served_logits_and_per_case_activation(self):
+        g = gates.ClassifierGates(markers=True, activation="softmax")
+        c = self.case([5, 1, 9, 2, 10, 2, 11, 7], [3, 5], activation="sigmoid")
+        got, ok, ref = g._served(c, np.arange(16) * 1.0)
+        self.assertTrue(ok)
+        self.assertEqual(got.tolist(), [3.0, 5.0])
+        self.assertEqual(ref.tolist(), [0.2, 0.2])
+        self.assertEqual(g._activation(c), "sigmoid")
+        self.assertEqual(g._activation(self.case([1, 2, 3], [0, 1])), "softmax")
+        # Without markers, the first n slots and the gates' activation, as before.
+        plain = gates.ClassifierGates(activation="softmax")
+        got, _, _ = plain._served(core.Case(ids=[1, 2], ref=np.zeros(2), label="p"), np.arange(4) * 1.0)
+        self.assertEqual(got.tolist(), [0.0, 1.0])
+        self.assertEqual(plain._activation(c), "softmax")

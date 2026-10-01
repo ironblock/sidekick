@@ -133,3 +133,26 @@ def check_classifier(m, *, src, buckets, backbone, head, tok, token_type_input, 
     _check(errors, io.get("output") == head.output, f"io.output {io.get('output')!r} != the head's {head.output!r}")
     if errors:
         raise SystemExit("manifest check failed:\n  " + "\n  ".join(errors))
+
+
+def check_gliner2(m, *, src, buckets, backbone, head):
+    """A gliner2-format manifest (docs/design/classify.md) vs the checkpoint
+    and the per-token head: zero-shot, the format's section and io, and the
+    common sequence-limit and revision checks."""
+    errors = []
+    _common(m, errors, src=src, buckets=buckets, backbone=backbone, strict_max_seq_len=True)
+    c = m.get("classify", {})
+    _check(errors, m.get("task") == "zero-shot-classification", f"task {m.get('task')!r} != 'zero-shot-classification'")
+    _check(errors, c.get("format") == "gliner2", f"classify.format {c.get('format')!r} != 'gliner2'")
+    _check(errors, not c.get("labels"), "a zero-shot model has no fixed labels")
+    _check(errors, (c.get("max_labels") or 0) >= 2, "classify.max_labels must be >= 2")
+    _check(errors, bool((c.get("gliner2") or {}).get("default_instructions", "").strip()),
+           "[classify.gliner2] needs default_instructions")
+    _check(errors, m.get("problem_type", "single_label") == "single_label",
+           "a gliner2 model's problem_type is single_label (requests opt into multi_label)")
+    io = c.get("io", {})
+    _check(errors, set(io) == {"input_ids", "attention_mask", "output"},
+           f"[classify.io] must name input_ids, attention_mask and output only, not {sorted(io)}")
+    _check(errors, io.get("output") == head.output, f"io.output {io.get('output')!r} != the head's {head.output!r}")
+    if errors:
+        raise SystemExit("manifest check failed:\n  " + "\n  ".join(errors))

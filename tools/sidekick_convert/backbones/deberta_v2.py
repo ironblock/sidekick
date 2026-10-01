@@ -196,8 +196,10 @@ def load(src, tok, *, task=None):
     model = model.float().eval()
     _check_supported(config, model)
     from ..tokenizer import special_ids
+    # The relative shift replaces transformers' gathers; one in the graph
+    # means a regression that would put the attention on the CPU.
     return DebertaV2Backbone(family="deberta-v2", model=model, config=config,
-                             special_ids=tuple(special_ids(tok)))
+                             special_ids=tuple(special_ids(tok)), forbid_ops={"gather_along_axis"})
 
 
 def gliner2_classifier(src):
