@@ -148,10 +148,12 @@ or SGLang works unchanged. What a host needs to know beyond that:
   400 and accept `false`, the default.
 - **Over-length input.** A text-classification input longer than the
   model's maximum is a 400 unless you send `truncate_prompt_tokens` (`-1`
-  truncates to the model's maximum). laya-format models (laya, Julia-1)
-  and gliner2 models truncate the text themselves, keeping its start, so
-  there it's never a 400, and `truncate_prompt_tokens` and
-  `truncation_side: left` are. gliner2 drops whole words from the end and
+  truncates to the model's maximum). laya-format models (laya, Julia-1),
+  gliner2 models and fev models (Lumma-fev) truncate the text themselves,
+  keeping its start, so there it's never a 400, and `truncate_prompt_tokens`
+  and `truncation_side: left` are. A fev model never cuts its question or
+  options: a request whose instructions and labels don't fit the window
+  beside a state is a 400. gliner2 drops whole words from the end and
   then ends the text with `.` as its training inputs did; its labels and
   instructions must fit the model whole, or the request is a 400.
 - **Errors are data.** Every error, malformed JSON included, is the
