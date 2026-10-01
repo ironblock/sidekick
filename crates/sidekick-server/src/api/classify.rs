@@ -189,10 +189,12 @@ struct Parsed {
 fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed, ApiError> {
     let laya = m.classify.format == Some(ClassifyFormat::Laya);
     let gliner2 = m.classify.format == Some(ClassifyFormat::Gliner2);
+    let fev = m.classify.format == Some(ClassifyFormat::Fev);
     // Formats that truncate the text themselves, keeping its start.
     let self_truncating = match m.classify.format {
         Some(ClassifyFormat::Laya) => Some("laya"),
         Some(ClassifyFormat::Gliner2) => Some("gliner2"),
+        Some(ClassifyFormat::Fev) => Some("fev"),
         None => None,
     };
     let zero_shot = m.task == ClassifyTask::ZeroShotClassification;
@@ -204,6 +206,7 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
                 (ClassifyTask::TextClassification, _) => "a text-classification model",
                 (_, Some(ClassifyFormat::Laya)) => "a zero-shot model in the laya format",
                 (_, Some(ClassifyFormat::Gliner2)) => "a zero-shot model in the gliner2 format",
+                (_, Some(ClassifyFormat::Fev)) => "a zero-shot model in the fev format",
                 _ => "a zero-shot model",
             }
         ))
@@ -264,7 +267,7 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         (Some(_), false) => return Err(unsupported("candidate_labels")),
         (None, false) => vec![],
     };
-    let question_type = match (req.question_type.as_deref(), laya) {
+    let question_type = match (req.question_type.as_deref(), laya || fev) {
         (Some(q), true) => Some(match q {
             "choice" => QuestionType::Choice,
             "score" => QuestionType::Score,
@@ -284,7 +287,7 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         (Some(_), false) => return Err(unsupported("question_type")),
         (None, false) => None,
     };
-    if req.instructions.is_some() && !(laya || gliner2) {
+    if req.instructions.is_some() && !(laya || gliner2 || fev) {
         return Err(unsupported("instructions"));
     }
     // The labels must render (noul's are fixed: `false`, `true`), and a
@@ -295,6 +298,9 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         if req.instructions.is_none() && section.default_instructions(q).is_none() {
             return Err(ApiError::invalid(sidekick_embed::laya::NO_INSTRUCTIONS));
         }
+    }
+    if let (Some(q), true) = (question_type, fev) {
+        sidekick_embed::fev::render_options(q, &candidate_labels)?;
     }
 
     // Calibration is an extension of models that declare temperatures;

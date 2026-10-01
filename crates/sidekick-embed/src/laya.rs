@@ -176,7 +176,7 @@ pub fn render_options(
 /// `"false"` → `Some(None)`, `"false: text"` → `Some(Some("text"))`,
 /// anything else → `None`. An empty description counts as none, as laya's
 /// `crit.get(...) or default` does.
-fn noul_description<'a>(label: &'a str, key: &str) -> Option<Option<&'a str>> {
+pub(crate) fn noul_description<'a>(label: &'a str, key: &str) -> Option<Option<&'a str>> {
     let rest = label.trim().strip_prefix(key)?;
     if rest.is_empty() {
         return Some(None);

@@ -270,6 +270,33 @@ pub fn julia_zero_shot() -> String {
         .replace("\ndefault_instructions", "\noption_rendering = \"julia\"\n# default_instructions")
 }
 
+/// `classifier.toml` for a zero-shot model in the fev format.
+pub const FEV_ZERO_SHOT: &str = r#"
+id = "fev-decider"
+task = "zero-shot-classification"
+source = { repo = "example/fev-decider" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [64]
+max_seq_len = 64
+max_batch = 2
+
+[classify]
+format = "fev"
+max_labels = 4
+
+[classify.fev]
+state_max_len = 32
+delimiters = { state = "<|r0|>", question = "<|r1|>", option = "<|r2|>", option_end = "<|r3|>", decide = "<|r4|>" }
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+marker_pos = "marker_pos"
+decide_pos = "decide_pos"
+output = "logits"
+"#;
+
 /// `classifier.toml` for a reranker that reports raw logits (the ms-marco
 /// cross-encoders' `Identity` activation).
 pub const RERANKER: &str = r#"
@@ -381,10 +408,23 @@ impl Classifier for MockClassifier {
                 assert!(params.question_type.is_none(), "the server sends no question_type to gliner2");
                 (vec![0; params.candidate_labels.len()], params.candidate_labels.clone())
             }
+            Some(ClassifyFormat::Fev) => {
+                let qt = params.question_type.expect("the server requires question_type");
+                sidekick_embed::fev::render_options(qt, &params.candidate_labels)?;
+                (vec![0; params.candidate_labels.len()], params.candidate_labels.clone())
+            }
             None => (vec![], vec![]),
         };
         LABELS.with(|l| *l.borrow_mut() = labels);
-        Ok(Prepared { ids, type_ids: vec![], markers, qtype: params.question_type.map(|q| q.index()), bucket: 64 })
+        let fev = self.manifest.classify.format == Some(ClassifyFormat::Fev);
+        Ok(Prepared {
+            ids,
+            type_ids: vec![],
+            markers,
+            qtype: params.question_type.filter(|_| !fev).map(|q| q.index()),
+            bucket: 64,
+            decide_pos: fev.then_some(0),
+        })
     }
 
     fn prepare_pair(&self, query: &str, document: &str, params: &PairParams) -> Result<Prepared> {
@@ -394,7 +434,7 @@ impl Classifier for MockClassifier {
             return Err(Error::InvalidRequest("rejected by prepare".into()));
         }
         let ids: Vec<i32> = format!("{query}|{document}").bytes().map(i32::from).collect();
-        Ok(Prepared { type_ids: vec![0; ids.len()], ids, markers: vec![], qtype: None, bucket: 64 })
+        Ok(Prepared { type_ids: vec![0; ids.len()], ids, markers: vec![], qtype: None, bucket: 64, decide_pos: None })
     }
 
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {
@@ -483,6 +523,7 @@ pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
         ("decider", ZERO_SHOT),
         ("schema-decider", SCHEMA_ZERO_SHOT),
         ("cpu-capped", capped.as_str()),
+        ("fev-decider", FEV_ZERO_SHOT),
         ("julia", julia.as_str()),
         ("reranker", RERANKER),
         ("sigmoid-reranker", SIGMOID_RERANKER),

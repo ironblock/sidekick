@@ -144,6 +144,7 @@ fn predictions_match_torch_in_every_bucket() {
             markers: case.markers.clone(),
             qtype: Some(case.qtype),
             bucket,
+            decide_pos: None,
         };
         // Its own bucket, the larger one, and random pad ids: all the same.
         let mut runs = vec![clf.run(&prepared).unwrap(), clf.run_in(&prepared, 32, &[]).unwrap()];
@@ -287,7 +288,7 @@ fn a_reranker_feeds_segment_ids_and_matches_torch() {
         serde_json::from_str(&std::fs::read_to_string(reranker_fixtures().join("expected.json")).unwrap()).unwrap();
     for case in &expected.cases {
         let bucket = if case.ids.len() <= 16 { 16 } else { 32 };
-        let prepared = Prepared { ids: case.ids.clone(), type_ids: case.type_ids.clone(), markers: vec![], qtype: None, bucket };
+        let prepared = Prepared { ids: case.ids.clone(), type_ids: case.type_ids.clone(), markers: vec![], qtype: None, bucket, decide_pos: None };
         for score in [clf.run(&prepared).unwrap(), clf.run_in(&prepared, 32, &[5; 32]).unwrap()] {
             assert_eq!(score.len(), 1);
             assert!((score[0] - case.score).abs() < 2e-2, "{score:?} vs {}", case.score);
@@ -400,7 +401,7 @@ fn gliner2_reads_per_token_logits_at_the_markers_in_every_bucket() {
         serde_json::from_str(&std::fs::read_to_string(gliner2_fixtures().join("expected.json")).unwrap()).unwrap();
     for case in &expected.cases {
         let bucket = if case.ids.len() <= 16 { 16 } else { 32 };
-        let prepared = Prepared { ids: case.ids.clone(), type_ids: vec![], markers: case.markers.clone(), qtype: None, bucket };
+        let prepared = Prepared { ids: case.ids.clone(), type_ids: vec![], markers: case.markers.clone(), qtype: None, bucket, decide_pos: None };
         // Its own bucket, the larger one, and random pad ids: all the same.
         let mut runs = vec![clf.run(&prepared).unwrap(), clf.run_in(&prepared, 32, &[9; 32]).unwrap()];
         runs.push(clf.run_in(&prepared, bucket, &[7; 32]).unwrap());

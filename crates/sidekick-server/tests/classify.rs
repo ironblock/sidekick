@@ -408,6 +408,37 @@ async fn julia_rendering_is_checked_before_the_model_loads() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn fev_requests_are_validated_against_the_format() {
+    let base = || json!({"model": "fev-decider", "input": "x", "candidate_labels": ["a", "b"], "question_type": "choice"});
+    let with = |field: &str, value: Value| {
+        let mut b = base();
+        if value.is_null() {
+            b.as_object_mut().unwrap().remove(field);
+        } else {
+            b[field] = value;
+        }
+        b
+    };
+    // No instructions is an empty question, as fev's own API sends it.
+    classify_ok(base()).await;
+    classify_ok(with("instructions", json!("Which fits?"))).await;
+    classify_ok(with("multi_label", json!(false))).await;
+    classify_400(with("question_type", Value::Null), "needs `question_type`").await;
+    classify_400(with("truncate_prompt_tokens", json!(8)), "fev format").await;
+    classify_400(with("truncation_side", json!("left")), "fev format").await;
+    classify_400(with("multi_label", json!(true)), "`multi_label` isn't supported").await;
+    classify_400(with("calibration", json!("model")), "fev format").await;
+    classify_400(with("candidate_labels", json!(["a"])), "at least 2").await;
+    // fev's rendering is checked before the model loads: labels alike once
+    // rendered, and noul labels that aren't false/true.
+    classify_400(with("candidate_labels", json!(["b", "b: "])), "render as the same option").await;
+    let noul = |labels: Value| json!({"model": "fev-decider", "input": "x", "candidate_labels": labels, "question_type": "noul"});
+    classify_400(noul(json!(["yes", "no"])), "`false` then `true`").await;
+    // Half-described noul labels render on their own sides, as fev does.
+    classify_ok(noul(json!(["false: it rains", "true"]))).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn models_are_sent_to_the_route_for_their_task() {
     classify_400(json!({"model": "test-static", "input": "a"}), "model `test-static` is a feature-extraction model").await;
     classify_400(json!({"model": "apple-fm", "input": "a"}), "text-generation").await;
@@ -505,6 +536,9 @@ async fn listings_are_task_aware() {
     assert_eq!(g["extensions"], json!(["candidate_labels", "instructions", "multi_label"]));
     assert_eq!(g["required"], json!(["candidate_labels"]));
     assert!(g.get("calibration").is_none());
+    let f = model("fev-decider");
+    assert_eq!(f["extensions"], json!(["candidate_labels", "question_type", "instructions"]));
+    assert_eq!(f["required"], json!(["candidate_labels", "question_type"]));
     // Each classifier's configured compute units: the default, or its own.
     assert_eq!(model("sentiment")["compute_units"], "cpu_and_ne");
     assert_eq!(g["compute_units"], "cpu_and_gpu");
@@ -512,7 +546,7 @@ async fn listings_are_task_aware() {
     let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;
     assert_eq!(
         health["classifiers"]["models"],
-        json!(["cpu-capped", "decider", "julia", "reranker", "schema-decider", "sentiment", "sigmoid-reranker"])
+        json!(["cpu-capped", "decider", "fev-decider", "julia", "reranker", "schema-decider", "sentiment", "sigmoid-reranker"])
     );
     // A cpu_only model past 1,024 tokens runs capped (D33), and says so.
     let cap = json!({"limit": 1024, "manifest_max_seq_len": 2048});

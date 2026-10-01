@@ -85,6 +85,7 @@ pub fn worker(
                 markers: case.markers.clone(),
                 qtype: case.qtype,
                 bucket,
+                decide_pos: None,
             };
             Some(clf.run(&theirs).map_err(e)?)
         };
