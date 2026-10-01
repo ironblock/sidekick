@@ -6,7 +6,10 @@
 # ids 0 then 1 in `token_type_ids`; the output is the raw logit, (1, 1).
 #
 # Produce the artifacts with the conversion library's BERT recipe
-# (tools/sidekick_convert, docs/CONVERTING.md). `problem_type` is the
+# (tools/sidekick_convert, docs/CONVERTING.md):
+#   python tools/convert_bert_classifier.py <checkpoint> <models>/ms-marco-minilm-l6-v2 --twice-gelu
+# --twice-gelu builds BERT's GELU from erf instead of Core ML's native op,
+# which is coarse on the ANE (docs/MODELS.md has the measured difference). `problem_type` is the
 # activation vLLM derives from the checkpoint: it pins
 # sentence-transformers' Identity, so scores are raw logits (regression).
 
