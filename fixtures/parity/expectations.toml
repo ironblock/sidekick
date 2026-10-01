@@ -151,3 +151,54 @@ path = "ane"
 worst = 0.999872
 stress = 0.99975
 drift = 0.004806
+
+# all-minilm-l6-v2 and e5-small-v2 (conversion library, BERT recipe):
+# M1 Max, macOS 27.0, September 2026.
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "all-minilm-l6-v2"
+path = "cpu"
+worst = 0.999878
+stress = 0.999947
+drift = 0.003199
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "all-minilm-l6-v2"
+path = "gpu"
+worst = 0.999988
+stress = 0.999988
+drift = 0.000667
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "all-minilm-l6-v2"
+path = "ane"
+worst = 0.999875
+stress = 0.999938
+drift = 0.004463
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "e5-small-v2"
+path = "cpu"
+worst = 0.999931
+stress = 0.999984
+drift = 0.00185
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "e5-small-v2"
+path = "gpu"
+worst = 0.999987
+stress = 0.999989
+drift = 0.000351
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "e5-small-v2"
+path = "ane"
+worst = 0.999919
+stress = 0.999983
+drift = 0.002743
