@@ -7,9 +7,13 @@ A converter builds a `Job` and hands it to `run()`. For every bucket, `run()`:
 3. traces it and converts with coremltools to an ML program (macOS 15 opset,
    int32 inputs with static shapes, docs/DECISIONS.md D15 and D27);
 4. refuses the graph if it contains a forbidden op (Core ML's fused
-   attention by default, D25);
-5. compiles it with `xcrun coremlcompiler` and runs the Core ML gates on the
-   compiled artifact, the bytes that get installed;
+   attention by default, D25), and with `int8_embedding` stores the
+   token-embedding table in int8;
+5. compiles it with `xcrun coremlcompiler`; refuses a model served on the
+   ANE whose weights pass the Neural Engine's per-program limit
+   (plan.MAX_ANE_PROGRAM_WEIGHT_BYTES; `ignore_ane_weight_cap` makes that a
+   warning, recorded in the report and the installed manifest); and runs the
+   Core ML gates on the compiled artifact, the bytes that get installed;
 6. installs `model_{seq}.mlmodelc`.
 
 Two inputs are kept apart by type, so no recipe can mix them up:
@@ -190,6 +194,8 @@ class Job:
     landing_required: bool = False
     gate_cases: str = "fitting"   # "fitting": every case that fits a bucket; "landing": those the server
                                   # would send to it (for models whose accuracy varies by bucket)
+    int8_embedding: bool = False  # store the token-embedding table in int8 (see int8_embedding())
+    ignore_ane_weight_cap: bool = False  # convert past MAX_ANE_PROGRAM_WEIGHT_BYTES, with a warning
 
 
 def trace_convert(wrapper, ports, seq, example, output):
@@ -209,6 +215,26 @@ def trace_convert(wrapper, ports, seq, example, output):
     )
 
 
+def int8_embedding(mlmodel):
+    """The converted program with its token-embedding table, the largest
+    constant a gather reads, stored in int8: linear symmetric, one scale per
+    row. Opt-in (Job(int8_embedding=True)), and graded like any rewrite. It
+    halves the largest single weight of a big-vocabulary model, which can
+    bring the program under Core ML's ~1 GiB cap for the ANE (plan.py). The
+    lookup is a gather, off the ANE either way, so the ANE's arithmetic is
+    unchanged. Returns (model, table name, shape)."""
+    import coremltools.optimize.coreml as cto
+    tables = [op.x.op for fn in mlmodel._mil_program.functions.values() for op in fn.operations
+              if op.op_type == "gather" and op.x.op is not None and op.x.op.op_type == "const"
+              and len(op.x.shape) == 2]
+    if not tables:
+        raise GateFailure("int8_embedding: the converted program has no gather from a constant table")
+    table = max(tables, key=lambda t: t.outputs[0].shape[0])
+    config = cto.OptimizationConfig(op_name_configs={table.name: cto.OpLinearQuantizerConfig(
+        mode="linear_symmetric", dtype="int8", granularity="per_channel", weight_threshold=1)})
+    return cto.linear_quantize_weights(mlmodel, config), table.name, tuple(table.outputs[0].shape)
+
+
 def mil_op_types(mlmodel):
     """Every op type in the converted ML program."""
     return {op.type for fn in mlmodel.get_spec().mlProgram.functions.values()
@@ -222,6 +248,34 @@ def compile_mlmodelc(pkg, out_dir):
     subprocess.run(["xcrun", "coremlcompiler", "compile", str(pkg), str(out_dir)], check=True,
                    stdout=subprocess.DEVNULL)
     return next(out_dir.glob("*.mlmodelc"))
+
+
+def check_ane_weights(job, seq, compiled):
+    """The weight-size check for a model served on the ANE (the gates make
+    its compute plan a gate). Returns None when the weights fit, or the
+    bypass note when the job ignores the limit; raises GateFailure
+    otherwise."""
+    from . import plan
+    if not getattr(job.gates, "plan_required", True):
+        return None
+    size = plan.weights_bytes(compiled)
+    if size <= plan.MAX_ANE_PROGRAM_WEIGHT_BYTES:
+        return None
+    message = plan.over_cap(job.name, seq, size)
+    if not job.ignore_ane_weight_cap:
+        raise GateFailure(message)
+    print(f"WARNING, --ignore-ane-weight-cap: {message} Converting anyway; the compute-plan gate still "
+          "checks where Core ML places it.", flush=True)
+    return (f"bucket {seq} has {size / 2**30:.3f} GiB of weights, over the Neural Engine's 1 GiB "
+            "per-program limit (MAX_ANE_PROGRAM_WEIGHT_BYTES)")
+
+
+def note_bypass(manifest, notes):
+    """Append the weight-limit bypass to an installed manifest, as comments,
+    so a bypassed artifact stays visible."""
+    lines = ["", "# Converted with --ignore-ane-weight-cap:"] + [f"# - {n}" for n in notes]
+    with open(manifest, "a") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 def _gate(job, fn, *args):
@@ -241,7 +295,7 @@ def run(job, install_dir):
     if job.negative_control:
         print(f"{job.name}: NEGATIVE CONTROL. Gate failures are reported, not fatal; "
               "never install the result where the daemon looks.", flush=True)
-    reports = {}
+    reports, bypassed = {}, []
     with tempfile.TemporaryDirectory() as work:
         for seq in job.buckets:
             cases = (job.evaluation.landing(seq, job.buckets) if job.gate_cases == "landing"
@@ -259,9 +313,16 @@ def run(job, install_dir):
                 _gate(job, _raise, GateFailure(
                     f"bucket {seq}: the converted graph contains {sorted(found)}; "
                     "see docs/CONVERTING.md for why each is forbidden"))
+            if job.int8_embedding:
+                mlmodel, table, shape = int8_embedding(mlmodel)
+                print(f"bucket {seq}: embedding table {table} {shape} stored in int8", flush=True)
             pkg = Path(work) / f"model_{seq}.mlpackage"
             mlmodel.save(str(pkg))
             compiled = compile_mlmodelc(pkg, Path(work) / f"compiled_{seq}")
+            bypass = _gate(job, check_ane_weights, job, seq, compiled)
+            if bypass:
+                report["ane_weight_cap"] = f"bypassed: {bypass}"
+                bypassed.append(bypass)
             report["coreml"] = _gate(job, job.gates.coreml, compiled, seq, cases, job, job.timing)
             for line in job.gates.describe_coreml(report["coreml"]):
                 print(f"bucket {seq}: {line}", flush=True)
@@ -272,8 +333,13 @@ def run(job, install_dir):
             reports[seq] = report
     for source, name in job.install_files:
         shutil.copy(source, install_dir / name)
+        if bypassed and name.endswith(".toml"):
+            note_bypass(install_dir / name, bypassed)
     if job.install_files:
         print(f"installed {', '.join(n for _, n in job.install_files)} -> {install_dir}", flush=True)
+    if bypassed:
+        print(f"WARNING: installed past the Neural Engine's weight limit (--ignore-ane-weight-cap): "
+              f"{'; '.join(bypassed)}", flush=True)
     return reports
 
 

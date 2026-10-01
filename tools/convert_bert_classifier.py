@@ -130,7 +130,7 @@ def main():
         tok=tok, texts=None if ranking else gate, pairs=gate if ranking else None,
         expected_problem_type=manifest.vllm_problem_type(backbone.config) if ranking else None,
         gate_overrides=RANKING_GATES if ranking else None,
-        rewrites=[bert.twice_gelu] if args.twice_gelu else (), timing=args.time)
+        rewrites=[bert.twice_gelu] if args.twice_gelu else (), timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)
 
 

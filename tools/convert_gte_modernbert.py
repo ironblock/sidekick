@@ -116,7 +116,7 @@ def main():
         texts=PARITY_SENTENCES, calibration=calibration,
         rewrites=[modernbert.residual_k(calibration, tok)],
         forbid_ops=frozenset() if negative_control else frozenset({core.FUSED_ATTENTION}),
-        negative_control=negative_control, timing=args.time)
+        negative_control=negative_control, timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)
 
 

@@ -131,7 +131,7 @@ def main():
     print(f"largest linear output {value:.1f} at {name}, {factor:.1f}x under the ANE linear's 2^15")
     job = recipes.embedder(model_id=MODEL_ID, src=args.src, buckets=args.buckets, backbone=backbone,
                            head=Pool("cls"), tok=tok, texts=PARITY_SENTENCES,
-                           forbid_ops=frozenset(), timing=args.time)
+                           forbid_ops=frozenset(), timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)
 
 

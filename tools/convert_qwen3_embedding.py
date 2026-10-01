@@ -94,7 +94,7 @@ def main():
         tok=tok, texts=[full(s, q) for s, q in zip(PARITY_SENTENCES, QUERY_FLAGS)], calibration=calibration,
         rewrites=[qwen3.precision_rewrite(calibration, tok)], strict_max_seq_len=False,
         truncate=True,   # the long text is 520 tokens: gate the server's truncation, which keeps the EOS
-        timing=args.time)
+        timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)
 
 
