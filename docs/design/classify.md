@@ -38,8 +38,8 @@ POST /v1/classify
 | `user` | SGLang, OpenAI | accepted and ignored |
 | `candidate_labels` ([str]) | extension (HF zero-shot's name) | required on zero-shot models; 400 on fixed-label models |
 | `calibration` (`none` \| `model`) | extension | only on models that declare temperatures (every value, `none` included, is a 400 elsewhere); default `none`; `model` applies the manifest's temperature, and with `use_activation: false` needs none |
-| `question_type` (`choice` \| `score` \| `noul`) | extension, laya and fev formats | required on both |
-| `instructions` (str) | extension, laya, gliner2 and fev formats | laya: the question text, with the manifest's per-type default when absent; required by a model whose manifest has none (Julia-1). gliner2: the task prompt (below), with the manifest's default when absent. fev: the question text; absent, the question is empty, as fev's own API sends it |
+| `question_type` (`choice` \| `score` \| `noul`) | extension, laya, fev and agentjev formats | required on all three |
+| `instructions` (str) | extension, laya, gliner2, fev and agentjev formats | laya: the question text, with the manifest's per-type default when absent; required by a model whose manifest has none (Julia-1). gliner2: the task prompt (below), with the manifest's default when absent. fev: the question text; absent, the question is empty, as fev's own API sends it. agentjev: the question text, required and nonempty, as AgentJev's API requires |
 | `multi_label` (bool, default false) | extension (HF zero-shot's name), gliner2 format | `true` (gliner2 only; a 400 elsewhere) scores each label independently: `probs` are per-label sigmoids instead of a softmax, and one candidate label is allowed. `false`, the default, is accepted on every model, as Hugging Face clients send it |
 
 Any other top-level field is ignored, as D22 already does. Extension fields
@@ -64,6 +64,10 @@ Over-length input:
   keeping its start. The question and options are never cut: a row that
   still exceeds the window is a 400 naming their token count.
   `truncate_prompt_tokens` and `truncation_side: left` are 400s.
+- **agentjev format:** nothing is truncated, as AgentJev refuses an
+  over-long path: a tree longer than the largest bucket is a 400 naming
+  its token count, and so are `truncate_prompt_tokens` and
+  `truncation_side: left`.
 
 Other 400s:
 - an empty batch, or more inputs than `max_batch`;
@@ -79,6 +83,10 @@ Other 400s:
 - with the fev format: two labels that render alike once control tokens
   are rewritten (`"<|x|>"` and `"<¦x¦>"`), or a label that renders as an
   empty option;
+- with the agentjev format: no `instructions`; an empty input or
+  instructions (whitespace by Python's `str.isspace`); two labels that give
+  the same candidate text (`"x: b"` and `"b"`), or one that gives an empty
+  one;
 - no `instructions` for a model whose manifest has no default;
 - `multi_label: true` on any format but gliner2;
 - `calibration: model` where the model declares no temperature for that
@@ -170,7 +178,7 @@ problem_type = "single_label"             # single_label | multi_label | regress
 compute_units = "cpu_and_ne"              # cpu_and_ne (default) | cpu_and_gpu | cpu_only | all
 
 [classify]
-format = "laya"                           # zero-shot formats: "laya", "gliner2", "fev"
+format = "laya"                           # zero-shot formats: "laya", "gliner2", "fev", "agentjev"
 max_labels = 32                           # laya: must equal the artifact's marker_pos width (checked at load)
 labels = []                               # text-classification: output order (id2label)
 
@@ -268,6 +276,7 @@ Every input is int32, which is what the runtime's `predict_int32` feeds.
 | laya | `input_ids [1,S]`, `attention_mask [1,S]`, `marker_pos [1,KMAX]` (−1 pads unused slots), `qtype [1]` (rank 1) | `logits [1,KMAX]`, padded slots at −1e4 |
 | gliner2 | `input_ids [1,S]`, `attention_mask [1,S]` | `logits [1,S]`, one per token |
 | fev | `input_ids [1,S]`, `attention_mask [1,S]`, `marker_pos [1,KMAX]` (each option's `<option_end>` position, −1 pads unused slots), `decide_pos [1]` (rank 1) | `logits [1,KMAX]`, padded slots at −1e4 |
+| agentjev | `input_ids [1,S]`, `attention_mask [1,S]`, `seg [1,S]` (−1 for pads), `position_ids [1,S]` (0 for pads), `marker_pos [1,KMAX]` (each candidate's last token, −1 pads unused slots) | `logits [1,KMAX]`, padded slots at −1e4 |
 
 laya's graph builds the one-hot marker selection and the question-type
 embedding from these inputs itself. It pins the residual range rewrite at
@@ -680,15 +689,141 @@ calibration table. `decide_pos` is an explicit input although it is always
 the row's last real token, so the token-id fixture pins it like the option
 positions.
 
+## The agentjev format
+
+AgentJev (aimeigaoshou/agent-jev; code at malevrigns/agent-jev,
+Apache-2.0) is a Qwen3-0.6B decision model with a candidate head. Its
+service scores each candidate on its own causal path,
+
+```text
+[STATE] state \n[QUESTION] question \n[CANDIDATE] candidate
+```
+
+reads the hidden state at the path's last token, and runs a
+permutation-equivariant set transformer and a scorer over the candidates'
+vectors. Every path of a question shares the state and question, so
+sidekick lays the question out once as a tree, and the graph scores every
+candidate in one pass. The Rust port of AgentJev's input contract
+(`jev_service/contract.py` at the pinned revision: `semantic`, `prepare`'s
+candidate rules, `encode_paths`) must copy these exactly:
+- Each fragment is tokenized on its own with the model's tokenizer and no
+  special tokens, and the ids are concatenated, with no BOS or EOS:
+  - the state, as `"[STATE] " + state`, or as sent when it already starts
+    with `[STATE]`;
+  - the question, as `"\n[QUESTION] " + instructions`;
+  - each candidate, as `"\n[CANDIDATE] " + candidate`.
+  The tags are plain text, not added tokens. Added tokens in the text are
+  matched as the tokenizer matches them, so `<|endoftext|>` in a state is
+  that token, as in AgentJev's own service.
+- The tokenizer is the checkpoint's `tokenizer.json`, which is
+  Qwen3-0.6B-Base's, as AgentJev's service loads. Qwen3-0.6B's (the
+  instruct model's) has extra added tokens and isn't interchangeable.
+- The state and the instructions must be nonempty once Python's
+  whitespace (`str.isspace`, which includes U+001C to U+001F) is
+  stripped. Text is otherwise kept as sent.
+- Candidates come from the request's labels in label order. A label's
+  description is the text after its first `": "`; an empty description
+  counts as none:
+  - choice: the description, else the label, as AgentJev reads an
+    option's value;
+  - score: the label as given, as AgentJev reads a level's description;
+  - noul: labels `false` then `true`, each optionally described. The
+    candidates are the descriptions, else `FALSE` and `TRUE`, AgentJev's
+    defaults for undescribed boolean criteria. AgentJev orders boolean
+    candidates true first. The head is permutation-equivariant and the
+    tree's branches never see each other, so label order changes only the
+    order of `probs`.
+  Candidates must be nonempty and distinct, as AgentJev requires; either
+  failure is a 400.
+- The tree is the prefix (the state's and question's ids), then each
+  candidate's ids in label order. Per token:
+  - `seg`: 0 for the prefix, `c` for candidate `c` (1-based);
+  - `position_ids`: `0…P−1` over the prefix, then `P, P+1, …` within each
+    candidate, restarting at `P`.
+  Each candidate's last token is its `marker_pos` entry. Positions come
+  from the layout, never from searching for token ids.
+- Nothing is truncated (see "Over-length input"). AgentJev refuses a path
+  over 2,048 tokens. sidekick's limit is stricter: the whole tree,
+  the prefix plus every candidate, must fit the largest bucket.
+
+The graph's attention lets token `i` attend token `j` when
+`attention_mask_j = 1`, `j ≤ i`, `seg_j ≥ 0`, and `seg_j` is 0 or
+`seg_i`. A pad (segment −1) attends only itself, so no row is fully
+masked and random pad ids change nothing. RoPE reads `position_ids`. Each
+candidate therefore sees exactly its own path at its own positions. Against
+AgentJev's per-path encoding, through the checkpoint's own head, the tree
+reproduced every probability within 2.1e-7 in fp32 (a boolean, a 4-option
+choice and a 5-level score). The head reads the hidden state at each
+`marker_pos` with one-hot matmuls. It runs the set transformer over the
+KMAX slots, with unused slots masked out of its attention and at −1e4 in
+the output.
+
+The probabilities are a softmax over the candidates' logits. AgentJev's
+service divides the logits by a per-type temperature (`temperatures.json`:
+1.0718 for boolean and score, 1.0353 for choice) when it is started with
+one, as its card does. sidekick's calibration is opt-in, as on laya:
+`calibration: model` applies the manifest's temperatures, declared under
+laya's keys for every label count the model serves (`noul:2`;
+`choice:2` … `choice:11+`; `score:2` … `score:6-10`). The default is
+temperature 1.
+
+Scope, per request:
+- **One question.** AgentJev's service takes several questions per state.
+  Each is scored on its own paths, so a sidekick request with one question
+  is the same computation.
+- **String states only.** AgentJev also takes a JSON object or array as a
+  state and renders it as compact JSON with sorted keys
+  (`separators=(',', ':')`, `ensure_ascii=False`). A sidekick input is a
+  string, used as sent: a client reproduces AgentJev's rendering by
+  sending that JSON text.
+- **`question_type` and `instructions` are required:** the model has no
+  default question, and noul labels render differently. `required` in
+  `/v1/models` lists `candidate_labels`, `question_type` and
+  `instructions`.
+- **Labels:** 2 to `max_labels` per request (AgentJev allows 2 to 255
+  choices and 2 to 10 levels).
+- **The response** is vLLM's: `probs` in label order and the argmax
+  `label`. AgentJev's own answers derive from the same distribution: a
+  boolean's probability is `p(true)`, and a score's expected level is
+  `Σ i·pᵢ`.
+
+```toml
+[classify]
+format = "agentjev"
+max_labels = 32
+labels = []
+
+[classify.calibration]                    # AgentJev's per-type temperatures
+"noul:2" = 1.0718
+"choice:2" = 1.0353
+# … every choice and score bucket
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+seg = "seg"
+position_ids = "position_ids"
+marker_pos = "cand_end"       # each candidate's last token
+output = "logits"
+```
+
+Validation for `format = "agentjev"`: `marker_pos`, `seg` and
+`position_ids` in `[classify.io]`, and no `qtype` or `token_type_ids`;
+`seg` and `position_ids` on no other format; `single_label`. Loading
+checks `seg` and `position_ids` are `[1, bucket]`, like `input_ids`.
+
 ## Fixtures and references (frozen formats)
 
 - **Token-id fixture**, `fixtures/classify/<model id>.tokens.json`,
   generated by `tools/classifier_reference.py` with the model's own Python:
   laya's `rl_common.py` for laya-en, the laya package's `common.py` for
   laya-typed-decisions, Julia-1's `julia/data.py` for Julia-1, the
-  gliner2 package's processor for gliner2, and Lumma-fev's
+  gliner2 package's processor for gliner2, Lumma-fev's
   `modeling_fev.py` (`encode`) for fev, with each case's `decide`
-  position. gliner2's fixture also has two
+  position, and AgentJev's `contract.py` (`encode_paths`) for agentjev,
+  laid out as a tree with each case's `seg` and `position_ids`. Every
+  path `encode_paths` returns must equal the case's prefix followed by
+  that candidate's suffix. gliner2's fixture also has two
   cases the generator builds at the truncation boundary (a text ending in
   `!` or `?` and a space, one token over only because of the appended
   `.`), which aren't in the corpus. `crates/sidekick-embed/tests/classify_tokens.rs`
