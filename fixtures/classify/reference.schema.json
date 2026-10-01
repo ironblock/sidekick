@@ -48,6 +48,8 @@
           "markers": {"type": "array", "items": {"type": "integer"}},
           "qtype": {"type": ["integer", "null"]},
           "decide": {"type": ["integer", "null"], "description": "fev: the <decide> position, where the pointer head's query is read"},
+          "seg": {"type": "array", "items": {"type": "integer"}, "description": "agentjev: each token's tree segment (0 the prefix, c candidate c)"},
+          "position_ids": {"type": "array", "items": {"type": "integer"}, "description": "agentjev: each token's position; every candidate's restart at the prefix's end"},
           "k": {"type": "integer", "description": "label count for this case"},
           "multi_label": {"type": ["boolean", "null"], "description": "the request asked for multi-label decoding (gliner2): the case is graded with independent sigmoids, not the model's activation"},
           "gold": {"type": ["array", "null"], "items": {"type": "string"}, "description": "gold labels when the corpus has them (reported, never graded)"}

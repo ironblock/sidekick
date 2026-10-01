@@ -44,6 +44,11 @@ struct Case {
     /// fev: the decide token's position.
     #[serde(default)]
     decide: Option<i32>,
+    /// agentjev: each token's tree segment and position.
+    #[serde(default)]
+    seg: Vec<i32>,
+    #[serde(default)]
+    position_ids: Vec<i32>,
 }
 
 fn fixtures_dir() -> PathBuf {
@@ -124,6 +129,8 @@ fn input_builder_reproduces_every_token_fixture() {
             assert_eq!(prepared.markers, case.markers, "{}/{}: markers", fixture.model, case.id);
             assert_eq!(prepared.qtype, case.qtype, "{}/{}: qtype", fixture.model, case.id);
             assert_eq!(prepared.decide_pos, case.decide, "{}/{}: decide", fixture.model, case.id);
+            assert_eq!(prepared.seg, case.seg, "{}/{}: seg", fixture.model, case.id);
+            assert_eq!(prepared.position_ids, case.position_ids, "{}/{}: position_ids", fixture.model, case.id);
             assert!(builder.buckets().contains(&prepared.bucket));
         }
         eprintln!("{}: {} cases reproduced", fixture.model, fixture.cases.len());
