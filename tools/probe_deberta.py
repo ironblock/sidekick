@@ -44,11 +44,25 @@ Measured on an M1 Max, macOS 27.0, coremltools 9.0 (September 2026):
   deberta-v3-small, cls                128-512  262/278       cos 1.000000    cos 0.999994
   GLiNER2.5-Decide encoder (v3-large)  128      1036/1052     cos 0.999999    cos 0.999981
 
-Pad invariance is exact on both paths. The CPU ops are the embedding gather
-and mask plumbing. In fp32, the rewritten GLiNER2.5-Decide graph, padded to
-256, matches gliner2's own unpadded scoring on 58 fast-decisions tasks (every
-argmax, max |Δlogit| < 1e-4). With --bias gather, deberta-v3-small's plan
-puts all 12 gathers and 6 matmuls on the CPU.
+GLiNER2.5-Decide with --head gliner2, [L] logits on fast-decisions against
+gliner2's own fp32 scoring (1039/1055 ops on the ANE at every bucket):
+
+  bucket  rows/tasks  CPU_AND_NE: argmax, max |Δlogit|, max Δp  CPU_ONLY: argmax, max Δp
+  128     92/110      110/110, 0.036, 0.0073                   110/110, 0.0101
+  256     204/348     348/348, 0.081, 0.0082                   348/348, 0.0270
+  512     204/348     348/348, 0.066, 0.0092                   348/348, 0.0270
+
+Pad invariance is exact everywhere. The CPU ops are the embedding gather and
+mask plumbing. In fp32 the rewritten graph, padded, matches gliner2's own
+unpadded scoring (every argmax, max |Δlogit| < 1e-4). Neither --gelu twice
+(ANE Δp 0.0089 at 128) nor --rescale-mlp 8 (0.0065, with |Δlogit| 0.048)
+improved the ANE path. With --bias gather, deberta-v3-small's plan puts all
+12 gathers and 6 matmuls on the CPU.
+
+Converting takes 30-47 s, at about 10 GB peak memory. The ANE compile takes
+18 s at 128, 32 s at 256 and 129 s at 512, once per artifact path:
+Core ML caches the compiled bundle per executable, and a later process
+loads in 0.2 s.
 
 Usage:
     python tools/probe_deberta.py <model-dir> <seq> [options]
@@ -62,11 +76,14 @@ Usage:
                         --revision 1a33070cabf94ce2e29105482dd2ef6c157ad7f2 --local-dir DIR)
     --per-file N       fast-decisions rows per domain file (default 6)
     --bias skew|gather the rewrite, or transformers' gathers made traceable
-    --gelu native|erf  Core ML's gelu op, or GELU built from erf
+    --gelu native|twice
+                       Core ML's gelu op, or x·(1 + erf(x/√2)) with the 0.5 folded
+                       into each layer's output.dense (no gelu op survives)
+    --rescale-mlp S    scale each MLP down projection's input by S (a power of two) and
+                       its weights by 1/S
     --convert DIR      also convert, compile into DIR, and report the compute
                        plan and parity on CPU_ONLY and CPU_AND_NE
 
-Converting the 434M-parameter DeBERTa-v3-large peaks at about 10 GB of memory.
 Core ML caches compiled bundles per executable under
 ~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache; running with
 CFFIXED_USER_HOME=<dir> puts that cache under <dir> instead.
@@ -200,9 +217,40 @@ def install(model, bias, seq):
     md.DebertaV2Encoder.get_attention_mask = get_attention_mask
 
 
-class ErfGelu(torch.nn.Module):
+class TwiceGelu(torch.nn.Module):
+    """2·GELU(x) = x·(1 + erf(x/√2)); the 0.5 is folded into the next linear's weights.
+
+    Core ML's native gelu op is coarse on the ANE (up to ~6e-3 off on [-1, 1]). Written with
+    the 0.5 in the graph, coremltools fuses the expression straight back into that op."""
+
     def forward(self, x):
-        return 0.5 * x * (1.0 + torch.erf(x * (1.0 / math.sqrt(2.0))))
+        return x * (1.0 + torch.erf(x * 0.7071067811865476))
+
+
+class ScaledAct(torch.nn.Module):
+    def __init__(self, act, scale):
+        super().__init__()
+        self.act, self.scale = act, scale
+
+    def forward(self, x):
+        return self.act(x) * self.scale
+
+
+def rescale_mlp(encoder, scale):
+    """Run each MLP down projection on a `scale`-times larger input (a power of two, exact in
+    fp16) and divide its weights by the same factor. The ANE linear's precision floor is
+    absolute on its input, and these inputs sit at rms 0.06-0.3."""
+    with torch.no_grad():
+        for layer in encoder.encoder.layer:
+            layer.intermediate.intermediate_act_fn = ScaledAct(layer.intermediate.intermediate_act_fn, scale)
+            layer.output.dense.weight.div_(scale)  # bias unchanged
+
+
+def twice_gelu(encoder):
+    with torch.no_grad():
+        for layer in encoder.encoder.layer:
+            layer.intermediate.intermediate_act_fn = TwiceGelu()
+            layer.output.dense.weight.mul_(0.5)  # bias unchanged
 
 
 # ---- heads and cases ----------------------------------------------------------------------
@@ -370,7 +418,8 @@ def main():
     ap.add_argument("--corpus")
     ap.add_argument("--per-file", type=int, default=6)
     ap.add_argument("--bias", choices=["skew", "gather"], default="skew")
-    ap.add_argument("--gelu", choices=["native", "erf"], default="native")
+    ap.add_argument("--gelu", choices=["native", "twice"], default="native")
+    ap.add_argument("--rescale-mlp", type=float, default=1.0)
     ap.add_argument("--convert", metavar="DIR")
     a = ap.parse_args()
     seq = a.seq
@@ -387,9 +436,10 @@ def main():
 
     encoder = load_encoder(a.src)
     install(encoder, a.bias, seq)
-    if a.gelu == "erf":
-        for layer in encoder.encoder.layer:
-            layer.intermediate.intermediate_act_fn = ErfGelu()
+    if a.gelu == "twice":
+        twice_gelu(encoder)
+    if a.rescale_mlp != 1.0:
+        rescale_mlp(encoder, a.rescale_mlp)
     head = (GlinerHead(encoder, classifier, seq) if a.head == "gliner2" else ClsHead(encoder)).eval()
 
     with torch.no_grad():
@@ -402,7 +452,7 @@ def main():
 
     out = Path(a.convert)
     out.mkdir(parents=True, exist_ok=True)
-    name = f"{a.head}_{a.bias}_{a.gelu}_{seq}"
+    name = f"{a.head}_{a.bias}_{a.gelu}_x{a.rescale_mlp:g}_{seq}"
     t = time.time()
     with torch.no_grad():
         traced = torch.jit.trace(head, tuple(map(torch.tensor, feeds(cases[0][0], seq))))
@@ -412,7 +462,7 @@ def main():
                     outputs=[ct.TensorType(name="logits" if a.head == "gliner2" else "embedding")],
                     convert_to="mlprogram", minimum_deployment_target=ct.target.macOS15)
     ops = Counter(op.op_type for f in ml._mil_program.functions.values() for op in f.operations)
-    print(f"converted in {time.time() - t:.0f}s; gather_along_axis {ops['gather_along_axis']}, gelu {ops['gelu']}")
+    print(f"converted in {time.time() - t:.0f}s; gather_along_axis {ops['gather_along_axis']}, gelu {ops['gelu']}, mul {ops['mul']}")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / f"{name}.mlpackage"
         ml.save(str(pkg))
@@ -428,15 +478,21 @@ def main():
     output = "logits" if a.head == "gliner2" else "embedding"
     noisy = np.random.default_rng(1).integers(1000, 100000, seq).astype(np.int32)
     for units in ("CPU_ONLY", "CPU_AND_NE"):
+        t = time.time()
         model = ct.models.CompiledMLModel(str(dst), compute_units=getattr(ct.ComputeUnit, units))
+        print(f"{units}: loaded in {time.time() - t:.0f}s")
 
         def run(ids, pads=None):
             x, m = feeds(ids, seq, pads)
             return model.predict({"input_ids": x, "attention_mask": m})[output][0]
 
         grade(units, a.head, cases, run)
-        pad = worst(cos(run(c[0]), run(c[0], noisy)) for c in cases)
-        print(f"{units}: pad invariance (cosine, pad ids 0 vs random) {pad:.7f}")
+        if a.head == "gliner2":  # per-token logits: compare the real tokens only
+            pad = max(float(np.abs(run(c[0])[: len(c[0])] - run(c[0], noisy)[: len(c[0])]).max()) for c in cases)
+            print(f"{units}: pad invariance (max |dlogit| over real tokens, pad ids 0 vs random) {pad:.6f}")
+        else:
+            pad = worst(cos(run(c[0]), run(c[0], noisy)) for c in cases)
+            print(f"{units}: pad invariance (cosine, pad ids 0 vs random) {pad:.7f}")
 
 
 if __name__ == "__main__":
