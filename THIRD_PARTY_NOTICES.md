@@ -20,11 +20,20 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 
 `tools/classifier_reference.py` imports the installed `gliner2` package to generate references and the token-id fixture. It does not vendor it.
 
+## Julia-1
+
+- **Source:** [SupersonicLabs/Julia-1](https://huggingface.co/SupersonicLabs/Julia-1), revision `a85b127321d580d65176c89ced8273f305745d85`
+- **License:** Apache License 2.0 (full text below)
+- **What sidekick uses:** `crates/sidekick-embed/src/laya.rs`'s Julia-1 option rendering (`option_rendering = "julia"`) reproduces the option texts Julia-1's typed API builds (`julia/typed.py`): a choice option's description, score items as given, and `"false"`/`"true"` or both descriptions for noul. It is compiled into `sidekickd` and `libsidekick.dylib`. The sequence around the options is laya's (above), which Julia-1's `julia/data.py` also follows.
+- **Changes:** sidekick takes options as candidate labels, so a choice option's description is the text after a label's first `": "`, and the label itself when it has none, which Julia-1's API, where every choice has a description, doesn't allow. An over-long state is truncated, as Julia-1's non-strict mode does; its strict mode, which rejects one, isn't implemented.
+
+`tools/convert_julia.py` and `tools/classifier_reference.py` import `julia/data.py` and `julia/model.py` from a local copy of the checkpoint at the same revision, after checking their sha256. They don't vendor them. `fixtures/classify/julia-1.tokens.json` holds token ids that `julia/data.py` produced.
+
 ## fast-decisions
 
 - **Source:** [fastino/fast-decisions](https://huggingface.co/datasets/fastino/fast-decisions), revision `1a33070`
 - **License:** Apache License 2.0 (full text below)
-- **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path. `fixtures/classify/gliner2.5-decide.corpus.toml` sends each of its classification heads as a gliner2-format request, to measure GLiNER2.5-Decide's parity on each compute path. The dataset is fetched when a reference is generated, not committed. `fixtures/classify/laya-en.tokens.json` includes three of its rows and `fixtures/classify/gliner2.5-decide.tokens.json` two, as text and as token ids.
+- **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path; `fixtures/classify/laya-typed-decisions.corpus.toml` and `fixtures/classify/julia-1.corpus.toml` reuse that translation for laya-typed-decisions and Julia-1. `fixtures/classify/gliner2.5-decide.corpus.toml` sends each of its classification heads as a gliner2-format request, to measure GLiNER2.5-Decide's parity on each compute path. The dataset is fetched when a reference is generated, not committed. As text and as token ids, `fixtures/classify/laya-en.tokens.json`, `laya-typed-decisions.tokens.json` and `julia-1.tokens.json` each include three of its rows, and `gliner2.5-decide.tokens.json` two.
 
 ---
 
