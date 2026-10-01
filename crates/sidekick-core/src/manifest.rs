@@ -319,6 +319,23 @@ impl ClassifierManifest {
         fields
     }
 
+    /// The extension fields every request must send: a subset of
+    /// [`extension_fields`](Self::extension_fields), listed so a client
+    /// learns them before a 400 does.
+    pub fn required_fields(&self) -> Vec<&'static str> {
+        let mut fields = Vec::new();
+        if self.task == ClassifyTask::ZeroShotClassification {
+            fields.push("candidate_labels");
+        }
+        if let Some(laya) = self.classify.laya.as_ref().filter(|_| self.classify.format == Some(ClassifyFormat::Laya)) {
+            fields.push("question_type");
+            if laya.default_instructions.is_none() {
+                fields.push("instructions");
+            }
+        }
+        fields
+    }
+
     /// The opt-in temperature for a question type and label count.
     pub fn temperature(&self, question_type: Option<QuestionType>, k: usize) -> Option<f32> {
         let key = calibration_key(question_type?, k);

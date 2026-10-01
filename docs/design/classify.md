@@ -175,7 +175,10 @@ shape guard passes. A bad bucket fails the load, not a later request.
 
 Task-aware listings:
 - `/v1/models` gains `task`, `labels` or `max_labels`, the accepted
-  extension fields, and the calibration table.
+  extension fields (`extensions`), the ones every request must send
+  (`required`: `candidate_labels` on zero-shot models, `question_type` on
+  laya-format ones, and `instructions` where the manifest has no default),
+  and the calibration table.
 - `/health` lists classifiers separately, with `classifiers.supported`,
   and the manifests the registry skipped, with paths relative to the
   models directory.

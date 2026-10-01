@@ -468,18 +468,24 @@ async fn listings_are_task_aware() {
     assert_eq!(s["labels"], json!(["1 star", "2 stars", "3 stars", "4 stars", "5 stars"]));
     assert_eq!(s["max_batch"], 4);
     assert_eq!(s["extensions"], json!([]));
+    assert_eq!(s["required"], json!([]));
     assert!(s.get("max_labels").is_none() && s.get("calibration").is_none());
 
     let d = model("decider");
     assert_eq!(d["task"], "zero-shot-classification");
     assert_eq!(d["max_labels"], 4);
     assert_eq!(d["extensions"], json!(["candidate_labels", "calibration", "question_type", "instructions"]));
+    assert_eq!(d["required"], json!(["candidate_labels", "question_type"]));
+    // No default instructions: every request sends them.
+    assert_eq!(model("julia")["required"], json!(["candidate_labels", "question_type", "instructions"]));
+    assert_eq!(model("reranker")["required"], json!([]));
     assert_eq!(d["calibration"], json!({"choice:3-5": 2.0, "noul:2": 0.5}));
     assert!(d.get("labels").is_none());
 
     let g = model("schema-decider");
     assert_eq!(g["task"], "zero-shot-classification");
     assert_eq!(g["extensions"], json!(["candidate_labels", "instructions", "multi_label"]));
+    assert_eq!(g["required"], json!(["candidate_labels"]));
     assert!(g.get("calibration").is_none());
 
     let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;

@@ -506,6 +506,10 @@ pub struct ModelObject {
     /// accepts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<Vec<&'static str>>,
+    /// Extension, classifiers: the extension fields every request must
+    /// send, a subset of `extensions`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<Vec<&'static str>>,
     /// Extension, classifiers: the temperatures `calibration: "model"`
     /// applies, keyed `"<question_type>:<label count bucket>"`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -524,6 +528,7 @@ impl ModelObject {
             max_labels: None,
             max_batch: None,
             extensions: None,
+            required: None,
             calibration: None,
         }
     }

@@ -126,7 +126,8 @@ or SGLang works unchanged. What a host needs to know beyond that:
   `task`, and either its fixed `labels` (text-classification) or its
   `max_labels` (zero-shot). It also gives `max_batch`, the extension fields
   it accepts (`candidate_labels`, `question_type`, `instructions`,
-  `calibration`), and its calibration temperatures. Nothing is loaded to
+  `calibration`), the ones every request must send (`required`), and its
+  calibration temperatures. Nothing is loaded to
   answer.
 - **Batch up to `max_batch`.** One request with several inputs beats
   several requests: the ANE serializes predictions anyway.
@@ -135,8 +136,8 @@ or SGLang works unchanged. What a host needs to know beyond that:
   `noul` questions take exactly `["false", "true"]`, each optionally with a
   description (`"true: the customer wants a refund"`). A model rendering
   options as Julia-1 does (`docs/design/classify.md`, "Option rendering")
-  takes descriptions on both or neither, and may need `instructions` on
-  every request.
+  takes descriptions on both or neither, and needs `instructions` on
+  every request when its listing's `required` says so.
 - **Over-length input.** A text-classification input longer than the
   model's maximum is a 400 unless you send `truncate_prompt_tokens` (`-1`
   truncates to the model's maximum). laya truncates the text itself,

@@ -41,6 +41,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             max_labels,
             max_batch: Some(m.max_batch),
             extensions: Some(m.extension_fields()),
+            required: Some(m.required_fields()),
             calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
             ..ModelObject::new(m.id.clone(), created, m.task.name())
         });
