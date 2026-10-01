@@ -244,3 +244,16 @@ class MarkerGates(unittest.TestCase):
         got, _, _ = plain._served(core.Case(ids=[1, 2], ref=np.zeros(2), label="p"), np.arange(4) * 1.0)
         self.assertEqual(got.tolist(), [0.0, 1.0])
         self.assertEqual(plain._activation(c), "softmax")
+
+    def test_multi_label_flips_are_per_label_sign_changes(self):
+        g = gates.ClassifierGates(margin=0.05)
+        ref = np.array([2.0, 1.5, -1.0, 0.01])
+        # Two labels above threshold swapping order: no decision changes.
+        self.assertEqual(g._decisions(np.array([1.5, 2.0, -1.0, 0.01]), ref, "sigmoid"), (0, 1))
+        # A clear label crossing 0.5 is a flip, even with the argmax unchanged.
+        self.assertEqual(g._decisions(np.array([2.0, 1.5, 0.2, 0.01]), ref, "sigmoid"), (1, 1))
+        # A label within the margin of 0 is a near-tie, whatever it does.
+        self.assertEqual(g._decisions(np.array([2.0, 1.5, -1.0, -0.02]), ref, "sigmoid"), (0, 1))
+        # Softmax keeps the argmax rule; a single output has no decision.
+        self.assertEqual(g._decisions(np.array([1.5, 2.0, -1.0, 0.01]), ref, "softmax"), (1, 0))
+        self.assertEqual(g._decisions(np.array([-3.0]), np.array([3.0]), "sigmoid"), (0, 0))

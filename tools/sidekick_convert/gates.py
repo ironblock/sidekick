@@ -141,6 +141,12 @@ class ClassifierGates:
     what padded output slots must hold (laya's -1e4); a case's reference then
     covers only its first len(ref) slots.
 
+    What counts as a flip follows the decision the activation serves: for
+    softmax, the argmax; for sigmoid over several labels (multi-label), each
+    label's own yes/no, the sign of its logit. A label whose fp32 logit is
+    within `margin` of the decision boundary is a near-tie either way. A
+    single output (a reranker's score) has no decision to flip.
+
     `markers` grades what a per-token head serves (gliner2): a case's
     reference covers its real tokens, and its served logits are the output
     at case.meta["markers"], activated by case.meta["activation"] when set
@@ -172,6 +178,19 @@ class ClassifierGates:
         m = list(case.meta["markers"])
         return (np.asarray(out, dtype=np.float64)[m], True, np.asarray(case.ref, dtype=np.float64)[m])
 
+    def _decisions(self, got, ref, activation):
+        """(flips, near-ties) of one case's served logits against fp32."""
+        if len(ref) < 2:
+            return 0, 0
+        if activation == "sigmoid":
+            clear = np.abs(ref) >= self.margin
+            flips = int(np.sum(clear & (np.sign(got) != np.sign(ref))))
+            return flips, int(np.sum(~clear))
+        top2 = np.sort(ref)[-2:]
+        if top2[1] - top2[0] >= self.margin:
+            return int(np.argmax(got) != np.argmax(ref)), 0
+        return 0, 1
+
     def _activation(self, case):
         return case.meta.get("activation", self.activation) if self.markers else self.activation
 
@@ -202,19 +221,15 @@ class ClassifierGates:
                 if not (finite(got) and slots_ok):
                     raise GateFailure(f"bucket {seq} [{path}]: non-finite or unpadded logits")
                 activation = self._activation(c)
-                if len(ref) > 1:
-                    top2 = np.sort(ref)[-2:]
-                    if top2[1] - top2[0] >= self.margin:
-                        flips += int(np.argmax(got) != np.argmax(ref))
-                    else:
-                        ties += 1
+                f, t = self._decisions(got, ref, activation)
+                flips, ties = flips + f, ties + t
                 dps.append(max_abs_diff(activate(got, activation), activate(ref, activation)))
                 dls.append(max_abs_diff(got, ref))
             r = {"n": len(cases), "flips": flips, "near_ties": ties, "dp_max": largest(dps),
                  "dlogit_max": largest(dls)}
             bad = flips or not r["dp_max"] <= self.dp_gate
             if bad:
-                message = (f"bucket {seq} [{path}]: {flips} argmax flips above margin {self.margin}, "
+                message = (f"bucket {seq} [{path}]: {flips} decision flips above margin {self.margin}, "
                            f"max |dp| {r['dp_max']:.4f} (gate {self.dp_gate})")
                 if path in self.gated_paths:
                     raise GateFailure(message)

@@ -88,9 +88,10 @@ For every bucket, `core.run()`:
      (see the stale-cache gotcha);
    - **accuracy per compute path**: CPU_AND_NE (what sidekick serves) and
      CPU_ONLY (an independent execution of the same graph). Embedders:
-     cosine ≥ 0.999 against the fp32 reference. Classifiers: argmax
-     agreement wherever the fp32 top-2 margin is ≥ 0.05, and max |Δp| after
-     the manifest's activation;
+     cosine ≥ 0.999 against the fp32 reference. Classifiers: the served
+     decision agrees with fp32 (the argmax wherever the fp32 top-2 margin is
+     ≥ 0.05; for a multi-label case, each label's sign wherever its fp32 logit
+     is ≥ 0.05 from 0), and max |Δp| after the activation;
    - **pad invariance**: the same input with random pad ids must give the
      same output. It catches a dropped attention mask (D25) and a mixer that
      reads pad states (D19) in seconds;

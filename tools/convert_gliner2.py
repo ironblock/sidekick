@@ -46,7 +46,8 @@ gather_along_axis op; compute plan (every linear/matmul on the ANE and
 >= 80% of ops); and on CPU_AND_NE, the served path, finite logits, argmax
 agreement with fp32 wherever its top-2 margin is >= 0.05, max raw |dp|
 <= 0.02 at the markers after each request's activation (softmax, or sigmoid
-for a multi-label request), and pad invariance. CPU_ONLY is reported, not
+for a multi-label request, whose decisions are each label's own yes/no, so
+a flip there is a clear label changing sign), and pad invariance. CPU_ONLY is reported, not
 gated: Core ML's fp16 CPU backend measured |dp| 0.027 at buckets 256 and 512
 on fast-decisions (0.0092 on the ANE), the same CPU-path weakness laya's
 converter reports (D28).
@@ -135,8 +136,6 @@ def main():
     args = cli.parse(__doc__.split("\n\n")[0], default_buckets=None, flags=[
         ("--tokenizer-sha256", {"help": "expected SHA-256 of the installed tokenizer.json"}),
     ])
-    import os
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
     from gliner2.processor import SchemaTransformer
     from transformers import AutoTokenizer
 
