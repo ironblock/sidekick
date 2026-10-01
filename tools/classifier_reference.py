@@ -258,10 +258,17 @@ def oracles(forward, cases, width, log_every=100):
         logits = np.full((len(cases), width), np.nan, dtype=np.float32)
         with torch.no_grad():
             for i, c in enumerate(cases):
-                logits[i, : c["k"]] = forward(run, c)
+                try:
+                    logits[i, : c["k"]] = forward(run, c)
+                except fp16sim.Fp16Overflow as e:
+                    print(f"WARNING: {c['id']}: {e}; no fp16 oracle", flush=True)
+                    break
                 if log_every and i % log_every == 0:
                     print(f"  {name} {i}/{len(cases)}", flush=True)
-        out[name] = logits
+            else:
+                out[name] = logits
+    if "fp16" not in out:
+        return out
     lost = np.isfinite(out["torch"]) & ~np.isfinite(out["fp16"])
     if lost.any():
         bad = [cases[i]["id"] for i in sorted(set(np.nonzero(lost)[0]))]

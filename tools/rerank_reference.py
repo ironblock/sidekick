@@ -144,7 +144,11 @@ def main():
                 feed["token_type_ids"] = torch.tensor([types])
             with torch.no_grad():
                 logit = model(**feed).logits[0, 0].item()
-                fp16_logit = fp16sim.run(model, **feed).logits[0, 0].item()
+                try:
+                    fp16_logit = fp16sim.run(model, **feed).logits[0, 0].item()
+                except fp16sim.Fp16Overflow as e:  # no ceiling: the check below drops it
+                    print(f"WARNING: {group['id']}-{i}: {e}")
+                    fp16_logit = float("nan")
             case = {"id": f"{group['id']}-{i}", "tags": group.get("tags", []), "group": group["id"],
                     "query": group["query"], "input": doc, "ids": ids, "k": 1, "qtype": None, "gold": None}
             if segments:
