@@ -16,6 +16,7 @@ coreml = ["dep:sidekick-coreml"]
 sidekick-core = { workspace = true }
 sidekick-coreml = { workspace = true, optional = true }
 tokenizers = { workspace = true }
+regex = { workspace = true }
 safetensors = { workspace = true }
 half = { workspace = true }
 tracing = { workspace = true }

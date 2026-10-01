@@ -210,8 +210,8 @@ shape: `input_type` (`search_query` / `search_document`),
 Inference responses (every route above) carry provenance headers:
 `sidekick-version`, `sidekick-model` (`<id>@<revision>` when the manifest
 records the source revision; for chat, the Foundation Models variant) and
-`sidekick-compute-units` (`cpu_and_ne` for Core ML models, `cpu` for static
-ones).
+`sidekick-compute-units` (a Core ML model's configured compute units,
+`cpu_and_ne` by default; `cpu` for static ones).
 
 ## Models directory
 
@@ -230,7 +230,11 @@ See [examples/manifests/](examples/manifests/) for annotated manifests
 (EmbeddingGemma-300m on ANE, bge-small, a static floor model). Manifest rules
 that matter: Core ML models must declare enumerated sequence-length `buckets`
 (fixed shapes are what keep the model on the ANE), and `matryoshka` declares
-which `dimensions` values the OpenAI API may request. A manifest that doesn't
+which `dimensions` values the OpenAI API may request. A Core ML model loads
+for the ANE (`.cpuAndNeuralEngine`) unless its manifest names other
+`compute_units` (`cpu_and_gpu`, `cpu_only` or `all`), for a model the ANE
+runs badly; `/v1/models` lists each model's (see "Compute units" in
+[docs/design/classify.md](docs/design/classify.md)). A manifest that doesn't
 parse or validate is skipped with a warning, and listed with the reason under
 `skipped_models` in `/health`; the rest of the directory still loads.
 

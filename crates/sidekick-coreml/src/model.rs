@@ -19,16 +19,21 @@ use objc2_foundation::{NSDictionary, NSNumber, NSString, NSURL};
 use sidekick_core::{Error, Result};
 use std::path::Path;
 
-impl ComputeUnits {
-    pub(crate) fn to_ml(self) -> objc2_core_ml::MLComputeUnits {
-        use objc2_core_ml::MLComputeUnits;
-        match self {
-            ComputeUnits::All => MLComputeUnits::All,
-            ComputeUnits::CpuAndNeuralEngine => MLComputeUnits::CPUAndNeuralEngine,
-            ComputeUnits::CpuAndGpu => MLComputeUnits::CPUAndGPU,
-            ComputeUnits::CpuOnly => MLComputeUnits::CPUOnly,
-        }
+pub(crate) fn to_ml(units: ComputeUnits) -> objc2_core_ml::MLComputeUnits {
+    use objc2_core_ml::MLComputeUnits;
+    match units {
+        ComputeUnits::All => MLComputeUnits::All,
+        ComputeUnits::CpuAndNeuralEngine => MLComputeUnits::CPUAndNeuralEngine,
+        ComputeUnits::CpuAndGpu => MLComputeUnits::CPUAndGPU,
+        ComputeUnits::CpuOnly => MLComputeUnits::CPUOnly,
     }
+}
+
+/// The inverse of [`to_ml`]; `None` for a value this crate never sets.
+fn from_ml(units: objc2_core_ml::MLComputeUnits) -> Option<ComputeUnits> {
+    [ComputeUnits::All, ComputeUnits::CpuAndNeuralEngine, ComputeUnits::CpuAndGpu, ComputeUnits::CpuOnly]
+        .into_iter()
+        .find(|&u| to_ml(u) == units)
 }
 
 /// A float32 output tensor read back from a prediction.
@@ -77,6 +82,12 @@ impl CoremlModel {
             }
         }
         Ok(Self { model })
+    }
+
+    /// The compute units Core ML holds in this model's configuration: what
+    /// it was loaded with, read back from Core ML rather than remembered.
+    pub fn compute_units(&self) -> Option<ComputeUnits> {
+        from_ml(unsafe { self.model.configuration().computeUnits() })
     }
 
     /// Run a prediction with named int32 inputs, returning the named float
@@ -251,7 +262,7 @@ fn open(path: &Path, units: ComputeUnits) -> Result<Retained<MLModel>> {
     };
 
     let config = unsafe { MLModelConfiguration::new() };
-    unsafe { config.setComputeUnits(units.to_ml()) };
+    unsafe { config.setComputeUnits(to_ml(units)) };
 
     unsafe { MLModel::modelWithContentsOfURL_configuration_error(&compiled_url, &config) }.map_err(
         |e| Error::Inference(format!("Core ML load failed for {}: {e}", path.display())),

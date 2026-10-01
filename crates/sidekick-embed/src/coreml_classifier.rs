@@ -1,5 +1,5 @@
-//! Core ML classifier (ANE-targeted): text-classification and the laya
-//! zero-shot format (docs/design/classify.md).
+//! Core ML classifier (ANE-targeted): text-classification, rerankers, and the
+//! laya and gliner2 zero-shot formats (docs/design/classify.md).
 //!
 //! Pipeline: [`InputBuilder`] (tokenize, lay out, bucket) → pad to the
 //! bucket → int32 prediction → the logits in label order. Activation is the
@@ -9,7 +9,9 @@
 //! - text-classification: `input_ids [1,S]`, `attention_mask [1,S]` →
 //!   `logits [1,N]`;
 //! - laya: those plus `marker_pos [1,KMAX]` (−1 in unused slots) and
-//!   `qtype [1]` → `logits [1,KMAX]`, unused slots at −1e4.
+//!   `qtype [1]` → `logits [1,KMAX]`, unused slots at −1e4;
+//! - gliner2: `input_ids [1,S]`, `attention_mask [1,S]` → `logits [1,S]`,
+//!   one per token, read at the `[L]` positions the input builder placed.
 
 use crate::bucket_models::BucketModels;
 use crate::classify_input::InputBuilder;
@@ -35,14 +37,17 @@ struct Io {
     marker_pos: Option<String>,
     qtype: Option<String>,
     output: String,
+    /// gliner2: the output is one logit per token, read at the markers.
+    per_token: bool,
 }
 
 /// Check one bucket's artifact against the manifest: `input_ids` and
 /// `attention_mask` are `[1, bucket]` (for per-bucket `{seq}` artifacts;
 /// a shared artifact must only have them); laya's `marker_pos` is
 /// `[1, max_labels]` and `qtype` is `[1]`; the output has one slot per label
-/// (`max_labels` for laya); and the inputs pass the flexible-shape guard
-/// (D27). Errors name the artifact relative to the model directory.
+/// (`max_labels` for laya), or exactly `[1, bucket]` for gliner2's per-token
+/// logits; and the inputs pass the flexible-shape guard (D27). Errors name
+/// the artifact relative to the model directory.
 fn check_interface(
     m: &ClassifierManifest,
     io: &Io,
@@ -91,6 +96,13 @@ fn check_interface(
     let labels = m.max_labels();
     match iface.outputs.get(&io.output) {
         None => fail(format!("no multi-array output `{}`", io.output)),
+        Some(shape) if io.per_token => match shape.as_slice() {
+            [1, n] if *n == bucket => Ok(()),
+            _ => fail(format!(
+                "output `{}` is {shape:?}, expected [1, {bucket}] (one logit per token)",
+                io.output
+            )),
+        },
         Some(shape) if !shape.is_empty() && shape.last() != Some(&labels) => fail(format!(
             "output `{}` is {shape:?}, expected {labels} slots (one per label)",
             io.output
@@ -105,13 +117,14 @@ fn io_name(name: &Option<String>, what: &str) -> Result<String> {
 }
 
 impl CoremlClassifier {
-    /// Load for the ANE (`.cpuAndNeuralEngine`), as the daemon does.
+    /// Load with the manifest's compute units (`cpu_and_ne` by default), as
+    /// the daemon does.
     pub fn load(model: &ResolvedClassifier) -> Result<Self> {
-        Self::load_with(model, ComputeUnits::CpuAndNeuralEngine)
+        Self::load_with(model, model.manifest.compute_units)
     }
 
-    /// Load with an explicit compute-unit preference, for tests that
-    /// compare paths.
+    /// Load with an explicit compute-unit preference, overriding the
+    /// manifest's, so tests and the parity suite can compare paths.
     pub fn load_with(model: &ResolvedClassifier, units: ComputeUnits) -> Result<Self> {
         let m = &model.manifest;
         let io = &m.classify.io;
@@ -127,6 +140,7 @@ impl CoremlClassifier {
             marker_pos,
             qtype: if laya { Some(io_name(&io.qtype, "qtype")?) } else { None },
             output,
+            per_token: m.classify.format == Some(ClassifyFormat::Gliner2),
         };
         // Every bucket is its own artifact: check each one's interface now,
         // from its description (a CPU-only load that never predicts), so a
@@ -159,6 +173,15 @@ impl CoremlClassifier {
     /// Sequence-length buckets, smallest first.
     pub fn buckets(&self) -> &[usize] {
         &self.manifest.buckets
+    }
+
+    /// The compute units Core ML loaded the model with, read back from the
+    /// smallest bucket's configuration (every bucket shares them).
+    pub fn compute_units(&self) -> Result<ComputeUnits> {
+        let bucket = *self.manifest.buckets.first().expect("validated non-empty");
+        self.models.get(bucket)?.compute_units().ok_or_else(|| {
+            Error::Inference("Core ML reports compute units sidekick doesn't set".into())
+        })
     }
 
     /// The input builder, for tests and the parity suite.
@@ -218,6 +241,26 @@ impl CoremlClassifier {
             }
             _ => self.manifest.classify.labels.len(),
         };
+
+        if self.io.per_token {
+            // Every marker must be a real token's position: a pad's logit
+            // would be read silently otherwise.
+            if prepared.markers.is_empty() || prepared.markers.iter().any(|&m| m < 0 || m as usize >= used) {
+                return Err(Error::Inference(format!(
+                    "markers {:?} aren't all positions of the {used} real tokens",
+                    prepared.markers
+                )));
+            }
+            let model = self.models.get(bucket)?;
+            let out = model.predict_int32(&inputs, &self.io.output)?;
+            if out.data.len() != bucket || out.shape.last().copied() != Some(bucket) {
+                return Err(Error::Inference(format!(
+                    "output `{}` has shape {:?}, expected [1, {bucket}]",
+                    self.io.output, out.shape
+                )));
+            }
+            return Ok(prepared.markers.iter().map(|&m| out.data[m as usize]).collect());
+        }
 
         let model = self.models.get(bucket)?;
         let out = model.predict_int32(&inputs, &self.io.output)?;

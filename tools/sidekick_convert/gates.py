@@ -139,7 +139,24 @@ class ClassifierGates:
     have no argmax). Paths in `gated_paths` fail on flips or on max |dp| above
     `dp_gate`; paths in `report_paths` only report. `pad_value`, when set, is
     what padded output slots must hold (laya's -1e4); a case's reference then
-    covers only its first len(ref) slots."""
+    covers only its first len(ref) slots.
+
+    What counts as a flip follows the decision the activation serves: for
+    softmax, the argmax; for sigmoid over several labels (multi-label), each
+    label's own yes/no, the sign of its logit. A label whose fp32 logit is
+    within `margin` of the decision boundary is a near-tie either way. A
+    single output (a reranker's score) has no decision to flip.
+
+    `markers` grades what a per-token head serves (gliner2): a case's
+    reference covers its real tokens, and its served logits are the output
+    at case.meta["markers"], activated by case.meta["activation"] when set
+    (a multi-label request) or `activation`. Flips, |dp| and pad invariance
+    are all measured on those logits, not on every token.
+
+    `plan_required` makes the compute plan a gate (every heavy op and
+    `plan_min_ane` of all ops on the ANE). Without it the plan is only
+    reported, for a model served off the ANE; `paths()` builds the paths
+    from the manifest's served path."""
     fp32_tol: float = 1e-3
     activation: str = "softmax"
     margin: float = 0.05
@@ -148,8 +165,18 @@ class ClassifierGates:
     report_paths: tuple = ()
     pad_tol: float = 1e-3
     pad_value: float = None
+    markers: bool = False
     plan_min_ane: float = 0.8
     pad_id_range: tuple = (1000, 30000)
+    plan_required: bool = True
+
+    @staticmethod
+    def paths(served, report=("CPU_AND_NE", "CPU_ONLY")):
+        """Keyword arguments for a model served on `served` (manifest.served_path):
+        that path gated, the rest of `report` reported, and the compute plan a
+        gate only for a model served on the ANE."""
+        return {"gated_paths": (served,), "report_paths": tuple(p for p in report if p != served),
+                "plan_required": served == "CPU_AND_NE"}
 
     def _split(self, out, ref):
         k = len(ref)
@@ -157,13 +184,37 @@ class ClassifierGates:
         slots_ok = self.pad_value is None or bool(np.all(got[k:] == self.pad_value))
         return got[:k], slots_ok
 
+    def _served(self, case, out):
+        """(served logits, slots ok, their reference) for one case's output."""
+        if not self.markers:
+            got, ok = self._split(out, case.ref)
+            return got, ok, np.asarray(case.ref, dtype=np.float64)
+        m = list(case.meta["markers"])
+        return (np.asarray(out, dtype=np.float64)[m], True, np.asarray(case.ref, dtype=np.float64)[m])
+
+    def _decisions(self, got, ref, activation):
+        """(flips, near-ties) of one case's served logits against fp32."""
+        if len(ref) < 2:
+            return 0, 0
+        if activation == "sigmoid":
+            clear = np.abs(ref) >= self.margin
+            flips = int(np.sum(clear & (np.sign(got) != np.sign(ref))))
+            return flips, int(np.sum(~clear))
+        top2 = np.sort(ref)[-2:]
+        if top2[1] - top2[0] >= self.margin:
+            return int(np.argmax(got) != np.argmax(ref)), 0
+        return 0, 1
+
+    def _activation(self, case):
+        return case.meta.get("activation", self.activation) if self.markers else self.activation
+
     def torch(self, wrapper, seq, cases, ports):
         diffs = []
         for c in cases:
-            got, slots_ok = self._split(_run_torch(wrapper, c.feed(seq, ports), ports), c.ref)
+            got, slots_ok, ref = self._served(c, _run_torch(wrapper, c.feed(seq, ports), ports))
             if not slots_ok:
                 raise GateFailure(f"bucket {seq}: fp32 wrapper output malformed (padded slots)")
-            diffs.append(max_abs_diff(got, c.ref))
+            diffs.append(max_abs_diff(got, ref))
         d = largest(diffs)
         if not d <= self.fp32_tol:
             raise GateFailure(f"bucket {seq}: fp32 wrapper vs the checkpoint, max |dlogit| {d:.2e} "
@@ -174,37 +225,33 @@ class ClassifierGates:
         return f"fp32 wrapper vs the checkpoint, max |dlogit| {r.get('fp32', float('nan')):.1e}"
 
     def coreml(self, compiled, seq, cases, job, timing):
-        out = {"plan": _plan.gate(compiled, self.plan_min_ane)}
+        out = {"plan": _plan.gate(compiled, self.plan_min_ane) if self.plan_required else _plan.report(compiled)}
         padded = next((c for c in cases if c.n < seq), None)
         for path in tuple(self.gated_paths) + tuple(self.report_paths):
             m = _model(compiled, path)
             flips, ties, dps, dls = 0, 0, [], []
             for c in cases:
-                got, slots_ok = self._split(m.predict(c.feed(seq, job.ports))[job.output][0], c.ref)
+                got, slots_ok, ref = self._served(c, m.predict(c.feed(seq, job.ports))[job.output][0])
                 if not (finite(got) and slots_ok):
                     raise GateFailure(f"bucket {seq} [{path}]: non-finite or unpadded logits")
-                ref = np.asarray(c.ref, dtype=np.float64)
-                if len(ref) > 1:
-                    top2 = np.sort(ref)[-2:]
-                    if top2[1] - top2[0] >= self.margin:
-                        flips += int(np.argmax(got) != np.argmax(ref))
-                    else:
-                        ties += 1
-                dps.append(max_abs_diff(activate(got, self.activation), activate(ref, self.activation)))
+                activation = self._activation(c)
+                f, t = self._decisions(got, ref, activation)
+                flips, ties = flips + f, ties + t
+                dps.append(max_abs_diff(activate(got, activation), activate(ref, activation)))
                 dls.append(max_abs_diff(got, ref))
             r = {"n": len(cases), "flips": flips, "near_ties": ties, "dp_max": largest(dps),
                  "dlogit_max": largest(dls)}
             bad = flips or not r["dp_max"] <= self.dp_gate
             if bad:
-                message = (f"bucket {seq} [{path}]: {flips} argmax flips above margin {self.margin}, "
+                message = (f"bucket {seq} [{path}]: {flips} decision flips above margin {self.margin}, "
                            f"max |dp| {r['dp_max']:.4f} (gate {self.dp_gate})")
                 if path in self.gated_paths:
                     raise GateFailure(message)
                 print(f"WARNING, report only: {message}", flush=True)
             if padded is not None:
-                a, _ = self._split(m.predict(padded.feed(seq, job.ports))[job.output][0], padded.ref)
-                b, _ = self._split(m.predict(padded.feed(seq, job.ports, _pad_ids(seq, self.pad_id_range)))
-                                   [job.output][0], padded.ref)
+                a, _, _ = self._served(padded, m.predict(padded.feed(seq, job.ports))[job.output][0])
+                b, _, _ = self._served(padded, m.predict(padded.feed(seq, job.ports, _pad_ids(seq, self.pad_id_range)))
+                                       [job.output][0])
                 r["pad"] = max_abs_diff(a, b)
                 if not r["pad"] <= self.pad_tol:
                     raise GateFailure(f"bucket {seq} [{path}]: logits depend on pad content "
@@ -215,7 +262,7 @@ class ClassifierGates:
         return out
 
     def describe_coreml(self, r):
-        lines = [_plan.describe(r["plan"])] if "plan" in r else []
+        lines = [_plan.describe(r["plan"])] if r.get("plan") else []
         for path in tuple(self.gated_paths) + tuple(self.report_paths):
             if path in r:
                 p = r[path]

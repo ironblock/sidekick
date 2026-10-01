@@ -39,7 +39,7 @@ pub fn compute_plan(path: &Path, units: ComputeUnits) -> Result<PlanSummary> {
     }
     let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
     let config = unsafe { MLModelConfiguration::new() };
-    unsafe { config.setComputeUnits(units.to_ml()) };
+    unsafe { config.setComputeUnits(crate::model::to_ml(units)) };
 
     // The plan is only valid inside the handler, and MLComputePlan isn't
     // Send, so the summary is built there and only plain data crosses back.

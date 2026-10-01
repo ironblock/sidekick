@@ -4,8 +4,8 @@
 //! Platform-neutral, so the token-level contract (docs/design/classify.md)
 //! is tested everywhere; [`crate::CoremlClassifier`] runs the result.
 
-use crate::laya;
-use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, LayaSection, ResolvedClassifier};
+use crate::{gliner2, laya};
+use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, Gliner2Section, LayaSection, ResolvedClassifier};
 use sidekick_core::{
     ClassifyParams, ClassifyTask, Error, PairParams, Prepared, Result, TruncationSide,
 };
@@ -30,6 +30,7 @@ pub struct InputBuilder {
 
 enum Format {
     Laya { section: LayaSection, specials: laya::Specials },
+    Gliner2 { section: Gliner2Section, specials: gliner2::Specials },
 }
 
 fn invalid(message: impl Into<String>) -> Error {
@@ -68,18 +69,20 @@ impl InputBuilder {
                 });
             }
         }
-        let format = match (m.classify.format, &m.classify.laya) {
-            (Some(ClassifyFormat::Laya), Some(section)) => Some(Format::Laya {
-                section: section.clone(),
+        let missing = |section: &str| Error::InvalidManifest {
+            path: m.id.clone(),
+            message: format!("the {section} format needs `[classify.{section}]`"),
+        };
+        let format = match m.classify.format {
+            Some(ClassifyFormat::Laya) => Some(Format::Laya {
+                section: m.classify.laya.clone().ok_or_else(|| missing("laya"))?,
                 specials: laya::Specials::from_tokenizer(&tokenizer)?,
             }),
-            (Some(ClassifyFormat::Laya), None) => {
-                return Err(Error::InvalidManifest {
-                    path: m.id.clone(),
-                    message: "the laya format needs `[classify.laya]`".into(),
-                })
-            }
-            (None, _) => None,
+            Some(ClassifyFormat::Gliner2) => Some(Format::Gliner2 {
+                section: m.classify.gliner2.clone().ok_or_else(|| missing("gliner2"))?,
+                specials: gliner2::Specials::from_tokenizer(&tokenizer)?,
+            }),
+            None => None,
         };
         Ok(Self {
             tokenizer,
@@ -98,7 +101,7 @@ impl InputBuilder {
     pub fn laya_specials(&self) -> Option<&laya::Specials> {
         match &self.format {
             Some(Format::Laya { specials, .. }) => Some(specials),
-            None => None,
+            _ => None,
         }
     }
 
@@ -122,6 +125,9 @@ impl InputBuilder {
             None => self.prepare_text(input, params),
             Some(Format::Laya { section, specials }) => {
                 self.prepare_laya(input, params, section, specials)
+            }
+            Some(Format::Gliner2 { section, specials }) => {
+                self.prepare_gliner2(input, params, section, specials)
             }
         }
     }
@@ -318,12 +324,13 @@ impl InputBuilder {
             return Err(invalid("question_type is required by this model (choice, score or noul)"));
         };
         let labels = &params.candidate_labels;
-        check_labels(labels, self.max_labels)?;
-        let options = laya::render_options(question_type, labels)?;
+        check_labels(labels, 2, self.max_labels)?;
+        let options = laya::render_options(question_type, labels, section.option_rendering)?;
         let instructions = params
             .instructions
             .as_deref()
-            .unwrap_or_else(|| section.default_instructions.get(question_type));
+            .or_else(|| section.default_instructions(question_type))
+            .ok_or_else(|| invalid(laya::NO_INSTRUCTIONS))?;
         // Byte caps bound tokenizer work; laya cuts every piece far below
         // them (the state to the sequence, options to 48 tokens, the
         // question to the head budget).
@@ -367,10 +374,74 @@ impl InputBuilder {
     }
 }
 
-/// Zero-shot label checks that don't need the tokenizer.
-pub fn check_labels(labels: &[String], max_labels: usize) -> Result<()> {
-    if labels.len() < 2 {
-        return Err(invalid("candidate_labels needs at least 2 labels"));
+impl InputBuilder {
+    /// The gliner2 format (docs/design/classify.md): the schema must fit,
+    /// and the text is truncated at the word level by design, keeping its
+    /// start, so `truncate_prompt_tokens` and left truncation are 400s.
+    fn prepare_gliner2(
+        &self,
+        input: &str,
+        params: &ClassifyParams,
+        section: &Gliner2Section,
+        specials: &gliner2::Specials,
+    ) -> Result<Prepared> {
+        if params.truncate_prompt_tokens.is_some() {
+            return Err(invalid(
+                "truncate_prompt_tokens isn't supported by the gliner2 format, which truncates \
+                 the text itself, keeping its start",
+            ));
+        }
+        if params.truncation_side == TruncationSide::Left {
+            return Err(invalid(
+                "truncation_side `left` isn't supported by the gliner2 format, which keeps the \
+                 text's start",
+            ));
+        }
+        if params.question_type.is_some() {
+            return Err(invalid("question_type is for the laya format"));
+        }
+        let labels = &params.candidate_labels;
+        // One label is a multi-label request's yes/no question; the server
+        // requires two otherwise, before the model loads.
+        check_labels(labels, 1, self.max_labels)?;
+        let prompt = params.instructions.as_deref().unwrap_or(&section.default_instructions);
+        // Byte caps bound tokenizer and splitter work: the schema has to fit
+        // the model whole, and the text is truncated anyway.
+        let schema_bytes = prompt.len() + labels.iter().map(String::len).sum::<usize>();
+        if schema_bytes > self.max_seq_len.saturating_mul(16) {
+            return Err(invalid(format!(
+                "the candidate labels and instructions ({schema_bytes} bytes) can't fit the model's \
+                 maximum of {} tokens",
+                self.max_seq_len
+            )));
+        }
+        let text = crate::byte_cap(input, self.max_seq_len);
+        let seq = gliner2::build_sequence(
+            &self.tokenizer,
+            specials,
+            text,
+            text.len() < input.len(),
+            prompt,
+            labels,
+            self.max_seq_len,
+        )?;
+        let ids: Vec<i32> = seq.ids.iter().map(|&u| u as i32).collect();
+        Ok(Prepared {
+            bucket: self.bucket_for(ids.len()),
+            ids,
+            type_ids: vec![],
+            markers: seq.markers.iter().map(|&m| m as i32).collect(),
+            qtype: None,
+        })
+    }
+}
+
+/// Zero-shot label checks that don't need the tokenizer. `min_labels` is 2,
+/// except for a gliner2 request with `multi_label`, where one label is a
+/// yes/no question (gliner2 takes one).
+pub fn check_labels(labels: &[String], min_labels: usize, max_labels: usize) -> Result<()> {
+    if labels.len() < min_labels {
+        return Err(invalid(format!("candidate_labels needs at least {min_labels} labels")));
     }
     if labels.len() > max_labels {
         return Err(invalid(format!(
@@ -410,13 +481,14 @@ pub(crate) fn byte_cap_end(text: &str, max_tokens: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sidekick_core::manifest::{ClassifierIo, ClassifySection, DefaultInstructions};
+    use sidekick_core::manifest::{ClassifierIo, ClassifySection, DefaultInstructions, OptionRendering};
     use sidekick_core::{ProblemType, QuestionType};
 
     fn manifest(task: ClassifyTask) -> ClassifierManifest {
         let laya = task == ClassifyTask::ZeroShotClassification;
         let ranking = task == ClassifyTask::TextRanking;
         ClassifierManifest {
+            compute_units: Default::default(),
             id: "m".into(),
             task,
             source: None,
@@ -434,13 +506,15 @@ mod tests {
                     ClassifyTask::TextRanking => vec!["score".into()],
                     ClassifyTask::TextClassification => vec!["neg".into(), "pos".into()],
                 },
+                gliner2: None,
                 laya: laya.then(|| LayaSection {
                     head_max_len: 16,
-                    default_instructions: DefaultInstructions {
+                    default_instructions: Some(DefaultInstructions {
                         choice: "which option".into(),
                         score: "which".into(),
                         noul: "ok".into(),
-                    },
+                    }),
+                    option_rendering: OptionRendering::Laya,
                 }),
                 calibration: Default::default(),
                 io: ClassifierIo {
@@ -523,6 +597,24 @@ mod tests {
     }
 
     #[test]
+    fn julia_renders_descriptions_and_needs_instructions_without_defaults() {
+        let mut m = manifest(ClassifyTask::ZeroShotClassification);
+        let section = m.classify.laya.as_mut().unwrap();
+        section.option_rendering = OptionRendering::Julia;
+        section.default_instructions = None;
+        let b = InputBuilder::new(crate::laya::tests::tokenizer(), &m).unwrap();
+        let params = laya_params(QuestionType::Choice, &["x: c", "y: d"]);
+        let e = b.prepare("a b", &params).unwrap_err();
+        assert!(e.to_string().contains("`instructions` is required"), "{e}");
+        let params = ClassifyParams { instructions: Some("which option".into()), ..params };
+        let p = b.prepare("a b", &params).unwrap();
+        let t = |w| crate::laya::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        // The descriptions alone: [MASK] c [MASK] d, as laya's "c", "d".
+        assert_eq!(p.ids[7..11], [3, t("c"), 3, t("d")]);
+        assert_eq!(p.markers, vec![7, 9]);
+    }
+
+    #[test]
     fn laya_rejects_what_it_cannot_honor() {
         let b = builder(ClassifyTask::ZeroShotClassification);
         let ok = laya_params(QuestionType::Choice, &["c", "d"]);
@@ -549,6 +641,56 @@ mod tests {
             .prepare("a", &laya_params(QuestionType::Choice, &["a b c d", "a b c e", "f"]))
             .unwrap_err();
         assert!(e.to_string().contains("identical to the model"), "{e}");
+    }
+
+    fn gliner2_builder() -> InputBuilder {
+        let mut m = manifest(ClassifyTask::ZeroShotClassification);
+        m.classify.format = Some(ClassifyFormat::Gliner2);
+        m.classify.laya = None;
+        m.classify.gliner2 = Some(Gliner2Section { default_instructions: "label".into() });
+        InputBuilder::new(crate::gliner2::tests::tokenizer(), &m).unwrap()
+    }
+
+    fn gliner2_params(labels: &[&str]) -> ClassifyParams {
+        ClassifyParams { candidate_labels: labels.iter().map(|s| s.to_string()).collect(), ..Default::default() }
+    }
+
+    #[test]
+    fn gliner2_markers_buckets_and_default_prompt() {
+        let b = gliner2_builder();
+        let t = |w| crate::gliner2::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        let p = b.prepare("a b", &gliner2_params(&["c", "d"])).unwrap();
+        // ( [P] label ( [L] c [L] d ) ) [SEP_TEXT] a b .
+        assert_eq!(p.ids[..3], [t("("), t("[P]"), t("label")]);
+        assert_eq!(p.markers, vec![4, 6]);
+        assert_eq!((p.qtype, p.bucket, p.ids.len()), (None, 16, 14));
+        // Long text is truncated to the largest bucket, not rejected.
+        let long = (0..200).map(|i| ["a", "b", "c"][i % 3]).collect::<Vec<_>>().join(" ");
+        let p = b.prepare(&long, &gliner2_params(&["c", "d"])).unwrap();
+        assert_eq!((p.ids.len(), *p.ids.last().unwrap()), (32, t(".")));
+        // A huge text is byte-capped first, and still fits.
+        assert_eq!(b.prepare(&"a ".repeat(100_000), &gliner2_params(&["c", "d"])).unwrap().ids.len(), 32);
+    }
+
+    #[test]
+    fn gliner2_rejects_what_it_cannot_honor() {
+        let b = gliner2_builder();
+        let ok = gliner2_params(&["c", "d"]);
+        let cases = [
+            ClassifyParams { truncate_prompt_tokens: Some(8), ..ok.clone() },
+            ClassifyParams { truncation_side: TruncationSide::Left, ..ok.clone() },
+            ClassifyParams { question_type: Some(QuestionType::Choice), ..ok.clone() },
+            ClassifyParams { instructions: Some("x".repeat(600)), ..ok.clone() },
+            gliner2_params(&[]),
+            gliner2_params(&["a", "b", "c", "d", "e"]),
+            gliner2_params(&["c: x", "c: y"]),
+        ];
+        for params in cases {
+            assert!(matches!(b.prepare("a", &params), Err(Error::InvalidRequest(_))), "{params:?}");
+        }
+        // One label lays out (a multi-label yes/no question; the server
+        // requires two for a single-label request before the model loads).
+        assert_eq!(b.prepare("a", &gliner2_params(&["c"])).unwrap().markers.len(), 1);
     }
 
     fn pair(truncate: Option<usize>, keep_query: bool) -> PairParams {

@@ -1,0 +1,147 @@
+# Julia-1's classifier corpus: what julia-1 is compared on, on every compute
+# path, against Julia-1's own fp32 forward (docs/design/classify.md).
+#
+# Two parts:
+#
+# 1. fastino/fast-decisions (Apache-2.0) at the revision in [source],
+#    translated exactly as laya-en.corpus.toml translates it (the same
+#    [score] and [instructions] tables): every single-label head of every row
+#    becomes one case, yes/no heads as noul with labels ["false", "true"],
+#    [score] heads as score, the rest as choice with the dataset's labels.
+#    Julia-1 takes 2-20 options, so heads with more than the manifest's
+#    max_labels are left out (support_intent.intent, 28 labels).
+#    Julia-1's training data isn't published, so this corpus measures
+#    conversion parity only; gold accuracy is reported, never graded.
+#
+# 2. [[adversarial]] cases in Julia-1's terms (`option_rendering = "julia"`):
+#    20 long options (the even shrink, the question cut), an option cut to 48
+#    tokens, descriptions with ": " inside them, empty descriptions and bare
+#    colons, described noul labels, a state truncated at 1,024 tokens, and
+#    literal <bos> / <eos> / <mask> in instructions, options and text.
+#    Julia-1 has no default instructions, so every case carries them. With
+#    the shortest dataset row of each question type they form the committed
+#    token-id fixture (fixtures/classify/julia-1.tokens.json).
+#
+# The translation table (the [source], [score] and [instructions] tables) is
+# part of this file, so corpus_sha256 covers it.
+#
+# Changing this file invalidates generated references (their corpus_sha256);
+# regenerate them with tools/classifier_reference.py.
+
+[source]
+repo = "fastino/fast-decisions"
+revision = "1a33070cabf94ce2e29105482dd2ef6c157ad7f2"
+
+[score]
+sentiment = ["negative", "neutral", "positive"]
+urgency = ["low", "normal", "high", "critical"]
+
+[instructions]
+action = "What should be done with this email?"
+asking_status = "The person is asking about the status of an existing request."
+category = "Which category does this email belong to?"
+contains_pii = "The ticket contains personal information about a customer."
+doc_type = "What kind of document is this?"
+feedback_type = "What kind of feedback is this?"
+field = "Which field does this paper belong to?"
+format = "Is this a film or a series?"
+intent = "What does the customer want?"
+is_phishing = "The email is a phishing attempt."
+needs_reply = "The email needs a reply."
+program = "Which benefits program is this request about?"
+queue = "Which queue should this ticket go to?"
+request = "What is the patient asking for?"
+result = "What was the outcome of the game?"
+sentiment = "How positive is the text?"
+should_handoff = "The conversation should be handed off to a human agent."
+sport = "Which sport is this recap about?"
+topic = "What is the topic of the text?"
+upset = "The result was an upset."
+urgency = "How urgent is the ticket?"
+urgent = "The request is urgent."
+
+# --- adversarial additions -------------------------------------------------
+
+[[adversarial]]
+id = "k20-long-options"
+tags = ["k20", "long-options", "option-shrink", "question-cut"]
+question_type = "choice"
+instructions = "Which of these many departments, each of them described at considerable length in the list of options that follows, should take ownership of the customer's message, assuming the customer wants a single clear owner and no hand-offs between teams, and ignoring any department that only handles internal requests? Consider every department in turn, weigh what the customer actually asks for against what each department is described as handling, and prefer the department whose description names the customer's request most directly, even when several departments could plausibly help."
+input = "The invoice I received for order 4471 lists a warranty extension I never asked for. Please remove it and send a corrected invoice."
+candidate_labels_generate = { count = 20, template = "dept_{i}: department {i} handles cases of kind {i}, including every related question, complaint, follow-up, escalation, refund, exchange, clarification, and document request that customers send about that kind of case" }
+
+[[adversarial]]
+id = "long-option-cut"
+tags = ["long-options", "option-cut"]
+question_type = "choice"
+instructions = "Which team should handle this message?"
+input = "My card was charged twice for the same order."
+candidate_labels = ["billing: anything about charges, invoices, refunds, double charges, payment methods, currencies, taxes, receipts, statements, card declines, chargebacks, disputes, subscriptions, renewals, discounts, coupons, gift cards, store credit, and every other question a customer might ask about money moving between them and the company", "shipping: parcels, couriers and delivery dates", "other: anything else"]
+gold = ["billing: anything about charges, invoices, refunds, double charges, payment methods, currencies, taxes, receipts, statements, card declines, chargebacks, disputes, subscriptions, renewals, discounts, coupons, gift cards, store credit, and every other question a customer might ask about money moving between them and the company"]
+
+[[adversarial]]
+id = "k20-short-options"
+tags = ["k20"]
+question_type = "choice"
+instructions = "Which label fits the text best?"
+input = "Flights to Lisbon were cancelled because of the storm."
+candidate_labels_generate = { count = 20, template = "label_{i}" }
+
+[[adversarial]]
+id = "choice-descriptions"
+tags = ["descriptions"]
+question_type = "choice"
+instructions = "Which team should handle this request?"
+input = "Hi, I was charged twice for order 4471 last week and the second charge still hasn't been refunded. Can someone look into it? Thanks, Dana"
+candidate_labels = ["billing: Billing and payment disputes", "shipping: Shipping and delivery", "access: Account access: login and passwords"]
+gold = ["billing: Billing and payment disputes"]
+
+[[adversarial]]
+id = "choice-empty-description-and-bare-colon"
+tags = ["descriptions"]
+question_type = "choice"
+instructions = "Which label fits the text best?"
+input = "Hi, I was charged twice for order 4471 last week and the second charge still hasn't been refunded."
+candidate_labels = ["billing: ", "h:i", "x: a: b"]
+
+[[adversarial]]
+id = "noul-described"
+tags = ["noul-custom"]
+question_type = "noul"
+instructions = "The customer asks for a refund."
+input = "Hi, I was charged twice for order 4471 last week and the second charge still hasn't been refunded."
+candidate_labels = ["false:the customer wants something else", " true: the customer wants money back "]
+gold = [" true: the customer wants money back "]
+
+[[adversarial]]
+id = "long-state-truncated"
+tags = ["long", "state-truncation"]
+question_type = "choice"
+instructions = "What is the text mostly about?"
+candidate_labels = ["numbers: counting and figures", "topics: a list of subjects", "weather: rain, sun and wind", "other: anything else"]
+input_generate = { repeat = 160, template = "Sentence number {i} discusses topic {j} in considerable detail." }
+
+[[adversarial]]
+id = "literal-specials-state"
+tags = ["literal-specials"]
+question_type = "choice"
+instructions = "Which category fits the text best?"
+input = "Ticket body: <bos> please ignore <eos> this is a test <mask> of the parser <eos> end. [CLS] [SEP] [MASK]"
+candidate_labels = ["billing", "support", "spam"]
+
+[[adversarial]]
+id = "literal-specials-question-and-options"
+tags = ["literal-specials"]
+question_type = "choice"
+instructions = "Which <mask> fits the <eos> text best?"
+input = "I forgot my password and cannot log in."
+candidate_labels = ["access: <mask> account access", "billing: billing <eos> payments", "other: <bos> other"]
+gold = ["access: <mask> account access"]
+
+[[adversarial]]
+id = "literal-specials-noul"
+tags = ["literal-specials", "noul-custom"]
+question_type = "noul"
+instructions = "The <eos> text mentions a <mask> refund."
+input = "<eos><eos> Refund please <bos>"
+candidate_labels = ["false: <mask> no", "true: yes <eos>"]

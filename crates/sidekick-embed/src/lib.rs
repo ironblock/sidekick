@@ -5,10 +5,12 @@
 //! - [`CoremlEmbedder`] (feature `coreml`, macOS): a Core ML encoder
 //!   (EmbeddingGemma-300m, bge-small, MiniLM, …) targeted at the ANE.
 //! - [`CoremlClassifier`] (feature `coreml`, macOS): a Core ML classifier,
-//!   text-classification or zero-shot in laya's format. Its tokenization
-//!   ([`InputBuilder`], [`laya`]) is platform-neutral.
+//!   text-classification, a reranker, or zero-shot in laya's or GLiNER2's
+//!   format. Its tokenization ([`InputBuilder`], [`laya`], [`gliner2`]) is
+//!   platform-neutral.
 
 pub mod classify_input;
+pub mod gliner2;
 pub mod laya;
 mod pooling;
 mod static_embedder;

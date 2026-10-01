@@ -1267,6 +1267,7 @@ name = "sidekick-embed"
 version = "0.4.0"
 dependencies = [
  "half",
+ "regex",
  "safetensors",
  "serde",
  "serde_json",

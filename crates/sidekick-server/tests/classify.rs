@@ -309,6 +309,105 @@ async fn zero_shot_requests_are_validated_against_the_format() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn gliner2_multi_label_switches_probs_to_per_label_sigmoids() {
+    let request = |multi: Option<bool>| {
+        let mut b = json!({
+            "model": "schema-decider",
+            "input": "a refund for the damaged parcel",
+            "candidate_labels": ["refund", "damaged", "cancel"],
+            "instructions": "intent",
+        });
+        if let Some(m) = multi {
+            b["multi_label"] = json!(m);
+        }
+        b
+    };
+    // The mock scores 3.0 for each label the input contains, 0.0 otherwise.
+    let logits = [3.0, 3.0, 0.0];
+    for multi in [None, Some(false)] {
+        let body = classify_ok(request(multi)).await;
+        let d = &body["data"][0];
+        assert_eq!(probs(d), activate(ProblemType::SingleLabel, &logits, None), "{multi:?}");
+        assert!((probs(d).iter().sum::<f32>() - 1.0).abs() < 1e-6);
+    }
+    let body = classify_ok(request(Some(true))).await;
+    let d = &body["data"][0];
+    assert_eq!(probs(d), activate(ProblemType::MultiLabel, &logits, None));
+    // Its manifest asks for the GPU, and the header says so.
+    let (_, headers, _) = call_with_headers(test_state(true, None), classify(request(None))).await;
+    assert_eq!(headers["sidekick-compute-units"], "cpu_and_gpu");
+    // One label, the argmax, as in vLLM's response; clients threshold probs.
+    assert_eq!(d["label"], "refund");
+    assert_eq!(d["num_classes"], 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn gliner2_requests_are_validated_against_the_format() {
+    let base = || json!({"model": "schema-decider", "input": "x", "candidate_labels": ["a", "b"]});
+    let with = |field: &str, value: Value| {
+        let mut b = base();
+        b[field] = value;
+        b
+    };
+    classify_ok(base()).await;
+    classify_ok(with("instructions", json!("intent: what the customer wants"))).await;
+    classify_ok(with("multi_label", json!(true))).await;
+    classify_400(with("question_type", json!("choice")), "gliner2 format").await;
+    classify_400(with("calibration", json!("model")), "gliner2 format").await;
+    classify_400(with("truncate_prompt_tokens", json!(8)), "gliner2 format").await;
+    classify_400(with("truncation_side", json!("left")), "gliner2 format").await;
+    classify_400(with("candidate_labels", json!(["a", "b", "c", "d", "e"])), "maximum of 4").await;
+    // multi_label: true is the gliner2 format's alone; false, the default,
+    // is accepted everywhere, as Hugging Face clients send it.
+    for model in [json!({"model": "sentiment", "input": "x"}),
+                  json!({"model": "decider", "input": "x", "candidate_labels": ["a", "b"], "question_type": "choice"})] {
+        let mut b = model.clone();
+        b["multi_label"] = json!(true);
+        classify_400(b.clone(), "`multi_label` isn't supported").await;
+        b["multi_label"] = json!(false);
+        classify_ok(b).await;
+    }
+    // One label is a yes/no question when each label is scored alone, as
+    // gliner2 allows; a softmax over one label would always be 1.
+    let one = with("candidate_labels", json!(["refund"]));
+    classify_400(one.clone(), "at least 2 labels").await;
+    let mut one_multi = one;
+    one_multi["multi_label"] = json!(true);
+    let body = classify_ok(one_multi).await;
+    assert_eq!(probs(&body["data"][0]).len(), 1);
+    assert_eq!(body["data"][0]["num_classes"], 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn julia_rendering_is_checked_before_the_model_loads() {
+    let p = test_state_full(true, None);
+    let julia = |q: &str, labels: Value, instructions: Option<&str>| {
+        let mut b = json!({"model": "julia", "input": "x", "candidate_labels": labels, "question_type": q});
+        if let Some(i) = instructions {
+            b["instructions"] = json!(i);
+        }
+        b
+    };
+    let cases = [
+        (julia("choice", json!(["a", "b"]), None), "`instructions` is required"),
+        (julia("noul", json!(["false: wet", "true"]), Some("Is it dry?")), "both `false` and `true`, or neither"),
+        (julia("choice", json!(["b", "b: "]), Some("Which?")), "render as the same option `b`"),
+        (julia("choice", json!(["a", ": "]), Some("Which?")), "renders as an empty option"),
+    ];
+    for (body, needle) in cases {
+        let (status, value) = call(p.state.clone(), classify(body.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {value}");
+        let message = value["error"]["message"].as_str().unwrap();
+        assert!(message.contains(needle), "{body}: {message}");
+    }
+    assert_eq!(p.runs.load(std::sync::atomic::Ordering::Relaxed), 0, "nothing ran");
+
+    let (status, value) = call(p.state.clone(), classify(julia("noul", json!(["false", "true"]), Some("Is it dry?")))).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(probs(&value["data"][0]).len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn models_are_sent_to_the_route_for_their_task() {
     classify_400(json!({"model": "test-static", "input": "a"}), "model `test-static` is a feature-extraction model").await;
     classify_400(json!({"model": "apple-fm", "input": "a"}), "text-generation").await;
@@ -378,23 +477,41 @@ async fn listings_are_task_aware() {
     let e = model("test-static");
     assert_eq!(e["task"], "feature-extraction");
     assert!(e.get("labels").is_none() && e.get("max_batch").is_none());
+    assert_eq!(e["compute_units"], "cpu");
 
     let s = model("sentiment");
     assert_eq!(s["task"], "text-classification");
     assert_eq!(s["labels"], json!(["1 star", "2 stars", "3 stars", "4 stars", "5 stars"]));
     assert_eq!(s["max_batch"], 4);
     assert_eq!(s["extensions"], json!([]));
+    assert_eq!(s["required"], json!([]));
     assert!(s.get("max_labels").is_none() && s.get("calibration").is_none());
 
     let d = model("decider");
     assert_eq!(d["task"], "zero-shot-classification");
     assert_eq!(d["max_labels"], 4);
     assert_eq!(d["extensions"], json!(["candidate_labels", "calibration", "question_type", "instructions"]));
+    assert_eq!(d["required"], json!(["candidate_labels", "question_type"]));
+    // No default instructions: every request sends them.
+    assert_eq!(model("julia")["required"], json!(["candidate_labels", "question_type", "instructions"]));
+    assert_eq!(model("reranker")["required"], json!([]));
     assert_eq!(d["calibration"], json!({"choice:3-5": 2.0, "noul:2": 0.5}));
     assert!(d.get("labels").is_none());
 
+    let g = model("schema-decider");
+    assert_eq!(g["task"], "zero-shot-classification");
+    assert_eq!(g["extensions"], json!(["candidate_labels", "instructions", "multi_label"]));
+    assert_eq!(g["required"], json!(["candidate_labels"]));
+    assert!(g.get("calibration").is_none());
+    // Each classifier's configured compute units: the default, or its own.
+    assert_eq!(model("sentiment")["compute_units"], "cpu_and_ne");
+    assert_eq!(g["compute_units"], "cpu_and_gpu");
+
     let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;
-    assert_eq!(health["classifiers"]["models"], json!(["decider", "reranker", "sentiment", "sigmoid-reranker"]));
+    assert_eq!(
+        health["classifiers"]["models"],
+        json!(["decider", "julia", "reranker", "schema-decider", "sentiment", "sigmoid-reranker"])
+    );
     assert_eq!(health["classifiers"]["resident"], 0);
     assert_eq!(health["embeddings"]["models"], json!(["test-static"]));
     let skipped = health["skipped_models"].as_array().unwrap();

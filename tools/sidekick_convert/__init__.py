@@ -5,7 +5,8 @@ core.run():
 - a backbone (sidekick_convert.backbones): the architecture made
   convertible, with its attention, masks, positions and precision rewrites;
 - a head (sidekick_convert.heads): what the artifact returns, a pooled
-  embedding or the checkpoint's own classification logits;
+  embedding, the checkpoint's own classification logits, or one value per
+  token;
 - ports and a manifest (core.text_ports, sidekick_convert.manifest): the
   int32 static-shape interface and the committed manifest it must match.
 

@@ -21,17 +21,10 @@ pub use plan::compute_plan;
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 
-/// Compute-unit preference. `CpuAndNeuralEngine` is sidekick's default: it
-/// keeps background work off the GPU entirely, which is the point of the
-/// project. Use `All` only when measuring.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ComputeUnits {
-    All,
-    #[default]
-    CpuAndNeuralEngine,
-    CpuAndGpu,
-    CpuOnly,
-}
+/// Compute-unit preference, as a manifest's `compute_units` names it.
+/// `CpuAndNeuralEngine` is sidekick's default: it keeps background work off
+/// the GPU, which is the point of the project.
+pub use sidekick_core::ComputeUnits;
 
 /// A named int32 tensor input (shape is row-major, batch dim included).
 #[derive(Debug)]

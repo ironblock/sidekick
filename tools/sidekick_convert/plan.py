@@ -121,6 +121,17 @@ def gate(compiled, min_ane=0.8):
     return s
 
 
+def report(compiled):
+    """The summary without the verdict, for a model sidekick doesn't serve on
+    the ANE: a low ANE share passes, and an unreadable plan returns None."""
+    try:
+        s = summarize(read(compiled))
+    except GateFailure:
+        return None
+    s["share"] = s["ane"] / s["assigned"] if s["assigned"] else 0.0
+    return s
+
+
 def describe(s):
     note = ""
     if s.get("unassigned_heavy"):

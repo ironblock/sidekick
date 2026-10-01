@@ -39,7 +39,8 @@ POST /v1/classify
 | `candidate_labels` ([str]) | extension (HF zero-shot's name) | required on zero-shot models; 400 on fixed-label models |
 | `calibration` (`none` \| `model`) | extension | only on models that declare temperatures (every value, `none` included, is a 400 elsewhere); default `none`; `model` applies the manifest's temperature, and with `use_activation: false` needs none |
 | `question_type` (`choice` \| `score` \| `noul`) | extension, laya format | required on laya |
-| `instructions` (str) | extension, laya format | optional; the manifest's per-type default when absent |
+| `instructions` (str) | extension, laya and gliner2 formats | laya: the question text, with the manifest's per-type default when absent; required by a model whose manifest has none (Julia-1). gliner2: the task prompt (below), with the manifest's default when absent |
+| `multi_label` (bool, default false) | extension (HF zero-shot's name), gliner2 format | `true` (gliner2 only; a 400 elsewhere) scores each label independently: `probs` are per-label sigmoids instead of a softmax, and one candidate label is allowed. `false`, the default, is accepted on every model, as Hugging Face clients send it |
 
 Any other top-level field is ignored, as D22 already does. Extension fields
 unsupported by the model's task are a 400.
@@ -54,14 +55,25 @@ Over-length input:
   than the largest bucket is a 400, as in vLLM.
 - **laya format:** the state is truncated by design, keeping its start, and
   `truncate_prompt_tokens` is a 400.
+- **gliner2 format:** the text is truncated at the word level, keeping its
+  start, until the sequence fits the largest bucket, and the `.` is then
+  appended as for any text. The schema is never truncated: a schema that
+  doesn't fit on its own is a 400.
+  `truncate_prompt_tokens` and `truncation_side: left` are 400s.
 
 Other 400s:
 - an empty batch, or more inputs than `max_batch`;
-- fewer than 2 candidate labels, or more than `max_labels`;
+- fewer than 2 candidate labels (1 with gliner2's `multi_label: true`),
+  or more than `max_labels`;
 - duplicate labels, including labels identical at the token level after
   laya's option shrinking;
 - a laya `noul` question whose labels aren't `false` / `true` in that order,
   optionally with descriptions (`"false: …"`, `"true: …"`);
+- with Julia-1's option rendering: a noul question that describes only
+  one of `false` and `true`, a label that renders as an empty option, or
+  two labels that render alike (`"b"` and `"x: b"`);
+- no `instructions` for a model whose manifest has no default;
+- `multi_label: true` on any format but gliner2;
 - `calibration: model` where the model declares no temperature for that
   question type and label count;
 - malformed JSON, on every route, in the API's usual error shape (D22
@@ -95,7 +107,19 @@ Where sidekick deliberately differs from vLLM:
   the argmax.
 - The activation follows transformers' text-classification pipeline:
   regression → none; multi-label or a single output → sigmoid; otherwise
-  softmax, with temperature 1 unless `calibration: model`.
+  softmax, with temperature 1 unless `calibration: model`. On a
+  gliner2-format model, `multi_label: true` makes the request multi-label;
+  on any other model it is a 400.
+- For gliner2 these are the probabilities its own API reports at its
+  default activation and temperature 1: a softmax over the task's label
+  logits for a single-label task, and each label's sigmoid for a
+  multi-label one. (Its per-label training loss is binary cross-entropy,
+  but its single-label confidence is the softmax.)
+- A multi-label request still returns one `label`, the argmax, because
+  vLLM's response shape has one label per input. Clients choose the
+  labels that apply by thresholding `probs`. gliner2's own API returns
+  every label at or above its `cls_threshold` (0.4 to 0.5 in its
+  examples), falling back to the argmax so the answer is never empty.
 - `usage.prompt_tokens` counts the real tokens of every input.
 
 **Provenance headers**, on every inference route (`/v1/classify`,
@@ -106,7 +130,8 @@ Where sidekick deliberately differs from vLLM:
   otherwise `<id>`. For chat it's the Foundation Models variant id, read
   in the background and cached; until it's known, the chat model's id.
 - `sidekick-compute-units`: the configuration the serving instance was
-  loaded with: `cpu_and_ne` for Core ML models, `cpu` for static models.
+  loaded with: a Core ML model's `compute_units` (`cpu_and_ne` unless its
+  manifest says otherwise; see "Compute units"), `cpu` for static models.
   Chat omits it. It reports configuration, not the executing device, which
   Core ML doesn't expose.
 
@@ -127,14 +152,16 @@ buckets = [128, 256, 512]
 max_seq_len = 512
 max_batch = 32
 problem_type = "single_label"             # single_label | multi_label | regression
+compute_units = "cpu_and_ne"              # cpu_and_ne (default) | cpu_and_gpu | cpu_only | all
 
 [classify]
-format = "laya"                           # zero-shot formats: "laya"
-max_labels = 32                           # must equal the artifact's marker_pos width (checked at load)
+format = "laya"                           # zero-shot formats: "laya", "gliner2"
+max_labels = 32                           # laya: must equal the artifact's marker_pos width (checked at load)
 labels = []                               # text-classification: output order (id2label)
 
 [classify.laya]
 head_max_len = 192
+option_rendering = "laya"                 # laya (default) | julia: see "Option rendering"
 default_instructions = { choice = "Which option fits the text best?", score = "Which level fits the text best?", noul = "Does the statement hold for the text?" }
 
 [classify.calibration]                    # opt-in; "<question_type>:<k bucket>", laya's temp_bucket keys
@@ -157,6 +184,36 @@ A text-classification manifest sets `task = "text-classification"`,
 `[classify] labels = [...]` and `problem_type`. Its `[classify.io]` has
 `input_ids`, `attention_mask` and `output` only.
 
+A gliner2 manifest is zero-shot with `format = "gliner2"`. Its
+`max_labels` is a policy cap on labels per request, since the artifact
+has no marker width. `problem_type` is `single_label`; a request makes
+itself multi-label with `multi_label`. Its `[classify.io]` has
+`input_ids`, `attention_mask` and `output`:
+
+```toml
+id = "gliner2.5-decide"
+task = "zero-shot-classification"
+source = { repo = "fastino/GLiNER2.5-Decide", revision = "5a7adf72a23b4d311abae6ce050d7f0012bb3416" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 32
+problem_type = "single_label"
+
+[classify]
+format = "gliner2"
+max_labels = 32
+
+[classify.gliner2]
+default_instructions = "label"            # the task prompt when a request sends none
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"                         # one logit per token, [1, bucket]
+```
+
 Registry validation rejects:
 - `labels` on a zero-shot model, or `format` on a fixed-label model;
 - a missing `[classify.io]` feature for the format.
@@ -165,12 +222,16 @@ Loading a classifier checks every bucket's artifact before any runs, from
 its model description (a CPU-only load that never predicts, about 2 s cold
 for a large bucket, read in parallel): `input_ids` and `attention_mask`
 are `[1, bucket]`, `marker_pos` is `[1, max_labels]`, `qtype` is `[1]`,
-the output has one slot per label where it declares a shape, and D27's
-shape guard passes. A bad bucket fails the load, not a later request.
+the output has one slot per label where it declares a shape (one per
+token, `[1, bucket]`, for gliner2), and D27's shape guard passes. A bad
+bucket fails the load, not a later request.
 
 Task-aware listings:
 - `/v1/models` gains `task`, `labels` or `max_labels`, the accepted
-  extension fields, and the calibration table.
+  extension fields (`extensions`), the ones every request must send
+  (`required`: `candidate_labels` on zero-shot models, `question_type` on
+  laya-format ones, and `instructions` where the manifest has no default),
+  and the calibration table.
 - `/health` lists classifiers separately, with `classifiers.supported`,
   and the manifests the registry skipped, with paths relative to the
   models directory.
@@ -190,6 +251,7 @@ Every input is int32, which is what the runtime's `predict_int32` feeds.
 |---|---|---|
 | text-classification | `input_ids [1,S]`, `attention_mask [1,S]` | `logits [1,N]` |
 | laya | `input_ids [1,S]`, `attention_mask [1,S]`, `marker_pos [1,KMAX]` (−1 pads unused slots), `qtype [1]` (rank 1) | `logits [1,KMAX]`, padded slots at −1e4 |
+| gliner2 | `input_ids [1,S]`, `attention_mask [1,S]` | `logits [1,S]`, one per token |
 
 laya's graph builds the one-hot marker selection and the question-type
 embedding from these inputs itself. It pins the residual range rewrite at
@@ -197,6 +259,62 @@ K = 2. The calibration rule would allow K = 1, but laya's largest measured
 linear output (about 27,500) would then sit within 2% of the rule's
 0.85 × 2^15 target (D25). The load-time check reads KMAX
 from `marker_pos`'s shape in the model description.
+
+gliner2's graph applies the checkpoint's classifier MLP to every token, and
+the runtime reads the logits at the `[L]` positions it placed while
+building the sequence. That needs no index inputs and no gather, and costs
+under 1% of the encoder's compute. The graph holds the encoder and that
+MLP only: GLiNER2's span, count and count-prediction modules serve
+extraction, not classification, and stay out of the artifact. The
+encoder is DeBERTa-v3, whose relative-position attention is rewritten to
+convert (`tools/probe_deberta.py`).
+
+## Compute units
+
+A Core ML model loads with `.cpuAndNeuralEngine` unless its manifest asks
+otherwise (D14): the ANE keeps background work off the GPU. Some models run
+badly there. GLiNER2.5-Decide grades A on the GPU at about 34 ms per input,
+but C on the ANE, where a prediction takes about 0.11, 0.34 and 1.28 s at
+128, 256 and 512 tokens, because its DeBERTa relative-position rewrite is
+slow on the ANE (docs/MODELS.md). Such a model
+names its compute units with an optional top-level key, in
+`classifier.toml` and in an embedder's `manifest.toml` alike:
+
+| `compute_units` | Core ML | |
+|---|---|---|
+| `cpu_and_ne` | `.cpuAndNeuralEngine` | the default |
+| `cpu_and_gpu` | `.cpuAndGPU` | for a model the ANE runs badly |
+| `cpu_only` | `.cpuOnly` | |
+| `all` | `.all` | Core ML chooses; for measuring |
+
+- The daemon and `libsidekick.dylib` load the model with it, and every
+  bucket shares it. Tests and the parity suite can still load any path
+  explicitly (`load_with`).
+- `sidekick-compute-units` and the model's `/v1/models` entry
+  (`compute_units`) report it. A static embedder reports `cpu`, and setting
+  the key on one is a validation error.
+- An unknown value fails validation, so the registry skips the manifest
+  with the reason (in `/health`'s `skipped_models`) and loads the rest.
+- D27's shape guard runs for every choice: it reads the model description,
+  which doesn't depend on compute units, so a multi-shape artifact is
+  refused on macOS 27 whatever the manifest asks for.
+- The parity suite grades every path regardless. The configured one is the
+  path a model is served on, so it is the grade that matters for that
+  model.
+
+Compatibility: sidekick 0.4 and earlier ignore unknown keys in both
+manifest files. A 0.4 daemon given a manifest with `compute_units` loads it
+with `.cpuAndNeuralEngine` and reports `cpu_and_ne`; it doesn't fail. (A
+gliner2-format manifest is skipped by 0.4 anyway, since it predates that
+format.)
+
+The same holds for `[classify.laya] option_rendering`, with a sharper edge:
+0.4 ignores the key and would render a Julia-1 manifest's options as laya
+does, which Julia-1 wasn't trained on. The committed Julia-1 manifest is
+safe there because it has no `default_instructions`, which 0.4 requires,
+so 0.4 skips it with that reason. Don't add `default_instructions` to a
+manifest with `option_rendering = "julia"` while 0.4 daemons may read the
+models directory.
 
 ## The laya format
 
@@ -213,18 +331,99 @@ a `[MASK]` marker before each option. The Rust port of its `build_sequence`
 - The question text is cut to `max(8, budget)` tokens.
 - The state is truncated to fit, keeping its start.
 - The final sequence is `ids[:max_len]`.
-- Options are rendered as laya renders them:
-  - choice: `"key"` or `"key: description"`;
-  - score: `"level i: description"`;
-  - noul: `"false: …"` then `"true: …"`, with laya's default texts when a
-    label has no description.
+- Options are rendered as the manifest's `option_rendering` says (below).
 - laya's act (escalate) head isn't served.
+
+### Option rendering
+
+Models trained on laya's sequence differ in how a label becomes option
+text. `[classify.laya] option_rendering` picks one; the sequence around
+the options is the same. A label's description is the text after its
+first `": "`; an empty description counts as none. The response's `label`
+is always the request's label as sent.
+
+| question | `laya` (default; laya's `render_options`) | `julia` (Julia-1's typed API) |
+|---|---|---|
+| choice | the label as given: `"key"` or `"key: description"` | the description, else the key |
+| score | `"level i: <label>"` | the label as given |
+| noul | `"false: …"` then `"true: …"`, laya's default text for a missing description | `"false"`, `"true"` when neither is described; the two descriptions when both are; one alone is a 400 |
+
+Julia-1's rendering also needs:
+- `max_labels` at most 20, Julia-1's most options per question;
+- no empty option and no two labels rendering alike (both 400s);
+- `instructions` on every request when the manifest has no
+  `default_instructions`, which Julia-1's API doesn't have. laya's
+  rendering requires them in the manifest.
+
+An over-long state is truncated, keeping its start, under both: sidekick
+doesn't implement Julia-1's strict mode, which rejects one.
+
+## The gliner2 format
+
+[GLiNER2](https://github.com/fastino-ai/GLiNER2) (Apache-2.0) models such as
+GLiNER2.5-Decide classify from a schema placed before the text. Each label
+gets an `[L]` marker token, and the classifier scores the encoder's output
+at each marker. The Rust port of the gliner2 package's input builder
+(`processor.py` in gliner2 2.0.0) must copy these exactly:
+- The sequence is the task's schema, `[SEP_TEXT]`, then the text:
+  `( [P] <prompt> ( [L] label0 [L] label1 … ) ) [SEP_TEXT] <text words>`.
+  It has no `[CLS]` or `[SEP]`.
+- Each item (each parenthesis, marker, the prompt, each label, each text
+  word) is tokenized on its own with the model's tokenizer, and the pieces
+  are concatenated.
+- `<prompt>` is the request's `instructions`, or the manifest's
+  `default_instructions`. gliner2's own API builds it as `task` or
+  `task: instruction` (for example `intent`, or `intent: what the
+  customer wants`); the string is tokenized as one item either way.
+  The default, `label`, matched the dataset's own task names (`intent`,
+  `sentiment`, …) on every argmax in an fp32 check of 45 single-task
+  fast-decisions rows from 9 domains.
+- A label sent as `"key: description"` puts `key` in its `[L]` slot and
+  appends ` [DESCRIPTION] key: description` to the prompt, in label order.
+- The text is split into words by gliner2's whitespace splitter regex,
+  and each word is lowercased. Labels, the prompt and descriptions keep
+  their case. The splitter's character classes are spelled out to match
+  Python 3.12's `re`, measured equal on all of Unicode 15.0. The runtime's
+  Unicode tables come from its Rust crates (`regex`, and the standard
+  library's lowercasing), which may be newer: a character added after
+  Unicode 15.0 can split or lowercase differently from gliner2 on Python
+  3.12.
+- An over-length text loses words from its end until the sequence fits the
+  largest bucket. Then a `.` is appended, as a word of its own, unless the
+  kept text ends in `.`, `!` or `?` (an empty text becomes `.`). gliner2
+  appends first and never truncates by default; truncating first is
+  sidekick's choice, so a truncated text still ends the way every training
+  input did. The reference runs gliner2 on the kept prefix of the text, cut
+  at the end of its last kept word, which reproduces this.
+- The `[P]` and `[L]` positions come from the layout, the first piece of
+  each marker's slot, never from searching for their token ids. A marker
+  string inside a label or the prompt tokenizes to its marker id but isn't
+  scored, as in gliner2. In the text, the word splitter breaks it up
+  (`[L]` becomes `[`, `l`, `]`), so it never becomes a marker.
+
+Scope, per request:
+- **One task.** gliner2 can score several tasks in one pass, with their
+  schemas joined by `[SEP_STRUCT]`, but vLLM's response carries one label
+  per input. Tasks attend to each other, so a task scored alone isn't
+  identical to the same task scored jointly. Measured in fp32 on 85
+  single-label tasks from fast-decisions rows that have several tasks:
+  alone vs joint agree on 83 argmaxes, the logits move by at most 2.4, and
+  gold accuracy is 54 vs 56 of 85. A multi-task extension would save passes
+  but isn't needed for accuracy.
+- **No few-shot examples** (`[EXAMPLE]` … `[OUTPUT]`) in this version.
+- **No long-text chunking.** gliner2's `classify_long` repeats the schema
+  over word windows and merges the logits; sidekick truncates instead.
 
 ## Fixtures and references (frozen formats)
 
 - **Token-id fixture**, `fixtures/classify/<model id>.tokens.json`,
-  generated by `tools/classifier_reference.py` with the model's own Python
-  (laya's `rl_common.py` for laya). `crates/sidekick-embed/tests/classify_tokens.rs`
+  generated by `tools/classifier_reference.py` with the model's own Python:
+  laya's `rl_common.py` for laya-en, the laya package's `common.py` for
+  laya-typed-decisions, Julia-1's `julia/data.py` for Julia-1, and the
+  gliner2 package's processor for gliner2. gliner2's fixture also has two
+  cases the generator builds at the truncation boundary (a text ending in
+  `!` or `?` and a space, one token over only because of the appended
+  `.`), which aren't in the corpus. `crates/sidekick-embed/tests/classify_tokens.rs`
   asserts that the Rust input builder reproduces it. The test needs the
   model's tokenizer installed; it skips otherwise, and fails instead under
   `SIDEKICK_REQUIRE_CLASSIFY_FIXTURES=1`.
@@ -233,7 +432,10 @@ a `[MASK]` marker before each option. The Rust port of its `build_sequence`
   `reference.safetensors`. It's written by the classifier reference
   generator and not committed, like D26's. It carries the per-case ids,
   markers, qtype, labels, fp32 logits and gold labels, plus D26's staleness
-  keys. Schema: `fixtures/classify/reference.schema.json`.
+  keys. It also records the option rendering of a laya-format model and the
+  gliner2 release of a gliner2 one: a reference whose rendering differs
+  from the manifest's, or whose gliner2 release isn't the one the runtime
+  ports, is stale. Schema: `fixtures/classify/reference.schema.json`.
 
 ## Validation
 
@@ -263,9 +465,35 @@ Corpora:
   - default instructions;
   - a massive-activation case;
   - literal `[SEP]` and `[CLS]` in the text.
+- **Julia-1** (`fixtures/classify/julia-1.corpus.toml`): the laya
+  translation of fast-decisions, without heads over its 20-label limit,
+  plus adversarial cases in Julia-1's terms (20 long options, an option cut
+  to 48 tokens, descriptions containing `": "`, empty descriptions and bare
+  colons, described noul labels, a state truncated at 1,024 tokens, and
+  literal `<bos>`, `<eos>` and `<mask>`). Inputs are built by Julia-1's own
+  `julia/data.py` with options rendered as its typed API renders them, and
+  the oracles run its `JuliaDecisionModel`.
+- **gliner2:** fastino/fast-decisions at revision `1a33070`, each task
+  sent as its own request, with multi-label tasks as `multi_label: true`.
+  It is fastino's own benchmark, so it grades parity only; gold accuracy
+  isn't reported for gliner2. Adversarial additions:
+  - 32 labels, and labels with descriptions;
+  - marker strings (`[L]`, `[P]`, `[SEP_TEXT]`) inside the text, a label
+    and a description;
+  - non-ASCII text and emoji (the tokenizer is a Unigram model without
+    byte fallback, so a character outside its vocabulary becomes `[UNK]`);
+  - text long enough to be truncated at the largest bucket, including one
+    whose last kept word is followed by terminal punctuation that
+    truncation removes, and one whose kept part already ends in `.`.
 
 First models:
 - `laya-en` (zero-shot, laya format);
 - `nlptown/bert-base-multilingual-uncased-sentiment` (text-classification;
   5 labels; BERT). If its checkpoint has no `tokenizer.json`, the converter
   generates one, and the Python reference tokenizes with that same file.
+- `SupersonicLabs/Julia-1` (zero-shot, laya format with Julia-1's option
+  rendering; mmBERT-small).
+- `fastino/GLiNER2.5-Decide` (zero-shot, gliner2 format; DeBERTa-v3-large),
+  served on the GPU (`compute_units = "cpu_and_gpu"`): it passes the gates
+  there (grade A), while the ANE grades C and is 10–40× slower
+  (docs/MODELS.md).

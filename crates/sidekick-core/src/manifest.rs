@@ -46,6 +46,41 @@ pub enum Pooling {
     None,
 }
 
+/// The Core ML compute units a model is loaded with: a manifest's
+/// `compute_units`, `cpu_and_ne` unless it says otherwise. The ANE
+/// preference is sidekick's default because it keeps background work off
+/// the GPU (D14); a model the ANE runs badly can ask for another
+/// (docs/design/classify.md, "Compute units").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ComputeUnits {
+    /// `.all`: Core ML picks among CPU, GPU and ANE.
+    #[serde(rename = "all")]
+    All,
+    /// `.cpuAndNeuralEngine`.
+    #[default]
+    #[serde(rename = "cpu_and_ne")]
+    CpuAndNeuralEngine,
+    /// `.cpuAndGPU`.
+    #[serde(rename = "cpu_and_gpu")]
+    CpuAndGpu,
+    /// `.cpuOnly`.
+    #[serde(rename = "cpu_only")]
+    CpuOnly,
+}
+
+impl ComputeUnits {
+    /// The manifest value, also what `sidekick-compute-units` and
+    /// `/v1/models` report.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::CpuAndNeuralEngine => "cpu_and_ne",
+            Self::CpuAndGpu => "cpu_and_gpu",
+            Self::CpuOnly => "cpu_only",
+        }
+    }
+}
+
 /// `manifest.toml` for an embedding model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelManifest {
@@ -85,6 +120,20 @@ pub struct ModelManifest {
     /// Where the weights came from (`sidekick-model: <id>@<revision>`).
     #[serde(default)]
     pub source: Option<Source>,
+    /// Core ML compute units (coreml backend only; default `cpu_and_ne`).
+    #[serde(default)]
+    pub compute_units: Option<ComputeUnits>,
+}
+
+impl ModelManifest {
+    /// What the model runs on, as `sidekick-compute-units` reports it:
+    /// `cpu` for a static model, else its Core ML compute units.
+    pub fn compute_units_name(&self) -> &'static str {
+        match self.backend {
+            EmbeddingBackendKind::Static => "cpu",
+            EmbeddingBackendKind::Coreml => self.compute_units.unwrap_or_default().name(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +185,9 @@ pub struct ClassifierManifest {
     pub max_batch: usize,
     #[serde(default = "default_problem_type")]
     pub problem_type: ProblemType,
+    /// Core ML compute units (default `cpu_and_ne`).
+    #[serde(default)]
+    pub compute_units: ComputeUnits,
     pub classify: ClassifySection,
 }
 
@@ -153,6 +205,9 @@ fn default_problem_type() -> ProblemType {
 pub enum ClassifyFormat {
     /// laya's decision format: a `[MASK]` marker before each option.
     Laya,
+    /// GLiNER2's schema format: an `[L]` marker before each label, scored
+    /// per token (docs/design/classify.md).
+    Gliner2,
 }
 
 /// `[classify]` of a `classifier.toml`.
@@ -170,6 +225,8 @@ pub struct ClassifySection {
     pub labels: Vec<String>,
     #[serde(default)]
     pub laya: Option<LayaSection>,
+    #[serde(default)]
+    pub gliner2: Option<Gliner2Section>,
     /// Opt-in temperatures, keyed `"<question_type>:<k bucket>"`
     /// ([`calibration_key`]).
     #[serde(default)]
@@ -185,8 +242,46 @@ pub struct LayaSection {
     /// Token budget for the question and its options (laya's `head_max_len`).
     pub head_max_len: usize,
     /// Instructions used when a request sends none, per question type.
-    pub default_instructions: DefaultInstructions,
+    /// Required with laya's rendering; without them (Julia-1 has none), a
+    /// request must send `instructions`.
+    #[serde(default)]
+    pub default_instructions: Option<DefaultInstructions>,
+    /// How a request's labels become option texts.
+    #[serde(default)]
+    pub option_rendering: OptionRendering,
 }
+
+/// `[classify.gliner2]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Gliner2Section {
+    /// The task prompt when a request sends no `instructions`.
+    pub default_instructions: String,
+}
+
+impl LayaSection {
+    /// The instructions a question gets when the request sends none.
+    pub fn default_instructions(&self, question_type: QuestionType) -> Option<&str> {
+        self.default_instructions.as_ref().map(|d| d.get(question_type))
+    }
+}
+
+/// How a laya-format model renders a request's labels as option texts. The
+/// sequence around them is the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OptionRendering {
+    /// laya's `render_options`: `"key: description"` as given, `"level i:
+    /// …"` for scores, `"false: …"`/`"true: …"` for noul.
+    #[default]
+    Laya,
+    /// Julia-1's typed API: the description alone (or the key), score items
+    /// as given, and `"false"`/`"true"` or the two descriptions for noul.
+    /// At most 20 options.
+    Julia,
+}
+
+/// Julia-1's most options per question.
+pub const JULIA_MAX_LABELS: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultInstructions {
@@ -268,8 +363,27 @@ impl ClassifierManifest {
         if !self.classify.calibration.is_empty() {
             fields.push("calibration");
         }
-        if self.classify.format == Some(ClassifyFormat::Laya) {
-            fields.extend(["question_type", "instructions"]);
+        match self.classify.format {
+            Some(ClassifyFormat::Laya) => fields.extend(["question_type", "instructions"]),
+            Some(ClassifyFormat::Gliner2) => fields.extend(["instructions", "multi_label"]),
+            None => {}
+        }
+        fields
+    }
+
+    /// The extension fields every request must send: a subset of
+    /// [`extension_fields`](Self::extension_fields), listed so a client
+    /// learns them before a 400 does.
+    pub fn required_fields(&self) -> Vec<&'static str> {
+        let mut fields = Vec::new();
+        if self.task == ClassifyTask::ZeroShotClassification {
+            fields.push("candidate_labels");
+        }
+        if let Some(laya) = self.classify.laya.as_ref().filter(|_| self.classify.format == Some(ClassifyFormat::Laya)) {
+            fields.push("question_type");
+            if laya.default_instructions.is_none() {
+                fields.push("instructions");
+            }
         }
         fields
     }
@@ -511,6 +625,9 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
     if m.backend != EmbeddingBackendKind::Coreml && m.artifact.contains("{seq}") {
         return Err("`{seq}` artifact placeholder is only valid for the coreml backend".into());
     }
+    if m.backend != EmbeddingBackendKind::Coreml && m.compute_units.is_some() {
+        return Err("`compute_units` is only valid for the coreml backend".into());
+    }
     Ok(())
 }
 
@@ -547,8 +664,8 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             if matches!(c.max_labels, Some(n) if n != c.labels.len()) {
                 return Err("`max_labels` must equal the number of `labels`".into());
             }
-            if c.laya.is_some() {
-                return Err("`[classify.laya]` is for the laya format".into());
+            if c.laya.is_some() || c.gliner2.is_some() {
+                return Err("`[classify.laya]` and `[classify.gliner2]` are for zero-shot formats".into());
             }
             if io.marker_pos.is_some() || io.qtype.is_some() {
                 return Err("text-classification's [classify.io] has input_ids, attention_mask and output only".into());
@@ -560,8 +677,8 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             }
         }
         ClassifyTask::TextRanking => {
-            if c.format.is_some() || c.laya.is_some() {
-                return Err("`format` and `[classify.laya]` are for zero-shot models".into());
+            if c.format.is_some() || c.laya.is_some() || c.gliner2.is_some() {
+                return Err("`format`, `[classify.laya]` and `[classify.gliner2]` are for zero-shot models".into());
             }
             if c.labels.len() != 1 {
                 return Err("a text-ranking model has one output: `labels` names it (e.g. [\"score\"])".into());
@@ -598,10 +715,45 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                     if laya.head_max_len == 0 || laya.head_max_len >= m.max_seq_len {
                         return Err("`head_max_len` must be in 1..max_seq_len".into());
                     }
+                    if laya.option_rendering == OptionRendering::Laya && laya.default_instructions.is_none() {
+                        return Err("laya's option rendering needs `default_instructions`".into());
+                    }
+                    if laya.option_rendering == OptionRendering::Julia && m.max_labels() > JULIA_MAX_LABELS {
+                        return Err(format!(
+                            "Julia-1 takes at most {JULIA_MAX_LABELS} options: `max_labels` must be at most that"
+                        ));
+                    }
                     require("marker_pos", &io.marker_pos)?;
                     require("qtype", &io.qtype)?;
                     if io.token_type_ids.is_some() {
                         return Err("the laya format takes no `token_type_ids`".into());
+                    }
+                    if c.gliner2.is_some() {
+                        return Err("`[classify.gliner2]` is for the gliner2 format".into());
+                    }
+                }
+                ClassifyFormat::Gliner2 => {
+                    match &c.gliner2 {
+                        Some(g) if !g.default_instructions.trim().is_empty() => {}
+                        Some(_) => return Err("`[classify.gliner2] default_instructions` must not be empty".into()),
+                        None => return Err("the gliner2 format needs `[classify.gliner2]`".into()),
+                    }
+                    if c.laya.is_some() {
+                        return Err("`[classify.laya]` is for the laya format".into());
+                    }
+                    if io.marker_pos.is_some() || io.qtype.is_some() || io.token_type_ids.is_some() {
+                        return Err("the gliner2 format's [classify.io] has input_ids, attention_mask and output only".into());
+                    }
+                    // A request makes itself multi-label (`multi_label`);
+                    // the manifest's problem type is the default.
+                    if m.problem_type != ProblemType::SingleLabel {
+                        return Err("the gliner2 format's problem_type is `single_label`; requests opt into \
+                                    multi-label with `multi_label`".into());
+                    }
+                    // Calibration keys are per question type, which the
+                    // gliner2 format doesn't have.
+                    if !c.calibration.is_empty() {
+                        return Err("`[classify.calibration]` isn't supported by the gliner2 format".into());
                     }
                 }
             }
@@ -746,9 +898,10 @@ source = { repo = "BAAI/bge-small-en-v1.5", revision = "abc" }
             vec!["candidate_labels", "calibration", "question_type", "instructions"]
         );
         assert_eq!(
-            laya.classify.laya.as_ref().unwrap().default_instructions.get(QuestionType::Noul),
-            "Does the statement hold for the text?"
+            laya.classify.laya.as_ref().unwrap().default_instructions(QuestionType::Noul),
+            Some("Does the statement hold for the text?")
         );
+        assert_eq!(laya.classify.laya.as_ref().unwrap().option_rendering, OptionRendering::Laya, "the default");
 
         let s = &reg.classifier("sentiment").unwrap().manifest;
         assert_eq!(s.max_labels(), 5);
@@ -806,6 +959,61 @@ output = "logits"
         }
     }
 
+    const GLINER2: &str = r#"
+id = "gliner2.5-decide"
+task = "zero-shot-classification"
+source = { repo = "fastino/GLiNER2.5-Decide", revision = "5a7adf72a23b4d311abae6ce050d7f0012bb3416" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 32
+problem_type = "single_label"
+
+[classify]
+format = "gliner2"
+max_labels = 32
+
+[classify.gliner2]
+default_instructions = "label"
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
+"#;
+
+    #[test]
+    fn gliner2_classifiers_and_what_they_refuse() {
+        let tmp = tmp_dir("gliner2");
+        write_classifier(&tmp, "g", GLINER2);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped());
+        let m = &reg.classifier("gliner2.5-decide").unwrap().manifest;
+        assert_eq!(m.classify.format, Some(ClassifyFormat::Gliner2));
+        assert_eq!(m.max_labels(), 32);
+        assert_eq!(m.classify.gliner2.as_ref().unwrap().default_instructions, "label");
+        assert_eq!(m.extension_fields(), vec!["candidate_labels", "instructions", "multi_label"]);
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        for (name, body, want) in [
+            ("no-section", GLINER2.replace("[classify.gliner2]\ndefault_instructions = \"label\"\n", ""), "needs `[classify.gliner2]`"),
+            ("empty-default", GLINER2.replace("= \"label\"", "= \" \""), "must not be empty"),
+            ("marker-io", GLINER2.replace("output = ", "marker_pos = \"m\"\noutput = "), "output only"),
+            ("multi-label", GLINER2.replace("problem_type = \"single_label\"", "problem_type = \"multi_label\""), "`multi_label`"),
+            ("calibration", format!("{GLINER2}\n[classify.calibration]\n\"choice:2\" = 1.0\n"), "isn't supported by the gliner2"),
+            ("laya-section", format!("{GLINER2}\n[classify.laya]\nhead_max_len = 8\ndefault_instructions = {{ choice = \"a\", score = \"b\", noul = \"c\" }}\n"), "for the laya format"),
+            ("on-fixed", format!("{SENTIMENT}\n[classify.gliner2]\ndefault_instructions = \"x\"\n"), "zero-shot formats"),
+        ] {
+            let tmp = tmp_dir(&format!("gliner2-{name}"));
+            write_classifier(&tmp, name, &body);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            assert_eq!(reg.skipped().len(), 1, "{name}");
+            assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
+            std::fs::remove_dir_all(&tmp).unwrap();
+        }
+    }
+
     #[test]
     fn calibration_keys_follow_laya_temp_bucket() {
         let cases = [(1, "choice:2"), (2, "choice:2"), (3, "choice:3-5"), (5, "choice:3-5"), (6, "choice:6-10"), (10, "choice:6-10"), (11, "choice:11+")];
@@ -832,6 +1040,9 @@ output = "logits"
             ("dup-label", SENTIMENT.replace("\"2 stars\"", "\"1 star\""), "duplicate label"),
             ("zero-batch", SENTIMENT.replace("max_seq_len = 512", "max_seq_len = 512\nmax_batch = 0"), "max_batch"),
             ("bad-buckets", SENTIMENT.replace("[128, 512]", "[512, 128]"), "increasing"),
+            ("julia-too-many", LAYA.replace("head_max_len = 192", "head_max_len = 192\noption_rendering = \"julia\""), "at most 20 options"),
+            ("no-defaults", LAYA.replace("\ndefault_instructions", "\n# default_instructions"), "default_instructions"),
+            ("bad-rendering", LAYA.replace("head_max_len = 192", "head_max_len = 192\noption_rendering = \"jules\""), "option_rendering"),
             ("not-toml", "id = ".to_string(), ""),
         ];
         for (name, body, want) in cases {
@@ -844,6 +1055,22 @@ output = "logits"
             assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
             std::fs::remove_dir_all(&tmp).unwrap();
         }
+    }
+
+    #[test]
+    fn julia_rendering_takes_up_to_20_options_and_no_default_instructions() {
+        let tmp = tmp_dir("julia");
+        let julia = LAYA
+            .replace("id = \"laya-en\"", "id = \"julia\"")
+            .replace("max_labels = 32", "max_labels = 20")
+            .replace("\ndefault_instructions", "\noption_rendering = \"julia\"\n# default_instructions");
+        write_classifier(&tmp, "julia", &julia);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        let laya = reg.classifier("julia").unwrap().manifest.classify.laya.clone().unwrap();
+        assert_eq!(laya.option_rendering, OptionRendering::Julia);
+        assert_eq!(laya.default_instructions(QuestionType::Choice), None);
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
@@ -985,6 +1212,40 @@ max_seq_len = 512
         let reg = ModelRegistry::scan(&tmp).unwrap();
         assert!(reg.is_empty());
         assert!(reg.skipped()[0].reason.contains("{seq}"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn compute_units_default_to_the_ane_and_unknown_values_are_skipped() {
+        const COREML: &str = "id = \"e\"\nbackend = \"coreml\"\nartifact = \"m\"\ntokenizer = \"t\"\ndims = 4\nbuckets = [8]\nmax_seq_len = 8\n";
+        const STATIC: &str = "id = \"s\"\nbackend = \"static\"\nartifact = \"m\"\ntokenizer = \"t\"\ndims = 4\nmax_seq_len = 8\n";
+        let tmp = tmp_dir("units");
+        write_classifier(&tmp, "default", SENTIMENT);
+        let gpu = SENTIMENT.replace("id = \"sentiment\"", "id = \"gpu\"").replace("\n[classify]", "compute_units = \"cpu_and_gpu\"\n\n[classify]");
+        write_classifier(&tmp, "gpu", &gpu);
+        write_manifest(&tmp, "e-default", COREML);
+        write_manifest(&tmp, "e-cpu", &format!("{}compute_units = \"cpu_only\"\n", COREML.replace("\"e\"", "\"e-cpu\"")));
+        write_manifest(&tmp, "s", STATIC);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        assert_eq!(reg.classifier("sentiment").unwrap().manifest.compute_units, ComputeUnits::CpuAndNeuralEngine);
+        assert_eq!(reg.classifier("gpu").unwrap().manifest.compute_units, ComputeUnits::CpuAndGpu);
+        let units = |id| reg.get(id).unwrap().manifest.compute_units_name();
+        assert_eq!((units("e"), units("e-cpu"), units("s")), ("cpu_and_ne", "cpu_only", "cpu"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // An unknown value, or units on a static model, skips that manifest
+        // with the reason; the rest load.
+        let tmp = tmp_dir("units-bad");
+        write_classifier(&tmp, "good", SENTIMENT);
+        write_classifier(&tmp, "typo", &SENTIMENT.replace("id = \"sentiment\"", "id = \"typo\"").replace("\n[classify]", "compute_units = \"gpu\"\n\n[classify]"));
+        write_manifest(&tmp, "s", &format!("{STATIC}compute_units = \"cpu_only\"\n"));
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert_eq!(reg.classifier_ids().collect::<Vec<_>>(), vec!["sentiment"]);
+        let reasons: Vec<&str> = reg.skipped().iter().map(|s| s.reason.as_str()).collect();
+        assert_eq!(reasons.len(), 2, "{reasons:?}");
+        assert!(reasons.iter().any(|r| r.contains("compute_units") && r.contains("gpu")), "{reasons:?}");
+        assert!(reasons.iter().any(|r| r.contains("only valid for the coreml backend")), "{reasons:?}");
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

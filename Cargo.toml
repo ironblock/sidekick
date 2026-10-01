@@ -34,6 +34,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Pure-Rust regex backend: keeps the build free of C/C++ cross-compilation.
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 safetensors = "0.5"
+regex = "1"
 half = "2"
 sha2 = "0.10"
 base64 = "0.22"

@@ -282,6 +282,10 @@ pub struct ClassifyRequest {
     pub question_type: Option<String>,
     #[serde(default)]
     pub instructions: Option<String>,
+    /// gliner2 format: score each label independently (sigmoid `probs`).
+    /// The name Hugging Face's zero-shot pipeline uses.
+    #[serde(default)]
+    pub multi_label: Option<bool>,
 }
 
 /// vLLM's pooling fields that classify and rerank share
@@ -502,6 +506,15 @@ pub struct ModelObject {
     /// accepts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<Vec<&'static str>>,
+    /// Extension, classifiers: the extension fields every request must
+    /// send, a subset of `extensions`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<Vec<&'static str>>,
+    /// Extension, embedders and classifiers: the compute units the model is
+    /// loaded with (`cpu` for a static model), as `sidekick-compute-units`
+    /// reports them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compute_units: Option<&'static str>,
     /// Extension, classifiers: the temperatures `calibration: "model"`
     /// applies, keyed `"<question_type>:<label count bucket>"`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -520,6 +533,8 @@ impl ModelObject {
             max_labels: None,
             max_batch: None,
             extensions: None,
+            required: None,
+            compute_units: None,
             calibration: None,
         }
     }

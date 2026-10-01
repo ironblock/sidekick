@@ -124,13 +124,14 @@ pub struct Prepared {
 }
 
 impl CoremlEmbedder {
-    /// Load for the ANE (`.cpuAndNeuralEngine`), as the daemon does.
+    /// Load with the manifest's compute units (`cpu_and_ne` by default), as
+    /// the daemon does.
     pub fn load(model: &ResolvedModel) -> Result<Self> {
-        Self::load_with(model, ComputeUnits::CpuAndNeuralEngine)
+        Self::load_with(model, model.manifest.compute_units.unwrap_or_default())
     }
 
-    /// Load with an explicit compute-unit preference. sidekick only serves
-    /// from the ANE preference; the others exist so tests can compare paths.
+    /// Load with an explicit compute-unit preference, overriding the
+    /// manifest's, so tests and the parity suite can compare paths.
     pub fn load_with(model: &ResolvedModel, units: ComputeUnits) -> Result<Self> {
         let m = &model.manifest;
         let mut tokenizer = Tokenizer::from_file(model.tokenizer_path())
@@ -174,6 +175,15 @@ impl CoremlEmbedder {
     /// Sequence-length buckets, smallest first.
     pub fn buckets(&self) -> &[usize] {
         &self.buckets
+    }
+
+    /// The compute units Core ML loaded the model with, read back from the
+    /// smallest bucket's configuration (every bucket shares them).
+    pub fn compute_units(&self) -> Result<ComputeUnits> {
+        let bucket = *self.buckets.first().expect("validated non-empty");
+        self.models.get(bucket)?.compute_units().ok_or_else(|| {
+            Error::Inference("Core ML reports compute units sidekick doesn't set".into())
+        })
     }
 
     /// Apply the purpose's prefix, tokenize, truncate, and pick a bucket.

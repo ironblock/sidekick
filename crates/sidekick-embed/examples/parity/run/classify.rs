@@ -52,9 +52,10 @@ pub fn worker(
         let e = |e: sidekick_core::Error| format!("case {}: {e}", case.id);
         let problem = crate::classify_grade::case_problem(&model.manifest, case);
         let max = model.manifest.max_seq_len;
+        let self_truncating = model.manifest.classify.format.is_some();
         let prepared = match &case.query {
             Some(query) => clf.prepare_pair(query, &case.input, &case.pair_params(max)),
-            None => clf.prepare(&case.input, &case.params(max)),
+            None => clf.prepare(&case.input, &case.params(max, self_truncating)),
         }
         .map_err(e)?;
         let t = Instant::now();
@@ -118,9 +119,10 @@ pub fn worker(
     let mut repeat_bitwise = true;
     for (case, first) in cases.iter().zip(&results).take(5) {
         let max = model.manifest.max_seq_len;
+        let self_truncating = model.manifest.classify.format.is_some();
         let again = match &case.query {
             Some(query) => clf.prepare_pair(query, &case.input, &case.pair_params(max)),
-            None => clf.prepare(&case.input, &case.params(max)),
+            None => clf.prepare(&case.input, &case.params(max, self_truncating)),
         }
         .and_then(|p| clf.run(&p))
         .map_err(|e| e.to_string())?;

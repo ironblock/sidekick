@@ -235,6 +235,7 @@ mod tests {
                 io: Default::default(),
                 prefixes: Default::default(),
                 source: None,
+                compute_units: None,
             },
             dir: dir.clone(),
         }

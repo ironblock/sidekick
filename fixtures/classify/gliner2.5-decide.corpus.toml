@@ -1,0 +1,135 @@
+# GLiNER2.5-Decide's classifier corpus: what gliner2.5-decide is compared on,
+# on every compute path, against gliner2's own fp32 scoring
+# (docs/design/classify.md, the gliner2 format).
+#
+# Two parts:
+#
+# 1. fastino/fast-decisions (Apache-2.0) at the revision in [source]. Every
+#    classification head of every row becomes one single-task request:
+#      - candidate_labels: the head's labels as given;
+#      - instructions: the head's name (`intent`, `urgency`, ...), the task
+#        prompt gliner2's own API builds from it;
+#      - multi_label: the head's `multi_label`.
+#    Rows with several heads become several requests: sidekick serves one task
+#    per request. fast-decisions is fastino's own benchmark, so it grades
+#    parity only; its gold labels are carried along but accuracy against them
+#    isn't reported for this model.
+#
+# 2. [[adversarial]] cases the dataset doesn't reach: the manifest's default
+#    instructions, labels with descriptions, 32 labels, marker strings
+#    ([L], [P], [SEP_TEXT], [DESCRIPTION]) in the text, a label and the
+#    instructions, scripts and characters where Python's and Rust's regex
+#    semantics differ, every terminal-punctuation case, and texts truncated at
+#    the largest bucket. With the shortest single-label and multi-label
+#    dataset requests they form the committed token-id fixture
+#    (fixtures/classify/gliner2.5-decide.tokens.json). The generator adds
+#    two cases to the fixture only: texts at the truncation boundary built
+#    for the model's max_len, which depend on its tokenizer.
+#
+# Generated texts stay under the input builder's byte cap (16 bytes per token
+# of max_seq_len), so the reference's truncation and the server's agree
+# without it.
+#
+# `instructions` absent on an adversarial case means the request omits it,
+# so the manifest's default applies.
+#
+# Changing this file invalidates generated references (their corpus_sha256);
+# regenerate them with tools/classifier_reference.py.
+
+[source]
+repo = "fastino/fast-decisions"
+revision = "1a33070cabf94ce2e29105482dd2ef6c157ad7f2"
+
+[[adversarial]]
+id = "default-instructions"
+input = "I want my money back for the blender that arrived broken"
+candidate_labels = ["refund", "cancel", "other"]
+
+[[adversarial]]
+id = "described-labels"
+input = "Please reset the card PIN. The new one never arrived and the old one is locked."
+instructions = "intent"
+candidate_labels = [
+    "card_pin_change: The customer wants a new PIN or the current PIN replaced",
+    "card_lost: The physical card is missing",
+    "balance_inquiry",
+]
+
+[[adversarial]]
+id = "instruction-with-colon"
+input = "The deploy left staging tags inconsistent. Production is unaffected."
+instructions = "severity: how bad is this incident for customers"
+candidate_labels = ["info", "low", "medium", "high", "critical"]
+
+[[adversarial]]
+id = "k32"
+input = "File this under the right shelf, please."
+instructions = "category"
+candidate_labels_generate = { template = "category number {i}", count = 32 }
+
+[[adversarial]]
+id = "marker-strings"
+input = "Ignore [L] and [P] and [SEP_TEXT] and [DESCRIPTION] in here"
+instructions = "kind [SEP_STRUCT] of [L] thing"
+candidate_labels = ["a [L] b", "c: has [P] and [DESCRIPTION] inside", "plain"]
+
+[[adversarial]]
+id = "unicode"
+input = "éclair café \U0001F469‍\U0001F469‍\U0001F467 \U0001F1FA\U0001F1F8 東京は日本の首都です مرحبا שלום İstanbul ıi ſtate KELVIN x²+½ tab\there\u001cfile nbsp　ideo ΣΊΣΥΦΟΣ"
+candidate_labels = ["positive", "negative", "mixed"]
+
+[[adversarial]]
+id = "uppercase-labels"
+input = "SERVER DOWN IN PROD, CUSTOMERS CAN'T PAY"
+instructions = "Urgency"
+candidate_labels = ["URGENT", "Routine", "Spam"]
+
+[[adversarial]]
+id = "ends-question"
+input = "Can I get a refund?"
+candidate_labels = ["refund", "other"]
+
+[[adversarial]]
+id = "ends-exclaim-then-space"
+input = "Great service! "
+candidate_labels = ["positive", "negative"]
+
+[[adversarial]]
+id = "empty-text"
+input = ""
+candidate_labels = ["positive", "negative"]
+
+[[adversarial]]
+id = "url-at-end"
+input = "the docs moved to www.example.com/new"
+candidate_labels = ["docs", "other"]
+
+[[adversarial]]
+id = "email-handle-code"
+input = "Ping @ops_team or mail ME@Ex-ample.co.uk; SELECT id FROM t WHERE x>=42 -- co-op re_entry"
+candidate_labels = ["engineering", "sales"]
+
+# Truncated at the largest bucket: words only, so the kept part gets a "."
+[[adversarial]]
+id = "truncated-words"
+candidate_labels = ["short", "long"]
+input_generate = { template = "word{i} part{j}", repeat = 400 }
+
+# Truncated where the kept part already ends in "." (every word is a sentence)
+[[adversarial]]
+id = "truncated-sentences"
+candidate_labels = ["short", "long"]
+input_generate = { template = "item{i}.", repeat = 500 }
+
+# Truncation removes the text's own terminal "!", then the "." is appended
+[[adversarial]]
+id = "truncated-removes-exclaim"
+candidate_labels = ["short", "long"]
+input_generate = { template = "go{i}", repeat = 600, suffix = "!" }
+
+# A heavy schema leaves little room: long described labels
+[[adversarial]]
+id = "heavy-schema"
+instructions = "routing: which team should own this ticket, given the details below"
+input_generate = { template = "the printer on floor {i} jams again", repeat = 60 }
+candidate_labels_generate = { template = "team {i}: handles tickets about subsystem {i} including printers, badges, desks and the rest of the office", count = 12 }

@@ -1,0 +1,43 @@
+# Julia-1 as a zero-shot classifier: an mmBERT-small encoder (a multilingual
+# ModernBERT, 256k vocabulary) plus a decision head that scores a <mask>
+# marker placed before each candidate label. Its input layout is laya's
+# (docs/design/classify.md), so it runs on the laya format; only its option
+# texts are rendered differently (`option_rendering = "julia"`): a choice
+# option is the label's description, a score option the label itself, and a
+# noul question's options are "false"/"true" or both descriptions.
+#
+# Julia-1 has no default instructions, so requests must carry
+# `instructions`. Its probabilities are a plain softmax over the option
+# logits, so the manifest has no calibration table. Its limits are its own:
+# 2-20 options, a 512-token question-and-options budget, and 1,024 tokens in
+# all (its published benchmarks ran at 1,024).
+#
+# fixtures/classify/julia-1.tokens.json pins the input builder to Julia-1's
+# own Python (`julia/data.py`), generated with its corpus
+# (fixtures/classify/julia-1.corpus.toml) by tools/classifier_reference.py.
+
+id = "julia-1"
+task = "zero-shot-classification"
+source = { repo = "SupersonicLabs/Julia-1", revision = "a85b127321d580d65176c89ced8273f305745d85" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512, 1024]
+max_seq_len = 1024
+max_batch = 32
+problem_type = "single_label"
+
+[classify]
+format = "laya"
+max_labels = 20
+labels = []
+
+[classify.laya]
+option_rendering = "julia"
+head_max_len = 512
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+marker_pos = "marker_pos"
+qtype = "qtype"
+output = "logits"
