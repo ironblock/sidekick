@@ -555,7 +555,10 @@ def gliner2_fit(proc, text, prompt, labels, max_len):
     if len(text.encode()) > max_len * 16:
         raise SystemExit("a corpus text exceeds the byte cap; keep generated texts under it")
     ends = [e for _, _, e in proc.word_splitter(text, lower=False)]
-    lo, hi = 0, len(ends) - 1          # largest n in [lo, hi] whose prefix fits
+    # Every word can be kept even when the whole text doesn't fit: a text
+    # ending in "!" and a space gets gliner2's "." appended, one token more
+    # than its prefix up to the "!", which needs none.
+    lo, hi = 0, len(ends)              # largest n in [lo, hi] whose prefix fits
     while lo < hi:
         n = (lo + hi + 1) // 2
         if len(gliner2_layout(proc, text[: ends[n - 1]], prompt, labels)[0]) <= max_len:
@@ -589,6 +592,29 @@ def gliner2_build(cases, proc, tok, default, max_len, max_labels):
             # truncates the text by design.
             c["tags"] = c["tags"] + ["truncated-text"]
         c.update(ids=ids, markers=markers, qtype=None, k=k)
+    return cases
+
+
+def gliner2_boundary_cases(proc, max_len):
+    """Token-fixture cases at the truncation boundary, built for the model's
+    max_len: a text ending in terminal punctuation and a space, whose layout
+    is one token over the limit only because gliner2 appends "." to it.
+    Every word still fits (the prefix up to the "!" or "?" needs no "."), so
+    nothing is dropped. They depend on the tokenizer and max_len, so they live
+    here, not in the corpus, and the reference doesn't include them."""
+    labels, prompt = ["refund", "cancel"], "intent"
+    cases = []
+    for mark in ("!", "?"):
+        def text(n):
+            return " ".join(["late"] * n) + f" too late{mark} "
+        n = 0
+        while len(gliner2_layout(proc, text(n), prompt, labels)[0]) <= max_len:
+            n += 1
+        if len(gliner2_layout(proc, text(n), prompt, labels)[0]) != max_len + 1:
+            raise SystemExit("no boundary text: a filler word isn't one token")
+        cases.append({"id": f"boundary-terminal{'-question' if mark == '?' else ''}-then-space",
+                      "tags": ["boundary"], "input": text(n), "candidate_labels": labels,
+                      "instructions": prompt, "multi_label": False, "gold": None, "head": None})
     return cases
 
 
@@ -641,8 +667,10 @@ def run_gliner2(args, manifest):
     cases = gliner2_build(gliner2_cases(corpus, dataset), proc, tok, cls["gliner2"]["default_instructions"],
                           manifest["max_seq_len"], cls["max_labels"])
     print(f"{len(cases)} cases; max {max(len(c['ids']) for c in cases)} tokens; "
-          f"{sum('truncated' in c['tags'] for c in cases)} truncated", flush=True)
-    fixture = gliner2_fixture_subset(cases)
+          f"{sum('truncated-text' in c['tags'] for c in cases)} truncated", flush=True)
+    boundary = gliner2_build(gliner2_boundary_cases(proc, manifest["max_seq_len"]), proc, tok,
+                             cls["gliner2"]["default_instructions"], manifest["max_seq_len"], cls["max_labels"])
+    fixture = gliner2_fixture_subset(cases) + boundary
     logits = None
     if not args.fixture_only:
         from gliner2.classification import Classifier
