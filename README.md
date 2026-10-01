@@ -254,9 +254,11 @@ addr = "127.0.0.1:8790"        # loopback only by default
 # api_key = "..."              # require Authorization: Bearer <key> on /v1
 session_ttl_secs = 300         # Foundation Models session reuse window
 model_idle_ttl_secs = 900      # model residency (embedders, classifiers) after last use
+ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
 ```
 
-CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...`.
+CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...
+--ignore-ane-weight-cap`.
 
 ## Workspace layout
 

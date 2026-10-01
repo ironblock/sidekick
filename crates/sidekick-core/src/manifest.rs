@@ -81,6 +81,26 @@ impl ComputeUnits {
     }
 }
 
+/// Core ML runs an ML program on the ANE only while its weights stay under
+/// about 1 GiB; past that it runs the whole program elsewhere, with no error
+/// and nothing in the log. Measured on an M1 Max under macOS 27.0: a program
+/// with 0.964 GiB of weights ran on the ANE, one with 1.022 GiB didn't, and
+/// coremltools documents a 1 GB Neural Engine limit. The converters gate on
+/// the same value (tools/sidekick_convert/plan.py).
+pub const MAX_ANE_PROGRAM_WEIGHT_BYTES: u64 = 1 << 30;
+
+/// A manifest's `ane_weight_limit`: whether the registry enforces
+/// [`MAX_ANE_PROGRAM_WEIGHT_BYTES`] on a model served on the ANE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AneWeightLimit {
+    /// Skip a model whose compiled weights exceed the cap (the default).
+    #[default]
+    Enforce,
+    /// Load it anyway, for experimentation: Core ML will run it off the ANE.
+    Ignore,
+}
+
 /// `manifest.toml` for an embedding model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelManifest {
@@ -123,6 +143,9 @@ pub struct ModelManifest {
     /// Core ML compute units (coreml backend only; default `cpu_and_ne`).
     #[serde(default)]
     pub compute_units: Option<ComputeUnits>,
+    /// Whether the ANE weight cap is enforced (coreml backend only).
+    #[serde(default)]
+    pub ane_weight_limit: Option<AneWeightLimit>,
 }
 
 impl ModelManifest {
@@ -188,6 +211,9 @@ pub struct ClassifierManifest {
     /// Core ML compute units (default `cpu_and_ne`).
     #[serde(default)]
     pub compute_units: ComputeUnits,
+    /// Whether the ANE weight cap is enforced (default `enforce`).
+    #[serde(default)]
+    pub ane_weight_limit: AneWeightLimit,
     pub classify: ClassifySection,
 }
 
@@ -439,6 +465,78 @@ impl ResolvedClassifier {
     }
 }
 
+/// How [`ModelRegistry::scan_with`] scans.
+#[derive(Debug, Clone, Default)]
+pub struct ScanOptions {
+    /// Load models served on the ANE even past
+    /// [`MAX_ANE_PROGRAM_WEIGHT_BYTES`] (`sidekickd
+    /// --ignore-ane-weight-cap`, or the parity suite, which measures every
+    /// compute path itself).
+    pub ignore_ane_weight_cap: bool,
+}
+
+/// The bytes of a compiled Core ML artifact's weights: every file under its
+/// `weights/` directory (an `.mlmodelc`), or under
+/// `Data/com.apple.CoreML/weights/` (an `.mlpackage`), as the converters
+/// measure them. Missing directories count as 0. File lengths are read from
+/// metadata, so the check reads no weights.
+pub fn artifact_weight_bytes(artifact: &Path) -> u64 {
+    fn walk(dir: &Path) -> u64 {
+        let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+        entries
+            .filter_map(|e| e.ok())
+            .map(|e| {
+                let path = e.path();
+                match std::fs::metadata(&path) {
+                    Ok(m) if m.is_dir() => walk(&path),
+                    Ok(m) => m.len(),
+                    Err(_) => 0,
+                }
+            })
+            .sum()
+    }
+    walk(&artifact.join("weights")) + walk(&artifact.join("Data/com.apple.CoreML/weights"))
+}
+
+/// Skip a model served on the ANE (`cpu_and_ne` or `all`) when a bucket's
+/// compiled weights exceed [`MAX_ANE_PROGRAM_WEIGHT_BYTES`]: Core ML would
+/// run it off the ANE with no error, so the model would look ANE-served and
+/// not be. Each `{seq}` bucket is its own program and is checked on its own.
+fn check_ane_weights(
+    dir: &Path,
+    artifact: &str,
+    buckets: &[usize],
+    units: ComputeUnits,
+    limit: AneWeightLimit,
+    options: &ScanOptions,
+) -> std::result::Result<(), String> {
+    let on_ane = matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All);
+    if !on_ane || limit == AneWeightLimit::Ignore || options.ignore_ane_weight_cap {
+        return Ok(());
+    }
+    let mut names: Vec<String> = if artifact.contains("{seq}") {
+        buckets.iter().map(|b| artifact.replace("{seq}", &b.to_string())).collect()
+    } else {
+        vec![artifact.to_string()]
+    };
+    names.dedup();
+    for name in names {
+        let bytes = artifact_weight_bytes(&dir.join(&name));
+        if bytes > MAX_ANE_PROGRAM_WEIGHT_BYTES {
+            return Err(format!(
+                "`{name}` has {:.3} GiB of weights, past Core ML's 1 GiB limit for running a program on \
+                 the ANE (MAX_ANE_PROGRAM_WEIGHT_BYTES); served with `{}`, Core ML would run it off the \
+                 ANE without an error. Serve it on the GPU (`compute_units = \"cpu_and_gpu\"`), convert \
+                 a quantized or chunked variant, or set `ane_weight_limit = \"ignore\"` (or start \
+                 sidekickd with --ignore-ane-weight-cap) to load it anyway",
+                bytes as f64 / (1u64 << 30) as f64,
+                units.name()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// A manifest the registry skipped, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SkippedManifest {
@@ -473,8 +571,14 @@ impl ModelRegistry {
     /// Scan `models_dir`. Only an unreadable directory is an error: a bad
     /// manifest is skipped with a warning, so one broken model can't take
     /// down every other. A classifier whose id an embedder already uses is
-    /// skipped too; the embedder keeps working.
+    /// skipped too; the embedder keeps working. So is a model served on the
+    /// ANE whose compiled weights exceed [`MAX_ANE_PROGRAM_WEIGHT_BYTES`].
     pub fn scan(models_dir: &Path) -> Result<Self> {
+        Self::scan_with(models_dir, &ScanOptions::default())
+    }
+
+    /// [`scan`](Self::scan) with options.
+    pub fn scan_with(models_dir: &Path, options: &ScanOptions) -> Result<Self> {
         let mut reg = Self { root: models_dir.to_path_buf(), ..Self::default() };
         if !models_dir.exists() {
             return Ok(reg);
@@ -492,7 +596,15 @@ impl ModelRegistry {
                 continue;
             }
             let loaded = read_manifest::<ModelManifest>(&path)
-                .and_then(|m| validate_embedder(&m).map(|()| m));
+                .and_then(|m| validate_embedder(&m).map(|()| m))
+                .and_then(|m| {
+                    if m.backend != EmbeddingBackendKind::Coreml {
+                        return Ok(m);
+                    }
+                    let units = m.compute_units.unwrap_or_default();
+                    let limit = m.ane_weight_limit.unwrap_or_default();
+                    check_ane_weights(dir, &m.artifact, &m.buckets, units, limit, options).map(|()| m)
+                });
             match loaded {
                 Ok(manifest) => match reg.owner(&manifest.id) {
                     Some(other) => reg.skip(&path, format!("duplicate model id `{}` (also {})", manifest.id, reg.relative(&other).display())),
@@ -509,7 +621,11 @@ impl ModelRegistry {
                 continue;
             }
             let loaded = read_manifest::<ClassifierManifest>(&path)
-                .and_then(|m| validate_classifier(&m).map(|()| m));
+                .and_then(|m| validate_classifier(&m).map(|()| m))
+                .and_then(|m| {
+                    check_ane_weights(dir, &m.artifact, &m.buckets, m.compute_units, m.ane_weight_limit, options)
+                        .map(|()| m)
+                });
             match loaded {
                 Ok(manifest) => match reg.owner(&manifest.id) {
                     Some(other) => reg.skip(&path, format!("duplicate model id `{}` (also {})", manifest.id, reg.relative(&other).display())),
@@ -627,6 +743,9 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
     }
     if m.backend != EmbeddingBackendKind::Coreml && m.compute_units.is_some() {
         return Err("`compute_units` is only valid for the coreml backend".into());
+    }
+    if m.backend != EmbeddingBackendKind::Coreml && m.ane_weight_limit.is_some() {
+        return Err("`ane_weight_limit` is only valid for the coreml backend".into());
     }
     Ok(())
 }
@@ -1246,6 +1365,74 @@ max_seq_len = 512
         assert_eq!(reasons.len(), 2, "{reasons:?}");
         assert!(reasons.iter().any(|r| r.contains("compute_units") && r.contains("gpu")), "{reasons:?}");
         assert!(reasons.iter().any(|r| r.contains("only valid for the coreml backend")), "{reasons:?}");
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// A compiled artifact whose weights total `bytes`, as sparse files
+    /// (their length counts; no disk is used).
+    fn weights(model_dir: &Path, artifact: &str, sub: &str, bytes: u64) {
+        let dir = model_dir.join(artifact).join(sub);
+        std::fs::create_dir_all(&dir).unwrap();
+        let half = bytes / 2;
+        for (name, len) in [("weight.bin", half), ("nested/more.bin", bytes - half)] {
+            let path = dir.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::File::create(&path).unwrap().set_len(len).unwrap();
+        }
+    }
+
+    #[test]
+    fn models_served_on_the_ane_past_its_weight_cap_are_skipped() {
+        const CAP: u64 = MAX_ANE_PROGRAM_WEIGHT_BYTES;
+        // SENTIMENT's buckets are 128 and 512, artifact model_{seq}.mlmodelc.
+        let cases: &[(&str, String, u64, Option<&str>)] = &[
+            // Every bucket is its own program: one over the cap skips the model.
+            ("over", SENTIMENT.to_string(), CAP + 1, Some("`model_512.mlmodelc` has 1.000 GiB of weights")),
+            ("at-cap", SENTIMENT.to_string(), CAP, None),
+            ("all-units", SENTIMENT.replace("\n[classify]", "compute_units = \"all\"\n\n[classify]"), CAP + 1, Some("past Core ML's 1 GiB limit")),
+            ("on-gpu", SENTIMENT.replace("\n[classify]", "compute_units = \"cpu_and_gpu\"\n\n[classify]"), CAP + 1, None),
+            ("on-cpu", SENTIMENT.replace("\n[classify]", "compute_units = \"cpu_only\"\n\n[classify]"), CAP + 1, None),
+            ("ignored", SENTIMENT.replace("\n[classify]", "ane_weight_limit = \"ignore\"\n\n[classify]"), CAP + 1, None),
+        ];
+        for (name, body, bytes, want) in cases {
+            let tmp = tmp_dir(&format!("ane-cap-{name}"));
+            write_classifier(&tmp, "s", body);
+            weights(&tmp.join("s"), "model_128.mlmodelc", "weights", 1 << 20);
+            weights(&tmp.join("s"), "model_512.mlmodelc", "weights", *bytes);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            match want {
+                Some(want) => {
+                    assert!(reg.classifier("sentiment").is_err(), "{name}");
+                    let reason = &reg.skipped()[0].reason;
+                    assert!(reason.contains(want), "{name}: {reason}");
+                    assert!(reason.contains("cpu_and_gpu") && reason.contains("ane_weight_limit"), "{name}: {reason}");
+                    // The daemon's --ignore-ane-weight-cap loads it.
+                    let opts = ScanOptions { ignore_ane_weight_cap: true };
+                    assert!(ModelRegistry::scan_with(&tmp, &opts).unwrap().classifier("sentiment").is_ok(), "{name}");
+                }
+                None => assert!(reg.skipped().is_empty(), "{name}: {:?}", reg.skipped().first().map(|s| &s.reason)),
+            }
+            std::fs::remove_dir_all(&tmp).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_ane_weight_cap_covers_embedders_and_mlpackages() {
+        const EMBEDDER: &str = "id = \"big\"\nbackend = \"coreml\"\nartifact = \"model.mlpackage\"\ntokenizer = \"t\"\ndims = 4\nbuckets = [8]\nmax_seq_len = 8\n";
+        let tmp = tmp_dir("ane-cap-embedder");
+        write_manifest(&tmp, "big", EMBEDDER);
+        // An .mlpackage keeps its weights under Data/com.apple.CoreML/weights.
+        weights(&tmp.join("big"), "model.mlpackage", "Data/com.apple.CoreML/weights", MAX_ANE_PROGRAM_WEIGHT_BYTES + 4096);
+        assert_eq!(artifact_weight_bytes(&tmp.join("big/model.mlpackage")), MAX_ANE_PROGRAM_WEIGHT_BYTES + 4096);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.get("big").is_err());
+        assert!(reg.skipped()[0].reason.contains("`model.mlpackage`"), "{}", reg.skipped()[0].reason);
+        std::fs::remove_dir_all(&tmp).unwrap();
+        // The key is for the coreml backend only.
+        let tmp = tmp_dir("ane-cap-static");
+        write_manifest(&tmp, "s", "id = \"s\"\nbackend = \"static\"\nartifact = \"m\"\ntokenizer = \"t\"\ndims = 4\nmax_seq_len = 8\nane_weight_limit = \"ignore\"\n");
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped()[0].reason.contains("only valid for the coreml backend"));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

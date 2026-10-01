@@ -178,4 +178,7 @@ failed on it. So a model you expect can be missing from
 `sk_pool_models` (or `/v1/models`) while the rest work. `sk_pool_skipped`
 (and `skipped_models` in the daemon's `/health`) lists each skipped
 manifest with the reason, its path relative to the models directory:
-check it when your model id isn't listed.
+check it when your model id isn't listed. That includes a model served
+on the ANE whose compiled weights exceed Core ML's 1 GiB limit, which
+Core ML would otherwise run off the ANE without telling you; the reason
+names the fixes (`docs/design/classify.md`, "The ANE weight cap").

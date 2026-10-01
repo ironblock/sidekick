@@ -37,6 +37,11 @@ usage: parity [options]
                        isn't bit-identical to CPU_ONLY
   --timeout SECS       per worker (default 1200)";
 
+/// The suite measures every compute path itself (its ANE plan check reports
+/// a model Core ML won't place on the ANE), so it loads models past the ANE
+/// weight cap too.
+const MEASURE_ALL: sidekick_core::ScanOptions = sidekick_core::ScanOptions { ignore_ane_weight_cap: true };
+
 /// Cases re-run in a second ANE process to check determinism across loads.
 const DETERMINISM_CASES: usize = 8;
 
@@ -86,7 +91,7 @@ fn reference_dir(model: &ResolvedModel, refs: Option<&Path>) -> PathBuf {
 }
 
 fn load_model(models_dir: &Path, id: &str) -> Result<ResolvedModel, String> {
-    let reg = ModelRegistry::scan(models_dir).map_err(|e| e.to_string())?;
+    let reg = ModelRegistry::scan_with(models_dir, &MEASURE_ALL).map_err(|e| e.to_string())?;
     reg.get(id).cloned().map_err(|e| e.to_string())
 }
 
@@ -267,7 +272,7 @@ fn worker(args: &[String]) -> Result<(), String> {
         .transpose()?;
     let path = Path3::parse(path).ok_or("bad path")?;
     let refs = (refs != "-").then(|| PathBuf::from(refs));
-    let registry = ModelRegistry::scan(Path::new(models_dir)).map_err(|e| e.to_string())?;
+    let registry = ModelRegistry::scan_with(Path::new(models_dir), &MEASURE_ALL).map_err(|e| e.to_string())?;
     if let Ok(model) = registry.classifier(id) {
         return classify::worker(model, refs.as_deref(), path, out, limit);
     }
@@ -611,7 +616,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
 
     let mut models: Vec<(PathBuf, ResolvedModel)> = Vec::new();
     for dir in &o.models_dirs {
-        let reg = ModelRegistry::scan(dir).map_err(|e| e.to_string())?;
+        let reg = ModelRegistry::scan_with(dir, &MEASURE_ALL).map_err(|e| e.to_string())?;
         for m in reg.iter() {
             if m.manifest.backend == EmbeddingBackendKind::Coreml
                 && (o.models.is_empty() || o.models.contains(&m.manifest.id))
@@ -622,7 +627,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
     }
     let mut classifiers: Vec<(PathBuf, ResolvedClassifier)> = Vec::new();
     for dir in &o.models_dirs {
-        let reg = ModelRegistry::scan(dir).map_err(|e| e.to_string())?;
+        let reg = ModelRegistry::scan_with(dir, &MEASURE_ALL).map_err(|e| e.to_string())?;
         for c in reg.classifiers() {
             if o.models.is_empty() || o.models.contains(&c.manifest.id) {
                 classifiers.push((dir.clone(), c.clone()));

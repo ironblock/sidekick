@@ -489,6 +489,7 @@ mod tests {
         let ranking = task == ClassifyTask::TextRanking;
         ClassifierManifest {
             compute_units: Default::default(),
+            ane_weight_limit: Default::default(),
             id: "m".into(),
             task,
             source: None,
