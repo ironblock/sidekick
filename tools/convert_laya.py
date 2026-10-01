@@ -50,11 +50,22 @@ D. INPUTS BUILT IN-GRAPH. marker_pos becomes a [KMAX, S] one-hot by
    comparison with a position constant (a -1 pad matches nothing), and
    qtype becomes a one-hot row that selects laya's question-type
    embedding. No data-dependent gather, so the graph stays static.
+E. EXPLICIT GELU (docs/DECISIONS.md D28 amendment). Core ML's native gelu
+   op is coarse on the ANE: up to 6e-3 off on [-1, 1] (the GPU: 3e-4), where
+   most of the encoder's MLP inputs lie. laya's decisions amplify it. Its
+   encoder's first layers are the sensitive ones, and there the native gelu
+   made the MLP branch 9-15x less accurate than on the GPU. TwiceGelu
+   computes x * (1 + erf(x / sqrt 2)) from erf, mul and add, 9x closer on
+   [-1, 1]. The factor 2 goes into the weights that consume it: each
+   encoder MLP's gate rows and the scorer's output linear. Exact in fp32.
+   Keeping the 0.5 out of the graph matters: 0.5 * x * (1 + erf(x / sqrt 2))
+   is fused back into the native op. convert_bucket() fails if a gelu op
+   survives.
 
 Gates, per bucket:
 - fp32: the wrapper (rewrite, explicit attention, one-hots) reproduces
   laya's own forward, max |dlogit| <= FP32_TOL;
-- converted graph: no fused attention op;
+- converted graph: no fused attention op and no native gelu;
 - on CPU_AND_NE, the path sidekick serves: argmax agreement with fp32
   wherever fp32's top-2 margin is >= MARGIN, and max raw |dp| <= DP_GATE;
 - on CPU_ONLY the same numbers are reported, not gated. Core ML's fp16 CPU
@@ -69,16 +80,28 @@ Every gate treats NaN as a failure.
 
 Measured (M1 Max, macOS 27.0) with tools/classifier_reference.py and
 tools/measure_classifier.py on laya's 2,612-case corpus
-(fixtures/classify/laya-en.corpus.toml), against laya's fp32 forward:
-- ANE: argmax agreement 99.81% over the 2,583 cases with a top-2 margin of
-  at least 0.05 logits (5 flips, all at margins of 0.055-0.12); raw |dp|
-  max 0.077, p99 0.030; calibrated |dp| p99 0.021; 20 / 38 / 107 ms at
-  buckets 128 / 256 / 512;
-- CPU_ONLY: 99.77% (6 flips); raw |dp| max 0.211, p99 0.048; 47 / 84 / 163 ms;
-- GPU: 100%; raw |dp| max 0.030; 20 / 32 / 58 ms;
-- pad invariance exact on every path; 1,074 of 1,090 operations on the ANE;
+(fixtures/classify/laya-en.corpus.toml), against laya's fp32 forward,
+before -> after constraint E:
+- ANE: argmax agreement 99.81% -> 99.96% over the 2,583 cases with a top-2
+  margin of at least 0.05 logits (flips 5 -> 1; the one left is at a 0.057
+  margin); raw |dp| max 0.077 -> 0.039, p99 0.030 -> 0.016, mean 0.0036 ->
+  0.0019; bucket invariance (max |dp|, every case in its own bucket vs each
+  larger one) 0.038 -> 0.027; 19.6 / 37.9 / 106 ms -> 20.8 / 40.0 / 107 ms
+  at buckets 128 / 256 / 512, timed interleaved (load average 3-5);
+- GPU: 100% both (0 flips); raw |dp| max 0.030 -> 0.025; bucket invariance
+  0.018 -> 0.011; latency unchanged (interleaved, within 2%);
+- CPU_ONLY: flips 6 -> 16; raw |dp| max 0.211 -> 0.172, p99 0.048 -> 0.053.
+  Core ML's CPU erf is a little coarser than its native gelu, and this path
+  is laya's least accurate either way;
+- the floor: an ideal fp16 engine (fp32 arithmetic, every stored tensor
+  rounded to fp16) reaches raw |dp| max 0.026, p99 0.0074 on the same
+  corpus, and rounding only the embedding output to fp16 moves |dp| by up
+  to 0.0058. laya's decisions resolve finer than fp16 does, so no fp16 path
+  holds its max |dp| under 1e-3. The ANE is within 1.5x of that floor at
+  max and 2x at p99;
+- pad invariance exact on every path; 1,161 of 1,177 operations on the ANE;
 - accuracy against the corpus's gold labels (reported, not graded) is the
-  same on every path: 52.9% on the ANE, 52.8% in fp32.
+  same on every path: 52.8% on the ANE and in fp32.
 """
 
 import hashlib
@@ -165,6 +188,37 @@ def load_decision_model(src, rl, cfg):
     if unexpected or any(m != "temperature" for m in missing):
         raise SystemExit(f"state dict mismatch: missing {missing}, unexpected {unexpected}")
     return dm.float().eval()
+
+
+class TwiceGelu(torch.nn.Module):
+    """TWICE the exact (erf) GELU, x * (1 + erf(x / sqrt 2)) (constraint E).
+    Without the 0.5, conversion keeps the erf instead of fusing the pattern
+    back into Core ML's native gelu; explicit_gelu() folds the 0.5 into the
+    next linear's weights."""
+
+    def forward(self, x):
+        return x * (1.0 + torch.erf(x * 0.7071067811865476))
+
+
+def explicit_gelu(dm):
+    """Constraint E: every GELU in the encoder's MLPs and the scorer as
+    TwiceGelu, the 0.5 folded into the weights that consume it (the gate
+    rows of each Wi, the scorer's output linear). Exact in fp32."""
+    if dm.encoder.config.hidden_activation != "gelu":
+        raise SystemExit(f"encoder activation {dm.encoder.config.hidden_activation!r}, expected exact gelu")
+    act = dm.scorer[2] if len(dm.scorer) == 4 else None
+    if not (isinstance(act, torch.nn.GELU) and act.approximate == "none"
+            and isinstance(dm.scorer[3], torch.nn.Linear)):
+        raise SystemExit(f"unexpected scorer layout: {dm.scorer}")
+    with torch.no_grad():
+        for layer in dm.encoder.layers:
+            ff = layer.mlp.Wo.in_features
+            layer.mlp.act = TwiceGelu()                 # Wo(act(input) * gate)
+            layer.mlp.Wi.weight[ff:].mul_(0.5)          # gate rows
+            if layer.mlp.Wi.bias is not None:
+                layer.mlp.Wi.bias[ff:].mul_(0.5)
+        dm.scorer[2] = TwiceGelu()
+        dm.scorer[3].weight.mul_(0.5)
 
 
 def explicit_head_layer(layer, x, add, seq):
@@ -319,6 +373,8 @@ def convert_bucket(wrapper, example, seq, workdir):
            for block in fn.block_specializations.values() for op in block.operations}
     if "scaled_dot_product_attention" in ops:
         raise SystemExit(f"seq {seq}: converted graph contains the fused attention op (D25)")
+    if "gelu" in ops:
+        raise SystemExit(f"seq {seq}: converted graph contains Core ML's native gelu (constraint E)")
     pkg = Path(workdir) / f"model_{seq}.mlpackage"
     mlmodel.save(str(pkg))
     return pkg
@@ -453,6 +509,7 @@ def main():
     # explicit attention for conversion (D25); laya's own build uses sdpa
     dm.encoder.config._attn_implementation = "eager"
     gte.range_rewrite(dm.encoder, K_RESIDUAL)
+    explicit_gelu(dm)
 
     report = {}
     with tempfile.TemporaryDirectory() as workdir:

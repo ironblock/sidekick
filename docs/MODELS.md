@@ -390,7 +390,7 @@ path.
 | model | task | conversion | CPU | GPU | ANE | ANE ops | ANE ms |
 |---|---|---|---|---|---|---|---|
 | [nlptown/bert-base-multilingual-uncased-sentiment](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment) as `nlptown-sentiment` | text-classification, 5 labels | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) | B 3.4e-3 | A 6.6e-4 | **B** 2.6e-3 | 294/304 | 4.2 |
-| [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` (**preview**) | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.21 (6 flips) | **F** 0.030 (bucket invariance) | **F** 0.077 (bucket invariance; 5 flips) | 1074/1090 | 38 |
+| [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` (**preview**) | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.17 (16 flips) | **F** 0.025 (bucket invariance 0.011) | **F** 0.039 (bucket invariance 0.027; 1 flip) | 1161/1177 | 40 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -400,29 +400,36 @@ mask, since the SDPA path emits the fused op that drops masks on the ANE
 
 **laya-en is a preview.** Measured on 2,612 cases: fastino/fast-decisions
 translated into laya's three question types, plus adversarial cases.
-- **Decisions:** 99.81% agree with fp32 on the ANE and 100% on the GPU.
-  The 5 ANE flips all had fp32 margins of 0.12 logits or less, so read
-  `probs`, not just `label`, when a decision is close.
+- **Decisions:** 99.96% agree with fp32 on the ANE and 100% on the GPU.
+  The one ANE flip had an fp32 margin of 0.057 logits, so read `probs`,
+  not just `label`, when a decision is close. |Δp| on the ANE is 0.039 at
+  most, 0.016 at p99.
+- **Where the loss was:** Core ML's native `gelu` op, which is coarse on
+  the ANE, in the first layers of the ModernBERT-large encoder. The
+  converter now builds GELU from erf (constraint E, D28 amendment). That
+  took the ANE from 5 flips and |Δp| 0.077 to 1 flip and 0.039, at 1–7%
+  more latency.
+- **The floor:** an ideal fp16 engine (fp32 arithmetic, every stored
+  tensor rounded to fp16) reaches |Δp| 0.026 on this corpus. laya's
+  decisions resolve finer than fp16 does, so no fp16 path grades it above
+  D by max |Δp|. The ANE is within 1.5× of that floor, and the GPU (0.025)
+  is at it.
 - **Hard gate:** it fails bucket invariance on the GPU and the ANE. An
-  input's probabilities move by up to 0.018 (GPU) or 0.038 (ANE) when the
-  same input runs in the next larger bucket, against a 1e-3 gate. The
-  graph itself is invariant: the CPU path is exact across buckets, pad
-  invariance is exact on every path, and two ANE processes agree exactly.
-  It is fp16 rounding that differs per compiled shape. A given input
-  always runs in the same bucket, so its answer is deterministic, and the
-  accuracy above is measured in each input's own bucket, as it is served.
-- **Where the loss is:** in the ModernBERT-large encoder. On a 304-case
-  sample, the encoder run alone on the ANE, with everything else in fp32,
-  accounts for all of it;
-  laya's head and scorer on the ANE, fed the fp32 encoder's output, lose
-  |Δp| 0.0014. The encoder is fp16-sensitive on every path, and the GPU
-  is its most accurate one.
-- **CPU:** Core ML's fp16 CPU backend is laya's least accurate path (6
-  flips, |Δp| up to 0.21). The conversion is exact in fp32 (|Δlogit| ≤
-  1.2e-4 against laya's own forward), so the loss is the backend's fp16
-  arithmetic. The converter gates accuracy on the ANE, the served path,
-  and only reports the CPU.
-- **Gold accuracy** is 52.9% on the ANE and 52.8% in fp32 (reported, not
+  input's probabilities move by up to 0.011 (GPU) or 0.027 (ANE) when the
+  same input runs in a larger bucket, against a 1e-3 gate. On the ANE the
+  cause is Core ML's softmax, whose sum reduction rounds differently per
+  compiled shape. A softmax written as exp and one matmul makes laya
+  exactly bucket-invariant on the ANE, but it isn't adopted yet (D28
+  amendment). A given input always runs in the same bucket, so its answer
+  is deterministic, and the accuracy above is measured in each input's own
+  bucket, as it is served.
+- **CPU:** Core ML's fp16 CPU backend is laya's least accurate path (16
+  flips, |Δp| up to 0.17). Its erf is a little coarser than its native
+  gelu. The conversion is exact in fp32 (|Δlogit| ≤ 1.2e-4 against laya's
+  own forward), so the loss is the backend's fp16 arithmetic. The
+  converter gates accuracy on the ANE, the served path, and only reports
+  the CPU.
+- **Gold accuracy** is 52.8% on the ANE and in fp32 (reported, not
   graded). That measures the dataset's mechanical translation, 28-way
   intents with bare label keys, as much as laya.
 - Its token layout is a port of laya's own code and reproduces laya's
