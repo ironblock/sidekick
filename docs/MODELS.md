@@ -480,10 +480,15 @@ for the document).
   The CPU path gets a little worse (2.3e-3 → 3.2e-3; Core ML's CPU `erf` is
   coarser than its native `gelu`), but sidekick serves the ANE.
 - **One pair keeps it at B.** `hardware-0` (fp32 logit −1.03) is at
-  Δp 3.4e-3 on the ANE with either GELU, so its error has another source.
-  It hasn't been diagnosed. The checkpoint's linear inputs are not small
-  (smallest rms 0.107), so the ANE `linear` precision floor is an unlikely
-  cause.
+  Δp 3.4e-3 on the ANE with either GELU. Part of that is where it sits:
+  near logit 0 the sigmoid is steepest, so its logit error, about 0.018,
+  becomes a large Δp, though that error is within the ANE's range over the
+  corpus (worst 0.024). Part isn't fp16's: an ideal fp16 engine is off by
+  only 2.0e-4 on it (the corpus's fp16 ceiling is 9.6e-4 at most, mean
+  5.8e-5), so the ANE's own arithmetic costs it about 17x what fp16
+  storage does. That excess hasn't been diagnosed. The checkpoint's linear
+  inputs are not small (smallest rms 0.107), so the ANE `linear` precision
+  floor is an unlikely cause.
 - It passes every hard gate on every path:
   - ids and segment ids equal `CrossEncoder`'s for all 51 pairs,
     including a pair truncated to 512 tokens and an empty document;
