@@ -1366,7 +1366,7 @@ blocks and self-attending pad queries. Graded by the parity suite on all
 | GPU | A | 0.93× | 0.037 / 0.0076 / 0.00095 | 0 | 0.0072 |
 | CPU | D | 6.1× | 0.162 / 0.049 / 0.0058 | 13 | 0 |
 
-The ANE's one graded flip (margin 0.055, the case v0.3.1 flipped too) caps
+The ANE's one graded flip (margin 0.055, one of the five v0.3.0 flipped) caps
 it at C; its p99 ratio alone would be a B. The bucket gate passes on both
 fp16 paths: exactly on the ANE, and within the ceiling's 0.017 on the GPU.
 Against the erf-only conversion, the ANE's worst case moves from 0.039 to
