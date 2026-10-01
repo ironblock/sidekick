@@ -226,9 +226,23 @@ pub fn build_sequence(
 fn fit_text(tok: &Tokenizer, text: &str, capped: bool, budget: usize) -> Result<(Vec<Vec<u32>>, bool)> {
     let encode = |s: &str| -> Result<Vec<Vec<u32>>> { words(s).iter().map(|w| pieces(tok, w)).collect() };
     let total = |w: &[Vec<u32>]| w.iter().map(Vec::len).sum::<usize>();
+    // Both passes stop tokenizing once the words seen can't fit: an
+    // over-length input costs about one budget of tokenizer calls, not one
+    // per word of the byte-capped text.
     if !capped {
-        let all = encode(&punctuated(text))?;
-        if total(&all) <= budget {
+        let mut all = Vec::new();
+        let mut used = 0;
+        let mut fits = true;
+        for w in words(&punctuated(text)) {
+            let p = pieces(tok, &w)?;
+            used += p.len();
+            if used > budget {
+                fits = false;
+                break;
+            }
+            all.push(p);
+        }
+        if fits {
             return Ok((all, false));
         }
     }
@@ -237,17 +251,24 @@ fn fit_text(tok: &Tokenizer, text: &str, capped: bool, budget: usize) -> Result<
     if capped {
         spans.pop();
     }
-    let lower: Vec<Vec<u32>> =
-        spans.iter().map(|&(s, e)| pieces(tok, &text[s..e].to_lowercase())).collect::<Result<_>>()?;
-    let mut prefix_len = vec![0usize; spans.len() + 1];
-    for (i, p) in lower.iter().enumerate() {
-        prefix_len[i + 1] = prefix_len[i] + p.len();
+    // The leading words' pieces, as far as a kept prefix could reach: n
+    // words can be kept only if the first n - 1 fit.
+    let mut lower: Vec<Vec<u32>> = Vec::new();
+    let mut prefix_len = vec![0usize];
+    for &(s, e) in &spans {
+        let so_far = *prefix_len.last().expect("starts with 0");
+        if so_far > budget {
+            break;
+        }
+        let p = pieces(tok, &text[s..e].to_lowercase())?;
+        prefix_len.push(so_far + p.len());
+        lower.push(p);
     }
     // The prefix that keeps n words, punctuated: the first n - 1 words are
     // unchanged, and the last one is re-split with the `.` appended, which
     // a URL-like word swallows. No lookbehind in the pattern, so a match
     // starting at a word's start doesn't depend on the text before it.
-    for n in (0..=spans.len()).rev() {
+    for n in (0..=lower.len()).rev() {
         if n > 0 && prefix_len[n - 1] > budget {
             continue;
         }
