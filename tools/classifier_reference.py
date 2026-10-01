@@ -253,7 +253,8 @@ def run_laya(args, manifest):
     fixture = laya_fixture_subset(cases)
     logits = None
     if not args.fixture_only:
-        cl.gte.install_patches()
+        from sidekick_convert.backbones import modernbert
+        modernbert.install_patches()  # laya's own forward, as its converter runs it
         dm = cl.load_decision_model(src, rl, cfg)
         logits = laya_logits(dm, cases, cls["max_labels"])
     return cases, fixture, logits, pr.corpus_hash(corpus_text)

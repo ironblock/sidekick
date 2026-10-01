@@ -278,7 +278,7 @@ run on any mismatch with the checkpoint, where the field exists:
 | `convert_bert_classifier.py` | BERT, explicit | sequence classification | classifiers and rerankers; `--twice-gelu` opt-in |
 | `convert_gte_modernbert.py` | ModernBERT, explicit, residual K calibrated (2) | CLS pool | `--attn sdpa` builds the fused-attention negative control |
 | `convert_qwen3_embedding.py` | Qwen3 decoder, precision rewrite | last-token pool | F2LLM; any Qwen3 last-token embedder (manifest by install-dir name) |
-| `convert_laya.py` | standalone | | imports the ModernBERT backbone's patches through `convert_gte_modernbert.py`; moves onto the library with its ANE precision fix |
+| `convert_laya.py` | ModernBERT, explicit, residual K pinned (2), TwiceGelu | laya's marker head (`heads/laya.py`) | the decision model's own forward is the fp32 reference; gated on CPU_AND_NE, CPU_ONLY reported |
 | `convert_embeddinggemma.py` | Gemma3, fp16 range rewrite (residual K = 32) and per-layer precision scales | mean pool, the two sentence-transformers dense layers, L2 (`heads/gemma_st.py`) | its calibration keeps one graded-corpus text under a logged legacy exemption, because the graded artifact was calibrated with it |
 | `convert_lfm25_embedding.py` | LFM2 (short convolutions with pad zeroing, attention), per-layer precision scales | CLS pool, L2 in graph | `--no-pad-zeroing` builds the negative control |
 

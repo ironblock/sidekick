@@ -66,14 +66,6 @@ NaN as a failure. Measured results in docs/MODELS.md.
 from sidekick_convert import cli, core, recipes, tokenizer
 from sidekick_convert.backbones import modernbert
 from sidekick_convert.heads.pool import Pool
-from sidekick_convert.techniques import saturation
-
-# tools/convert_laya.py imports these from this module; they go when laya's
-# converter moves onto the library.
-install_patches = modernbert.install_patches
-range_rewrite = modernbert.residual_rewrite_encoder
-ANE_LINEAR_MAX = saturation.ANE_LINEAR_MAX
-LINEAR_HEADROOM = saturation.HEADROOM
 
 MODEL_ID = "gte-modernbert-base"
 
