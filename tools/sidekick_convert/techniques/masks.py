@@ -40,9 +40,12 @@ def causal(seq):
     return (idx[None, :] > idx[:, None]).to(torch.float32).reshape(1, 1, seq, seq) * MASK_ADD
 
 
-def self_attending(mask):
+def self_attending(mask, seq=None):
     """Zero the diagonal of an (..., S, S) additive mask, so every query can
-    attend to itself and no row is fully masked."""
-    seq = int(mask.shape[-1])
+    attend to itself and no row is fully masked. Pass `seq` as a Python int
+    when the mask is computed from an input: reading the size from a traced
+    tensor records arithmetic that coremltools 9 can't convert."""
+    if seq is None:
+        seq = int(mask.shape[-1])
     eye = torch.eye(seq, dtype=torch.bool)
     return mask.masked_fill(eye, 0.0)

@@ -10,5 +10,6 @@ Each module states the limit it works around and where it was measured
 - pooling: in-graph pooling within fp16 range;
 - reduce: blocked max (macOS 27 CPU reduce_max bug);
 - traceable: rotate_half/repeat_kv without shape arithmetic;
-- onehot: selections from int32 inputs without gathers.
+- onehot: selections from int32 inputs without gathers;
+- relative_shift: relative-position terms by query-key distance without gathers.
 """

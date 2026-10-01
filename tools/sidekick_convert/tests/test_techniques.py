@@ -43,6 +43,7 @@ class Masks(unittest.TestCase):
     def test_self_attending_frees_only_the_diagonal(self):
         full = torch.full((1, 1, 4, 4), masks.MASK_ADD)
         m = masks.self_attending(full)[0, 0]
+        self.assertTrue(torch.equal(masks.self_attending(full, 4)[0, 0], m))
         self.assertTrue(torch.equal(torch.diagonal(m), torch.zeros(4)))
         off = m[~torch.eye(4, dtype=torch.bool)]
         self.assertTrue(torch.all(off == masks.MASK_ADD))

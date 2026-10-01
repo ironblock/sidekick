@@ -44,7 +44,9 @@ don't multiply into one script per combination:
   L2-normalized). `sequence.SequenceClassification` is the checkpoint's own
   classification head, run through its task class, so each family's head
   semantics are exactly the checkpoint's; a reranker is this head with one
-  label and a token_type_ids input.
+  label and a token_type_ids input. `per_token.PerToken` applies a module to
+  every token and returns one value per token, `(1, S)`; the runtime reads
+  the positions it placed (GLiNER2's `[L]` label markers).
 - **Interface** (`core.Port`, `sidekick_convert.manifest`): the int32
   static-shape inputs, the output name, and the committed manifest the
   artifact must match.
@@ -118,6 +120,7 @@ around and where it was measured.
 | `traceable` | `rotate_half`, `repeat_kv` without shape arithmetic; `install()` patches a transformers module | RoPE and grouped-query attention | D17 |
 | `attention.transformer_encoder_layer` | `nn.TransformerEncoderLayer(norm_first)` with its attention written out, so its fast path is never traced | task heads built from PyTorch encoder layers (laya) | D28 |
 | `onehot` | selections from int32 inputs by comparison with a position constant, instead of data-dependent gathers | inputs that index positions (laya's markers and question type) | D28 |
+| `relative_shift` | relative-position terms read by query-key distance, `score[q, k] += x · T[idx(q − k)]`, without gathers: the table expanded over the bucket's 2L − 1 distances as a weight-only constant, then one matmul and a reshape/slice skew | any attention bias that gathers by q − k (DeBERTa-v2/v3's c2p and p2c); transformers' gathers run on the CPU and take their matmuls along | `tools/probe_deberta.py` |
 
 Two rewrites are specific to one family so far and live in its backbone:
 the range rewrite for activations past fp16's own maximum (EmbeddingGemma's
@@ -299,8 +302,8 @@ for `xcrun coremlcompiler`.
      sizes);
    - `buffers()` for positions and anything else constant per bucket;
    - rewrites as functions of the backbone, applied after the references.
-3. **Pick a head**, or add one to `heads/` if the output is new (a
-   per-token head, a marker head).
+3. **Pick a head**, or add one to `heads/` if the output is new (a marker
+   head, say; `per_token` covers one output per token).
 4. **Commit the manifest** under `examples/`, reviewed like code.
 5. **Write the converter**: gate texts of its own (short, long, multilingual,
    code, delimiters; at least one in each bucket for classifiers), a
@@ -397,7 +400,15 @@ pre-library builds at every bucket.
 - **Shape arithmetic in traced code crashes coremltools 9** under static
   shapes ("only 0-dimensional arrays can be converted to Python scalars").
   Never compute with `x.size()` or `x.shape`; use Python ints and literal
-  reshapes, including the pooled output's `reshape(1, dims)`.
+  reshapes, including the pooled output's `reshape(1, dims)`. That includes
+  `int(t.shape[-1])` on a tensor computed from an input (pass `seq` to
+  `masks.self_attending`), and keeping leading dims by reading them: use
+  `torch.flatten`/`torch.unflatten` on the trailing dims instead.
+- **transformers' DeBERTa-v2 attention doesn't trace**, through its
+  TorchScript helpers, and made traceable its relative-position gathers
+  land on the CPU with their matmuls. `backbones.deberta_v2` writes the
+  forward out with `relative_shift` and leaves transformers' own forward
+  as the fp32 reference.
 - **`0.5 * x * (1 + erf(...))` is fused back into native gelu**, and
   `x * sigmoid(x)` into silu. Write 2·f(x) and fold the 0.5 elsewhere.
 - **transformers 5 builds BERT's mask in `masking_utils`**, bypassing the
