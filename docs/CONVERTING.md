@@ -119,10 +119,12 @@ around and where it was measured.
 | `attention.transformer_encoder_layer` | `nn.TransformerEncoderLayer(norm_first)` with its attention written out, so its fast path is never traced | task heads built from PyTorch encoder layers (laya) | D28 |
 | `onehot` | selections from int32 inputs by comparison with a position constant, instead of data-dependent gathers | inputs that index positions (laya's markers and question type) | D28 |
 
-The range rewrite for activations past fp16's own maximum (EmbeddingGemma's
-residual stream at ~1.5e5, D17) and pad zeroing for convolutional mixers
-(D19) live in their converters for now and move into the library with those
-families.
+Two rewrites are specific to one family so far and live in its backbone:
+the range rewrite for activations past fp16's own maximum (EmbeddingGemma's
+residual stream at ~1.5e5, D17; `backbones.gemma3.fp16_range_rewrite`), and
+pad zeroing before every convolution of a convolutional mixer (D19;
+`backbones.lfm2`, on by default, `--no-pad-zeroing` for the negative
+control).
 
 ## Calibration and evaluation
 
@@ -277,7 +279,8 @@ run on any mismatch with the checkpoint, where the field exists:
 | `convert_gte_modernbert.py` | ModernBERT, explicit, residual K calibrated (2) | CLS pool | `--attn sdpa` builds the fused-attention negative control |
 | `convert_qwen3_embedding.py` | Qwen3 decoder, precision rewrite | last-token pool | F2LLM; any Qwen3 last-token embedder (manifest by install-dir name) |
 | `convert_laya.py` | standalone | | imports the ModernBERT backbone's patches through `convert_gte_modernbert.py`; moves onto the library with its ANE precision fix |
-| `convert_embeddinggemma.py`, `convert_lfm25_embedding.py` | standalone | | move to Gemma3 and LFM2 backbones next |
+| `convert_embeddinggemma.py` | Gemma3, fp16 range rewrite (residual K = 32) and per-layer precision scales | mean pool, the two sentence-transformers dense layers, L2 (`heads/gemma_st.py`) | its calibration keeps one graded-corpus text under a logged legacy exemption, because the graded artifact was calibrated with it |
+| `convert_lfm25_embedding.py` | LFM2 (short convolutions with pad zeroing, attention), per-layer precision scales | CLS pool, L2 in graph | `--no-pad-zeroing` builds the negative control |
 
 Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
 `--time` and its own flags. The library needs arm64-native Python with
