@@ -26,7 +26,8 @@ pub use classify::{
 pub use embed::{truncate_normalized, EmbedLimits, EmbedPurpose, Embedder, Truncate};
 pub use error::{Error, Result};
 pub use manifest::{
-    calibration_key, ClassifierManifest, ClassifyFormat, EmbeddingBackendKind, ModelManifest, OptionRendering,
+    calibration_key, ClassifierManifest, ClassifyFormat, ComputeUnits, EmbeddingBackendKind, ModelManifest,
+    OptionRendering,
     ModelRegistry, Pooling, ResolvedClassifier,
 };
 

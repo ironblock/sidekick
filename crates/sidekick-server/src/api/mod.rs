@@ -15,7 +15,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use sidekick_core::{EmbeddingBackendKind, Error, UnavailableReason};
+use sidekick_core::{Error, UnavailableReason};
 
 pub fn build_router(state: AppState) -> Router {
     // Every inference and listing route needs the API key when one is set.
@@ -101,9 +101,6 @@ pub struct Provenance {
     pub compute_units: Option<&'static str>,
 }
 
-/// The compute units every Core ML model is loaded with (D14).
-pub const CORE_ML_UNITS: &str = "cpu_and_ne";
-
 impl Provenance {
     pub fn model_id(id: &str, source: Option<&sidekick_core::Source>) -> String {
         match source.and_then(|s| s.revision.as_deref()) {
@@ -112,14 +109,13 @@ impl Provenance {
         }
     }
 
+    /// An embedder's provenance: `cpu` for a static model, else its
+    /// manifest's Core ML compute units, which its instance was loaded with.
     pub fn embedder(state: &AppState, id: &str) -> Self {
         let m = state.registry.get(id).ok().map(|r| &r.manifest);
         Self {
             model: Self::model_id(id, m.and_then(|m| m.source.as_ref())),
-            compute_units: Some(match m.map(|m| m.backend) {
-                Some(EmbeddingBackendKind::Static) => "cpu",
-                _ => CORE_ML_UNITS,
-            }),
+            compute_units: m.map(|m| m.compute_units_name()),
         }
     }
 

@@ -117,13 +117,14 @@ fn io_name(name: &Option<String>, what: &str) -> Result<String> {
 }
 
 impl CoremlClassifier {
-    /// Load for the ANE (`.cpuAndNeuralEngine`), as the daemon does.
+    /// Load with the manifest's compute units (`cpu_and_ne` by default), as
+    /// the daemon does.
     pub fn load(model: &ResolvedClassifier) -> Result<Self> {
-        Self::load_with(model, ComputeUnits::CpuAndNeuralEngine)
+        Self::load_with(model, model.manifest.compute_units)
     }
 
-    /// Load with an explicit compute-unit preference, for tests that
-    /// compare paths.
+    /// Load with an explicit compute-unit preference, overriding the
+    /// manifest's, so tests and the parity suite can compare paths.
     pub fn load_with(model: &ResolvedClassifier, units: ComputeUnits) -> Result<Self> {
         let m = &model.manifest;
         let io = &m.classify.io;
@@ -172,6 +173,15 @@ impl CoremlClassifier {
     /// Sequence-length buckets, smallest first.
     pub fn buckets(&self) -> &[usize] {
         &self.manifest.buckets
+    }
+
+    /// The compute units Core ML loaded the model with, read back from the
+    /// smallest bucket's configuration (every bucket shares them).
+    pub fn compute_units(&self) -> Result<ComputeUnits> {
+        let bucket = *self.manifest.buckets.first().expect("validated non-empty");
+        self.models.get(bucket)?.compute_units().ok_or_else(|| {
+            Error::Inference("Core ML reports compute units sidekick doesn't set".into())
+        })
     }
 
     /// The input builder, for tests and the parity suite.

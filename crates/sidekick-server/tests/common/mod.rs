@@ -239,6 +239,7 @@ tokenizer = "tokenizer.json"
 buckets = [64]
 max_seq_len = 64
 max_batch = 2
+compute_units = "cpu_and_gpu"
 
 [classify]
 format = "gliner2"

@@ -333,6 +333,9 @@ async fn gliner2_multi_label_switches_probs_to_per_label_sigmoids() {
     let body = classify_ok(request(Some(true))).await;
     let d = &body["data"][0];
     assert_eq!(probs(d), activate(ProblemType::MultiLabel, &logits, None));
+    // Its manifest asks for the GPU, and the header says so.
+    let (_, headers, _) = call_with_headers(test_state(true, None), classify(request(None))).await;
+    assert_eq!(headers["sidekick-compute-units"], "cpu_and_gpu");
     // One label, the argmax, as in vLLM's response; clients threshold probs.
     assert_eq!(d["label"], "refund");
     assert_eq!(d["num_classes"], 3);
@@ -462,6 +465,7 @@ async fn listings_are_task_aware() {
     let e = model("test-static");
     assert_eq!(e["task"], "feature-extraction");
     assert!(e.get("labels").is_none() && e.get("max_batch").is_none());
+    assert_eq!(e["compute_units"], "cpu");
 
     let s = model("sentiment");
     assert_eq!(s["task"], "text-classification");
@@ -487,6 +491,9 @@ async fn listings_are_task_aware() {
     assert_eq!(g["extensions"], json!(["candidate_labels", "instructions", "multi_label"]));
     assert_eq!(g["required"], json!(["candidate_labels"]));
     assert!(g.get("calibration").is_none());
+    // Each classifier's configured compute units: the default, or its own.
+    assert_eq!(model("sentiment")["compute_units"], "cpu_and_ne");
+    assert_eq!(g["compute_units"], "cpu_and_gpu");
 
     let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;
     assert_eq!(

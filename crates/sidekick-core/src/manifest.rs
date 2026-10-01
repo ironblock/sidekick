@@ -46,6 +46,41 @@ pub enum Pooling {
     None,
 }
 
+/// The Core ML compute units a model is loaded with: a manifest's
+/// `compute_units`, `cpu_and_ne` unless it says otherwise. The ANE
+/// preference is sidekick's default because it keeps background work off
+/// the GPU (D14); a model the ANE runs badly can ask for another
+/// (docs/design/classify.md, "Compute units").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ComputeUnits {
+    /// `.all`: Core ML picks among CPU, GPU and ANE.
+    #[serde(rename = "all")]
+    All,
+    /// `.cpuAndNeuralEngine`.
+    #[default]
+    #[serde(rename = "cpu_and_ne")]
+    CpuAndNeuralEngine,
+    /// `.cpuAndGPU`.
+    #[serde(rename = "cpu_and_gpu")]
+    CpuAndGpu,
+    /// `.cpuOnly`.
+    #[serde(rename = "cpu_only")]
+    CpuOnly,
+}
+
+impl ComputeUnits {
+    /// The manifest value, also what `sidekick-compute-units` and
+    /// `/v1/models` report.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::CpuAndNeuralEngine => "cpu_and_ne",
+            Self::CpuAndGpu => "cpu_and_gpu",
+            Self::CpuOnly => "cpu_only",
+        }
+    }
+}
+
 /// `manifest.toml` for an embedding model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelManifest {
@@ -85,6 +120,20 @@ pub struct ModelManifest {
     /// Where the weights came from (`sidekick-model: <id>@<revision>`).
     #[serde(default)]
     pub source: Option<Source>,
+    /// Core ML compute units (coreml backend only; default `cpu_and_ne`).
+    #[serde(default)]
+    pub compute_units: Option<ComputeUnits>,
+}
+
+impl ModelManifest {
+    /// What the model runs on, as `sidekick-compute-units` reports it:
+    /// `cpu` for a static model, else its Core ML compute units.
+    pub fn compute_units_name(&self) -> &'static str {
+        match self.backend {
+            EmbeddingBackendKind::Static => "cpu",
+            EmbeddingBackendKind::Coreml => self.compute_units.unwrap_or_default().name(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +185,9 @@ pub struct ClassifierManifest {
     pub max_batch: usize,
     #[serde(default = "default_problem_type")]
     pub problem_type: ProblemType,
+    /// Core ML compute units (default `cpu_and_ne`).
+    #[serde(default)]
+    pub compute_units: ComputeUnits,
     pub classify: ClassifySection,
 }
 
@@ -572,6 +624,9 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
     }
     if m.backend != EmbeddingBackendKind::Coreml && m.artifact.contains("{seq}") {
         return Err("`{seq}` artifact placeholder is only valid for the coreml backend".into());
+    }
+    if m.backend != EmbeddingBackendKind::Coreml && m.compute_units.is_some() {
+        return Err("`compute_units` is only valid for the coreml backend".into());
     }
     Ok(())
 }
@@ -1157,6 +1212,40 @@ max_seq_len = 512
         let reg = ModelRegistry::scan(&tmp).unwrap();
         assert!(reg.is_empty());
         assert!(reg.skipped()[0].reason.contains("{seq}"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn compute_units_default_to_the_ane_and_unknown_values_are_skipped() {
+        const COREML: &str = "id = \"e\"\nbackend = \"coreml\"\nartifact = \"m\"\ntokenizer = \"t\"\ndims = 4\nbuckets = [8]\nmax_seq_len = 8\n";
+        const STATIC: &str = "id = \"s\"\nbackend = \"static\"\nartifact = \"m\"\ntokenizer = \"t\"\ndims = 4\nmax_seq_len = 8\n";
+        let tmp = tmp_dir("units");
+        write_classifier(&tmp, "default", SENTIMENT);
+        let gpu = SENTIMENT.replace("id = \"sentiment\"", "id = \"gpu\"").replace("\n[classify]", "compute_units = \"cpu_and_gpu\"\n\n[classify]");
+        write_classifier(&tmp, "gpu", &gpu);
+        write_manifest(&tmp, "e-default", COREML);
+        write_manifest(&tmp, "e-cpu", &format!("{}compute_units = \"cpu_only\"\n", COREML.replace("\"e\"", "\"e-cpu\"")));
+        write_manifest(&tmp, "s", STATIC);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        assert_eq!(reg.classifier("sentiment").unwrap().manifest.compute_units, ComputeUnits::CpuAndNeuralEngine);
+        assert_eq!(reg.classifier("gpu").unwrap().manifest.compute_units, ComputeUnits::CpuAndGpu);
+        let units = |id| reg.get(id).unwrap().manifest.compute_units_name();
+        assert_eq!((units("e"), units("e-cpu"), units("s")), ("cpu_and_ne", "cpu_only", "cpu"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // An unknown value, or units on a static model, skips that manifest
+        // with the reason; the rest load.
+        let tmp = tmp_dir("units-bad");
+        write_classifier(&tmp, "good", SENTIMENT);
+        write_classifier(&tmp, "typo", &SENTIMENT.replace("id = \"sentiment\"", "id = \"typo\"").replace("\n[classify]", "compute_units = \"gpu\"\n\n[classify]"));
+        write_manifest(&tmp, "s", &format!("{STATIC}compute_units = \"cpu_only\"\n"));
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert_eq!(reg.classifier_ids().collect::<Vec<_>>(), vec!["sentiment"]);
+        let reasons: Vec<&str> = reg.skipped().iter().map(|s| s.reason.as_str()).collect();
+        assert_eq!(reasons.len(), 2, "{reasons:?}");
+        assert!(reasons.iter().any(|r| r.contains("compute_units") && r.contains("gpu")), "{reasons:?}");
+        assert!(reasons.iter().any(|r| r.contains("only valid for the coreml backend")), "{reasons:?}");
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

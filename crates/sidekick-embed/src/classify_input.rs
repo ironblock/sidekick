@@ -484,6 +484,7 @@ mod tests {
         let laya = task == ClassifyTask::ZeroShotClassification;
         let ranking = task == ClassifyTask::TextRanking;
         ClassifierManifest {
+            compute_units: Default::default(),
             id: "m".into(),
             task,
             source: None,

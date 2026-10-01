@@ -110,7 +110,8 @@ Where sidekick deliberately differs from vLLM:
   otherwise `<id>`. For chat it's the Foundation Models variant id, read
   in the background and cached; until it's known, the chat model's id.
 - `sidekick-compute-units`: the configuration the serving instance was
-  loaded with: `cpu_and_ne` for Core ML models, `cpu` for static models.
+  loaded with: a Core ML model's `compute_units` (`cpu_and_ne` unless its
+  manifest says otherwise; see "Compute units"), `cpu` for static models.
   Chat omits it. It reports configuration, not the executing device, which
   Core ML doesn't expose.
 
@@ -131,6 +132,7 @@ buckets = [128, 256, 512]
 max_seq_len = 512
 max_batch = 32
 problem_type = "single_label"             # single_label | multi_label | regression
+compute_units = "cpu_and_ne"              # cpu_and_ne (default) | cpu_and_gpu | cpu_only | all
 
 [classify]
 format = "laya"                           # zero-shot formats: "laya"
@@ -205,6 +207,44 @@ K = 2. The calibration rule would allow K = 1, but laya's largest measured
 linear output (about 27,500) would then sit within 2% of the rule's
 0.85 × 2^15 target (D25). The load-time check reads KMAX
 from `marker_pos`'s shape in the model description.
+
+## Compute units
+
+A Core ML model loads with `.cpuAndNeuralEngine` unless its manifest asks
+otherwise (D14): the ANE keeps background work off the GPU. Some models run
+badly there. GLiNER2.5-Decide grades A on the GPU at about 34 ms per input,
+but C on the ANE at well over half a second, because its DeBERTa
+relative-position rewrite is slow on the ANE (docs/MODELS.md). Such a model
+names its compute units with an optional top-level key, in
+`classifier.toml` and in an embedder's `manifest.toml` alike:
+
+| `compute_units` | Core ML | |
+|---|---|---|
+| `cpu_and_ne` | `.cpuAndNeuralEngine` | the default |
+| `cpu_and_gpu` | `.cpuAndGPU` | for a model the ANE runs badly |
+| `cpu_only` | `.cpuOnly` | |
+| `all` | `.all` | Core ML chooses; for measuring |
+
+- The daemon and `libsidekick.dylib` load the model with it, and every
+  bucket shares it. Tests and the parity suite can still load any path
+  explicitly (`load_with`).
+- `sidekick-compute-units` and the model's `/v1/models` entry
+  (`compute_units`) report it. A static embedder reports `cpu`, and setting
+  the key on one is a validation error.
+- An unknown value fails validation, so the registry skips the manifest
+  with the reason (in `/health`'s `skipped_models`) and loads the rest.
+- D27's shape guard runs for every choice: it reads the model description,
+  which doesn't depend on compute units, so a multi-shape artifact is
+  refused on macOS 27 whatever the manifest asks for.
+- The parity suite grades every path regardless. The configured one is the
+  path a model is served on, so it is the grade that matters for that
+  model.
+
+Compatibility: sidekick 0.4 and earlier ignore unknown top-level keys in
+both manifest files. A 0.4 daemon given a manifest with `compute_units`
+loads it with `.cpuAndNeuralEngine` and reports `cpu_and_ne`; it doesn't
+fail. (A gliner2-format manifest is skipped by 0.4 anyway, since it
+predates that format.)
 
 ## The laya format
 

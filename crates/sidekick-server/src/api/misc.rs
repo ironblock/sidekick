@@ -22,7 +22,11 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
     }
 
     for id in state.registry.ids() {
-        data.push(ModelObject::new(id.to_string(), created, "feature-extraction"));
+        let units = state.registry.get(id).ok().map(|r| r.manifest.compute_units_name());
+        data.push(ModelObject {
+            compute_units: units,
+            ..ModelObject::new(id.to_string(), created, "feature-extraction")
+        });
     }
 
     // Classifiers, from their manifests: nothing is loaded to list them.
@@ -42,6 +46,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             max_batch: Some(m.max_batch),
             extensions: Some(m.extension_fields()),
             required: Some(m.required_fields()),
+            compute_units: Some(m.compute_units.name()),
             calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
             ..ModelObject::new(m.id.clone(), created, m.task.name())
         });

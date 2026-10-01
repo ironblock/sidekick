@@ -9,7 +9,7 @@
 //! (which needs the tokenizer, loaded with the model) before any input runs.
 
 use super::wire::*;
-use super::{model_task, pooling, wrong_route, ApiError, ApiJson, Provenance, CORE_ML_UNITS};
+use super::{model_task, pooling, wrong_route, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -120,7 +120,7 @@ pub async fn classify(
 
     let provenance = Provenance {
         model: Provenance::model_id(&req.model, manifest.source.as_ref()),
-        compute_units: Some(CORE_ML_UNITS),
+        compute_units: Some(manifest.compute_units.name()),
     };
     Ok(provenance.apply(
         Json(ClassifyResponse {

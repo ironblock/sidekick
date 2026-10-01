@@ -7,7 +7,7 @@
 //! before any work, and every pair is prepared before any runs.
 
 use super::wire::*;
-use super::{model_task, pooling, wrong_route, ApiError, ApiJson, Provenance, CORE_ML_UNITS};
+use super::{model_task, pooling, wrong_route, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -135,7 +135,7 @@ async fn rerank(
     let prompt_tokens = prompt_tokens as u32;
     let provenance = Provenance {
         model: Provenance::model_id(&req.model, manifest.source.as_ref()),
-        compute_units: Some(CORE_ML_UNITS),
+        compute_units: Some(manifest.compute_units.name()),
     };
     Ok(provenance.apply(
         Json(RerankResponse {

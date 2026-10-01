@@ -149,8 +149,9 @@ or SGLang works unchanged. What a host needs to know beyond that:
 - **Provenance.** Record the `sidekick-model` response header
   (`<id>@<revision>`) with any stored label or score, so results from
   different model revisions don't mix silently. The daemon also sends
-  `sidekick-version` and `sidekick-compute-units`. The embeddings route
-  sends the same headers.
+  `sidekick-version` and `sidekick-compute-units` (the compute units the
+  model is configured for, also in its `/v1/models` entry). The embeddings
+  route sends the same headers.
 
 ## Path 3: your fallback
 

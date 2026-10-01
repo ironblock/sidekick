@@ -170,6 +170,39 @@ fn predictions_match_torch_in_every_bucket() {
 }
 
 #[test]
+fn the_manifest_compute_units_reach_core_ml() {
+    // Absent, the default; otherwise each value the manifest can name. The
+    // units are read back from the loaded model's Core ML configuration.
+    for (line, want) in [
+        ("", ComputeUnits::CpuAndNeuralEngine),
+        ("compute_units = \"cpu_and_gpu\"\n", ComputeUnits::CpuAndGpu),
+        ("compute_units = \"cpu_only\"\n", ComputeUnits::CpuOnly),
+        ("compute_units = \"all\"\n", ComputeUnits::All),
+    ] {
+        let manifest = MANIFEST.replace("max_batch = 4\n", &format!("max_batch = 4\n{line}"));
+        let dir = model_dir(&format!("units-{}", want.name()), &manifest, Some("model_16.mlmodelc"), Some("model_32.mlmodelc"));
+        let registry = ModelRegistry::scan(&dir).unwrap();
+        let model = registry.classifier("tiny-laya").unwrap();
+        assert_eq!(model.manifest.compute_units, want);
+        let clf = CoremlClassifier::load(model).unwrap();
+        assert_eq!(clf.compute_units().unwrap(), want, "{line:?}");
+        // And it serves there.
+        let params = ClassifyParams {
+            candidate_labels: vec!["a".into(), "b".into()],
+            question_type: Some(QuestionType::Choice),
+            ..Default::default()
+        };
+        assert!(clf.classify("c d", &params).unwrap().iter().all(|x| x.is_finite()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+    // An explicit preference overrides the manifest's.
+    let manifest = MANIFEST.replace("max_batch = 4\n", "max_batch = 4\ncompute_units = \"cpu_and_gpu\"\n");
+    let dir = model_dir("units-override", &manifest, Some("model_16.mlmodelc"), Some("model_32.mlmodelc"));
+    assert_eq!(load(&dir).unwrap().compute_units().unwrap(), ComputeUnits::CpuOnly);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn every_bucket_is_checked_at_load() {
     // Before the check covered every bucket, each of these loaded: only the
     // smallest bucket was loaded eagerly, and the larger one failed on the

@@ -510,6 +510,11 @@ pub struct ModelObject {
     /// send, a subset of `extensions`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<&'static str>>,
+    /// Extension, embedders and classifiers: the compute units the model is
+    /// loaded with (`cpu` for a static model), as `sidekick-compute-units`
+    /// reports them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compute_units: Option<&'static str>,
     /// Extension, classifiers: the temperatures `calibration: "model"`
     /// applies, keyed `"<question_type>:<label count bucket>"`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -529,6 +534,7 @@ impl ModelObject {
             max_batch: None,
             extensions: None,
             required: None,
+            compute_units: None,
             calibration: None,
         }
     }
