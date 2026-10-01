@@ -882,9 +882,18 @@ class AgentJevPaths(torch.nn.Module):
             raise SystemExit(f"the checkpoint's head and AgentJev's modules differ: {unexpected or missing}")
         self._score = lambda v, m: model_module.AgentJevModel._score(self, v, m)
 
+    # Paths encoded per forward: a question's paths are encoded a few at a
+    # time, as AgentJev's service batches them, so 32 paths of 2,048 tokens
+    # never materialize one [32, heads, 2048, 2048] attention tensor.
+    CHUNK = 2
+
     def forward(self, ids, mask, last):
-        h = self.backbone(input_ids=ids, attention_mask=mask, use_cache=False).last_hidden_state
-        vectors = h[torch.arange(h.shape[0]), last][None]
+        vectors = []
+        for i in range(0, ids.shape[0], self.CHUNK):
+            h = self.backbone(input_ids=ids[i:i + self.CHUNK], attention_mask=mask[i:i + self.CHUNK],
+                              use_cache=False).last_hidden_state
+            vectors.append(h[torch.arange(h.shape[0]), last[i:i + self.CHUNK]])
+        vectors = torch.cat(vectors)[None]
         return self._score(vectors, torch.ones(vectors.shape[:2], dtype=torch.bool))[0]
 
 
@@ -896,9 +905,16 @@ def load_agentjev(src, model_module):
     weights = load_file(str(src / "model.safetensors"))
     cfg = Qwen3Config.from_pretrained(src)
     cfg._attn_implementation = "eager"
-    backbone = Qwen3Model(cfg)
+    # Built without allocating weights, then given the checkpoint's own
+    # tensors, so the model never exists twice (~2.4 GB each in fp32). RoPE's
+    # inv_freq isn't in the checkpoint, so the rotary embedding is rebuilt.
+    from transformers.models.qwen3.modeling_qwen3 import Qwen3RotaryEmbedding
+    with torch.device("meta"):
+        backbone = Qwen3Model(cfg)
     prefix = "path_encoder.backbone."
-    backbone.load_state_dict({k[len(prefix):]: v for k, v in weights.items() if k.startswith(prefix)}, strict=True)
+    backbone.load_state_dict({k[len(prefix):]: v for k, v in weights.items() if k.startswith(prefix)}, strict=True,
+                             assign=True)
+    backbone.rotary_emb = Qwen3RotaryEmbedding(config=cfg)
     head = {k: v for k, v in weights.items() if not k.startswith(prefix)}
     return AgentJevPaths(backbone.float().eval(), model_module, head).eval()
 
