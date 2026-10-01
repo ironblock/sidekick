@@ -1551,6 +1551,12 @@ max_labels = 32
 [classify.calibration]
 "noul:2" = 1.0718
 "choice:2" = 1.0353
+"choice:3-5" = 1.0353
+"choice:6-10" = 1.0353
+"choice:11+" = 1.0353
+"score:2" = 1.0718
+"score:3-5" = 1.0718
+"score:6-10" = 1.0718
 
 [classify.io]
 input_ids = "input_ids"
@@ -1573,6 +1579,8 @@ output = "logits"
         assert_eq!(m.extension_fields(), vec!["candidate_labels", "calibration", "question_type", "instructions"]);
         assert_eq!(m.required_fields(), vec!["candidate_labels", "question_type", "instructions"]);
         assert_eq!(m.temperature(Some(QuestionType::Noul), 2), Some(1.0718));
+        assert_eq!(m.temperature(Some(QuestionType::Choice), 32), Some(1.0353));
+        assert_eq!(m.temperature(Some(QuestionType::Score), 10), Some(1.0718));
         std::fs::remove_dir_all(&tmp).unwrap();
 
         for (name, body, want) in [

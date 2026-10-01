@@ -319,8 +319,9 @@ decide_pos = "decide_pos"
 output = "logits"
 "#;
 
-/// `classifier.toml` for a zero-shot model in the agentjev format, with
-/// per-type temperatures for two labels.
+/// `classifier.toml` for a zero-shot model in the agentjev format. AgentJev's
+/// temperatures are per question type, whatever the label count, so the
+/// manifest declares each type's at every label-count bucket it can reach.
 pub const AGENTJEV_ZERO_SHOT: &str = r#"
 id = "jev-decider"
 task = "zero-shot-classification"
@@ -339,6 +340,9 @@ max_labels = 4
 [classify.calibration]
 "noul:2" = 1.0718
 "choice:2" = 1.0353
+"choice:3-5" = 1.0353
+"score:2" = 1.0718
+"score:3-5" = 1.0718
 
 [classify.io]
 input_ids = "input_ids"

@@ -492,12 +492,16 @@ async fn agentjev_requests_are_validated_against_the_format() {
     };
     classify_400(noul(json!(["yes", "no"])), "`false` then `true`").await;
     classify_ok(noul(json!(["false: unmet", "true: met"]))).await;
-    // Temperatures exist for two labels only, as the manifest declares.
-    let three = with("candidate_labels", json!(["a", "b", "c"]));
-    classify_ok(three.clone()).await;
-    let mut calibrated = three;
-    calibrated["calibration"] = json!("model");
-    classify_400(calibrated, "no calibration temperature").await;
+    // AgentJev's temperatures are per type, so they apply at any label
+    // count the manifest declares: here up to its max_labels of 4.
+    let mut four = with("candidate_labels", json!(["a", "b", "c", "d"]));
+    four["calibration"] = json!("model");
+    classify_ok(four.clone()).await;
+    four["question_type"] = json!("score");
+    classify_ok(four).await;
+    let mut noul = noul(json!(["false", "true"]));
+    noul["calibration"] = json!("model");
+    classify_ok(noul).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

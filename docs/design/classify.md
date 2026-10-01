@@ -762,9 +762,12 @@ The probabilities are a softmax over the candidates' logits. AgentJev's
 service divides the logits by a per-type temperature (`temperatures.json`:
 1.0718 for boolean and score, 1.0353 for choice) when it is started with
 one, as its card does. sidekick's calibration is opt-in, as on laya:
-`calibration: model` applies the manifest's temperatures, declared under
-laya's keys for every label count the model serves (`noul:2`;
-`choice:2` … `choice:11+`; `score:2` … `score:6-10`). The default is
+`calibration: model` applies the manifest's temperatures. AgentJev's are
+per type, whatever the candidate count, so the manifest declares each
+type's temperature under every one of laya's label-count keys the type can
+reach (`noul:2`; `choice:2` … `choice:11+`; `score:2` … `score:6-10`, as
+AgentJev takes 2 to 10 levels). A missing bucket would make
+`calibration: model` a 400 at that label count. The default is
 temperature 1.
 
 Scope, per request:
@@ -793,10 +796,15 @@ format = "agentjev"
 max_labels = 32
 labels = []
 
-[classify.calibration]                    # AgentJev's per-type temperatures
-"noul:2" = 1.0718
+[classify.calibration]                    # AgentJev's per-type temperatures, at every
+"noul:2" = 1.0718                         # label-count bucket the type reaches
 "choice:2" = 1.0353
-# … every choice and score bucket
+"choice:3-5" = 1.0353
+"choice:6-10" = 1.0353
+"choice:11+" = 1.0353
+"score:2" = 1.0718
+"score:3-5" = 1.0718
+"score:6-10" = 1.0718
 
 [classify.io]
 input_ids = "input_ids"
