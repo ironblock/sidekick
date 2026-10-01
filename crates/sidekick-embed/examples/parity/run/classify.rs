@@ -72,7 +72,9 @@ pub fn worker(
             && (!segments || prepared.type_ids == case.type_ids)
             && prepared.markers == case.markers
             && prepared.qtype == case.qtype
-            && prepared.decide_pos == case.decide;
+            && prepared.decide_pos == case.decide
+            && prepared.seg == case.seg
+            && prepared.position_ids == case.position_ids;
         let model_only = if ids_match {
             None
         } else {
@@ -87,6 +89,8 @@ pub fn worker(
                 qtype: case.qtype,
                 bucket,
                 decide_pos: case.decide,
+                seg: case.seg.clone(),
+                position_ids: case.position_ids.clone(),
             };
             Some(clf.run(&theirs).map_err(e)?)
         };
@@ -583,6 +587,8 @@ mod tests {
             markers: vec![],
             qtype: None,
             decide: None,
+            seg: vec![],
+            position_ids: vec![],
             k: 2,
             multi_label: None,
             gold: None,

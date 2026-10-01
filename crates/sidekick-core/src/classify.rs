@@ -136,6 +136,12 @@ pub struct Prepared {
     pub qtype: Option<i32>,
     /// fev format: the decide token's position. `None` otherwise.
     pub decide_pos: Option<i32>,
+    /// agentjev format: each token's segment, parallel to `ids` (0 for the
+    /// shared prefix, `c` for candidate `c`, 1-based). Empty otherwise.
+    pub seg: Vec<i32>,
+    /// agentjev format: each token's position, parallel to `ids`; every
+    /// candidate's positions continue from the prefix's end. Empty otherwise.
+    pub position_ids: Vec<i32>,
     /// The smallest bucket that fits `ids`.
     pub bucket: usize,
 }

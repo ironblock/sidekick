@@ -4,7 +4,7 @@
 //! Platform-neutral, so the token-level contract (docs/design/classify.md)
 //! is tested everywhere; [`crate::CoremlClassifier`] runs the result.
 
-use crate::{fev, gliner2, laya};
+use crate::{agentjev, fev, gliner2, laya};
 use sidekick_core::manifest::{
     ClassifierManifest, ClassifyFormat, FevSection, Gliner2Section, LayaSection, ResolvedClassifier,
 };
@@ -34,6 +34,7 @@ enum Format {
     Laya { section: LayaSection, specials: laya::Specials },
     Gliner2 { section: Gliner2Section, specials: gliner2::Specials },
     Fev { section: FevSection, delimiters: fev::Delimiters },
+    Agentjev,
 }
 
 fn invalid(message: impl Into<String>) -> Error {
@@ -90,6 +91,7 @@ impl InputBuilder {
                 let delimiters = fev::Delimiters::from_tokenizer(&tokenizer, &section.delimiters)?;
                 Some(Format::Fev { section, delimiters })
             }
+            Some(ClassifyFormat::Agentjev) => Some(Format::Agentjev),
             None => None,
         };
         Ok(Self {
@@ -138,6 +140,7 @@ impl InputBuilder {
                 self.prepare_gliner2(input, params, section, specials)
             }
             Some(Format::Fev { section, delimiters }) => self.prepare_fev(input, params, section, delimiters),
+            Some(Format::Agentjev) => self.prepare_agentjev(input, params),
         }
     }
 
@@ -199,7 +202,7 @@ impl InputBuilder {
         if ids.len() > max {
             return Err(too_long(format!("{} tokens", ids.len()), max));
         }
-        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids: vec![], markers: vec![], qtype: None, decide_pos: None })
+        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids: vec![], markers: vec![], qtype: None, decide_pos: None, seg: vec![], position_ids: vec![] })
     }
 
     /// A text-ranking model's (query, document) pair, as its tokenizer
@@ -305,7 +308,7 @@ impl InputBuilder {
         } else {
             vec![]
         };
-        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids, markers: vec![], qtype: None, decide_pos: None })
+        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids, markers: vec![], qtype: None, decide_pos: None, seg: vec![], position_ids: vec![] })
     }
 
     /// The laya format: the state is truncated by design, keeping its
@@ -379,7 +382,7 @@ impl InputBuilder {
             type_ids: vec![],
             markers: seq.markers.iter().map(|&m| m as i32).collect(),
             qtype: Some(question_type.index()),
-            decide_pos: None,
+            decide_pos: None, seg: vec![], position_ids: vec![],
         })
     }
 }
@@ -442,7 +445,7 @@ impl InputBuilder {
             type_ids: vec![],
             markers: seq.markers.iter().map(|&m| m as i32).collect(),
             qtype: None,
-            decide_pos: None,
+            decide_pos: None, seg: vec![], position_ids: vec![],
         })
     }
 }
@@ -493,7 +496,46 @@ impl InputBuilder {
             type_ids: vec![],
             markers: seq.option_ends.iter().map(|&m| m as i32).collect(),
             qtype: None,
-            decide_pos: Some(seq.decide as i32),
+            decide_pos: Some(seq.decide as i32), seg: vec![], position_ids: vec![],
+        })
+    }
+}
+
+impl InputBuilder {
+    /// The agentjev format (docs/design/classify.md): the state, question
+    /// and candidates as one tree. AgentJev never truncates, so neither
+    /// does sidekick: a tree over the largest bucket is a 400, and so are
+    /// `truncate_prompt_tokens` and left truncation.
+    fn prepare_agentjev(&self, input: &str, params: &ClassifyParams) -> Result<Prepared> {
+        if params.truncate_prompt_tokens.is_some() {
+            return Err(invalid(
+                "truncate_prompt_tokens isn't supported by the agentjev format, which never truncates; shorten the \
+                 input instead",
+            ));
+        }
+        if params.truncation_side == TruncationSide::Left {
+            return Err(invalid("truncation_side `left` isn't supported by the agentjev format, which never truncates"));
+        }
+        let Some(question_type) = params.question_type else {
+            return Err(invalid("question_type is required by this model (choice, score or noul)"));
+        };
+        let Some(instructions) = params.instructions.as_deref() else {
+            return Err(invalid("instructions is required by this model: the question to decide"));
+        };
+        let labels = &params.candidate_labels;
+        check_labels(labels, 2, self.max_labels)?;
+        let candidates = agentjev::render_candidates(question_type, labels)?;
+        let tree = agentjev::build_tree(&self.tokenizer, input, instructions, &candidates, self.max_seq_len)?;
+        let ids: Vec<i32> = tree.ids.iter().map(|&u| u as i32).collect();
+        Ok(Prepared {
+            bucket: self.bucket_for(ids.len()),
+            ids,
+            type_ids: vec![],
+            markers: tree.cand_ends.iter().map(|&m| m as i32).collect(),
+            qtype: None,
+            decide_pos: None,
+            seg: tree.seg,
+            position_ids: tree.position_ids,
         })
     }
 }
@@ -818,6 +860,64 @@ mod tests {
         let p = b.prepare("a", &fev_params(QuestionType::Choice, &[&option(12), "c"])).unwrap();
         assert_eq!((p.ids.len(), p.bucket), (32, 32));
         let e = b.prepare("a", &fev_params(QuestionType::Choice, &[&option(13), "c"])).unwrap_err();
+        assert!(e.to_string().contains("the model's input holds 32"), "{e}");
+    }
+
+    fn agentjev_builder(max_seq_len: usize) -> InputBuilder {
+        let mut m = manifest(ClassifyTask::ZeroShotClassification);
+        m.classify.format = Some(ClassifyFormat::Agentjev);
+        m.classify.laya = None;
+        m.max_seq_len = max_seq_len;
+        m.buckets = vec![max_seq_len / 2, max_seq_len];
+        InputBuilder::new(crate::agentjev::tests::tokenizer(), &m).unwrap()
+    }
+
+    fn agentjev_params(qt: QuestionType, labels: &[&str]) -> ClassifyParams {
+        ClassifyParams {
+            question_type: Some(qt),
+            instructions: Some("done".into()),
+            candidate_labels: labels.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn agentjev_lays_out_a_tree() {
+        let b = agentjev_builder(32);
+        let t = |w| crate::agentjev::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        let p = b.prepare("state", &agentjev_params(QuestionType::Noul, &["false", "true: yes"])).unwrap();
+        assert_eq!(p.ids.len(), 15);
+        assert_eq!((p.seg.len(), p.position_ids.len()), (15, 15));
+        // Each marker is its candidate's last token: FALSE, then the description.
+        assert_eq!(p.markers, vec![10, 14]);
+        assert_eq!((p.ids[10], p.ids[14]), (t("FALSE"), t("yes")));
+        assert_eq!((p.seg[7], p.seg[10], p.seg[11], p.seg[14]), (1, 1, 2, 2));
+        assert_eq!((p.position_ids[7], p.position_ids[11]), (7, 7));
+        assert_eq!((p.qtype, p.decide_pos, p.bucket), (None, None, 16));
+        assert!(p.type_ids.is_empty());
+    }
+
+    #[test]
+    fn agentjev_rejects_what_it_cannot_honor() {
+        let b = agentjev_builder(32);
+        let ok = agentjev_params(QuestionType::Choice, &["b", "c"]);
+        let cases = [
+            ClassifyParams { truncate_prompt_tokens: Some(8), ..ok.clone() },
+            ClassifyParams { truncation_side: TruncationSide::Left, ..ok.clone() },
+            ClassifyParams { question_type: None, ..ok.clone() },
+            ClassifyParams { instructions: None, ..ok.clone() },
+            ClassifyParams { instructions: Some(" ".into()), ..ok.clone() },
+            agentjev_params(QuestionType::Choice, &["b"]),
+            agentjev_params(QuestionType::Choice, &["a", "b", "c", "d", "e"]),
+            agentjev_params(QuestionType::Choice, &["x: b", "b"]),
+            agentjev_params(QuestionType::Noul, &["yes", "no"]),
+        ];
+        for params in cases {
+            assert!(matches!(b.prepare("state", &params), Err(Error::InvalidRequest(_))), "{params:?}");
+        }
+        assert!(matches!(b.prepare(" ", &ok), Err(Error::InvalidRequest(_))));
+        // Never truncated: the largest bucket holds 32; a longer tree is a 400.
+        let e = b.prepare(&"a ".repeat(20), &ok).unwrap_err();
         assert!(e.to_string().contains("the model's input holds 32"), "{e}");
     }
 

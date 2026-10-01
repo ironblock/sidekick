@@ -459,6 +459,48 @@ async fn fev_requests_are_validated_against_the_format() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn agentjev_requests_are_validated_against_the_format() {
+    let base = || {
+        json!({"model": "jev-decider", "input": "x", "candidate_labels": ["a", "b"], "question_type": "choice",
+               "instructions": "Which fits?"})
+    };
+    let with = |field: &str, value: Value| {
+        let mut b = base();
+        if value.is_null() {
+            b.as_object_mut().unwrap().remove(field);
+        } else {
+            b[field] = value;
+        }
+        b
+    };
+    classify_ok(base()).await;
+    classify_ok(with("multi_label", json!(false))).await;
+    classify_ok(with("calibration", json!("model"))).await;
+    // AgentJev's API needs a question and a type, and never truncates.
+    classify_400(with("instructions", Value::Null), "needs `instructions`").await;
+    classify_400(with("question_type", Value::Null), "needs `question_type`").await;
+    classify_400(with("truncate_prompt_tokens", json!(8)), "never truncates").await;
+    classify_400(with("truncation_side", json!("left")), "never truncates").await;
+    classify_400(with("multi_label", json!(true)), "`multi_label` isn't supported").await;
+    classify_400(with("candidate_labels", json!(["a"])), "at least 2").await;
+    // The candidates are checked before the model loads: two labels giving
+    // the same candidate text, and noul labels that aren't false/true.
+    classify_400(with("candidate_labels", json!(["x: same", "y: same"])), "must be distinct").await;
+    let noul = |labels: Value| {
+        json!({"model": "jev-decider", "input": "x", "candidate_labels": labels, "question_type": "noul",
+               "instructions": "Done?"})
+    };
+    classify_400(noul(json!(["yes", "no"])), "`false` then `true`").await;
+    classify_ok(noul(json!(["false: unmet", "true: met"]))).await;
+    // Temperatures exist for two labels only, as the manifest declares.
+    let three = with("candidate_labels", json!(["a", "b", "c"]));
+    classify_ok(three.clone()).await;
+    let mut calibrated = three;
+    calibrated["calibration"] = json!("model");
+    classify_400(calibrated, "no calibration temperature").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn models_are_sent_to_the_route_for_their_task() {
     classify_400(json!({"model": "test-static", "input": "a"}), "model `test-static` is a feature-extraction model").await;
     classify_400(json!({"model": "apple-fm", "input": "a"}), "text-generation").await;
@@ -559,6 +601,10 @@ async fn listings_are_task_aware() {
     let f = model("fev-decider");
     assert_eq!(f["extensions"], json!(["candidate_labels", "question_type", "instructions"]));
     assert_eq!(f["required"], json!(["candidate_labels", "question_type"]));
+    let j = model("jev-decider");
+    assert_eq!(j["extensions"], json!(["candidate_labels", "calibration", "question_type", "instructions"]));
+    assert_eq!(j["required"], json!(["candidate_labels", "question_type", "instructions"]));
+    assert_eq!(j["compute_units"], "cpu_and_gpu");
     // Each classifier's configured compute units: the default, or its own.
     assert_eq!(model("sentiment")["compute_units"], "cpu_and_ne");
     assert_eq!(g["compute_units"], "cpu_and_gpu");
@@ -567,8 +613,8 @@ async fn listings_are_task_aware() {
     assert_eq!(
         health["classifiers"]["models"],
         json!([
-            "cpu-capped", "decider", "fev-decider", "julia", "placed", "placed-gpu", "placed-stale", "reranker",
-            "schema-decider", "sentiment", "sigmoid-reranker"
+            "cpu-capped", "decider", "fev-decider", "jev-decider", "julia", "placed", "placed-gpu", "placed-stale",
+            "reranker", "schema-decider", "sentiment", "sigmoid-reranker"
         ])
     );
     // A cpu_only model past 1,024 tokens runs capped (D33), and says so.
