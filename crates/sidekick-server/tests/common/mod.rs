@@ -252,6 +252,13 @@ input_ids = "input_ids"
 attention_mask = "attention_mask"
 output = "logits"
 "#;
+/// The zero-shot model with Julia-1's option rendering, which has no
+/// default instructions.
+pub fn julia_zero_shot() -> String {
+    ZERO_SHOT
+        .replace("id = \"decider\"", "id = \"julia\"")
+        .replace("\ndefault_instructions", "\noption_rendering = \"julia\"\n# default_instructions")
+}
 
 /// `classifier.toml` for a reranker that reports raw logits (the ms-marco
 /// cross-encoders' `Identity` activation).
@@ -356,7 +363,8 @@ impl Classifier for MockClassifier {
         let (markers, labels) = match self.manifest.classify.format {
             Some(ClassifyFormat::Laya) => {
                 let qt = params.question_type.expect("the server requires question_type");
-                sidekick_embed::laya::render_options(qt, &params.candidate_labels)?;
+                let rendering = self.manifest.classify.laya.as_ref().map(|l| l.option_rendering).unwrap_or_default();
+                sidekick_embed::laya::render_options(qt, &params.candidate_labels, rendering)?;
                 (vec![0; params.candidate_labels.len()], params.candidate_labels.clone())
             }
             Some(ClassifyFormat::Gliner2) => {
@@ -458,10 +466,12 @@ pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
         FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     write_embedding_fixture(&dir);
+    let julia = julia_zero_shot();
     for (name, body) in [
         ("sentiment", SENTIMENT),
         ("decider", ZERO_SHOT),
         ("schema-decider", SCHEMA_ZERO_SHOT),
+        ("julia", julia.as_str()),
         ("reranker", RERANKER),
         ("sigmoid-reranker", SIGMOID_RERANKER),
         ("broken", "id = "),

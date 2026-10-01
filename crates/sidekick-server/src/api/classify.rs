@@ -282,10 +282,14 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         (Some(_), false) => return Err(unsupported("multi_label")),
         (value, _) => value.unwrap_or(false),
     };
-    // laya's noul labels are fixed (`false`, `true`); checked here, where
+    // The labels must render (noul's are fixed: `false`, `true`), and a
+    // model without default instructions needs them; checked here, where
     // the manifest alone can answer, not after the model loads.
-    if let Some(q) = question_type {
-        sidekick_embed::laya::render_options(q, &candidate_labels)?;
+    if let (Some(q), Some(section)) = (question_type, m.classify.laya.as_ref()) {
+        sidekick_embed::laya::render_options(q, &candidate_labels, section.option_rendering)?;
+        if req.instructions.is_none() && section.default_instructions(q).is_none() {
+            return Err(ApiError::invalid(sidekick_embed::laya::NO_INSTRUCTIONS));
+        }
     }
 
     // Calibration is an extension of models that declare temperatures;

@@ -325,11 +325,12 @@ impl InputBuilder {
         };
         let labels = &params.candidate_labels;
         check_labels(labels, self.max_labels)?;
-        let options = laya::render_options(question_type, labels)?;
+        let options = laya::render_options(question_type, labels, section.option_rendering)?;
         let instructions = params
             .instructions
             .as_deref()
-            .unwrap_or_else(|| section.default_instructions.get(question_type));
+            .or_else(|| section.default_instructions(question_type))
+            .ok_or_else(|| invalid(laya::NO_INSTRUCTIONS))?;
         // Byte caps bound tokenizer work; laya cuts every piece far below
         // them (the state to the sequence, options to 48 tokens, the
         // question to the head budget).
@@ -476,7 +477,7 @@ pub(crate) fn byte_cap_end(text: &str, max_tokens: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sidekick_core::manifest::{ClassifierIo, ClassifySection, DefaultInstructions};
+    use sidekick_core::manifest::{ClassifierIo, ClassifySection, DefaultInstructions, OptionRendering};
     use sidekick_core::{ProblemType, QuestionType};
 
     fn manifest(task: ClassifyTask) -> ClassifierManifest {
@@ -503,11 +504,12 @@ mod tests {
                 gliner2: None,
                 laya: laya.then(|| LayaSection {
                     head_max_len: 16,
-                    default_instructions: DefaultInstructions {
+                    default_instructions: Some(DefaultInstructions {
                         choice: "which option".into(),
                         score: "which".into(),
                         noul: "ok".into(),
-                    },
+                    }),
+                    option_rendering: OptionRendering::Laya,
                 }),
                 calibration: Default::default(),
                 io: ClassifierIo {
@@ -587,6 +589,24 @@ mod tests {
         let p = b.prepare(&words(200), &laya_params(QuestionType::Noul, &["false", "true"])).unwrap();
         assert_eq!(p.ids.len(), 32);
         assert_eq!(p.qtype, Some(2));
+    }
+
+    #[test]
+    fn julia_renders_descriptions_and_needs_instructions_without_defaults() {
+        let mut m = manifest(ClassifyTask::ZeroShotClassification);
+        let section = m.classify.laya.as_mut().unwrap();
+        section.option_rendering = OptionRendering::Julia;
+        section.default_instructions = None;
+        let b = InputBuilder::new(crate::laya::tests::tokenizer(), &m).unwrap();
+        let params = laya_params(QuestionType::Choice, &["x: c", "y: d"]);
+        let e = b.prepare("a b", &params).unwrap_err();
+        assert!(e.to_string().contains("`instructions` is required"), "{e}");
+        let params = ClassifyParams { instructions: Some("which option".into()), ..params };
+        let p = b.prepare("a b", &params).unwrap();
+        let t = |w| crate::laya::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        // The descriptions alone: [MASK] c [MASK] d, as laya's "c", "d".
+        assert_eq!(p.ids[7..11], [3, t("c"), 3, t("d")]);
+        assert_eq!(p.markers, vec![7, 9]);
     }
 
     #[test]

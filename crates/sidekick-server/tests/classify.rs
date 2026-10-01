@@ -364,6 +364,35 @@ async fn gliner2_requests_are_validated_against_the_format() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn julia_rendering_is_checked_before_the_model_loads() {
+    let p = test_state_full(true, None);
+    let julia = |q: &str, labels: Value, instructions: Option<&str>| {
+        let mut b = json!({"model": "julia", "input": "x", "candidate_labels": labels, "question_type": q});
+        if let Some(i) = instructions {
+            b["instructions"] = json!(i);
+        }
+        b
+    };
+    let cases = [
+        (julia("choice", json!(["a", "b"]), None), "`instructions` is required"),
+        (julia("noul", json!(["false: wet", "true"]), Some("Is it dry?")), "both `false` and `true`, or neither"),
+        (julia("choice", json!(["b", "b: "]), Some("Which?")), "render as the same option `b`"),
+        (julia("choice", json!(["a", ": "]), Some("Which?")), "renders as an empty option"),
+    ];
+    for (body, needle) in cases {
+        let (status, value) = call(p.state.clone(), classify(body.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {value}");
+        let message = value["error"]["message"].as_str().unwrap();
+        assert!(message.contains(needle), "{body}: {message}");
+    }
+    assert_eq!(p.runs.load(std::sync::atomic::Ordering::Relaxed), 0, "nothing ran");
+
+    let (status, value) = call(p.state.clone(), classify(julia("noul", json!(["false", "true"]), Some("Is it dry?")))).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(probs(&value["data"][0]).len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn models_are_sent_to_the_route_for_their_task() {
     classify_400(json!({"model": "test-static", "input": "a"}), "model `test-static` is a feature-extraction model").await;
     classify_400(json!({"model": "apple-fm", "input": "a"}), "text-generation").await;
@@ -456,7 +485,7 @@ async fn listings_are_task_aware() {
     let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;
     assert_eq!(
         health["classifiers"]["models"],
-        json!(["decider", "reranker", "schema-decider", "sentiment", "sigmoid-reranker"])
+        json!(["decider", "julia", "reranker", "schema-decider", "sentiment", "sigmoid-reranker"])
     );
     assert_eq!(health["classifiers"]["resident"], 0);
     assert_eq!(health["embeddings"]["models"], json!(["test-static"]));

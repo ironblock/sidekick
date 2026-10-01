@@ -39,7 +39,7 @@ POST /v1/classify
 | `candidate_labels` ([str]) | extension (HF zero-shot's name) | required on zero-shot models; 400 on fixed-label models |
 | `calibration` (`none` \| `model`) | extension | only on models that declare temperatures (every value, `none` included, is a 400 elsewhere); default `none`; `model` applies the manifest's temperature, and with `use_activation: false` needs none |
 | `question_type` (`choice` \| `score` \| `noul`) | extension, laya format | required on laya |
-| `instructions` (str) | extension, laya format | optional; the manifest's per-type default when absent |
+| `instructions` (str) | extension, laya format | the manifest's per-type default when absent; required by a model whose manifest has none (Julia-1) |
 
 Any other top-level field is ignored, as D22 already does. Extension fields
 unsupported by the model's task are a 400.
@@ -62,6 +62,10 @@ Other 400s:
   laya's option shrinking;
 - a laya `noul` question whose labels aren't `false` / `true` in that order,
   optionally with descriptions (`"false: …"`, `"true: …"`);
+- with Julia-1's option rendering: a noul question that describes only
+  one of `false` and `true`, a label that renders as an empty option, or
+  two labels that render alike (`"b"` and `"x: b"`);
+- no `instructions` for a model whose manifest has no default;
 - `calibration: model` where the model declares no temperature for that
   question type and label count;
 - malformed JSON, on every route, in the API's usual error shape (D22
@@ -135,6 +139,7 @@ labels = []                               # text-classification: output order (i
 
 [classify.laya]
 head_max_len = 192
+option_rendering = "laya"                 # laya (default) | julia: see "Option rendering"
 default_instructions = { choice = "Which option fits the text best?", score = "Which level fits the text best?", noul = "Does the statement hold for the text?" }
 
 [classify.calibration]                    # opt-in; "<question_type>:<k bucket>", laya's temp_bucket keys
@@ -213,12 +218,32 @@ a `[MASK]` marker before each option. The Rust port of its `build_sequence`
 - The question text is cut to `max(8, budget)` tokens.
 - The state is truncated to fit, keeping its start.
 - The final sequence is `ids[:max_len]`.
-- Options are rendered as laya renders them:
-  - choice: `"key"` or `"key: description"`;
-  - score: `"level i: description"`;
-  - noul: `"false: …"` then `"true: …"`, with laya's default texts when a
-    label has no description.
+- Options are rendered as the manifest's `option_rendering` says (below).
 - laya's act (escalate) head isn't served.
+
+### Option rendering
+
+Models trained on laya's sequence differ in how a label becomes option
+text. `[classify.laya] option_rendering` picks one; the sequence around
+the options is the same. A label's description is the text after its
+first `": "`; an empty description counts as none. The response's `label`
+is always the request's label as sent.
+
+| question | `laya` (default; laya's `render_options`) | `julia` (Julia-1's typed API) |
+|---|---|---|
+| choice | the label as given: `"key"` or `"key: description"` | the description, else the key |
+| score | `"level i: <label>"` | the label as given |
+| noul | `"false: …"` then `"true: …"`, laya's default text for a missing description | `"false"`, `"true"` when neither is described; the two descriptions when both are; one alone is a 400 |
+
+Julia-1's rendering also needs:
+- `max_labels` at most 20, Julia-1's most options per question;
+- no empty option and no two labels rendering alike (both 400s);
+- `instructions` on every request when the manifest has no
+  `default_instructions`, which Julia-1's API doesn't have. laya's
+  rendering requires them in the manifest.
+
+An over-long state is truncated, keeping its start, under both: sidekick
+doesn't implement Julia-1's strict mode, which rejects one.
 
 ## Fixtures and references (frozen formats)
 

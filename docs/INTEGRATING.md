@@ -133,7 +133,10 @@ or SGLang works unchanged. What a host needs to know beyond that:
 - **Zero-shot labels are the answer space.** `probs` follows
   `candidate_labels`, and `label` is the most probable one. laya's
   `noul` questions take exactly `["false", "true"]`, each optionally with a
-  description (`"true: the customer wants a refund"`).
+  description (`"true: the customer wants a refund"`). A model rendering
+  options as Julia-1 does (`docs/design/classify.md`, "Option rendering")
+  takes descriptions on both or neither, and may need `instructions` on
+  every request.
 - **Over-length input.** A text-classification input longer than the
   model's maximum is a 400 unless you send `truncate_prompt_tokens` (`-1`
   truncates to the model's maximum). laya truncates the text itself,

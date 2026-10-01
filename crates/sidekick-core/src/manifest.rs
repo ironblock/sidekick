@@ -190,7 +190,13 @@ pub struct LayaSection {
     /// Token budget for the question and its options (laya's `head_max_len`).
     pub head_max_len: usize,
     /// Instructions used when a request sends none, per question type.
-    pub default_instructions: DefaultInstructions,
+    /// Required with laya's rendering; without them (Julia-1 has none), a
+    /// request must send `instructions`.
+    #[serde(default)]
+    pub default_instructions: Option<DefaultInstructions>,
+    /// How a request's labels become option texts.
+    #[serde(default)]
+    pub option_rendering: OptionRendering,
 }
 
 /// `[classify.gliner2]`.
@@ -199,6 +205,31 @@ pub struct Gliner2Section {
     /// The task prompt when a request sends no `instructions`.
     pub default_instructions: String,
 }
+
+impl LayaSection {
+    /// The instructions a question gets when the request sends none.
+    pub fn default_instructions(&self, question_type: QuestionType) -> Option<&str> {
+        self.default_instructions.as_ref().map(|d| d.get(question_type))
+    }
+}
+
+/// How a laya-format model renders a request's labels as option texts. The
+/// sequence around them is the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OptionRendering {
+    /// laya's `render_options`: `"key: description"` as given, `"level i:
+    /// …"` for scores, `"false: …"`/`"true: …"` for noul.
+    #[default]
+    Laya,
+    /// Julia-1's typed API: the description alone (or the key), score items
+    /// as given, and `"false"`/`"true"` or the two descriptions for noul.
+    /// At most 20 options.
+    Julia,
+}
+
+/// Julia-1's most options per question.
+pub const JULIA_MAX_LABELS: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultInstructions {
@@ -612,6 +643,14 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                     if laya.head_max_len == 0 || laya.head_max_len >= m.max_seq_len {
                         return Err("`head_max_len` must be in 1..max_seq_len".into());
                     }
+                    if laya.option_rendering == OptionRendering::Laya && laya.default_instructions.is_none() {
+                        return Err("laya's option rendering needs `default_instructions`".into());
+                    }
+                    if laya.option_rendering == OptionRendering::Julia && m.max_labels() > JULIA_MAX_LABELS {
+                        return Err(format!(
+                            "Julia-1 takes at most {JULIA_MAX_LABELS} options: `max_labels` must be at most that"
+                        ));
+                    }
                     require("marker_pos", &io.marker_pos)?;
                     require("qtype", &io.qtype)?;
                     if io.token_type_ids.is_some() {
@@ -787,9 +826,10 @@ source = { repo = "BAAI/bge-small-en-v1.5", revision = "abc" }
             vec!["candidate_labels", "calibration", "question_type", "instructions"]
         );
         assert_eq!(
-            laya.classify.laya.as_ref().unwrap().default_instructions.get(QuestionType::Noul),
-            "Does the statement hold for the text?"
+            laya.classify.laya.as_ref().unwrap().default_instructions(QuestionType::Noul),
+            Some("Does the statement hold for the text?")
         );
+        assert_eq!(laya.classify.laya.as_ref().unwrap().option_rendering, OptionRendering::Laya, "the default");
 
         let s = &reg.classifier("sentiment").unwrap().manifest;
         assert_eq!(s.max_labels(), 5);
@@ -928,6 +968,9 @@ output = "logits"
             ("dup-label", SENTIMENT.replace("\"2 stars\"", "\"1 star\""), "duplicate label"),
             ("zero-batch", SENTIMENT.replace("max_seq_len = 512", "max_seq_len = 512\nmax_batch = 0"), "max_batch"),
             ("bad-buckets", SENTIMENT.replace("[128, 512]", "[512, 128]"), "increasing"),
+            ("julia-too-many", LAYA.replace("head_max_len = 192", "head_max_len = 192\noption_rendering = \"julia\""), "at most 20 options"),
+            ("no-defaults", LAYA.replace("\ndefault_instructions", "\n# default_instructions"), "default_instructions"),
+            ("bad-rendering", LAYA.replace("head_max_len = 192", "head_max_len = 192\noption_rendering = \"jules\""), "option_rendering"),
             ("not-toml", "id = ".to_string(), ""),
         ];
         for (name, body, want) in cases {
@@ -940,6 +983,22 @@ output = "logits"
             assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
             std::fs::remove_dir_all(&tmp).unwrap();
         }
+    }
+
+    #[test]
+    fn julia_rendering_takes_up_to_20_options_and_no_default_instructions() {
+        let tmp = tmp_dir("julia");
+        let julia = LAYA
+            .replace("id = \"laya-en\"", "id = \"julia\"")
+            .replace("max_labels = 32", "max_labels = 20")
+            .replace("\ndefault_instructions", "\noption_rendering = \"julia\"\n# default_instructions");
+        write_classifier(&tmp, "julia", &julia);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        let laya = reg.classifier("julia").unwrap().manifest.classify.laya.clone().unwrap();
+        assert_eq!(laya.option_rendering, OptionRendering::Julia);
+        assert_eq!(laya.default_instructions(QuestionType::Choice), None);
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
