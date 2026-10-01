@@ -742,8 +742,21 @@ Most rejections are visible long before a conversion. Cheapest first:
      - **QK-norm** (`q_norm`/`k_norm` in the modeling code): keeps
        activations small (LFM2.5 ~25, F2LLM ~420), so no range rewrite.
      - **bf16 training**: nothing kept its activations in fp16 range.
-     - **Size**: validated up to 350M parameters, and each bucket stores the
-       whole model at ~2 bytes/param.
+     - **Size**: each bucket stores the whole model at ~2 bytes/param, and
+       Core ML runs an ML program on the ANE only if its weights fit in about
+       1 GiB: about 500M parameters in fp16, embedding table included.
+       Measured on an M1 Max with macOS 27 (October 2026) by cutting
+       agent-jev's Qwen3-0.6B at different depths: 0.964 GiB of weights put
+       99.4% of operations on the ANE, and 1.022 GiB put 0%. Over the cap,
+       `cpu_and_ne` silently runs the whole model on the CPU, with no error,
+       so a compute plan of 0 ANE operations is the symptom. Storing only the
+       embedding table in int8 brought agent-jev (1.12 GiB) to 0.97 GiB and
+       98% on the ANE, at no measurable cost in accuracy. This is Core ML's
+       documented limit: Apple's coremltools guide ("MLModel Utilities",
+       Bisect Model) states it as 1 GB for the Neural Engine on iPhone, and
+       its `ct.models.utils.bisect_model` splits a model into two chunks
+       under it. It may differ on other chips and OS releases; measure it
+       there. GPU serving has no such cap (GLiNER2.5-Decide and agent-jev).
      - **Needed sequence length**: buckets are ≤512, and the ANE's advantage
        shrinks with length.
      - **Output shape**: one vector per input fits `/v1/embeddings`, and a
