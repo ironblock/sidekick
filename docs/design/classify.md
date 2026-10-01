@@ -56,8 +56,9 @@ Over-length input:
 - **laya format:** the state is truncated by design, keeping its start, and
   `truncate_prompt_tokens` is a 400.
 - **gliner2 format:** the text is truncated at the word level, keeping its
-  start, until the sequence fits the largest bucket. The schema is never
-  truncated: a schema that doesn't fit on its own is a 400.
+  start, until the sequence fits the largest bucket, and the `.` is then
+  appended as for any text. The schema is never truncated: a schema that
+  doesn't fit on its own is a 400.
   `truncate_prompt_tokens` and `truncation_side: left` are 400s.
 
 Other 400s:
@@ -107,6 +108,11 @@ Where sidekick deliberately differs from vLLM:
   regression → none; multi-label or a single output → sigmoid; otherwise
   softmax, with temperature 1 unless `calibration: model`. For zero-shot
   models, `multi_label: true` makes the request multi-label.
+- For gliner2 these are the probabilities its own API reports at its
+  default activation and temperature 1: a softmax over the task's label
+  logits for a single-label task, and each label's sigmoid for a
+  multi-label one. (Its per-label training loss is binary cross-entropy,
+  but its single-label confidence is the softmax.)
 - A multi-label request still returns one `label`, the argmax, because
   vLLM's response shape has one label per input. Clients choose the
   labels that apply by thresholding `probs`. gliner2's own API returns
@@ -363,12 +369,16 @@ at each marker. The Rust port of the gliner2 package's input builder
   fast-decisions rows from 9 domains.
 - A label sent as `"key: description"` puts `key` in its `[L]` slot and
   appends ` [DESCRIPTION] key: description` to the prompt, in label order.
-- The text gets a `.` appended unless it ends in `.`, `!` or `?` (an empty
-  text becomes `.`). It is then split into words by gliner2's
-  whitespace splitter regex, and each word is lowercased. Labels, the
-  prompt and descriptions keep their case.
-- Truncation drops text words from the end, after the `.` is appended,
-  until the sequence fits the largest bucket.
+- The text is split into words by gliner2's whitespace splitter regex,
+  and each word is lowercased. Labels, the prompt and descriptions keep
+  their case.
+- An over-length text loses words from its end until the sequence fits the
+  largest bucket. Then a `.` is appended, as a word of its own, unless the
+  kept text ends in `.`, `!` or `?` (an empty text becomes `.`). gliner2
+  appends first and never truncates by default; truncating first is
+  sidekick's choice, so a truncated text still ends the way every training
+  input did. The reference runs gliner2 on the kept prefix of the text, cut
+  at the end of its last kept word, which reproduces this.
 - The `[P]` and `[L]` positions come from the layout, the first piece of
   each marker's slot, never from searching for their token ids. A marker
   string inside a label or the prompt tokenizes to its marker id but isn't
@@ -441,7 +451,9 @@ Corpora:
     and a description;
   - non-ASCII text and emoji (the tokenizer is a Unigram model without
     byte fallback, so a character outside its vocabulary becomes `[UNK]`);
-  - text long enough to be truncated at the largest bucket.
+  - text long enough to be truncated at the largest bucket, including one
+    whose last kept word is followed by terminal punctuation that
+    truncation removes, and one whose kept part already ends in `.`.
 
 First models:
 - `laya-en` (zero-shot, laya format);
