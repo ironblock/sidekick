@@ -31,6 +31,14 @@ Corpora:
   Inputs are built with the checkpoint's own build_sequence: laya's pinned
   rl_common.py, or for laya-typed-decisions the laya package's common.py
   (--laya-code), checked as tools/convert_laya.py checks it.
+- laya format with `option_rendering = "julia"` (Julia-1):
+  fixtures/classify/<id>.corpus.toml, the same dataset translation with
+  Julia-1's own adversarial cases; heads over max_labels are left out.
+  Inputs are built with Julia-1's julia/data.py and options rendered as its
+  typed API renders them; the oracles run its JuliaDecisionModel, with RoPE
+  read from the encoder config's `rope_parameters` (which transformers 4.x
+  ignores). --source is the Julia-1 snapshot; its julia/ code is checked by
+  sha256.
 - text-classification: the embedding parity corpus
   (fixtures/parity/corpus.toml), materialized with the model's
   tokenizer.json. Inputs longer than the largest bucket are truncated to it
@@ -325,6 +333,167 @@ def run_laya(args, manifest):
     return cases, fixture, logits, pr.corpus_hash(corpus_text)
 
 
+# --- laya format, Julia-1's option rendering ----------------------------------------
+
+# Julia-1's own code at the manifest's revision: its input builder and its model
+JULIA_SHA256 = {"data.py": "e3510fa4152ec11fa193046715991f44d7c2f85fd2488a98ef11c9d3db23da4e",
+                "model.py": "ef2ba82fe20cdf0db7bb887e9ef075476ed08b985ce9a95be0de3e26246ecc81"}
+
+
+def noul_description(label, key):
+    """sidekick's noul label parsing (crates/sidekick-embed/src/laya.rs):
+    None if `label` isn't `key`, else its description, '' for none."""
+    rest = label.strip()
+    if not rest.startswith(key):
+        return None
+    rest = rest[len(key):]
+    if not rest:
+        return ""
+    return rest[1:].strip() if rest.startswith(":") else None
+
+
+def julia_options(question_type, labels):
+    """The request's labels as Julia-1's option texts, the way its typed API
+    (julia/typed.py) builds options from criteria: a choice option is the
+    label's description (after its first ": "), or the label itself when it
+    has none; a score option is the label; a noul question's options are
+    "false"/"true", or both descriptions. An empty description counts as
+    none, and a half-described noul question is rejected."""
+    if question_type == "choice":
+        out = []
+        for label in labels:
+            key, sep, desc = label.partition(": ")
+            out.append(desc if sep and desc.strip() else key if sep else label)
+        return out
+    if question_type == "score":
+        return list(labels)
+    f, t = noul_description(labels[0], "false"), noul_description(labels[1], "true")
+    if f is None or t is None or bool(f) != bool(t):
+        raise SystemExit(f"noul labels {labels}: false then true, both described or neither")
+    return [f, t] if f else ["false", "true"]
+
+
+def load_julia_code(src):
+    """julia/data.py and julia/model.py from the snapshot, after checking
+    they're the pinned files."""
+    import importlib.util
+    mods = {}
+    for name, want in JULIA_SHA256.items():
+        path = src / "julia" / name
+        if sha256(path) != want:
+            raise SystemExit(f"{path} is not Julia-1's {name} at the pinned revision (sha256 {sha256(path)})")
+        spec = importlib.util.spec_from_file_location(f"julia_{path.stem}", path)
+        mods[path.stem] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mods[path.stem])
+    return mods["data"], mods["model"]
+
+
+def julia_tokenizer(src):
+    """Julia-1's tokenizer with the special tokens its tokenizer_config names
+    (CLS <bos>, SEP <eos>, MASK <mask>): the ones julia/data.py reads."""
+    from transformers import PreTrainedTokenizerFast
+    tok = PreTrainedTokenizerFast(tokenizer_file=str(src / "tokenizer" / "tokenizer.json"))
+    config = json.loads((src / "tokenizer" / "tokenizer_config.json").read_text())
+    for name in ("cls_token", "sep_token", "mask_token", "pad_token"):
+        setattr(tok, name, config[name])
+    return tok
+
+
+def julia_model(src, model_py):
+    """JuliaDecisionModel in fp32 with Julia-1's weights. The encoder is built
+    from encoder/config.json with RoPE taken from its `rope_parameters`
+    block: transformers 4.x ignores that block (it is how transformers 5
+    saves ModernBERT) and would run mmBERT's sliding layers at theta 10000
+    instead of 160000, a different model (measured: |dp| up to 0.97 on
+    laya's gate questions)."""
+    from safetensors.torch import load_file
+    from transformers import ModernBertConfig, ModernBertModel
+    raw = json.loads((src / "encoder" / "config.json").read_text())
+    ecfg = ModernBertConfig(**raw)
+    rope = raw.get("rope_parameters") or {}
+    for layer_type, attr in (("full_attention", "global_rope_theta"), ("sliding_attention", "local_rope_theta")):
+        if layer_type in rope:
+            setattr(ecfg, attr, float(rope[layer_type]["rope_theta"]))
+    ecfg._attn_implementation = "sdpa"
+    jcfg = json.loads((src / "julia_config.json").read_text())
+    model = model_py.JuliaDecisionModel(ModernBertModel(ecfg), head_layers=jcfg["head_layers"], n_act=jcfg["n_act"])
+    model.load_state_dict(load_file(str(src / "model.safetensors")), strict=True)
+    return model.float().eval()
+
+
+def julia_build(cases, data, tok, manifest):
+    """julia/data.py's sequence() per case (non-strict: it truncates, as
+    sidekick does), after the validation the server applies: instructions
+    present (Julia-1 has no defaults), 2 to max_labels labels, no duplicate
+    labels or rendered options, none identical at the token level after
+    shrinking. Cases over max_labels are left out, as the corpus says."""
+    cls = manifest["classify"]
+    max_len, head, max_labels = manifest["max_seq_len"], cls["laya"]["head_max_len"], cls["max_labels"]
+    kept, over = [], {}
+    for c in cases:
+        labels = c["candidate_labels"]
+        k = len(labels)
+        if k > max_labels:
+            over[c["head"] or c["id"]] = over.get(c["head"] or c["id"], 0) + 1
+            continue
+        if c["instructions"] is None:
+            raise SystemExit(f"{c['id']}: no instructions, and Julia-1 has no defaults")
+        options = julia_options(c["question_type"], labels)
+        if k < 2 or len(set(labels)) != k or len(set(options)) != k or not all(o.strip() for o in options):
+            raise SystemExit(f"{c['id']}: {k} labels, or duplicate or empty options: the server would reject it")
+        if len({tuple(o) for o in option_token_ids(tok, options, head)}) != k:
+            raise SystemExit(f"{c['id']}: options identical at the token level after shrinking")
+        row = {"state": c["input"], "question": c["instructions"], "type": c["question_type"], "options": options}
+        data.validate_row(row, 1)
+        enc = data.sequence(tok, row, max_len, head)
+        if len(enc["markers"]) != k:
+            raise SystemExit(f"{c['id']}: {len(enc['markers'])} markers for {k} labels")
+        c.update(ids=enc["ids"], markers=enc["markers"], qtype=enc["qtype"], k=k)
+        if enc["truncated"]:
+            c["tags"] = c["tags"] + ["truncated"]
+        kept.append(c)
+    if over:
+        print(f"left out {sum(over.values())} cases over max_labels {max_labels}: {over}", flush=True)
+    return kept
+
+
+def julia_logits(model, cases, max_labels):
+    def forward(run, c):
+        ids = torch.tensor([c["ids"]])
+        args = (ids, torch.ones_like(ids), torch.tensor([c["markers"]]),
+                torch.ones((1, c["k"]), dtype=torch.bool), torch.tensor([c["qtype"]]))
+        return run(model, *args)[0].numpy()
+    return oracles(forward, cases, max_labels)
+
+
+def run_julia(args, manifest):
+    """A laya-format model with Julia-1's option rendering: the corpus is
+    fixtures/classify/<id>.corpus.toml (laya's dataset translation, Julia-1's
+    adversarial cases), inputs come from Julia-1's own julia/data.py, and the
+    oracles run its JuliaDecisionModel."""
+    src = args.source
+    data, model_py = load_julia_code(src)
+    if sha256(src / "tokenizer" / "tokenizer.json") != sha256(args.model_dir / "tokenizer.json"):
+        raise SystemExit("the installed tokenizer.json differs from the checkpoint's")
+    tok = julia_tokenizer(src)
+    corpus_path = REPO / "fixtures" / "classify" / f"{manifest['id']}.corpus.toml"
+    corpus_text = corpus_path.read_text()
+    corpus = tomllib.loads(corpus_text)
+    dataset = args.dataset
+    if dataset is None:
+        from huggingface_hub import snapshot_download
+        dataset = Path(snapshot_download(corpus["source"]["repo"], repo_type="dataset",
+                                         revision=corpus["source"]["revision"], local_files_only=True))
+    cases = julia_build(laya_cases(corpus, dataset), data, tok, manifest)
+    print(f"{len(cases)} cases; max {max(len(c['ids']) for c in cases)} tokens", flush=True)
+    fixture = laya_fixture_subset(cases)
+    logits = None
+    if not args.fixture_only:
+        cases = limited(args, cases)
+        logits = julia_logits(julia_model(src, model_py), cases, manifest["classify"]["max_labels"])
+    return cases, fixture, logits, pr.corpus_hash(corpus_text)
+
+
 # --- gliner2 ------------------------------------------------------------------------
 
 
@@ -542,7 +711,8 @@ def main():
     manifest = tomllib.loads((args.model_dir / "classifier.toml").read_text())
     fmt = manifest["classify"].get("format")
     laya, gliner2 = fmt == "laya", fmt == "gliner2"
-    run = run_laya if laya else run_gliner2 if gliner2 else run_text
+    julia = laya and manifest["classify"]["laya"].get("option_rendering") == "julia"
+    run = run_julia if julia else run_laya if laya else run_gliner2 if gliner2 else run_text
     cases, fixture, logits, corpus_sha = run(args, manifest)
     tokenizer_sha = sha256(args.model_dir / "tokenizer.json")
     source = {"repo": manifest["source"]["repo"], "revision": manifest["source"].get("revision")}
