@@ -459,7 +459,7 @@ M1 Max, macOS 27.0, September 2026.
 
 | model | conversion | CPU | GPU | ANE | rank flips | ANE ops | ANE ms |
 |---|---|---|---|---|---|---|---|
-| [cross-encoder/ms-marco-MiniLM-L6-v2](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) as `ms-marco-minilm-l6-v2` | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) | B 2.3e-3 (Δlogit 0.082) | B 1.2e-3 (Δlogit 0.0085) | **B** 3.4e-3 (Δlogit 0.030) | 0 on every path | 150/165 | not measured |
+| [cross-encoder/ms-marco-MiniLM-L6-v2](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) as `ms-marco-minilm-l6-v2` | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) `--twice-gelu` | B 3.2e-3 (Δlogit 0.082) | B 1.3e-3 (Δlogit 0.0091) | **B** 3.4e-3 (Δlogit 0.024) | 0 on every path | 168/183 | not measured |
 
 **ms-marco-MiniLM-L6-v2**: a 6-layer BERT cross-encoder (22.7M
 parameters, Apache-2.0), converted by the conversion library's BERT recipe.
@@ -468,17 +468,30 @@ segment ids as a third int32 input (`token_type_ids`: 0 for the query, 1
 for the document).
 - Its score is the raw logit: the checkpoint pins sentence-transformers'
   Identity activation, and vLLM serves the same.
+- **Converted with `--twice-gelu`.** BERT's erf GELU is built as
+  `x * (1 + erf(x/√2))`, with the 0.5 folded into each layer's output
+  projection, instead of Core ML's native `gelu`, which is coarse on the
+  ANE. Compared with the native op, on the ANE:
+  - mean Δp halves (2.9e-4 → 1.4e-4), and the worst Δlogit drops from 0.030
+    to 0.024;
+  - bucket invariance improves from 8.3e-4 to 1.4e-4, against the 1e-3
+    gate;
+  - 50 of the 51 pairs come within A (≤ 8.2e-4).
+  The CPU path gets a little worse (2.3e-3 → 3.2e-3; Core ML's CPU `erf` is
+  coarser than its native `gelu`), but sidekick serves the ANE.
+- **One pair keeps it at B.** `hardware-0` (fp32 logit −1.03) is at
+  Δp 3.4e-3 on the ANE with either GELU, so its error has another source.
+  It hasn't been diagnosed. The checkpoint's linear inputs are not small
+  (smallest rms 0.107), so the ANE `linear` precision floor is an unlikely
+  cause.
 - It passes every hard gate on every path:
   - ids and segment ids equal `CrossEncoder`'s for all 51 pairs,
     including a pair truncated to 512 tokens and an empty document;
   - pad invariance is exact;
-  - ANE bucket invariance is 8.3e-4 against the 1e-3 gate;
   - ANE output is bit-identical across processes.
 - It ranks exactly as fp32 does, with no flips and no near-ties. That
   includes five near-duplicate documents with fp32 logits from 7.1 to 9.7,
   the closest two 0.24 apart.
-- The largest errors are on mid-range logits (−1 to +1), where the
-  sigmoid is steepest.
 
 ## Incompatible / not integrated
 
