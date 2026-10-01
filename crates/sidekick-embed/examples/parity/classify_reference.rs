@@ -230,6 +230,7 @@ impl ClassifyReference {
         }
         let format = manifest.classify.format.map(|f| match f {
             ClassifyFormat::Laya => "laya".to_string(),
+            ClassifyFormat::Gliner2 => "gliner2".to_string(),
         });
         if m.format != format {
             why.push("format changed".into());

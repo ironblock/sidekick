@@ -11,11 +11,20 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 
 `tools/convert_laya.py` imports `rl_common.py` from a local copy of the checkpoint at the same revision. It does not vendor it.
 
+## gliner2
+
+- **Source:** [fastino-ai/GLiNER2](https://github.com/fastino-ai/GLiNER2), the `gliner2` Python package, version 2.0.0
+- **License:** Apache License 2.0 (full text below)
+- **What sidekick uses:** `crates/sidekick-embed/src/gliner2.rs` is a Rust port of the classification input layout from `processor.py` (`_transform_schema`, `_format_input_with_mapping`, and the terminal-punctuation rule of `collate_fn_inference`) and of `WhitespaceTokenSplitter`'s pattern from `processing/word_splitter.py`. It is compiled into `sidekickd` and `libsidekick.dylib`.
+- **Changes:** translated from Python to Rust. Tokenization goes through the `tokenizers` crate, and the marker tokens are resolved from the model's `tokenizer.json`. The word-splitter pattern's character classes are spelled out to keep Python's `re` semantics under Rust's `regex` crate. The schema layout, marker positions, per-item tokenization, lowercasing and terminal punctuation are unchanged. Additions: one task per request; labels sent as `"key: description"` become gliner2 label descriptions; an over-length text is truncated at the word level before its terminal punctuation is added (gliner2 doesn't truncate by default); each text is capped at 16 bytes per token of the model's maximum before splitting; and empty names, duplicate names and labels identical at the token level are rejected.
+
+`tools/classifier_reference.py` imports the installed `gliner2` package to generate references and the token-id fixture. It does not vendor it.
+
 ## fast-decisions
 
 - **Source:** [fastino/fast-decisions](https://huggingface.co/datasets/fastino/fast-decisions), revision `1a33070`
 - **License:** Apache License 2.0 (full text below)
-- **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path. The dataset is fetched when a reference is generated, not committed. `fixtures/classify/laya-en.tokens.json` includes three of its rows, as text and as token ids.
+- **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path. `fixtures/classify/gliner2.5-decide.corpus.toml` sends each of its classification heads as a gliner2-format request, to measure GLiNER2.5-Decide's parity on each compute path. The dataset is fetched when a reference is generated, not committed. `fixtures/classify/laya-en.tokens.json` includes three of its rows and `fixtures/classify/gliner2.5-decide.tokens.json` two, as text and as token ids.
 
 ---
 

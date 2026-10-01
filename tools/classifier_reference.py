@@ -18,6 +18,12 @@ unpadded input at a time, and writes (docs/design/classify.md):
   with their ids and markers. Schema: fixtures/classify/tokens.schema.json.
 
 Corpora:
+- gliner2 format: fixtures/classify/gliner2.5-decide.corpus.toml: every
+  fast-decisions head as one single-task request, plus adversarial cases.
+  Inputs are laid out by the gliner2 package's own processor (2.0.0); an
+  over-length text is cut to its longest prefix of whole words that fits and
+  then laid out as is (gliner2 appends the terminal "."), sidekick's
+  truncation rule. --source is the GLiNER2 checkpoint.
 - laya format: fixtures/classify/<id>.corpus.toml (laya-en's translates
   fastino/fast-decisions mechanically and adds adversarial cases;
   laya-typed-decisions' is the same with one longer case). Its [source]
@@ -60,6 +66,7 @@ import parity_reference as pr  # noqa: E402  (corpus hash and materialization, D
 from sidekick_convert import fp16sim  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
+GLINER2_CORPUS = REPO / "fixtures" / "classify" / "gliner2.5-decide.corpus.toml"
 FORMAT = 1
 QTYPES = {"choice": 0, "score": 1, "noul": 2}
 # text-classification token fixture: short parity-corpus cases chosen for
@@ -308,6 +315,151 @@ def run_laya(args, manifest):
     return cases, fixture, logits, pr.corpus_hash(corpus_text)
 
 
+# --- gliner2 ------------------------------------------------------------------------
+
+
+def split_label(label):
+    """`key` or `key: description`, split at the first ": " (the contract's rule)."""
+    key, sep, desc = label.partition(": ")
+    key, desc = key.strip(), desc.strip()
+    return (key, desc) if sep and desc else (key, None)
+
+
+def gliner2_cases(corpus, dataset_dir):
+    cases = []
+    for path in sorted(Path(dataset_dir).glob("*.jsonl")):
+        domain = path.stem
+        for row, line in enumerate(path.read_text().splitlines()):
+            record = json.loads(line)
+            for head in record["output"]["classifications"]:
+                cases.append({"id": f"{domain}.{head['task']}.{row:03d}", "tags": [domain, head["task"]],
+                              "input": record["input"], "candidate_labels": list(head["labels"]),
+                              "instructions": head["task"], "multi_label": bool(head["multi_label"]),
+                              "gold": head["true_label"], "head": f"{domain}.{head['task']}"})
+    for adv in corpus["adversarial"]:
+        labels = adv.get("candidate_labels")
+        if labels is None:
+            g = adv["candidate_labels_generate"]
+            labels = [g["template"].format(i=i) for i in range(g["count"])]
+        text = adv.get("input")
+        if text is None:
+            g = adv["input_generate"]
+            text = " ".join(g["template"].format(i=i, j=i * 7 % 13) for i in range(g["repeat"])) + g.get("suffix", "")
+        cases.append({"id": adv["id"], "tags": ["adversarial"] + adv.get("tags", []), "input": text,
+                      "candidate_labels": labels, "instructions": adv.get("instructions"),
+                      "multi_label": bool(adv.get("multi_label", False)), "gold": adv.get("gold"), "head": None})
+    return cases
+
+
+def gliner2_layout(proc, text, prompt, labels):
+    """gliner2's own processor on one single-task request: (ids, [L] positions)."""
+    split = [split_label(l) for l in labels]
+    task = {"task": prompt, "labels": [k for k, _ in split], "true_label": ["N/A"], "multi_label": False,
+            "cls_threshold": 0.5, "class_act": "auto",
+            "label_descriptions": {k: d for k, d in split if d is not None}}
+    schema = {"json_structures": [], "classifications": [task], "entities": {}, "relations": [],
+              "json_descriptions": {}, "entity_descriptions": {}}
+    b = proc.collate_fn_inference([(text, schema)], error_policy="raise")
+    return b.input_ids[0].tolist(), [int(p) for p in b.schema_special_indices[0][0]][1:]
+
+
+def gliner2_fit(proc, text, prompt, labels, max_len):
+    """sidekick's truncation: the whole text if it fits once gliner2 lays it
+    out, else its longest prefix of whole words (cut at the end of the last
+    kept word) that fits; gliner2 then appends the terminal "." itself."""
+    ids, markers = gliner2_layout(proc, text, prompt, labels)
+    if len(ids) <= max_len:
+        return ids, markers, False
+    if len(text.encode()) > max_len * 16:
+        raise SystemExit("a corpus text exceeds the byte cap; keep generated texts under it")
+    ends = [e for _, _, e in proc.word_splitter(text, lower=False)]
+    lo, hi = 0, len(ends) - 1          # largest n in [lo, hi] whose prefix fits
+    while lo < hi:
+        n = (lo + hi + 1) // 2
+        if len(gliner2_layout(proc, text[: ends[n - 1]], prompt, labels)[0]) <= max_len:
+            lo = n
+        else:
+            hi = n - 1
+    prefix = text[: ends[lo - 1]] if lo else ""
+    ids, markers = gliner2_layout(proc, prefix, prompt, labels)
+    if len(ids) > max_len:
+        raise SystemExit("the schema doesn't fit the model: the server would reject it")
+    return ids, markers, True
+
+
+def gliner2_build(cases, proc, tok, default, max_len, max_labels):
+    """The layout per case, after the validation the server applies."""
+    for c in cases:
+        labels = c["candidate_labels"]
+        k = len(labels)
+        keys = [split_label(l)[0] for l in labels]
+        if not 2 <= k <= max_labels or len(set(labels)) != k or len(set(keys)) != k or "" in keys:
+            raise SystemExit(f"{c['id']}: {k} labels, duplicates or an empty name: the server would reject it")
+        if len({tuple(tok.encode(key, add_special_tokens=False).ids) for key in keys}) != k:
+            raise SystemExit(f"{c['id']}: labels identical at the token level")
+        prompt = c["instructions"] if c["instructions"] is not None else default
+        ids, markers, truncated = gliner2_fit(proc, c["input"], prompt, labels, max_len)
+        if len(markers) != k:
+            raise SystemExit(f"{c['id']}: {len(markers)} markers for {k} labels")
+        if truncated:
+            c["tags"] = c["tags"] + ["truncated"]
+        c.update(ids=ids, markers=markers, qtype=None, k=k)
+    return cases
+
+
+def gliner2_fixture_subset(cases):
+    """Every adversarial case, plus the shortest single-label and multi-label
+    dataset requests, so real dataset text is pinned too."""
+    chosen = [c for c in cases if c["head"] is None]
+    for multi in (False, True):
+        pool = [c for c in cases if c["head"] is not None and c["multi_label"] == multi]
+        if pool:
+            chosen.append(min(pool, key=lambda c: len(c["ids"])))
+    return chosen
+
+
+def run_gliner2(args, manifest):
+    import os
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    from tokenizers import Tokenizer
+    from transformers import AutoTokenizer
+    from gliner2.processor import SchemaTransformer
+    src = args.source
+    if sha256(src / "tokenizer.json") != sha256(args.model_dir / "tokenizer.json"):
+        raise SystemExit("the installed tokenizer.json differs from the checkpoint's")
+    if version("gliner2") != "2.0.0":
+        raise SystemExit(f"the gliner2 format is pinned to gliner2 2.0.0, not {version('gliner2')}")
+    proc = SchemaTransformer(tokenizer=AutoTokenizer.from_pretrained(src))
+    proc.change_mode(is_training=False)
+    tok = Tokenizer.from_file(str(args.model_dir / "tokenizer.json"))
+    corpus_text = GLINER2_CORPUS.read_text()
+    corpus = tomllib.loads(corpus_text)
+    dataset = args.dataset
+    if dataset is None:
+        from huggingface_hub import snapshot_download
+        dataset = Path(snapshot_download(corpus["source"]["repo"], repo_type="dataset",
+                                         revision=corpus["source"]["revision"], local_files_only=True))
+    cls = manifest["classify"]
+    cases = gliner2_build(gliner2_cases(corpus, dataset), proc, tok, cls["gliner2"]["default_instructions"],
+                          manifest["max_seq_len"], cls["max_labels"])
+    print(f"{len(cases)} cases; max {max(len(c['ids']) for c in cases)} tokens; "
+          f"{sum('truncated' in c['tags'] for c in cases)} truncated", flush=True)
+    fixture = gliner2_fixture_subset(cases)
+    logits = None
+    if not args.fixture_only:
+        from gliner2.classification import Classifier
+        model = Classifier.from_pretrained(str(src), device="cpu", dtype=torch.float32).scorer.model.eval()
+        logits = np.full((len(cases), cls["max_labels"]), np.nan, dtype=np.float32)
+        with torch.no_grad():
+            for i, c in enumerate(cases):
+                ids = torch.tensor([c["ids"]])
+                h = model.encoder(input_ids=ids, attention_mask=torch.ones_like(ids)).last_hidden_state[0]
+                logits[i, : c["k"]] = model.classifier(h[c["markers"]]).squeeze(-1).numpy()
+                if i % 100 == 0:
+                    print(f"  fp32 {i}/{len(cases)}", flush=True)
+    return cases, fixture, logits, pr.corpus_hash(corpus_text)
+
+
 # --- text-classification -----------------------------------------------------------
 
 
@@ -365,8 +517,10 @@ def main():
                     help="laya-typed-decisions: the laya package's common.py (tools/convert_laya.py)")
     args = ap.parse_args()
     manifest = tomllib.loads((args.model_dir / "classifier.toml").read_text())
-    laya = manifest["classify"].get("format") == "laya"
-    cases, fixture, logits, corpus_sha = (run_laya if laya else run_text)(args, manifest)
+    fmt = manifest["classify"].get("format")
+    laya, gliner2 = fmt == "laya", fmt == "gliner2"
+    run = run_laya if laya else run_gliner2 if gliner2 else run_text
+    cases, fixture, logits, corpus_sha = run(args, manifest)
     tokenizer_sha = sha256(args.model_dir / "tokenizer.json")
     source = {"repo": manifest["source"]["repo"], "revision": manifest["source"].get("revision")}
 
@@ -378,9 +532,13 @@ def main():
             if laya:
                 rec.update(candidate_labels=c["candidate_labels"], question_type=c["question_type"],
                            instructions=c["instructions"])
+            if gliner2:
+                rec.update(candidate_labels=c["candidate_labels"], instructions=c["instructions"])
             rec["ids"] = c["ids"]
             if laya:
                 rec.update(markers=c["markers"], qtype=c["qtype"])
+            if gliner2:
+                rec.update(markers=c["markers"], qtype=None)
             fx["cases"].append(rec)
         args.tokens_fixture.write_text(json.dumps(fx, ensure_ascii=False, separators=(",", ":")) + "\n")
         print(f"token fixture: {len(fixture)} cases -> {args.tokens_fixture}")
@@ -411,8 +569,12 @@ def main():
         if laya:
             rec.update(candidate_labels=c["candidate_labels"], question_type=c["question_type"],
                        instructions=c["instructions"])
+        if gliner2:
+            rec.update(candidate_labels=c["candidate_labels"], instructions=c["instructions"])
         rec.update(ids=c["ids"], k=c["k"], gold=c["gold"])
-        if laya:
+        if gliner2:
+            rec["multi_label"] = c["multi_label"]
+        if laya or gliner2:
             rec.update(markers=c["markers"], qtype=c["qtype"])
         meta["cases"].append(rec)
     out = (args.out or args.model_dir / "parity") / manifest["id"]

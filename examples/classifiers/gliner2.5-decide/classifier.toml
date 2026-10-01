@@ -1,0 +1,32 @@
+# GLiNER2.5-Decide as an ANE-resident Core ML zero-shot classifier: a
+# DeBERTa-v3-large encoder plus GLiNER2's per-token classifier, which scores
+# an [L] marker placed before each candidate label. One static-shape
+# artifact per sequence-length bucket ({seq} resolves against `buckets`);
+# each outputs one logit per token, and sidekick reads them at the markers.
+#
+# The request format, validation and this manifest's fields are specified in
+# docs/design/classify.md ("The gliner2 format"). `default_instructions` is
+# the task prompt when a request sends no `instructions`; GLiNER2.5-Decide
+# measured the same decisions with it as with the benchmark's own task names.
+
+id = "gliner2.5-decide"
+task = "zero-shot-classification"
+source = { repo = "fastino/GLiNER2.5-Decide", revision = "5a7adf72a23b4d311abae6ce050d7f0012bb3416" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 32
+problem_type = "single_label"
+
+[classify]
+format = "gliner2"
+max_labels = 32
+
+[classify.gliner2]
+default_instructions = "label"
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
