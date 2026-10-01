@@ -477,14 +477,20 @@ def main():
 
     output = "logits" if a.head == "gliner2" else "embedding"
     noisy = np.random.default_rng(1).integers(1000, 100000, seq).astype(np.int32)
+    kept = []
     for units in ("CPU_ONLY", "CPU_AND_NE"):
         t = time.time()
         model = ct.models.CompiledMLModel(str(dst), compute_units=getattr(ct.ComputeUnit, units))
         print(f"{units}: loaded in {time.time() - t:.0f}s")
 
+        # Core ML releases a prediction's input about a second after the model
+        # goes idle, from its own queue; coremltools hands it NumPy-backed
+        # buffers that Python may already have freed by then (a segfault). Keep
+        # every input alive for the life of the process.
         def run(ids, pads=None):
             x, m = feeds(ids, seq, pads)
-            return model.predict({"input_ids": x, "attention_mask": m})[output][0]
+            kept.append({"input_ids": x, "attention_mask": m})
+            return model.predict(kept[-1])[output][0]
 
         grade(units, a.head, cases, run)
         if a.head == "gliner2":  # per-token logits: compare the real tokens only
