@@ -25,6 +25,14 @@ tiny-gliner2/: the gliner2 format. `input_ids`/`attention_mask` [1, S] and
   load check must refuse;
 - `expected.json`: fp32 torch logits at the markers for fixed inputs.
 
+tiny-fev/: the fev format, causal. `input_ids`/`attention_mask` [1, S],
+`marker_pos` [1, K] (each option's end, -1 in unused slots), `decide_pos`
+[1], and `logits` [1, K]: a pointer head between each option's state and
+the decide token's, unused slots at -1e4. Each token's state is the mean
+of the embeddings up to it, so pads after the row change nothing.
+- `model_16.mlmodelc`, `model_32.mlmodelc`: K = 4;
+- `expected.json`: fp32 torch logits for fixed (ids, ends, decide).
+
 tiny-multishape/: one artifact, `model.mlmodelc`, whose `input_ids` and
 `attention_mask` each accept two enumerated shapes, [1, 16] and [1, 32],
 and whose `logits` are [1, 1]. Its layout is the one macOS 27 can abort
@@ -33,8 +41,8 @@ on, which the loader must refuse there whatever the compute units (D27).
 Usage:
     python tools/make_classifier_test_models.py crates/sidekick-embed/tests/fixtures [name ...]
 
-    name    tiny-laya, tiny-reranker, tiny-gliner2, tiny-multishape (default:
-            all). Building
+    name    tiny-laya, tiny-reranker, tiny-gliner2, tiny-fev, tiny-multishape
+            (default: all). Building
             only the one you changed keeps the others' committed bytes.
 
 Requires torch, coremltools and numpy (arm64-native Python 3.12 or
@@ -114,6 +122,29 @@ LAYA_INPUTS = lambda seq, k: [("input_ids", (1, seq)), ("attention_mask", (1, se
 PAIR_INPUTS = lambda seq: [("input_ids", (1, seq)), ("attention_mask", (1, seq)), ("token_type_ids", (1, seq))]
 
 
+class TinyFev(nn.Module):
+    """A causal pointer head: each token's state is the running mean of the
+    embeddings so far, and an option scores q(decide) . k(its end)."""
+
+    def __init__(self):
+        super().__init__()
+        self.emb = nn.Embedding(VOCAB, D)
+        self.q, self.k = nn.Linear(D, D), nn.Linear(D, D)
+
+    def forward(self, input_ids, attention_mask, marker_pos, decide_pos):
+        h = torch.tanh(self.emb(input_ids.long()))
+        n = torch.arange(1, input_ids.shape[1] + 1, dtype=torch.float32)[None, :, None]
+        h = torch.cumsum(h, 1) / n
+        pos = torch.arange(input_ids.shape[1], dtype=torch.int32)
+        ends = torch.matmul((marker_pos[:, :, None] == pos[None, None, :]).float(), h)
+        decide = torch.matmul((decide_pos[:, None, None] == pos[None, None, :]).float(), h)
+        logits = (self.k(ends) * self.q(decide)).sum(-1) / D ** 0.5
+        return torch.where(marker_pos < 0, torch.full_like(logits, -1e4), logits)
+
+
+FEV_INPUTS = lambda seq, k: [("input_ids", (1, seq)), ("attention_mask", (1, seq)), ("marker_pos", (1, k)), ("decide_pos", (1,))]
+
+
 class TinyPooled(nn.Module):
     """A score from the mean of the real tokens' embeddings: any length."""
 
@@ -154,15 +185,43 @@ def convert(model, shapes, out_dir, name):
 
 def main():
     root = sys.argv[1]
-    names = sys.argv[2:] or ["tiny-laya", "tiny-reranker", "tiny-gliner2", "tiny-multishape"]
+    names = sys.argv[2:] or ["tiny-laya", "tiny-reranker", "tiny-gliner2", "tiny-fev", "tiny-multishape"]
     if "tiny-laya" in names:
         laya(root)
     if "tiny-reranker" in names:
         reranker(root)
     if "tiny-gliner2" in names:
         gliner2(root)
+    if "tiny-fev" in names:
+        fev(root)
     if "tiny-multishape" in names:
         multishape(root)
+
+
+def fev(root):
+    out = os.path.join(root, "tiny-fev")
+    os.makedirs(out, exist_ok=True)
+    torch.manual_seed(4)
+    model = TinyFev().eval()
+    convert(model, FEV_INPUTS(16, 4), out, "model_16")
+    convert(model, FEV_INPUTS(32, 4), out, "model_32")
+    # Fixed rows laid out as fev's are: <s> state <q> question (<o> option
+    # </o>)... <d>, with delimiter ids 0-4 and arbitrary words after them.
+    cases = [
+        ([0, 10, 11, 1, 12, 2, 13, 3, 2, 14, 3, 4], [7, 10], 11),
+        ([0, 15, 16, 17, 1, 2, 18, 19, 3, 2, 20, 3, 2, 21, 3, 4], [8, 11, 14], 15),
+        ([0] + [22] * 15 + [1, 2, 23, 3, 2, 24, 3, 4], [19, 22], 23),
+    ]
+    expected = []
+    for ids, ends, decide in cases:
+        mp = ends + [-1] * (4 - len(ends))
+        with torch.no_grad():
+            logits = model(torch.tensor([ids], dtype=torch.int32), torch.ones(1, len(ids), dtype=torch.int32),
+                           torch.tensor([mp], dtype=torch.int32), torch.tensor([decide], dtype=torch.int32))[0][: len(ends)]
+        expected.append({"ids": ids, "markers": ends, "decide": decide, "logits": [float(x) for x in logits]})
+    with open(os.path.join(out, "expected.json"), "w") as f:
+        json.dump({"cases": expected}, f, indent=1)
+        f.write("\n")
 
 
 def multishape(root):
