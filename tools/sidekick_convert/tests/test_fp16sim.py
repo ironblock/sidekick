@@ -93,6 +93,20 @@ class Fp16Sim(unittest.TestCase):
             torch.testing.assert_close(fp16sim.run(Fused(), q, k, v, mask),
                                        fp16sim.run(Explicit(), q, k, v, mask), rtol=0, atol=0)
 
+    def test_grouped_query_attention(self):
+        q, k = torch.randn(1, 4, 6, 8), torch.randn(1, 2, 6, 8)
+
+        class Fused(torch.nn.Module):
+            def forward(self, q, k):
+                return F.scaled_dot_product_attention(q, k, k, enable_gqa=True)
+
+        class Explicit(torch.nn.Module):
+            def forward(self, q, k):
+                k = k.repeat_interleave(2, dim=1)
+                return (torch.matmul(q, k.transpose(2, 3)) * (1 / math.sqrt(8))).softmax(-1) @ k
+
+        torch.testing.assert_close(fp16sim.run(Fused(), q, k), fp16sim.run(Explicit(), q, k), rtol=0, atol=0)
+
     def test_transformer_fast_path_is_off_inside_only(self):
         before = torch.backends.mha.get_fastpath_enabled()
         layer = torch.nn.TransformerEncoderLayer(16, 2, 32, batch_first=True).eval()
@@ -125,6 +139,69 @@ class Fp16Sim(unittest.TestCase):
         ids = torch.tensor([[70000, 3]])
         got = fp16sim.run(emb, input=ids)
         torch.testing.assert_close(got, r(emb(ids).detach()), rtol=0, atol=0)
+
+
+class TinyRMSNorm(torch.nn.Module):
+    """transformers' RMSNorm, decomposed: x^2 overflows fp16 for |x| > 256."""
+
+    def __init__(self, n):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.ones(n))
+
+    def forward(self, x):
+        variance = x.pow(2).mean(-1, keepdim=True)
+        return self.weight * (x * torch.rsqrt(variance + 1e-6))
+
+
+class Normalizations(unittest.TestCase):
+    def setUp(self):
+        torch.manual_seed(0)
+        self.x = torch.randn(1, 4, 16)
+        self.x[0, 1, 3] = 6631.0  # an attention-sink activation
+
+    def test_a_normalization_is_one_operation(self):
+        norm = TinyRMSNorm(16)
+        got = fp16sim.run(norm, self.x)
+        with torch.no_grad():
+            want = r(norm(r(self.x)))
+        torch.testing.assert_close(got, want, rtol=0, atol=0)
+        self.assertTrue(bool(got[0, 1].abs().amax() > 0.5))  # the sink token isn't zeroed
+
+    def test_the_same_math_outside_a_norm_raises(self):
+        class Unnamed(torch.nn.Module):
+            def forward(self, x):
+                return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6)
+
+        with self.assertRaises(fp16sim.Fp16Overflow) as caught:
+            fp16sim.run(Unnamed(), self.x)
+        self.assertIn("mean reads", str(caught.exception))
+        self.assertIn("pow stored", str(caught.exception))
+
+
+class NonFinite(unittest.TestCase):
+    def test_a_finfo_min_mask_does_its_job(self):
+        q = torch.randn(1, 2, 6, 8)
+        keep = torch.tensor([1.0] * 4 + [0.0] * 2)
+
+        class Masked(torch.nn.Module):
+            def forward(self, q, keep):
+                add = (1.0 - keep) * torch.finfo(torch.float32).min
+                return (torch.matmul(q, q.transpose(-1, -2)) + add).softmax(-1) @ q
+
+        out = fp16sim.run(Masked(), q, keep)
+        self.assertTrue(bool(torch.isfinite(out).all()))
+
+    def test_an_overflowed_activation_fails_loudly(self):
+        lin = torch.nn.Linear(8, 8)
+
+        class Residual(torch.nn.Module):
+            def forward(self, x):
+                return torch.tanh(lin(x * 1000.0)) * 0.0  # the output would stay finite
+
+        x = torch.full((1, 8), 100.0)
+        with self.assertRaises(fp16sim.Fp16Overflow) as caught:
+            fp16sim.run(Residual(), x)
+        self.assertIn("mul stored |x| up to 1e+05", str(caught.exception))
 
 
 if __name__ == "__main__":

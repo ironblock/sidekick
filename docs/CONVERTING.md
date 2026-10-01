@@ -177,6 +177,17 @@ input-dependent tensor stored in fp16.**
    converted program has, and on laya they inflated the ceiling 1.5x at the
    mean and 2.8x at the maximum. `nn.TransformerEncoderLayer`'s fast path
    runs a whole layer as one fused operation, so it is turned off.
+   **A normalization is one operation too**: fp32 inside, its output stored
+   in fp16. Most checkpoints write RMSNorm out by hand (`x.pow(2).mean()`,
+   `rsqrt`, a multiply). Rounding those steps would store RMSNorm's x² in
+   fp16, which overflows past |x| 256. On agent-jev, whose attention-sink
+   activation reaches 6,800, that zeroed the sink token and left the last
+   token at cosine 0.53 to fp32 on a 16-token input. A converter computes a
+   norm whole or pre-scales it, so no converted program stores that
+   intermediate. With the norm as one operation, the same token is at
+   0.999999. Normalizations are found by class name: any module whose name
+   ends in `RMSNorm` or `LayerNorm` (Qwen3's, Gemma's, Llama's, Nandi's, and
+   PyTorch's).
 2. **Everything that does not depend on the input is a constant**: computed
    exactly, as a converter folds it in fp32, and stored in fp16 once. That
    covers weights, buffers, and tables built from them. RoPE is the case that
@@ -207,9 +218,22 @@ and p99 with K = 2, against K = 1 (which matches the published model).
     logits = fp16sim.run(model, input_ids=ids, attention_mask=mask).logits
 
 `fp16sim.run` treats every tensor argument as an input. `fp16sim.ideal_fp16()`
-is the same as a context manager, for a call that mixes inputs and constants.
-`ops=` rounds only some operations' outputs, which is useful for diagnosis
-and never for grading.
+is the same as a context manager, for a call that mixes inputs and constants;
+pass it the model (`module=`) so it finds the normalizations. `ops=` rounds
+only some operations' outputs, which is useful for diagnosis and never for
+grading.
+
+**A ceiling exists only if fp16 storage keeps every value meaningful.** An
+infinity or NaN may flow only through operations that handle it exactly:
+masking arithmetic, softmax, comparisons and data movement. That is how a
+`finfo.min` mask fill, -inf in fp16, does its job. Reaching anything else (a
+reduction, a matmul, a square root), it would corrupt the result, possibly
+silently: rsqrt of an overflowed sum is 0, and the output stays finite. So
+the run raises `fp16sim.Fp16Overflow`, naming the operation and where the
+value came from, e.g. "mean reads an infinity (pow stored |x| up to 4.4e+07
+in fp16, past 65,504)". The reference generators then leave out the `fp16`
+oracle and print why. The check covers whatever the normalization rule
+misses.
 
 Caveats:
 
@@ -218,9 +242,9 @@ Caveats:
   once where the simulation rounds each step. A ratio a little under 1 is
   not an error.
 - **A model whose activations pass fp16's 65,504 has no ceiling as
-  published.** EmbeddingGemma's residual stream is one example. The
-  reference generator leaves out a non-finite fp16 oracle, and says why,
-  rather than write it.
+  published.** EmbeddingGemma's residual stream is one example. The run
+  raises `Fp16Overflow` (above), and the reference generator leaves out the
+  fp16 oracle rather than write a meaningless one.
 - **The single worst case is sensitive to the exact rounding points.** On
   laya at bucket 128, a hand-placed set of rounding points agreed with this
   definition on mean and p99 Δp to within 15% but differed 1.7x on the
