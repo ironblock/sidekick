@@ -25,9 +25,13 @@ What conversion needs:
     MLP's inputs needed no rescale.
 """
 
+import types
+from pathlib import Path
+
 import torch
 
-from ..techniques import activations, precision, traceable
+from ..techniques import activations, masks, precision, traceable
+from ..techniques.onehot import positions, positions_onehot
 from ..calibrate import collect
 from . import Backbone
 
@@ -126,3 +130,65 @@ def precision_rewrite(calibration, tok, texts_for=lambda cal: cal.texts, report=
             scales.append(f"L{i} {s_in:g}/{s_o:g}")
         report("attention input scales (q/k/v in, o_proj in): " + ", ".join(scales))
     return rewrite
+
+
+class Qwen3TreeBackbone(Qwen3Backbone):
+    """A Qwen3 decoder over a tree layout (the agentjev format,
+    docs/design/classify.md): a shared prefix then sibling branches, each
+    branch seeing the prefix and its own earlier tokens only. Ports beyond
+    the text ones: `seg` [1, S] (0 prefix, c branch c, -1 pads) and
+    `position_ids` [1, S] (every branch continues from the prefix's end).
+
+    The mask is built in-graph from `seg` (masks.tree). RoPE reads constant
+    cos/sin tables through a one-hot of `position_ids` rather than computing
+    angles: an angle like 2,047 radians stored in fp16 is off by up to 0.5,
+    while the tables are exact constants. Positions never exceed the bucket,
+    so one table row per position is enough."""
+
+    def buffers(self, seq):
+        rope = self.model.rotary_emb
+        angle = torch.arange(seq, dtype=torch.float64)[:, None] * rope.inv_freq.double()[None, :]
+        emb = torch.cat([angle, angle], dim=-1)
+        return {"rope_positions": positions(seq),
+                "rope_cos": (emb.cos() * rope.attention_scaling).float(),
+                "rope_sin": (emb.sin() * rope.attention_scaling).float(),
+                **masks.tree_buffers(seq)}
+
+    def call(self, w, x):
+        m = getattr(w, self.attr)
+        seq = w.seq
+        bias = masks.tree(x["seg"], x["attention_mask"], w.tree_causal, w.tree_eye, seq)
+        onehot = positions_onehot(x["position_ids"], w.rope_positions, torch.float32)   # [1, S, S]
+        rope = (onehot @ w.rope_cos, onehot @ w.rope_sin)                              # [1, S, head_dim]
+        h = m.embed_tokens(x["input_ids"].long())
+        for layer in m.layers:
+            h = layer(h, attention_mask=bias, position_embeddings=rope)
+            h = h[0] if isinstance(h, tuple) else h
+        return types.SimpleNamespace(last_hidden_state=m.norm(h))
+
+
+def load_tree(src, tok, prefix=""):
+    """A Qwen3 decoder for the tree layout, from a checkpoint whose backbone
+    tensors are named `<prefix><Qwen3Model name>` in model.safetensors (AgentJev:
+    "path_encoder.backbone."). Built without allocating weights and given the
+    checkpoint's tensors, so the model never exists twice; RoPE's inv_freq,
+    which isn't stored, is rebuilt from the config. The checkpoint's other
+    tensors (a task head) are returned for the head to load."""
+    from safetensors.torch import load_file
+    from transformers import Qwen3Config, Qwen3Model
+    from transformers.models.qwen3.modeling_qwen3 import Qwen3RotaryEmbedding
+    config = Qwen3Config.from_pretrained(src)
+    config._attn_implementation = "sdpa"
+    config.use_cache = False
+    weights = load_file(str(Path(src) / "model.safetensors"))
+    with torch.device("meta"):
+        model = Qwen3Model(config)
+    model.load_state_dict({k[len(prefix):]: v.float() for k, v in weights.items() if k.startswith(prefix)},
+                          strict=True, assign=True)
+    model.rotary_emb = Qwen3RotaryEmbedding(config=config)
+    model.eval().requires_grad_(False)
+    install_patches()
+    from ..tokenizer import special_ids
+    rest = {k: v for k, v in weights.items() if not k.startswith(prefix)}
+    ids = tuple(special_ids(tok)) if tok is not None else ()
+    return Qwen3TreeBackbone(family="qwen3", model=model, config=config, special_ids=ids), rest

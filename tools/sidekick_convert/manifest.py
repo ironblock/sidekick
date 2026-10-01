@@ -170,3 +170,38 @@ def check_gliner2(m, *, src, buckets, backbone, head):
     _check(errors, io.get("output") == head.output, f"io.output {io.get('output')!r} != the head's {head.output!r}")
     if errors:
         raise SystemExit("manifest check failed:\n  " + "\n  ".join(errors))
+
+
+def check_agentjev(m, *, src, buckets, backbone, head, temperatures=None):
+    """An agentjev-format manifest (docs/design/classify.md) vs the checkpoint
+    and the candidate head: zero-shot, the tree's io names, max_labels equal
+    to the head's slots, and the common sequence-limit and revision checks.
+    With `temperatures` (the checkpoint's temperatures.json), every
+    calibration key must carry its question type's temperature."""
+    errors = []
+    _common(m, errors, src=src, buckets=buckets, backbone=backbone, strict_max_seq_len=True)
+    c = m.get("classify", {})
+    _check(errors, m.get("task") == "zero-shot-classification", f"task {m.get('task')!r} != 'zero-shot-classification'")
+    _check(errors, c.get("format") == "agentjev", f"classify.format {c.get('format')!r} != 'agentjev'")
+    _check(errors, not c.get("labels"), "a zero-shot model has no fixed labels")
+    _check(errors, c.get("max_labels") == head.kmax, f"classify.max_labels {c.get('max_labels')} != the head's {head.kmax} slots")
+    _check(errors, m.get("problem_type", "single_label") == "single_label", "an agentjev model's problem_type is single_label")
+    io = c.get("io", {})
+    _check(errors, set(io) == {"input_ids", "attention_mask", "seg", "position_ids", "marker_pos", "output"},
+           f"[classify.io] must name input_ids, attention_mask, seg, position_ids, marker_pos and output, not {sorted(io)}")
+    ports = {p.name for p in head.ports()}
+    for key in ("input_ids", "attention_mask", "seg", "position_ids"):
+        _check(errors, io.get(key) == key, f"io.{key} {io.get(key)!r} != the graph's {key!r}")
+    _check(errors, io.get("marker_pos") in ports, f"io.marker_pos {io.get('marker_pos')!r} isn't one of the graph's inputs")
+    _check(errors, io.get("output") == head.output, f"io.output {io.get('output')!r} != the head's {head.output!r}")
+    if temperatures is not None:
+        types = {"noul": "boolean", "choice": "choice", "score": "score"}
+        for key, t in c.get("calibration", {}).items():
+            want = temperatures.get(types.get(key.split(":")[0], ""), {}).get("temperature")
+            _check(errors, want is not None and abs(t - want) < 1e-9,
+                   f"calibration {key!r} = {t} isn't the checkpoint's {want}")
+        reached = {"noul:2", "choice:2", "choice:3-5", "choice:6-10", "choice:11+", "score:2", "score:3-5", "score:6-10"}
+        _check(errors, reached <= set(c.get("calibration", {})),
+               f"calibration lacks {sorted(reached - set(c.get('calibration', {})))}: AgentJev's temperatures apply at every label count")
+    if errors:
+        raise SystemExit("manifest check failed:\n  " + "\n  ".join(errors))
