@@ -393,7 +393,7 @@ its grade as a starting expectation, not a promise, and run the suite.
 | family | validated | ANE grade | risks seen | inputs that find them |
 |---|---|---|---|---|
 | BERT (bge, MiniLM, e5) | bge-small-en-v1.5, all-MiniLM-L6-v2, e5-small-v2 | A | none | — |
-| ModernBERT | gte-modernbert-base; laya-en (ModernBERT-large, classifier preview) | A (gte); C (laya: one flip caps it; p99 1.93× its fp16 ceiling) | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate, and laya's head reads single-token vectors, where that loss isn't averaged away | pad and bucket invariance; delimiters |
+| ModernBERT | gte-modernbert-base; laya-en (ModernBERT-large classifier) | A (gte); C (laya: one flip caps it; p99 1.93× its fp16 ceiling) | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate, and laya's head reads single-token vectors, where that loss isn't averaged away | pad and bucket invariance; delimiters |
 | Qwen3 decoder, last-token pooling | F2LLM-v2-160M | A | truncation must keep the final token; without the precision rewrite, the native SiLU costs ~0.03% on the ANE (graded B) | over-length; the ids gate; numbers |
 | Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
 | LFM2 hybrid (conv + attention) | LFM2.5-Embedding-350M | A | convolutions read pad states unless they're zeroed; without the precision rewrite, up to 4.6% ANE loss on URLs and delimiters (graded D) | pad invariance; delimiters, numbers |
@@ -420,6 +420,14 @@ On the GPU and ANE, variation between buckets within the ceiling passes
 the bucket gate (D28 amendment). Models whose references don't yet carry
 the `fp16` oracle are graded on the absolute scale only.
 
+**Supported or preview.** A classifier is supported when it passes every
+hard gate on every path, its conversion is exact in fp32 with no known
+unfixed defect, and it grades A on at least one path. Otherwise it's a
+preview. When the A path isn't the one a model is served on by default,
+its notes say so, and a manifest's `compute_units` can serve it there.
+sidekick serves on the ANE by default (D14), even where the GPU grades
+higher, to keep background work off the GPU.
+
 M1 Max, macOS 27.0, September 2026. ms is the median per input on that
 path.
 
@@ -427,8 +435,8 @@ path.
 |---|---|---|---|---|---|---|---|
 | [nlptown/bert-base-multilingual-uncased-sentiment](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment) as `nlptown-sentiment` | text-classification, 5 labels | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) | B 3.4e-3 | A 6.6e-4 | **B** 2.6e-3 | 294/304 | 4.2 |
 | [SupersonicLabs/Julia-1](https://huggingface.co/SupersonicLabs/Julia-1) as `julia-1` (**preview**) | zero-shot, laya's format with Julia-1's option rendering, 1,024 tokens | [convert_julia.py](../tools/convert_julia.py) | D 0.39 (39 flips; 5.3× ceiling) | **C** 0.053 (2 flips cap it; 1.07× ceiling, A level) | **C** 0.116 (7 flips cap it; 1.84× ceiling, B level) | 1647/1665 | 9.0 |
-| [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` (**preview**) | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.16 (13 flips; 6.1× ceiling) | **A** 0.037 (0.93× ceiling) | **C** 0.043 (1 flip caps it; 1.93× ceiling, B level) | 1701/1719 | 40 |
-| [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` (**preview**) | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
+| [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.16 (13 flips; 6.1× ceiling) | **A** 0.037 (0.93× ceiling) | **C** 0.043 (1 flip caps it; 1.93× ceiling, B level) | 1701/1719 | 40 |
+| [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
 | [fastino/GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) as `gliner2.5-decide` (served on the GPU) | zero-shot, gliner2's format | [convert_gliner2.py](../tools/convert_gliner2.py) | D 0.024 | **A** 3.7e-3 | C 0.019 (512 bucket only) | 947/956 | 1,280 at 512 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
@@ -437,7 +445,9 @@ about 5e-4 on the ANE. Its conversion uses eager attention with a finite
 mask, since the SDPA path emits the fused op that drops masks on the ANE
 (D25).
 
-**laya-en is a preview.** Measured on 2,612 cases: fastino/fast-decisions
+**laya-en** is supported: it passes every gate and grades A on the GPU
+(served on the ANE by default; `compute_units = "cpu_and_gpu"` serves the
+A path at about the same latency). Measured on 2,612 cases: fastino/fast-decisions
 translated into laya's three question types, plus adversarial cases.
 - **Grades:** C on the ANE, A on the GPU, D on the CPU, graded against
   laya's ideal-fp16 ceiling (D28 amendment): an ideal fp16 engine moves
@@ -473,7 +483,8 @@ translated into laya's three question types, plus adversarial cases.
 - Its token layout is a port of laya's own code and reproduces laya's
   Python token for token on 15 cases that take every branch.
 
-**laya-typed-decisions is a preview.** It is laya's format with a
+**laya-typed-decisions** is supported: it passes every gate and grades A
+on the GPU (served on the ANE by default, as laya-en). It is laya's format with a
 1,024-token input and a 256-token head, converted the same way as laya-en
 (erf GELU, the matmul softmax) in four buckets, 128 to 1,024 tokens. Its
 inputs are built by the laya package's code (`--laya-code`, checked by
@@ -502,7 +513,8 @@ laya truncates at 1,024 tokens, and inputs within 16 tokens of the limit
 The suite passes both laya models on every path. laya-en's CPU path takes about 20 minutes for its 2,612 cases on an M1 Max, which is
 the suite's default per-worker limit, so run it with `--timeout 3600`.
 
-**julia-1 is a preview.** Julia-1 is an mmBERT-small encoder (a
+**julia-1 is a preview**: it passes every gate, but no path grades A,
+since decision flips cap both its fp16 paths at C. Julia-1 is an mmBERT-small encoder (a
 multilingual ModernBERT) with laya's decision head, so it runs on the laya
 format; only its option texts are rendered differently
 (`option_rendering = "julia"`). Measured on 2,510 cases: fastino/fast-decisions
@@ -552,6 +564,10 @@ cases.
 - **GPU: A.** p99 at 1.14× the ceiling, worst |Δp| 3.7e-3, no decision
   flips, 34 ms median. Bucket invariance is 3.3e-3, within the ceiling's
   own 3.5e-3.
+- **First requests are slow.** Each bucket loads onto the GPU when it's
+  first used: in a fresh `sidekickd`, the first request took about 15 s,
+  and the first use of each other bucket 2.4 s and 4.6 s. Warm requests
+  took 29–135 ms.
 - **ANE: C, and slow.** p99 at 3.3× the ceiling, worst |Δp| 0.019, one
   flip on a near tie (fp32 margin 0.003 logits). A prediction takes about
   0.11 s at 128 tokens, 0.34 s at 256 and 1.28 s at 512: 10–40× the
