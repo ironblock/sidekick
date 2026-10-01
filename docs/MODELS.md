@@ -393,7 +393,7 @@ its grade as a starting expectation, not a promise, and run the suite.
 | family | validated | ANE grade | risks seen | inputs that find them |
 |---|---|---|---|---|
 | BERT (bge, MiniLM, e5) | bge-small-en-v1.5, all-MiniLM-L6-v2, e5-small-v2 | A | none | — |
-| ModernBERT | gte-modernbert-base; laya-en (ModernBERT-large, classifier preview) | A (gte); D, failing bucket invariance (laya) | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate, and laya's head reads single-token vectors, where that loss isn't averaged away | pad and bucket invariance; delimiters |
+| ModernBERT | gte-modernbert-base; laya-en (ModernBERT-large, classifier preview) | A (gte); C (laya: one flip caps it; p99 1.93× its fp16 ceiling) | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate, and laya's head reads single-token vectors, where that loss isn't averaged away | pad and bucket invariance; delimiters |
 | Qwen3 decoder, last-token pooling | F2LLM-v2-160M | A | truncation must keep the final token; without the precision rewrite, the native SiLU costs ~0.03% on the ANE (graded B) | over-length; the ids gate; numbers |
 | Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
 | LFM2 hybrid (conv + attention) | LFM2.5-Embedding-350M | A | convolutions read pad states unless they're zeroed; without the precision rewrite, up to 4.6% ANE loss on URLs and delimiters (graded D) | pad invariance; delimiters, numbers |
@@ -426,7 +426,7 @@ path.
 | model | task | conversion | CPU | GPU | ANE | ANE ops | ANE ms |
 |---|---|---|---|---|---|---|---|
 | [nlptown/bert-base-multilingual-uncased-sentiment](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment) as `nlptown-sentiment` | text-classification, 5 labels | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) | B 3.4e-3 | A 6.6e-4 | **B** 2.6e-3 | 294/304 | 4.2 |
-| [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` (**preview**) | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.17 (16 flips) | **F** 0.025 (bucket invariance 0.011) | **F** 0.039 (bucket invariance 0.027; 1 flip) | 1161/1177 | 40 |
+| [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` (**preview**) | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.16 (13 flips; 6.1× ceiling) | **A** 0.037 (0.93× ceiling) | **C** 0.043 (1 flip caps it; 1.93× ceiling, B level) | 1701/1719 | 40 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -436,31 +436,30 @@ mask, since the SDPA path emits the fused op that drops masks on the ANE
 
 **laya-en is a preview.** Measured on 2,612 cases: fastino/fast-decisions
 translated into laya's three question types, plus adversarial cases.
+- **Grades:** C on the ANE, A on the GPU, D on the CPU, graded against
+  laya's ideal-fp16 ceiling (D28 amendment): an ideal fp16 engine moves
+  laya's probabilities by up to 0.017 (p99 0.0081). The ANE's p99 is 1.93×
+  that, a B by the ratio alone; its one graded flip caps it at C. The GPU
+  is at the ceiling (0.93×).
 - **Decisions:** 99.96% agree with fp32 on the ANE and 100% on the GPU.
-  The one ANE flip had an fp32 margin of 0.057 logits, so read `probs`,
-  not just `label`, when a decision is close. |Δp| on the ANE is 0.039 at
+  The one ANE flip had an fp32 margin of 0.055 logits, so read `probs`,
+  not just `label`, when a decision is close. |Δp| on the ANE is 0.043 at
   most, 0.016 at p99.
 - **Where the loss was:** Core ML's native `gelu` op, which is coarse on
   the ANE, in the first layers of the ModernBERT-large encoder. The
-  converter now builds GELU from erf (constraint E, D28 amendment). That
-  took the ANE from 5 flips and |Δp| 0.077 to 1 flip and 0.039, at 1–7%
-  more latency.
-- **The floor:** an ideal fp16 engine (fp32 arithmetic, every stored
-  tensor rounded to fp16) reaches |Δp| 0.026 on this corpus. laya's
-  decisions resolve finer than fp16 does, so no fp16 path grades it above
-  D by max |Δp|. The ANE is within 1.5× of that floor, and the GPU (0.025)
-  is at it.
-- **Hard gate:** it fails bucket invariance on the GPU and the ANE. An
-  input's probabilities move by up to 0.011 (GPU) or 0.027 (ANE) when the
-  same input runs in a larger bucket, against a 1e-3 gate. On the ANE the
-  cause is Core ML's softmax, whose sum reduction rounds differently per
-  compiled shape. A softmax written as exp and one matmul makes laya
-  exactly bucket-invariant on the ANE, but it isn't adopted yet (D28
-  amendment). A given input always runs in the same bucket, so its answer
-  is deterministic, and the accuracy above is measured in each input's own
-  bucket, as it is served.
-- **CPU:** Core ML's fp16 CPU backend is laya's least accurate path (16
-  flips, |Δp| up to 0.17). Its erf is a little coarser than its native
+  converter builds GELU from erf (constraint E, D28 amendment). That took
+  the ANE from 5 flips and |Δp| 0.077 to 1 flip and 0.039, at 1–7% more
+  latency.
+- **Bucket invariance:** exact on the ANE. Core ML's softmax sums in an
+  order that depends on the compiled shape, so the converter builds every
+  softmax from exp and one matmul instead (constraint F), and the same
+  input gives bit-identical output in every bucket (it moved by up to
+  0.027 before). That costs a few inputs: |Δp| max 0.039 → 0.043, with p99
+  and mean unchanged. On the GPU an input moves by up to 0.0072 between
+  buckets, inside the gate, which allows what fp16 storage alone produces
+  (the ceiling's 0.017).
+- **CPU:** Core ML's fp16 CPU backend is laya's least accurate path (13
+  flips, |Δp| up to 0.16). Its erf is a little coarser than its native
   gelu. The conversion is exact in fp32 (|Δlogit| ≤ 1.2e-4 against laya's
   own forward), so the loss is the backend's fp16 arithmetic. The
   converter gates accuracy on the ANE, the served path, and only reports
@@ -471,8 +470,7 @@ translated into laya's three question types, plus adversarial cases.
 - Its token layout is a port of laya's own code and reproduces laya's
   Python token for token on 15 cases that take every branch.
 
-The suite reports laya as FAIL until its bucket invariance is fixed. Its
-CPU path takes about 20 minutes for the 2,612 cases on an M1 Max, which is
+The suite passes laya-en on every path. Its CPU path takes about 20 minutes for the 2,612 cases on an M1 Max, which is
 the suite's default per-worker limit, so run it with `--timeout 3600`.
 
 ## Rerankers (`/v1/rerank`)
