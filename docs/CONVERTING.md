@@ -18,6 +18,7 @@ cited as Dnn).
 - [The conversion run and its gates](#the-conversion-run-and-its-gates)
 - [Techniques](#techniques)
 - [Calibration and evaluation](#calibration-and-evaluation)
+- [Ideal fp16](#ideal-fp16)
 - [Tokenizers](#tokenizers)
 - [Manifests](#manifests)
 - [Converters](#converters)
@@ -137,6 +138,76 @@ Two kinds of inputs, kept apart by type:
 
 The guard is not hypothetical. bge-small's parity sentences are in the graded
 corpus, which was seeded from them.
+
+## Ideal fp16
+
+`sidekick_convert.fp16sim` simulates an ideal fp16 engine: one that loses
+nothing to fp16 beyond storing its tensors in it. Its error against the fp32
+reference is the model's ceiling, the best any fp16 path can do. Classifier
+and reranker references carry it as the `fp16` oracle beside `torch`
+(`tools/classifier_reference.py`; `fixtures/classify/reference.schema.json`),
+and the parity suite grades each path as a ratio to it. The definition lives
+in one function so that every model's ceiling means the same thing.
+
+**The definition: fp32 arithmetic inside each operation, every
+input-dependent tensor stored in fp16.**
+
+1. **Every operation that depends on the input rounds its float output to
+   fp16**, at operation granularity. Rounding module outputs instead (a hook
+   on each `nn.Linear` and `LayerNorm`) misses everything a module computes
+   inside its forward: attention scores and probabilities, residual adds, an
+   MLP's activation times its gate. In ModernBERT and DeBERTa a whole
+   attention block is one module. A fused kernel (layer norm, GELU, softmax,
+   a linear with its bias) is one operation, rounded once. Fused attention
+   runs as its math decomposition, so its scores and probabilities are
+   stored like any other tensor.
+2. **Everything that does not depend on the input is a constant**: computed
+   exactly, as a converter folds it in fp32, and stored in fp16 once. That
+   covers weights, buffers, and tables built from them. RoPE is the case that
+   matters. Rounding positions x inv_freq op by op puts the angle at
+   position 500 off by up to 0.25 radians, a loss no converted program has.
+   On gte-modernbert's 442-token gate text it costs 6.5x in 1 - cos
+   (5.8e-6 against 8.9e-7).
+3. **Python scalars** (an epsilon, a `1/sqrt(d)` written as a float) are
+   applied exactly.
+
+The rounding happens at PyTorch's dispatcher, below Python, so it reaches an
+operation however the model calls it (`F.linear`, `@`, `torch.bmm`,
+`Tensor.softmax`, `+`). The split between constants and input-dependent
+tensors is found by tracking which tensors derive from the inputs. Neither
+needs a per-architecture list.
+
+**It runs the model the `torch` oracle runs**: the published checkpoint in
+fp32, one unpadded input at a time. It does not run the converted wrapper.
+The ceiling belongs to the model, so a converter's rewrites (TwiceGelu's tanh
+form, the residual 1/K) are graded against it, not folded into it. To
+separate rewrite error from fp16 storage, a converter can run the same
+function on its wrapper; that is a diagnosis, not a ceiling.
+
+    from sidekick_convert import fp16sim
+    logits = fp16sim.run(model, input_ids=ids, attention_mask=mask).logits
+
+`fp16sim.run` treats every tensor argument as an input. `fp16sim.ideal_fp16()`
+is the same as a context manager, for a call that mixes inputs and constants.
+`ops=` rounds only some operations' outputs, which is useful for diagnosis
+and never for grading.
+
+Caveats:
+
+- **A real engine can beat the ceiling slightly.** Core ML fuses some runs
+  of operations into one (a decomposed layer norm, a GELU pattern) and rounds
+  once where the simulation rounds each step. A ratio a little under 1 is
+  not an error.
+- **A model whose activations pass fp16's 65,504 has no ceiling as
+  published.** EmbeddingGemma's residual stream is one example. The
+  reference generator leaves out a non-finite fp16 oracle, and says why,
+  rather than write it.
+- **The single worst case is sensitive to the exact rounding points.** On
+  laya at bucket 128, two implementations of this definition, one with
+  hand-placed rounding points and one generic, agreed on mean and p99 Δp to
+  within 15% but differed 1.7x on the maximum. That sensitivity is why the
+  definition lives in one function. Grades that divide by the ceiling's
+  maximum should report the p99 ratio too.
 
 ## Tokenizers
 
@@ -312,8 +383,8 @@ bucket.
 
 The logic that decides artifacts has torch-only unit tests (no Core ML), in
 `tools/sidekick_convert/tests`: the calibration guard, the tokenizer rule,
-masks, one-hots, the blocked max, the K choice, activations, pooling, and the
-manifest rules. From the repository root:
+masks, one-hots, the blocked max, the K choice, activations, pooling, the
+manifest rules, and the ideal-fp16 simulation. From the repository root:
 
     python -m pytest tools/sidekick_convert/tests
 
