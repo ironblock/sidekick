@@ -263,6 +263,15 @@ def oracles(forward, cases, width, log_every=100):
     return out
 
 
+def limited(args, cases):
+    """The first `--limit` cases, for a smoke run: a reference of fewer
+    cases than the corpus isn't one the suite can grade against."""
+    if args.limit is None:
+        return cases
+    print(f"SMOKE RUN: {args.limit} of {len(cases)} cases; not a usable reference", flush=True)
+    return cases[: args.limit]
+
+
 def laya_logits(dm, cases, max_labels):
     def forward(run, c):
         ids = torch.tensor([c["ids"]])
@@ -311,6 +320,7 @@ def run_laya(args, manifest):
         from sidekick_convert.backbones import modernbert
         modernbert.install_patches()  # laya's own forward, as its converter runs it
         dm = cl.load_decision_model(src, rl, cfg)
+        cases = limited(args, cases)
         logits = laya_logits(dm, cases, cls["max_labels"])
     return cases, fixture, logits, pr.corpus_hash(corpus_text)
 
@@ -418,6 +428,19 @@ def gliner2_fixture_subset(cases):
     return chosen
 
 
+class MarkerScores(torch.nn.Module):
+    """GLiNER2's classification logits: the encoder's output at each `[L]`
+    marker, scored by the classifier."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, ids, markers):
+        h = self.model.encoder(input_ids=ids, attention_mask=torch.ones_like(ids)).last_hidden_state[0]
+        return self.model.classifier(h[markers]).squeeze(-1)
+
+
 def run_gliner2(args, manifest):
     import os
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -449,14 +472,12 @@ def run_gliner2(args, manifest):
     if not args.fixture_only:
         from gliner2.classification import Classifier
         model = Classifier.from_pretrained(str(src), device="cpu", dtype=torch.float32).scorer.model.eval()
-        logits = np.full((len(cases), cls["max_labels"]), np.nan, dtype=np.float32)
-        with torch.no_grad():
-            for i, c in enumerate(cases):
-                ids = torch.tensor([c["ids"]])
-                h = model.encoder(input_ids=ids, attention_mask=torch.ones_like(ids)).last_hidden_state[0]
-                logits[i, : c["k"]] = model.classifier(h[c["markers"]]).squeeze(-1).numpy()
-                if i % 100 == 0:
-                    print(f"  fp32 {i}/{len(cases)}", flush=True)
+        # The encoder and the classifier run as one module, so the fp16
+        # oracle rounds the classifier too.
+        scorer = MarkerScores(model)
+        cases = limited(args, cases)
+        logits = oracles(lambda run, c: run(scorer, torch.tensor([c["ids"]]), torch.tensor(c["markers"])).numpy(),
+                         cases, cls["max_labels"])
     return cases, fixture, logits, pr.corpus_hash(corpus_text)
 
 
@@ -498,6 +519,7 @@ def run_text(args, manifest):
             ids = torch.tensor([c["ids"]])
             feed = {"input_ids": ids, "attention_mask": torch.ones_like(ids)}
             return run(model, **feed).logits[0].numpy()
+        cases = limited(args, cases)
         logits = oracles(forward, cases, cases[0]["k"])
     return cases, fixture, logits, pr.corpus_hash(corpus_text)
 
@@ -515,6 +537,7 @@ def main():
     ap.add_argument("--fixture-only", action="store_true", help="write the token fixture and stop")
     ap.add_argument("--laya-code", type=Path,
                     help="laya-typed-decisions: the laya package's common.py (tools/convert_laya.py)")
+    ap.add_argument("--limit", type=int, help="smoke run: only the first N cases (not a usable reference)")
     args = ap.parse_args()
     manifest = tomllib.loads((args.model_dir / "classifier.toml").read_text())
     fmt = manifest["classify"].get("format")
