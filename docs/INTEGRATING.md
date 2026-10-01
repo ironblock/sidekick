@@ -126,9 +126,9 @@ or SGLang works unchanged. What a host needs to know beyond that:
   `task`, and either its fixed `labels` (text-classification) or its
   `max_labels` (zero-shot). It also gives `max_batch`, the extension fields
   it accepts (`candidate_labels`, `question_type`, `instructions`,
-  `calibration`), the ones every request must send (`required`), and its
-  calibration temperatures. Nothing is loaded to
-  answer.
+  `calibration`, `multi_label`), the ones every request must send
+  (`required`), its calibration temperatures, and the compute units it runs
+  on. Nothing is loaded to answer.
 - **Batch up to `max_batch`.** One request with several inputs beats
   several requests: the ANE serializes predictions anyway.
 - **Zero-shot labels are the answer space.** `probs` follows
@@ -136,12 +136,24 @@ or SGLang works unchanged. What a host needs to know beyond that:
   `noul` questions take exactly `["false", "true"]`, each optionally with a
   description (`"true: the customer wants a refund"`). A model rendering
   options as Julia-1 does (`docs/design/classify.md`, "Option rendering")
-  takes descriptions on both or neither, and needs `instructions` on
-  every request when its listing's `required` says so.
+  shows the model a choice label's description (the text after its first
+  `": "`) rather than the whole label, takes noul descriptions on both or
+  neither, accepts at most 20 labels, and needs `instructions` on every
+  request when its listing's `required` says so. The response's `label` is
+  always your label as sent.
+- **Multi-label (gliner2 models).** `multi_label: true` scores each label
+  on its own: `probs` are independent sigmoids, not a distribution, so
+  threshold them rather than reading `label` (still the argmax). One label
+  is then allowed, as a yes/no question. Other models answer `true` with a
+  400 and accept `false`, the default.
 - **Over-length input.** A text-classification input longer than the
   model's maximum is a 400 unless you send `truncate_prompt_tokens` (`-1`
-  truncates to the model's maximum). laya truncates the text itself,
-  keeping its start, so there it's never a 400.
+  truncates to the model's maximum). laya-format models (laya, Julia-1)
+  and gliner2 models truncate the text themselves, keeping its start, so
+  there it's never a 400, and `truncate_prompt_tokens` and
+  `truncation_side: left` are. gliner2 drops whole words from the end and
+  then ends the text with `.` as its training inputs did; its labels and
+  instructions must fit the model whole, or the request is a 400.
 - **Errors are data.** Every error, malformed JSON included, is the
   OpenAI shape `{"error": {"message", "type", "code"}}`. A 400 names the
   field it rejected. Sending a classifier to `/v1/embeddings`, or an
