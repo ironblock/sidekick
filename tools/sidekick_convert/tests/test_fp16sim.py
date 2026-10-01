@@ -61,7 +61,7 @@ class Fp16Sim(unittest.TestCase):
         rounded_angles = r(r(torch.arange(600).float())[:, None] * r(inv_freq)[None, :])
         self.assertGreater((r(rounded_angles.cos()) - got).abs().max().item(), 0.01)
 
-    def test_fused_attention_runs_decomposed(self):
+    def test_fused_attention_runs_in_explicit_form(self):
         q = torch.randn(1, 2, 6, 8)
 
         class Attn(torch.nn.Module):
@@ -70,10 +70,37 @@ class Fp16Sim(unittest.TestCase):
 
         got = fp16sim.run(Attn(), q)
         x = r(q)
-        s = math.sqrt(1 / math.sqrt(8))
-        scores = r(r(r(x * s) @ r(x.transpose(-2, -1) * s)))
+        scores = r(r(x @ x.transpose(-2, -1)) * (1 / math.sqrt(8)))
         want = r(r(scores.softmax(-1)) @ x)
-        torch.testing.assert_close(got, want, rtol=0, atol=1e-6)
+        torch.testing.assert_close(got, want, rtol=0, atol=0)
+
+    def test_fused_and_explicit_attention_store_the_same(self):
+        q, k, v = (torch.randn(1, 2, 6, 8) for _ in range(3))
+        keep = torch.tensor([True] * 4 + [False] * 2).reshape(1, 1, 1, 6)
+        add = torch.zeros(1, 1, 1, 6).masked_fill(~keep, -30000.0)
+
+        class Fused(torch.nn.Module):
+            def forward(self, q, k, v, mask):
+                return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=0.3)
+
+        class Explicit(torch.nn.Module):
+            def forward(self, q, k, v, mask):
+                if mask.dtype == torch.bool:
+                    mask = torch.zeros(mask.shape).masked_fill(~mask, float("-inf"))
+                return (torch.matmul(q, k.transpose(2, 3)) * 0.3 + mask).softmax(-1) @ v
+
+        for mask in (add, keep):
+            torch.testing.assert_close(fp16sim.run(Fused(), q, k, v, mask),
+                                       fp16sim.run(Explicit(), q, k, v, mask), rtol=0, atol=0)
+
+    def test_transformer_fast_path_is_off_inside_only(self):
+        before = torch.backends.mha.get_fastpath_enabled()
+        layer = torch.nn.TransformerEncoderLayer(16, 2, 32, batch_first=True).eval()
+        with fp16sim.ideal_fp16() as sim:
+            self.assertFalse(torch.backends.mha.get_fastpath_enabled())
+            out = layer(sim.input(torch.randn(1, 5, 16)))
+        self.assertEqual(torch.backends.mha.get_fastpath_enabled(), before)
+        self.assertTrue(is_fp16_exact(out))
 
     def test_module_and_inputs_are_left_unchanged(self):
         before = {k: v.clone() for k, v in self.lin.state_dict().items()}

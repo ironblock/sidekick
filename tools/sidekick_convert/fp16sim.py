@@ -15,9 +15,13 @@ The definition (docs/CONVERTING.md, "Ideal fp16"):
   Python, so it reaches every operation however the model calls it
   (F.linear, @, torch.bmm, Tensor.softmax, +) with no per-architecture
   list. A fused kernel (F.layer_norm, F.gelu, softmax, a linear with its
-  bias) is one operation, rounded once. Fused attention is not: it runs as
-  its math decomposition, so scores and probabilities are stored like any
-  other tensor.
+  bias) is one operation, rounded once. Attention is not: fused attention
+  runs in the explicit form every converted program uses (D25), matmul,
+  scale, mask, softmax, matmul, each output stored, whatever attention
+  implementation the model loaded with. (PyTorch's own math decomposition
+  scales q and k separately, two roundings no converted program has.)
+  nn.TransformerEncoderLayer's fast path, one fused operation per layer, is
+  turned off for the same reason.
 - Everything that does not depend on the input is a constant: computed
   exactly, as a converter folds it in fp32, and stored in fp16 once, where
   an input-dependent operation reads it. Weights, buffers, and tables built
@@ -32,6 +36,7 @@ are always stored in fp16. A ceiling for grading rounds every operation.
 """
 
 import contextlib
+import math
 
 import torch
 from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -48,6 +53,10 @@ CLASSES = {
 }
 
 _FLOATS = (torch.float32, torch.float64)
+
+# every scaled_dot_product_attention reaches this op under ideal_fp16(),
+# which allows only the flash backend; it runs as explicit attention instead
+_FUSED_ATTENTION = torch.ops.aten._scaled_dot_product_flash_attention_for_cpu.default
 
 
 def round_fp16(t):
@@ -107,10 +116,13 @@ class IdealFp16(TorchDispatchMode):
             if not written:
                 put(pytree.tree_map(lambda t: t if self._is_dynamic(t) else round_fp16(t), value))
 
-        out = func(*args, **kwargs)
+        if func is _FUSED_ATTENTION:
+            out = self._explicit_attention(*args, **kwargs)
+        else:
+            out = func(*args, **kwargs)
         if not schema.returns:
             return out
-        rounding =self.ops is None or func.overloadpacket.__name__ in self.ops
+        rounding = self.ops is None or func.overloadpacket.__name__ in self.ops
         single = len(schema.returns) == 1  # one return may be a list (unbind, split)
         results = (out,) if single else out
         rounded = []
@@ -129,6 +141,28 @@ class IdealFp16(TorchDispatchMode):
             rounded.append(pytree.tree_unflatten(new, spec))
         return rounded[0] if single else type(out)(rounded)
 
+    def _store(self, name, t):
+        return round_fp16(t) if self.ops is None or name in self.ops else t
+
+    def _explicit_attention(self, query, key, value, dropout_p=0.0, is_causal=False, *, attn_mask=None,
+                            scale=None):
+        """scaled_dot_product_attention as a converted program computes it:
+        matmul, scale, mask, softmax, matmul, each output stored in fp16.
+        Returns (output, logsumexp), as the fused operation does."""
+        if dropout_p:
+            raise ValueError("ideal fp16 runs a model in eval mode: attention dropout must be 0")
+        if scale is None:
+            scale = 1.0 / math.sqrt(query.shape[-1])
+        scores = self._store("bmm", torch.matmul(query, key.transpose(-2, -1)))
+        scores = self._store("mul", scores * scale)
+        if is_causal:
+            keep = torch.ones(query.shape[-2], key.shape[-2], dtype=torch.bool).tril()
+            scores = self._store("masked_fill", scores.masked_fill(~keep, float("-inf")))
+        if attn_mask is not None:
+            scores = self._store("add", scores + attn_mask)
+        probs = self._store("_softmax", torch.softmax(scores, dim=-1))
+        return self._store("bmm", torch.matmul(probs, value)), torch.logsumexp(scores, dim=-1)
+
 
 @contextlib.contextmanager
 def ideal_fp16(ops=None):
@@ -140,8 +174,13 @@ def ideal_fp16(ops=None):
 
     Run the model in eval mode."""
     mode = IdealFp16(ops)
-    with sdpa_kernel([SDPBackend.MATH]), torch.no_grad(), mode:
-        yield mode
+    fastpath = torch.backends.mha.get_fastpath_enabled()
+    torch.backends.mha.set_fastpath_enabled(False)
+    try:
+        with sdpa_kernel([SDPBackend.FLASH_ATTENTION]), torch.no_grad(), mode:
+            yield mode
+    finally:
+        torch.backends.mha.set_fastpath_enabled(fastpath)
 
 
 def run(module, *args, ops=None, **kwargs):
