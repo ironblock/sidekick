@@ -10,13 +10,19 @@ Its forward takes the ports as named parameters (input_ids, attention_mask,
 ...), as a hand-written wrapper would. jit.trace names graph inputs after
 them, and later values after the Python locals they are bound to; with
 unnamed inputs, the numbering of every value derived from them shifts, and
-the converted program's variable names with it.
+the converted program's variable names with it. Constructing `Wrapper`
+directly gives the same class compose() uses.
 """
 
 import torch
 
 
 class Wrapper(torch.nn.Module):
+    def __new__(cls, backbone, head, ports, seq):
+        if cls is Wrapper:
+            cls = _wrapper_class(tuple(p.name for p in ports))
+        return super().__new__(cls)
+
     def __init__(self, backbone, head, ports, seq):
         super().__init__()
         setattr(self, backbone.attr, backbone.model)
