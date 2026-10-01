@@ -309,6 +309,61 @@ async fn zero_shot_requests_are_validated_against_the_format() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn gliner2_multi_label_switches_probs_to_per_label_sigmoids() {
+    let request = |multi: Option<bool>| {
+        let mut b = json!({
+            "model": "schema-decider",
+            "input": "a refund for the damaged parcel",
+            "candidate_labels": ["refund", "damaged", "cancel"],
+            "instructions": "intent",
+        });
+        if let Some(m) = multi {
+            b["multi_label"] = json!(m);
+        }
+        b
+    };
+    // The mock scores 3.0 for each label the input contains, 0.0 otherwise.
+    let logits = [3.0, 3.0, 0.0];
+    for multi in [None, Some(false)] {
+        let body = classify_ok(request(multi)).await;
+        let d = &body["data"][0];
+        assert_eq!(probs(d), activate(ProblemType::SingleLabel, &logits, None), "{multi:?}");
+        assert!((probs(d).iter().sum::<f32>() - 1.0).abs() < 1e-6);
+    }
+    let body = classify_ok(request(Some(true))).await;
+    let d = &body["data"][0];
+    assert_eq!(probs(d), activate(ProblemType::MultiLabel, &logits, None));
+    // One label, the argmax, as in vLLM's response; clients threshold probs.
+    assert_eq!(d["label"], "refund");
+    assert_eq!(d["num_classes"], 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn gliner2_requests_are_validated_against_the_format() {
+    let base = || json!({"model": "schema-decider", "input": "x", "candidate_labels": ["a", "b"]});
+    let with = |field: &str, value: Value| {
+        let mut b = base();
+        b[field] = value;
+        b
+    };
+    classify_ok(base()).await;
+    classify_ok(with("instructions", json!("intent: what the customer wants"))).await;
+    classify_ok(with("multi_label", json!(true))).await;
+    classify_400(with("question_type", json!("choice")), "gliner2 format").await;
+    classify_400(with("calibration", json!("model")), "gliner2 format").await;
+    classify_400(with("truncate_prompt_tokens", json!(8)), "gliner2 format").await;
+    classify_400(with("truncation_side", json!("left")), "gliner2 format").await;
+    classify_400(with("candidate_labels", json!(["a", "b", "c", "d", "e"])), "maximum of 4").await;
+    // multi_label is the gliner2 format's alone.
+    for model in [json!({"model": "sentiment", "input": "x"}),
+                  json!({"model": "decider", "input": "x", "candidate_labels": ["a", "b"], "question_type": "choice"})] {
+        let mut b = model.clone();
+        b["multi_label"] = json!(true);
+        classify_400(b, "`multi_label` isn't supported").await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn models_are_sent_to_the_route_for_their_task() {
     classify_400(json!({"model": "test-static", "input": "a"}), "model `test-static` is a feature-extraction model").await;
     classify_400(json!({"model": "apple-fm", "input": "a"}), "text-generation").await;
@@ -393,8 +448,16 @@ async fn listings_are_task_aware() {
     assert_eq!(d["calibration"], json!({"choice:3-5": 2.0, "noul:2": 0.5}));
     assert!(d.get("labels").is_none());
 
+    let g = model("schema-decider");
+    assert_eq!(g["task"], "zero-shot-classification");
+    assert_eq!(g["extensions"], json!(["candidate_labels", "instructions", "multi_label"]));
+    assert!(g.get("calibration").is_none());
+
     let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;
-    assert_eq!(health["classifiers"]["models"], json!(["decider", "reranker", "sentiment", "sigmoid-reranker"]));
+    assert_eq!(
+        health["classifiers"]["models"],
+        json!(["decider", "reranker", "schema-decider", "sentiment", "sigmoid-reranker"])
+    );
     assert_eq!(health["classifiers"]["resident"], 0);
     assert_eq!(health["embeddings"]["models"], json!(["test-static"]));
     let skipped = health["skipped_models"].as_array().unwrap();

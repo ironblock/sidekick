@@ -229,6 +229,30 @@ qtype = "qtype"
 output = "logits"
 "#;
 
+/// `classifier.toml` for a zero-shot model in the gliner2 format.
+pub const SCHEMA_ZERO_SHOT: &str = r#"
+id = "schema-decider"
+task = "zero-shot-classification"
+source = { repo = "example/schema-decider" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [64]
+max_seq_len = 64
+max_batch = 2
+
+[classify]
+format = "gliner2"
+max_labels = 4
+
+[classify.gliner2]
+default_instructions = "label"
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
+"#;
+
 /// `classifier.toml` for a reranker that reports raw logits (the ms-marco
 /// cross-encoders' `Identity` activation).
 pub const RERANKER: &str = r#"
@@ -335,6 +359,10 @@ impl Classifier for MockClassifier {
                 sidekick_embed::laya::render_options(qt, &params.candidate_labels)?;
                 (vec![0; params.candidate_labels.len()], params.candidate_labels.clone())
             }
+            Some(ClassifyFormat::Gliner2) => {
+                assert!(params.question_type.is_none(), "the server sends no question_type to gliner2");
+                (vec![0; params.candidate_labels.len()], params.candidate_labels.clone())
+            }
             None => (vec![], vec![]),
         };
         LABELS.with(|l| *l.borrow_mut() = labels);
@@ -433,6 +461,7 @@ pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
     for (name, body) in [
         ("sentiment", SENTIMENT),
         ("decider", ZERO_SHOT),
+        ("schema-decider", SCHEMA_ZERO_SHOT),
         ("reranker", RERANKER),
         ("sigmoid-reranker", SIGMOID_RERANKER),
         ("broken", "id = "),

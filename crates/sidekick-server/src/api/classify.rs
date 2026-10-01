@@ -18,7 +18,8 @@ use axum::Json;
 use serde_json::Value;
 use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat};
 use sidekick_core::{
-    activate, ClassifyParams, ClassifyTask, Error, QuestionType, TruncationSide, UnavailableReason,
+    activate, ClassifyParams, ClassifyTask, Error, ProblemType, QuestionType, TruncationSide,
+    UnavailableReason,
 };
 
 pub async fn classify(
@@ -43,6 +44,7 @@ pub async fn classify(
     let inputs = parse_input(&req, &manifest)?;
     let request = parse_params(&req, &manifest)?;
     let (params, temperature, use_activation) = (request.params, request.temperature, request.use_activation);
+    let multi_label = request.multi_label;
     let k = match manifest.task {
         ClassifyTask::TextClassification | ClassifyTask::TextRanking => manifest.classify.labels.len(),
         ClassifyTask::ZeroShotClassification => params.candidate_labels.len(),
@@ -99,8 +101,11 @@ pub async fn classify(
             ))
             .into());
         }
+        // `multi_label` (gliner2) makes this request multi-label; the
+        // manifest's problem type is the default.
+        let problem = if multi_label { ProblemType::MultiLabel } else { classifier.problem_type() };
         let probs = if use_activation {
-            activate(classifier.problem_type(), &logits, temperature)
+            activate(problem, &logits, temperature)
         } else {
             logits
         };
@@ -175,20 +180,30 @@ struct Parsed {
     /// The calibration temperature, when `calibration: "model"` applies one.
     temperature: Option<f32>,
     use_activation: bool,
+    /// gliner2: sigmoid per label instead of the model's softmax.
+    multi_label: bool,
 }
 
 /// Every other field, checked against the model's task and format before
 /// the model loads.
 fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed, ApiError> {
     let laya = m.classify.format == Some(ClassifyFormat::Laya);
+    let gliner2 = m.classify.format == Some(ClassifyFormat::Gliner2);
+    // Formats that truncate the text themselves, keeping its start.
+    let self_truncating = match m.classify.format {
+        Some(ClassifyFormat::Laya) => Some("laya"),
+        Some(ClassifyFormat::Gliner2) => Some("gliner2"),
+        None => None,
+    };
     let zero_shot = m.task == ClassifyTask::ZeroShotClassification;
     let unsupported = |field: &str| {
         ApiError::invalid(format!(
             "`{field}` isn't supported by model `{}` ({})",
             m.id,
-            match (m.task, laya) {
+            match (m.task, m.classify.format) {
                 (ClassifyTask::TextClassification, _) => "a text-classification model",
-                (_, true) => "a zero-shot model in the laya format",
+                (_, Some(ClassifyFormat::Laya)) => "a zero-shot model in the laya format",
+                (_, Some(ClassifyFormat::Gliner2)) => "a zero-shot model in the gliner2 format",
                 _ => "a zero-shot model",
             }
         ))
@@ -199,10 +214,11 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
     }
     let truncation_side = match req.truncation_side.as_deref() {
         None | Some("right") => TruncationSide::Right,
-        Some("left") if laya => {
-            return Err(ApiError::invalid(
-                "`truncation_side: left` isn't supported by the laya format, which keeps the text's start",
-            ))
+        Some("left") if self_truncating.is_some() => {
+            return Err(ApiError::invalid(format!(
+                "`truncation_side: left` isn't supported by the {} format, which keeps the text's start",
+                self_truncating.unwrap_or_default()
+            )))
         }
         Some("left") => TruncationSide::Left,
         Some(other) => {
@@ -213,10 +229,11 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
     };
     let truncate_prompt_tokens = match req.truncate_prompt_tokens {
         None => None,
-        Some(_) if laya => {
-            return Err(ApiError::invalid(
-                "`truncate_prompt_tokens` isn't supported by the laya format, which truncates the text itself",
-            ))
+        Some(_) if self_truncating.is_some() => {
+            return Err(ApiError::invalid(format!(
+                "`truncate_prompt_tokens` isn't supported by the {} format, which truncates the text itself",
+                self_truncating.unwrap_or_default()
+            )))
         }
         // vLLM: -1 truncates to the model's maximum.
         Some(-1) => Some(m.max_seq_len),
@@ -258,9 +275,13 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         (Some(_), false) => return Err(unsupported("question_type")),
         (None, false) => None,
     };
-    if req.instructions.is_some() && !laya {
+    if req.instructions.is_some() && !(laya || gliner2) {
         return Err(unsupported("instructions"));
     }
+    let multi_label = match (req.multi_label, gliner2) {
+        (Some(_), false) => return Err(unsupported("multi_label")),
+        (value, _) => value.unwrap_or(false),
+    };
     // laya's noul labels are fixed (`false`, `true`); checked here, where
     // the manifest alone can answer, not after the model loads.
     if let Some(q) = question_type {
@@ -305,5 +326,5 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         question_type,
         instructions: req.instructions.clone(),
     };
-    Ok(Parsed { params, temperature, use_activation })
+    Ok(Parsed { params, temperature, use_activation, multi_label })
 }

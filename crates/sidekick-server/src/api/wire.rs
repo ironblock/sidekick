@@ -282,6 +282,10 @@ pub struct ClassifyRequest {
     pub question_type: Option<String>,
     #[serde(default)]
     pub instructions: Option<String>,
+    /// gliner2 format: score each label independently (sigmoid `probs`).
+    /// The name Hugging Face's zero-shot pipeline uses.
+    #[serde(default)]
+    pub multi_label: Option<bool>,
 }
 
 /// vLLM's pooling fields that classify and rerank share
