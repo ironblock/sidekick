@@ -358,6 +358,31 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
             g.median_ms,
         );
     }
+    if let Some(c) = grades.iter().find_map(|g| g.ceiling) {
+        println!(
+            "  fp16 ceiling (ideal fp16 vs fp32): max {}, p99 {}, mean {}",
+            fmt(Some(c.max)),
+            fmt(Some(c.p99)),
+            fmt(Some(c.mean))
+        );
+        let ratios: Vec<String> = grades
+            .iter()
+            .map(|g| match (g.ratio, g.max_ratio) {
+                (Some(r), max) => format!(
+                    "{} {r:.2}x ({}; absolute {}; max {})",
+                    g.path,
+                    crate::classify_grade::ratio_letter(r),
+                    g.absolute_letter,
+                    max.map_or("-".into(), |m| format!("{m:.2}x")),
+                ),
+                (None, _) => format!("{} -", g.path),
+            })
+            .collect();
+        println!(
+            "  p99 Δp / ceiling p99, the better of it and the absolute grade counts: {}",
+            ratios.join(", ")
+        );
+    }
     if let Some(d) = &report.determinism {
         println!("  ANE across two processes: Δp {} over {} cases", fmt(d.max), d.n);
     }
