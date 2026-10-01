@@ -29,11 +29,20 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 
 `tools/convert_julia.py` and `tools/classifier_reference.py` import `julia/data.py` and `julia/model.py` from a local copy of the checkpoint at the same revision, after checking their sha256. They don't vendor them. `fixtures/classify/julia-1.tokens.json` holds token ids that `julia/data.py` produced.
 
+## Lumma-fev
+
+- **Source:** [FrontiersMind/Lumma-fev-0.1b](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b), revision `085f4705aa860a6404d6cc3ff17de8a2969ac0f4`. Its NOTICE reads: "Lumma-Fev. Copyright 2026 FrontiersMind. Portions of the model and serving code are adapted from work Copyright 2026 Jared Palmer, licensed under the Apache License, Version 2.0."
+- **License:** Apache License 2.0 (full text below)
+- **What sidekick uses:** the fev format's input builder (docs/design/classify.md, "The fev format") reproduces the row `modeling_fev.py` builds: its `render`, `option_text`, `pack` and `encode`, including the rewrite of `<|name|>` to `<¦name¦>` in request text.
+- **Changes:** sidekick takes options as candidate labels, so a choice option is the label as given and a noul question's labels are `false` and `true` (rendered as fev's `no` and `yes`), and a request carries one question. States are strings only.
+
+`tools/classifier_reference.py` imports `modeling_fev.py`, `modeling_nandi.py` and their configuration modules from a local copy of the checkpoint at the same revision, after checking their sha256. It doesn't vendor them. `fixtures/classify/lumma-fev-0.1b.tokens.json` holds token ids that `modeling_fev.py` produced.
+
 ## fast-decisions
 
 - **Source:** [fastino/fast-decisions](https://huggingface.co/datasets/fastino/fast-decisions), revision `1a33070`
 - **License:** Apache License 2.0 (full text below)
-- **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path; `fixtures/classify/laya-typed-decisions.corpus.toml` and `fixtures/classify/julia-1.corpus.toml` reuse that translation for laya-typed-decisions and Julia-1. `fixtures/classify/gliner2.5-decide.corpus.toml` sends each of its classification heads as a gliner2-format request, to measure GLiNER2.5-Decide's parity on each compute path. The dataset is fetched when a reference is generated, not committed. As text and as token ids, `fixtures/classify/laya-en.tokens.json`, `laya-typed-decisions.tokens.json` and `julia-1.tokens.json` each include three of its rows, and `gliner2.5-decide.tokens.json` two.
+- **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path; `fixtures/classify/laya-typed-decisions.corpus.toml`, `fixtures/classify/julia-1.corpus.toml` and `fixtures/classify/lumma-fev-0.1b.corpus.toml` reuse that translation for laya-typed-decisions, Julia-1 and Lumma-fev-0.1b. `fixtures/classify/gliner2.5-decide.corpus.toml` sends each of its classification heads as a gliner2-format request, to measure GLiNER2.5-Decide's parity on each compute path. The dataset is fetched when a reference is generated, not committed. As text and as token ids, `fixtures/classify/laya-en.tokens.json`, `laya-typed-decisions.tokens.json`, `julia-1.tokens.json` and `lumma-fev-0.1b.tokens.json` each include three of its rows, and `gliner2.5-decide.tokens.json` two.
 
 ---
 

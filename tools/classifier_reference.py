@@ -39,6 +39,11 @@ Corpora:
   read from the encoder config's `rope_parameters` (which transformers 4.x
   ignores). --source is the Julia-1 snapshot; its julia/ code is checked by
   sha256.
+- fev format (Lumma-fev): fixtures/classify/<id>.corpus.toml, laya's dataset
+  translation with fev's own adversarial and long cases. Inputs are laid out
+  by the checkpoint's own modeling_fev.py (pack, encode) and the oracles run
+  its FevForDecision, both sha256-pinned and run on transformers 4.x with
+  the shims load_fev() documents. --source is the Lumma-fev snapshot.
 - text-classification: the embedding parity corpus
   (fixtures/parity/corpus.toml), materialized with the model's
   tokenizer.json. Inputs longer than the largest bucket are truncated to it
@@ -504,6 +509,229 @@ def run_julia(args, manifest):
     return cases, fixture, logits, pr.corpus_hash(corpus_text)
 
 
+# --- fev (Lumma-fev) -----------------------------------------------------------------
+
+FEV_SHA256 = {"modeling_fev.py": "5d89f8861b9af25eb6f369ffea35659c394025ed70b2aaa1cd44407594e0febc",
+              "modeling_nandi.py": "5d724ccf35d65f6e0447f3987d08a4c8588560d41785e45ca8bae96677b415d3",
+              "configuration_fev.py": "e887919e9254cf6edc203b179e8b6cbc29fa978431f7b3d35cd914922a9d53a8",
+              "configuration_nandi.py": "7949a9e6df044f7c9adb8b7bd59672e2e393b4d89b3ada4b496995347c3822b8",
+              "fev_backbone.py": "a35dfec6a6e3fbcf3e108a9a9354d8daa0a3f0304e5f2759a26fd4297b79c676"}
+
+
+def fev_options(question_type, labels):
+    """The request's labels as fev option texts (docs/design/classify.md,
+    "The fev format"), the way fev's option_text renders criteria: a choice
+    option is the label as given, "key" or "key: description"; a score
+    option is the label; a noul question's options are "no" and "yes", each
+    with ": description" when its label (false, true) has one. An empty
+    description counts as none."""
+    if question_type == "choice":
+        out = []
+        for label in labels:
+            key, sep, desc = label.partition(": ")
+            out.append(label if sep and desc.strip() else key if sep else label)
+        return out
+    if question_type == "score":
+        return list(labels)
+    f, t = noul_description(labels[0], "false"), noul_description(labels[1], "true")
+    if f is None or t is None:
+        raise SystemExit(f"noul labels {labels}: false then true")
+    return ["no: " + f if f else "no", "yes: " + t if t else "yes"]
+
+
+def fev_question(question_type, labels, instructions):
+    """The request as the TypeSafe-shaped question fev's pack() reads, built
+    so its option_text reproduces fev_options exactly (checked per case)."""
+    if question_type == "choice":
+        crit = {}
+        for label in labels:
+            key, sep, desc = label.partition(": ")
+            crit[key if sep else label] = desc if sep and desc.strip() else None
+        if len(crit) != len(labels):
+            raise SystemExit(f"labels {labels}: two share a key, which fev's criteria can't express")
+        return {"type": "choice", "instructions": instructions, "criteria": crit}
+    if question_type == "score":
+        return {"type": "score", "instructions": instructions, "criteria": list(labels)}
+    f, t = noul_description(labels[0], "false"), noul_description(labels[1], "true")
+    return {"type": "noul", "instructions": instructions, "criteria": {"false": f or None, "true": t or None}}
+
+
+def load_fev(src):
+    """FevForDecision in fp32 from the checkpoint's own modeling_fev.py and
+    modeling_nandi.py (sha256-pinned), and its tokenizer's raw backend.
+
+    That code is written for transformers 5; on the pinned transformers 4.57
+    it runs with three shims, none of which touches the computation:
+    auto_docstring, merge_with_config_defaults and output_capturing's
+    capture_outputs become pass-through decorators (4.57's auto_docstring
+    can't parse PEP 604 annotations; the other two don't exist in 4.57),
+    and create_causal_mask, called with transformers 5's arguments, returns
+    the same causal-and-key-padding additive mask. The layers, RoPE, the
+    layer-sharing loop and the pointer head run as written, with eager
+    attention."""
+    import importlib.util
+    import sys as _sys
+    import types
+    from safetensors.torch import load_file
+    from tokenizers import Tokenizer
+    import transformers.utils as tu
+    import transformers.utils.generic as generic
+    for name, want in FEV_SHA256.items():
+        if sha256(src / name) != want:
+            raise SystemExit(f"{src / name} is not the pinned fev code (sha256 {sha256(src / name)})")
+    tu.auto_docstring = lambda obj=None, **kw: obj if obj is not None else (lambda o: o)
+    if not hasattr(generic, "merge_with_config_defaults"):
+        generic.merge_with_config_defaults = lambda f: f
+    if "transformers.utils.output_capturing" not in _sys.modules:
+        capture = types.ModuleType("transformers.utils.output_capturing")
+        capture.capture_outputs = lambda f: f
+        _sys.modules["transformers.utils.output_capturing"] = capture
+    pkg = types.ModuleType("fev_checkpoint")
+    pkg.__path__ = [str(src)]
+    _sys.modules["fev_checkpoint"] = pkg
+    mods = {}
+    for stem in ("configuration_nandi", "modeling_nandi", "configuration_fev", "fev_backbone", "modeling_fev"):
+        spec = importlib.util.spec_from_file_location(f"fev_checkpoint.{stem}", src / f"{stem}.py")
+        mods[stem] = importlib.util.module_from_spec(spec)
+        _sys.modules[spec.name] = mods[stem]
+        spec.loader.exec_module(mods[stem])
+
+    def causal_mask(config=None, inputs_embeds=None, attention_mask=None, **kw):
+        b, n = inputs_embeds.shape[:2]
+        allowed = torch.tril(torch.ones(n, n, dtype=torch.bool))[None]
+        if attention_mask is not None:
+            allowed = allowed & attention_mask.bool()[:, None, :]
+        return torch.zeros(b, 1, n, n, dtype=inputs_embeds.dtype).masked_fill(
+            ~allowed[:, None], torch.finfo(inputs_embeds.dtype).min)
+    mods["modeling_nandi"].create_causal_mask = causal_mask
+    fev = mods["modeling_fev"]
+    raw = json.loads((src / "config.json").read_text())
+    cfg = fev.FevConfig(**{k: v for k, v in raw.items()
+                           if k not in ("architectures", "auto_map", "model_type", "dtype", "transformers_version")})
+    model = fev.FevForDecision(cfg)
+    model.lm.config._attn_implementation = "eager"
+    state = {k: v.float() for k, v in load_file(str(src / "model.safetensors")).items()}
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if missing or unexpected:
+        raise SystemExit(f"state dict mismatch: missing {missing}, unexpected {unexpected}")
+    backend = Tokenizer.from_file(str(src / "tokenizer.json"))
+    tok = types.SimpleNamespace(backend_tokenizer=backend, convert_tokens_to_ids=backend.token_to_id, unk_token_id=None)
+    return fev, model.float().eval(), tok
+
+
+def fev_build(cases, fev, model, tok, manifest):
+    """fev's own pack() and encode() per case, after the validation the
+    server applies: 2 to max_labels labels, no duplicate labels or rendered
+    options. A state longer than the state limit is truncated by encode()
+    and tagged "truncated-text"; a case whose row then exceeds the window is
+    an error here, as it is a 400 for the server. `target_len` cuts the
+    input at whitespace to the longest prefix whose row fits in that many
+    tokens, as for laya's long cases."""
+    cls, fv = manifest["classify"], manifest["classify"]["fev"]
+    max_labels = cls["max_labels"]
+    if model.limits()[0] != fv["state_max_len"] or model.limits()[1] != manifest["max_seq_len"]:
+        raise SystemExit(f"the manifest's limits ({fv['state_max_len']}, {manifest['max_seq_len']}) "
+                         f"aren't the checkpoint's {model.limits()}")
+    roles = ("state", "question", "option", "option_end", "decide")   # fev's order (configuration_fev.py)
+    if [tok.convert_tokens_to_ids(fv["delimiters"][r]) for r in roles] != model.delimiter_ids(tok):
+        raise SystemExit("the manifest's delimiters aren't the checkpoint's, role by role")
+    if model.config.temperature != 1.0:
+        raise SystemExit(f"temperature {model.config.temperature}: the converted graph must fold it in first")
+
+    def encode(text, q):
+        S, rows = model.encode(tok, text, fev.pack({"q": q}))
+        return S, rows[0]
+
+    def fits(text, q, limit):
+        try:
+            S, row = encode(text, q)
+        except ValueError:   # fev's own over-window error
+            return False
+        return len(S) + len(row["ids"]) <= limit
+
+    kept, over = [], {}
+    for c in cases:
+        labels, k = c["candidate_labels"], len(c["candidate_labels"])
+        if k > max_labels:
+            over[c["head"] or c["id"]] = over.get(c["head"] or c["id"], 0) + 1
+            continue
+        options = fev_options(c["question_type"], labels)
+        if k < 2 or len(set(labels)) != k or len(set(options)) != k:
+            raise SystemExit(f"{c['id']}: {k} labels, or duplicate options: the server would reject it")
+        q = fev_question(c["question_type"], labels, c["instructions"])
+        if fev.pack({"q": q})[0][1] != options:
+            raise SystemExit(f"{c['id']}: fev renders {fev.pack({'q': q})[0][1]}, the contract says {options}")
+        if c.get("target_len") and not fits(c["input"], q, c["target_len"]):
+            text = c["input"]
+            cuts = [i for i, ch in enumerate(text) if ch.isspace()]
+            lo, hi = 0, len(cuts) - 1
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                lo, hi = (mid, hi) if fits(text[: cuts[mid]], q, c["target_len"]) else (lo, mid - 1)
+            c["input"] = text[: cuts[lo]]
+        S, row = encode(c["input"], q)
+        if c.get("target_len"):
+            if not c["target_len"] - 16 <= len(S) + len(row["ids"]) <= c["target_len"]:
+                raise SystemExit(f"{c['id']}: cut to {len(S) + len(row['ids'])} tokens, not within 16 of {c['target_len']}")
+        if len(model.text_ids(tok, fev.render(c["input"]))) + 1 > fv["state_max_len"]:
+            c["tags"] = c["tags"] + ["truncated-text"]
+        c.update(ids=S + row["ids"], markers=[len(S) + o for o in row["options"]], decide=len(S) + row["decide"],
+                 qtype=None, k=k)   # the model takes no question type; only the rendering depends on it
+        kept.append(c)
+    if over:
+        print(f"left out {sum(over.values())} cases over max_labels {max_labels}: {over}", flush=True)
+    return kept
+
+
+class FevLogits(torch.nn.Module):
+    """FevForDecision's backbone and pointer head on one unpadded row: the
+    logits before fev's softmax. Position ids are left to the backbone
+    (0..n-1), so ideal fp16 folds RoPE's tables as constants."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, ids, mask, markers, decide):
+        h = self.model.lm(input_ids=ids, attention_mask=mask, use_cache=False).last_hidden_state[0]
+        return self.model.head(h[decide], h[markers])
+
+
+def fev_logits(model, cases, max_labels):
+    wrapped = FevLogits(model).eval()
+
+    def forward(run, c):
+        ids = torch.tensor([c["ids"]])
+        return run(wrapped, ids, torch.ones_like(ids), torch.tensor(c["markers"]), torch.tensor(c["decide"])).numpy()
+    return oracles(forward, cases, max_labels)
+
+
+def run_fev(args, manifest):
+    """A fev-format model (Lumma-fev): the corpus is
+    fixtures/classify/<id>.corpus.toml (laya's dataset translation and long
+    cases, fev's adversarial cases), and inputs and oracles come from the
+    checkpoint's own modeling_fev.py."""
+    src = args.source
+    fev, model, tok = load_fev(src)
+    if sha256(src / "tokenizer.json") != sha256(args.model_dir / "tokenizer.json"):
+        raise SystemExit("the installed tokenizer.json differs from the checkpoint's")
+    corpus_text = (REPO / "fixtures" / "classify" / f"{manifest['id']}.corpus.toml").read_text()
+    corpus = tomllib.loads(corpus_text)
+    dataset = args.dataset
+    if dataset is None:
+        from huggingface_hub import snapshot_download
+        dataset = Path(snapshot_download(corpus["source"]["repo"], repo_type="dataset",
+                                         revision=corpus["source"]["revision"], local_files_only=True))
+    cases = fev_build(laya_cases(corpus, dataset), fev, model, tok, manifest)
+    print(f"{len(cases)} cases; max {max(len(c['ids']) for c in cases)} tokens", flush=True)
+    fixture = laya_fixture_subset(cases)
+    logits = None
+    if not args.fixture_only:
+        cases = limited(args, cases)
+        logits = fev_logits(model, cases, manifest["classify"]["max_labels"])
+    return cases, fixture, logits, pr.corpus_hash(corpus_text)
+
+
 # --- gliner2 ------------------------------------------------------------------------
 
 
@@ -752,9 +980,11 @@ def main():
     args = ap.parse_args()
     manifest = tomllib.loads((args.model_dir / "classifier.toml").read_text())
     fmt = manifest["classify"].get("format")
-    laya, gliner2 = fmt == "laya", fmt == "gliner2"
+    laya, gliner2, fev = fmt == "laya", fmt == "gliner2", fmt == "fev"
     julia = laya and manifest["classify"]["laya"].get("option_rendering") == "julia"
-    run = run_julia if julia else run_laya if laya else run_gliner2 if gliner2 else run_text
+    run = (run_julia if julia else run_laya if laya else run_gliner2 if gliner2 else run_fev if fev
+           else run_text)
+    zero_shot = laya or fev
     cases, fixture, logits, corpus_sha = run(args, manifest)
     tokenizer_sha = sha256(args.model_dir / "tokenizer.json")
     source = {"repo": manifest["source"]["repo"], "revision": manifest["source"].get("revision")}
@@ -764,14 +994,16 @@ def main():
               "tokenizer_sha256": tokenizer_sha, "max_len": manifest["max_seq_len"], "cases": []}
         for c in fixture:
             rec = {"id": c["id"], "input": c["input"]}
-            if laya:
+            if zero_shot:
                 rec.update(candidate_labels=c["candidate_labels"], question_type=c["question_type"],
                            instructions=c["instructions"])
             if gliner2:
                 rec.update(candidate_labels=c["candidate_labels"], instructions=c["instructions"])
             rec["ids"] = c["ids"]
-            if laya:
+            if zero_shot:
                 rec.update(markers=c["markers"], qtype=c["qtype"])
+            if fev:
+                rec["decide"] = c["decide"]
             if gliner2:
                 rec.update(markers=c["markers"], qtype=None)
             fx["cases"].append(rec)
@@ -806,7 +1038,7 @@ def main():
         meta["model"]["option_rendering"] = cls["laya"].get("option_rendering", "laya")
     for c in cases:
         rec = {"id": c["id"], "tags": c["tags"], "input": c["input"]}
-        if laya:
+        if zero_shot:
             rec.update(candidate_labels=c["candidate_labels"], question_type=c["question_type"],
                        instructions=c["instructions"])
         if gliner2:
@@ -814,8 +1046,10 @@ def main():
         rec.update(ids=c["ids"], k=c["k"], gold=c["gold"])
         if gliner2:
             rec["multi_label"] = c["multi_label"]
-        if laya or gliner2:
+        if zero_shot or gliner2:
             rec.update(markers=c["markers"], qtype=c["qtype"])
+        if fev:
+            rec["decide"] = c["decide"]
         meta["cases"].append(rec)
     out = (args.out or args.model_dir / "parity") / manifest["id"]
     out.mkdir(parents=True, exist_ok=True)
