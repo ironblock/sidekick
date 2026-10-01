@@ -356,6 +356,18 @@ pre-library builds at every bucket.
 - **The fused attention op crashed the process on the CPU at head dim 16**
   (SIGBUS/SIGSEGV, intermittently; macOS 27.0, M1 Max, coremltools 9). This
   was observed, not investigated. The library never emits the fused op.
+- **coremltools crashes the process about a second after a prediction
+  whose inputs Python has freed.** Core ML keeps a prediction's inputs bound
+  to its execution stream and releases them, on a queue of its own, once the
+  stream has been idle for about a second. coremltools backs them with the
+  NumPy arrays, so a freed array is a use-after-free there (EXC_BAD_ACCESS on
+  `MLE5ExecutionStream`'s reset queue). Any model and any compute unit,
+  CPU_ONLY included (macOS 27.0, coremltools 9): `m.predict({"x":
+  np.ones(...)})` followed by a second of other work, or of predictions on
+  another model, crashes; a tight loop of predictions on one model never
+  does, which makes it look intermittent. Keep every input referenced until
+  the model is released. The gates' models do (`gates._Model`); a script
+  that calls `predict()` directly must too.
 - **CPU `reduce_max` over ≥ 256 elements returns max(x, 0)**, and
   `reduce_min` min(x, 0) (macOS 27). A small reduce can land on the CPU even
   under CPU_AND_NE. Use `reduce.blocked_max()` for any explicit max.
@@ -420,7 +432,8 @@ pre-library builds at every bucket.
 The logic that decides artifacts has torch-only unit tests (no Core ML), in
 `tools/sidekick_convert/tests`: the calibration guard, the tokenizer rule,
 masks, one-hots, the blocked max, the K choice, activations, pooling, the
-manifest rules, and the ideal-fp16 simulation. From the repository root:
+manifest rules, the ideal-fp16 simulation, and the gates' prediction
+inputs. From the repository root:
 
     python -m pytest tools/sidekick_convert/tests
 
