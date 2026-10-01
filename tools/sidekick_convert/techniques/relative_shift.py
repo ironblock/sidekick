@@ -16,10 +16,11 @@ pick its rows), and the term is read off one matmul by a relative shift
 ANE, deberta-v3-small and DeBERTa-v3-large (GLiNER2.5-Decide) run 98.5% of
 their operations there, with one hand-off.
 
-The expanded table has 2L - 1 rows per term and layer: the same order as the
-model's own position table up to bucket 256, and twice it at 512.
-Computing the expansion in-graph instead costs as much as the model's own
-position projections, and coremltools folds weight-only expressions into
+The expanded table has 2L - 1 rows per term and layer, against the model's
+own 2 x buckets rows of relative embeddings (512 for DeBERTa-v3) shared by
+every layer. The constants add up per layer and term: (2L - 1) x hidden in
+fp16. Computing the expansion in-graph instead costs as much as the model's
+own position projections, and coremltools folds weight-only expressions into
 constants anyway.
 
 L is always a Python int: a size read from a tensor traces as arithmetic

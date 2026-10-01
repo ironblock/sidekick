@@ -12,6 +12,10 @@ What conversion needs (measured with tools/probe_deberta.py on macOS 27):
   layer, the position projections expanded over the 2L - 1 distances are
   constant buffers (`buffers(seq)`), and each term is a matmul plus a
   reshape/slice skew. Then techniques.attention.explicit().
+  The buffers cost 2 terms x layers x (2L - 1) x hidden in fp16: for
+  DeBERTa-v3-large (24 layers, hidden 1024) about 25 MB at bucket 128,
+  50 MB at 256 and 100 MB at 512, about 176 MB across the three, on top
+  of the ~870 MB of weights each bucket already carries.
 - MASKS. transformers fills masked scores with finfo.min (-inf in fp16) and
   masks pairwise, so a pad query's whole row is masked. Here the pairwise
   mask is finite (masks.MASK_ADD) and self-attending, which is exact for
