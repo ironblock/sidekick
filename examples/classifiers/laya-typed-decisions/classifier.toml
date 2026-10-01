@@ -1,0 +1,52 @@
+# laya-typed-decisions as an ANE-resident Core ML zero-shot classifier: laya
+# (laya-en) fine-tuned on longer typed-decision inputs. The architecture is
+# laya's, a ModernBERT-large encoder plus laya's decision head scoring a
+# [MASK] marker before each candidate label, and so is the input layout.
+# Only the limits differ: 1,024 tokens in all (laya-en: 512) and a 256-token
+# question-and-options budget (laya-en: 192). One static-shape artifact per
+# sequence-length bucket ({seq} resolves against `buckets`).
+#
+# Produce the artifacts with `tools/convert_laya.py --model
+# laya-typed-decisions`. The checkpoint ships no rl_common.py; its code is
+# the `laya` package (0.3.22), whose common.py the converter and the
+# reference generator take by path and check by sha256. For sidekick's
+# requests its build_sequence produces the same tokens as laya's own.
+#
+# The calibration table is the checkpoint's `temperature_by_options`, which
+# is laya's table unchanged; as for laya-en, "choice:11+" (T = 0.10) is left
+# out. The checkpoint's card reports ECE 0.213 and calls the temperatures
+# possibly uncalibrated, so treat calibrated probabilities with care.
+
+id = "laya-typed-decisions"
+task = "zero-shot-classification"
+source = { repo = "convaiinnovations/laya-typed-decisions", revision = "1a793eb568e6718f15941d08f85432581df534e3" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512, 1024]
+max_seq_len = 1024
+max_batch = 32
+problem_type = "single_label"
+
+[classify]
+format = "laya"
+max_labels = 32
+labels = []
+
+[classify.laya]
+head_max_len = 256
+default_instructions = { choice = "Which option fits the text best?", score = "Which level fits the text best?", noul = "Does the statement hold for the text?" }
+
+[classify.calibration]
+"choice:2" = 1.906
+"choice:3-5" = 1.760
+"choice:6-10" = 1.000
+"score:3-5" = 1.251
+"noul:2" = 1.983
+# "choice:11+" deliberately absent: laya's single fit (T = 0.10) is too thin
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+marker_pos = "marker_pos"
+qtype = "qtype"
+output = "logits"

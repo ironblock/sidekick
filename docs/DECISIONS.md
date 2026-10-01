@@ -1376,6 +1376,15 @@ so the converter's sanity gate on the ANE moves from 0.05 to 0.08, with
 flips still gated at zero. Accuracy is graded by the suite, not by that
 gate.
 
+laya-typed-decisions, laya's format at 1,024 tokens, is converted the same
+way (`convert_laya.py --model laya-typed-decisions`, buckets 128 to 1,024).
+On its 2,641 cases, which add 29 inputs of 587 to 1,024 tokens to laya-en's
+corpus, the ceiling is |Δp| max 0.0252, p99 0.0038. The ANE grades C (p99
+2.14×, worst case 0.025, no flips, bucket invariance exact), the GPU A
+(1.02×), the CPU D (1 flip). The inputs above 512 tokens stay within
+0.0084 on the ANE, so the 1,024 bucket needs nothing beyond constraints E
+and F.
+
 ## D29 — Reranking: vLLM's and Cohere's contracts, a reranker is a classifier
 Reranking (scoring documents against a query) is how retrieval pipelines
 use cross-encoders, and it has the strongest API convention of anything
