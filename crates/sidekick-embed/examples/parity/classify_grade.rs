@@ -217,6 +217,8 @@ pub struct Ceiling {
     pub max: f64,
     pub p99: f64,
     pub mean: f64,
+    /// How many Δp values it summarizes. Under 100, `p99` is the maximum.
+    pub n: usize,
 }
 
 /// The ceiling for these cases, or `None` without the oracle (or with a
@@ -236,7 +238,7 @@ pub fn ceiling(
         return None;
     }
     d.sort_by(f64::total_cmp);
-    Some(Ceiling { max: d[d.len() - 1], p99: p99(&d), mean: d.iter().sum::<f64>() / d.len() as f64 })
+    Some(Ceiling { max: d[d.len() - 1], p99: p99(&d), mean: d.iter().sum::<f64>() / d.len() as f64, n: d.len() })
 }
 
 /// The 99th percentile of sorted values (nearest rank): the value at rank

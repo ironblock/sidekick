@@ -382,6 +382,13 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
             "  p99 Δp / ceiling p99, the better of it and the absolute grade counts: {}",
             ratios.join(", ")
         );
+        if c.n < 100 {
+            println!(
+                "  note: p99 = max at this corpus size ({} values); the ratio inherits the \
+                 ceiling max's sensitivity",
+                c.n
+            );
+        }
     }
     if let Some(d) = &report.determinism {
         println!("  ANE across two processes: Δp {} over {} cases", fmt(d.max), d.n);
