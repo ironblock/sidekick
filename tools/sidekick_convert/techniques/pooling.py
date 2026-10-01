@@ -13,6 +13,7 @@ embedding output is harmless.
 """
 
 import torch
+import torch.nn.functional as F
 
 PRESCALE = 1.0 / 32.0
 
@@ -36,11 +37,13 @@ def masked_mean(hidden, attention_mask, dims, prescale=PRESCALE):
 def last_token(hidden, attention_mask, dims):
     """The last real position of a right-padded input, selected without a
     data-dependent index: mask * (1 - shift_left(mask)) is 1 exactly there,
-    and a masked sum picks it (F2LLM, docs/DECISIONS.md D20)."""
-    m = attention_mask.to(hidden.dtype)
-    shifted = torch.cat([m[:, 1:], torch.zeros_like(m[:, :1])], dim=1)
-    onehot = (m * (1.0 - shifted)).unsqueeze(-1)
-    return (hidden * onehot).sum(dim=1).reshape(1, dims)
+    and a masked sum picks it (F2LLM, docs/DECISIONS.md D20). Written as the
+    F2LLM converter wrote it, whose locals name the converted values."""
+    mask_f = attention_mask.to(hidden.dtype)                    # (1, seq)
+    shifted = F.pad(mask_f[:, 1:], (0, 1), value=0.0)          # mask[i+1], last=0
+    last_onehot = mask_f * (1.0 - shifted)                     # 1 at last real pos
+    pooled = (last_onehot.unsqueeze(-1) * hidden).sum(dim=1)   # (1, dims)
+    return pooled.reshape(1, dims)
 
 
 def l2(y, prescale=PRESCALE):

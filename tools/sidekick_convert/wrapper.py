@@ -5,6 +5,12 @@ default), so converted weights are named after that path, registers the
 backbone's and the head's per-bucket buffers, and traces
 `head.forward(wrapper, inputs, backbone)`. Nothing in it reads a tensor's
 size: every shape is a Python int fixed per bucket.
+
+Its forward takes the ports as named parameters (input_ids, attention_mask,
+...), as a hand-written wrapper would. jit.trace names graph inputs after
+them, and later values after the Python locals they are bound to; with
+unnamed inputs, the numbering of every value derived from them shifts, and
+the converted program's variable names with it.
 """
 
 import torch
@@ -22,16 +28,32 @@ class Wrapper(torch.nn.Module):
         self._head = head
         self.seq = seq
 
-    def forward(self, *inputs):
+    def _forward(self, *inputs):
         return self._head.forward(self, dict(zip(self._names, inputs)), self._backbone)
+
+
+_CLASSES = {}
+
+
+def _wrapper_class(names):
+    """A Wrapper subclass whose forward takes `names` as its parameters."""
+    if names not in _CLASSES:
+        if not all(n.isidentifier() for n in names):
+            raise ValueError(f"port names must be identifiers: {names}")
+        params = ", ".join(names)
+        namespace = {}
+        exec(f"def forward(self, {params}):\n    return self._forward({params})\n", namespace)
+        _CLASSES[names] = type("Wrapper", (Wrapper,), {"forward": namespace["forward"]})
+    return _CLASSES[names]
 
 
 def compose(backbone, head, ports):
     """Returns (make_wrapper(seq), example(seq)) for a core.Job."""
     head.bind(backbone)
+    cls = _wrapper_class(tuple(p.name for p in ports))
 
     def make_wrapper(seq):
-        return Wrapper(backbone, head, ports, seq)
+        return cls(backbone, head, ports, seq)
 
     def example(seq):
         return backbone.example(seq, ports)

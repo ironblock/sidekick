@@ -15,10 +15,12 @@ def positions(seq):
     return torch.arange(seq, dtype=torch.long).reshape(1, 1, seq)
 
 
-def positions_onehot(pos, positions_buffer, dtype):
-    """pos (1, K) int32 positions -> (1, K, seq) one-hot. A -1 pad matches
-    nothing, so its row is zero."""
-    return (pos.long().unsqueeze(-1) == positions_buffer).to(dtype)
+def positions_onehot(marker_pos, positions_buffer, dtype):
+    """marker_pos (1, K) int32 positions -> (1, K, seq) one-hot. A -1 pad
+    matches nothing, so its row is zero."""
+    pos = marker_pos.long().unsqueeze(-1)
+    onehot = (pos == positions_buffer).to(dtype)
+    return onehot
 
 
 def indices(n):
@@ -26,6 +28,7 @@ def indices(n):
     return torch.arange(n, dtype=torch.long).reshape(1, n)
 
 
-def index_onehot(i, indices_buffer, dtype):
-    """i (1,) int32 -> (1, n) one-hot row."""
-    return (i.long().reshape(1, 1) == indices_buffer).to(dtype)
+def index_onehot(qtype, indices_buffer, dtype):
+    """qtype (1,) int32 index -> (1, n) one-hot row. (The parameter name
+    names the traced input value; it keeps laya's.)"""
+    return (qtype.long().reshape(1, 1) == indices_buffer).to(dtype)
