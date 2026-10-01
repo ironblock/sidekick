@@ -18,11 +18,13 @@ unpadded input at a time, and writes (docs/design/classify.md):
   with their ids and markers. Schema: fixtures/classify/tokens.schema.json.
 
 Corpora:
-- laya format: fixtures/classify/laya-en.corpus.toml, which translates
-  fastino/fast-decisions mechanically and adds adversarial cases. Its
-  [source] revision must be in the local Hugging Face cache (or pass
-  --dataset). Inputs are built with laya's build_sequence from the pinned
-  rl_common.py.
+- laya format: fixtures/classify/<id>.corpus.toml (laya-en's translates
+  fastino/fast-decisions mechanically and adds adversarial cases;
+  laya-typed-decisions' is the same with one longer case). Its [source]
+  revision must be in the local Hugging Face cache (or pass --dataset).
+  Inputs are built with the checkpoint's own build_sequence: laya's pinned
+  rl_common.py, or for laya-typed-decisions the laya package's common.py
+  (--laya-code), checked as tools/convert_laya.py checks it.
 - text-classification: the embedding parity corpus
   (fixtures/parity/corpus.toml), materialized with the model's
   tokenizer.json. Inputs longer than the largest bucket are truncated to it
@@ -58,7 +60,6 @@ import parity_reference as pr  # noqa: E402  (corpus hash and materialization, D
 from sidekick_convert import fp16sim  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-LAYA_CORPUS = REPO / "fixtures" / "classify" / "laya-en.corpus.toml"
 FORMAT = 1
 QTYPES = {"choice": 0, "score": 1, "noul": 2}
 # text-classification token fixture: short parity-corpus cases chosen for
@@ -106,6 +107,45 @@ def laya_question(qtype, labels, instructions):
     return {"t": "noul", "ins": instructions, "crit": crit}
 
 
+def laya_translate(corpus, where, name, labels, gold):
+    """One dataset head in laya's terms: (question type, candidate labels, gold)."""
+    if labels == ["yes", "no"]:
+        return "noul", ["false", "true"], ["true" if g == "yes" else "false" for g in gold]
+    if name in corpus["score"]:
+        levels = corpus["score"][name]
+        if sorted(levels) != sorted(labels):
+            raise SystemExit(f"{where}.{name}: labels {labels} != score levels {levels}")
+        return "score", levels, gold
+    return "choice", labels, gold
+
+
+def laya_long_cases(corpus, dataset_dir):
+    """[[long]] corpus entries: consecutive rows of one dataset file joined
+    into one long input, asked that file's head (translated as for single
+    rows). `target_len` asks laya_build to cut the input, at whitespace, to
+    the longest prefix whose sequence fits in that many tokens; without it
+    the input is as long as its rows make it, truncated past max_len by
+    laya's own layout and tagged "at-max-len".
+    `candidate_labels_generate` and `instructions` override the head's.
+    There is no gold label: the rows' answers differ."""
+    cases = []
+    for spec in corpus.get("long", []):
+        lines = (Path(dataset_dir) / f"{spec['domain']}.jsonl").read_text().splitlines()
+        rows = [json.loads(line) for line in lines[spec["start"]: spec["start"] + spec["rows"]]]
+        head = next(h for h in rows[0]["output"]["classifications"] if h["task"] == spec["head"])
+        qtype, cand, _ = laya_translate(corpus, spec["domain"], head["task"], head["labels"], [])
+        if "candidate_labels_generate" in spec:
+            g = spec["candidate_labels_generate"]
+            cand = [g["template"].format(i=i) for i in range(g["count"])]
+        cases.append({"id": spec["id"], "tags": ["long", spec["domain"], spec["head"], qtype] + spec.get("tags", []),
+                      "input": "\n\n".join(r["input"] for r in rows), "candidate_labels": cand,
+                      "question_type": qtype,
+                      "instructions": spec.get("instructions", corpus["instructions"][spec["head"]]),
+                      "gold": None, "head": f"long:{spec['domain']}.{spec['head']}",
+                      "target_len": spec.get("target_len")})
+    return cases
+
+
 def laya_cases(corpus, dataset_dir):
     cases = []
     for path in sorted(Path(dataset_dir).glob("*.jsonl")):
@@ -115,17 +155,8 @@ def laya_cases(corpus, dataset_dir):
             for head in record["output"]["classifications"]:
                 if head["multi_label"]:
                     continue
-                name, labels, gold = head["task"], head["labels"], head["true_label"]
-                if labels == ["yes", "no"]:
-                    qtype, cand = "noul", ["false", "true"]
-                    gold = ["true" if g == "yes" else "false" for g in gold]
-                elif name in corpus["score"]:
-                    levels = corpus["score"][name]
-                    if sorted(levels) != sorted(labels):
-                        raise SystemExit(f"{domain}.{name}: labels {labels} != score levels {levels}")
-                    qtype, cand = "score", levels
-                else:
-                    qtype, cand = "choice", labels
+                name = head["task"]
+                qtype, cand, gold = laya_translate(corpus, domain, name, head["labels"], head["true_label"])
                 cases.append({"id": f"{domain}.{name}.{row:03d}", "tags": [domain, name, qtype],
                               "input": record["input"], "candidate_labels": cand,
                               "question_type": qtype, "instructions": corpus["instructions"][name],
@@ -143,7 +174,7 @@ def laya_cases(corpus, dataset_dir):
                       "candidate_labels": labels, "question_type": adv["question_type"],
                       "instructions": adv.get("instructions"), "gold": adv.get("gold"),
                       "head": None})
-    return cases
+    return cases + laya_long_cases(corpus, dataset_dir)
 
 
 def option_token_ids(tok, options, head_max_len):
@@ -175,8 +206,25 @@ def laya_build(cases, rl, tok, cfg, defaults, max_labels):
         if len({tuple(o) for o in option_token_ids(tok, options, cfg["head_max_len"])}) != k:
             raise SystemExit(f"{c['id']}: labels identical at the token level after shrinking")
         ids, markers = rl.build_sequence(tok, c["input"], q, cfg["max_len"], cfg["head_max_len"])
+        if c.get("target_len") and len(ids) > c["target_len"]:
+            # the longest whitespace-cut prefix of the input that fits target_len
+            text = c["input"]
+            cuts = [i for i, ch in enumerate(text) if ch.isspace()]
+            lo, hi = 0, len(cuts) - 1
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                n = len(rl.build_sequence(tok, text[: cuts[mid]], q, cfg["max_len"], cfg["head_max_len"])[0])
+                lo, hi = (mid, hi) if n <= c["target_len"] else (lo, mid - 1)
+            c["input"] = text[: cuts[lo]]
+            ids, markers = rl.build_sequence(tok, c["input"], q, cfg["max_len"], cfg["head_max_len"])
+            if not c["target_len"] - 16 <= len(ids) <= c["target_len"]:
+                raise SystemExit(f"{c['id']}: cut to {len(ids)} tokens, not within 16 of {c['target_len']}")
         if len(markers) != k:
             raise SystemExit(f"{c['id']}: {len(markers)} markers for {k} labels")
+        # laya truncates its own text (the suite's "truncated" tag would ask
+        # for truncate_prompt_tokens, which the laya format refuses)
+        if "long" in c["tags"] and len(ids) == cfg["max_len"] and "at-max-len" not in c["tags"]:
+            c["tags"] = c["tags"] + ["at-max-len"]
         c.update(ids=ids, markers=markers, qtype=QTYPES[c["question_type"]], k=k)
     return cases
 
@@ -234,12 +282,12 @@ def run_laya(args, manifest):
     import convert_laya as cl
     from transformers import AutoTokenizer
     src = args.source
-    rl = cl.load_rl_common(src)
+    rl = cl.load_rl_common(src, manifest["id"], args.laya_code)
     cfg = json.loads((src / "rl_agent_config.json").read_text())
     if sha256(src / "tokenizer" / "tokenizer.json") != sha256(args.model_dir / "tokenizer.json"):
         raise SystemExit("the installed tokenizer.json differs from the checkpoint's")
     tok = AutoTokenizer.from_pretrained(src / "tokenizer")
-    corpus_text = LAYA_CORPUS.read_text()
+    corpus_text = (REPO / "fixtures" / "classify" / f"{manifest['id']}.corpus.toml").read_text()
     corpus = tomllib.loads(corpus_text)
     dataset = args.dataset
     if dataset is None:
@@ -313,6 +361,8 @@ def main():
     ap.add_argument("--out", type=Path)
     ap.add_argument("--tokens-fixture", type=Path)
     ap.add_argument("--fixture-only", action="store_true", help="write the token fixture and stop")
+    ap.add_argument("--laya-code", type=Path,
+                    help="laya-typed-decisions: the laya package's common.py (tools/convert_laya.py)")
     args = ap.parse_args()
     manifest = tomllib.loads((args.model_dir / "classifier.toml").read_text())
     laya = manifest["classify"].get("format") == "laya"

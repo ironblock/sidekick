@@ -1,5 +1,7 @@
-"""Convert convaiinnovations/laya (English) into ANE-resident Core ML classifier
-artifacts for sidekick's `POST /v1/classify` (docs/design/classify.md).
+"""Convert laya-format checkpoints into ANE-resident Core ML classifier artifacts
+for sidekick's `POST /v1/classify` (docs/design/classify.md):
+convaiinnovations/laya (English, `laya-en`) and its fine-tune
+convaiinnovations/laya-typed-decisions (`laya-typed-decisions`).
 
 laya is a decision model: a ModernBERT-large encoder, then a two-layer
 transformer head and a scorer that reads a [MASK] marker placed before each
@@ -8,14 +10,22 @@ model and returns one logit per marker.
 
 Usage:
     python tools/convert_laya.py <laya-dir> <install-dir> [buckets...] [--time]
+    python tools/convert_laya.py --model laya-typed-decisions --laya-code <common.py> \\
+        <laya-typed-dir> <install-dir> [buckets...] [--time]
 
     laya-dir:     local snapshot of convaiinnovations/laya at revision
                   55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851: model.safetensors,
                   rl_common.py, rl_agent_config.json, encoder/config.json,
                   tokenizer/tokenizer.json
+    laya-typed-dir: local snapshot of convaiinnovations/laya-typed-decisions
+                  at revision 1a793eb568e6718f15941d08f85432581df534e3 (the
+                  same files, without rl_common.py)
+    --laya-code:  laya-typed-decisions' code: common.py from the `laya`
+                  package 0.3.22 (its sdist, unpacked), checked by sha256
     install-dir:  classifier directory the daemon scans, e.g.
                   "~/Library/Application Support/sidekick/models/laya-en"
-    buckets:      default 128 256 512
+    buckets:      default: the manifest's (laya-en 128 256 512,
+                  laya-typed-decisions 128 256 512 1024)
 
 Requires: torch, transformers >= 4.48 (ModernBERT), coremltools, numpy,
 safetensors (arm64-native Python), plus Xcode for `xcrun coremlcompiler`.
@@ -23,7 +33,12 @@ safetensors (arm64-native Python), plus Xcode for `xcrun coremlcompiler`.
 laya's own code (rl_common.py, Apache-2.0, convaiinnovations) is imported
 from the snapshot rather than copied; its git blob hash is checked against
 the pinned revision, because the token-id fixtures and the Rust port of its
-build_sequence must agree with exactly that version.
+build_sequence must agree with exactly that version. laya-typed-decisions
+ships no code: its model and build_sequence are the `laya` package's
+common.py (Apache-2.0, convaiinnovations), pinned by sha256. For sidekick's
+requests (string labels, no custom noul names) that build_sequence produces
+the same tokens as rl_common.py's, and its DecisionModel is the same
+computation.
 
 Core ML interface (all int32, docs/design/classify.md):
     input_ids      [1, S]
@@ -63,7 +78,6 @@ E. EXPLICIT GELU (docs/DECISIONS.md D28 amendment). Core ML's native gelu
    Keeping the 0.5 out of the graph matters: 0.5 * x * (1 + erf(x / sqrt 2))
    is fused back into the native op. The conversion fails if a gelu op
    survives.
-
 F. BUCKET-INVARIANT SOFTMAX (docs/DECISIONS.md D28 amendment). On the ANE,
    linear, layer_norm, matmul, exp and max give bit-identical results for
    the same real tokens at any sequence length; reduce_sum does not, and
@@ -160,9 +174,17 @@ from sidekick_convert.techniques import saturation
 from sidekick_convert.wrapper import compose
 
 REPO = Path(__file__).resolve().parent.parent
-MANIFEST = REPO / "examples" / "classifiers" / "laya-en" / "classifier.toml"
-LAYA_REVISION = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
-RL_COMMON_BLOB = "d90d564964bcdc77586a257b0acccb5b7b19d6cf"  # git blob of rl_common.py at LAYA_REVISION
+# each laya-format checkpoint: its manifest, pinned revision and code
+MODELS = {
+    "laya-en": {
+        "revision": "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851",
+        "code": ("rl_common.py", "git-blob", "d90d564964bcdc77586a257b0acccb5b7b19d6cf"),
+    },
+    "laya-typed-decisions": {
+        "revision": "1a793eb568e6718f15941d08f85432581df534e3",
+        "code": ("--laya-code", "sha256", "cb77c34b3b5abfc1f59eb1a73357ad80238df397ffdddcfaf634c01949f89b3f"),
+    },
+}
 KMAX = 32
 K_RESIDUAL = 2
 PAD_LOGIT = -1e4
@@ -202,12 +224,22 @@ def git_blob_sha1(path):
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
-def load_rl_common(src):
-    path = src / "rl_common.py"
-    blob = git_blob_sha1(path)
-    if blob != RL_COMMON_BLOB:
-        raise SystemExit(f"{path} is not laya's rl_common.py at {LAYA_REVISION[:7]} "
-                         f"(git blob {blob}, expected {RL_COMMON_BLOB})")
+def manifest_path(model):
+    return REPO / "examples" / "classifiers" / model / "classifier.toml"
+
+
+def load_rl_common(src, model="laya-en", code_path=None):
+    """The checkpoint's own code: laya's rl_common.py from the snapshot, or,
+    for laya-typed-decisions, the laya package's common.py given by path.
+    Either is checked against its pin before it is imported."""
+    where, kind, want = MODELS[model]["code"]
+    path = src / where if code_path is None else Path(code_path)
+    if where.startswith("--") and code_path is None:
+        raise SystemExit(f"{model} needs {where} (the laya package's common.py)")
+    got = git_blob_sha1(path) if kind == "git-blob" else hashlib.sha256(path.read_bytes()).hexdigest()
+    if got != want:
+        raise SystemExit(f"{path} is not {model}'s code at {MODELS[model]['revision'][:7]} "
+                         f"({kind} {got}, expected {want})")
     spec = importlib.util.spec_from_file_location("laya_rl_common", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -248,20 +280,23 @@ def reference_logits(dm, items):
     return out
 
 
-def check_manifest(cfg):
-    """classifier.toml must agree with laya's config: head_max_len, KMAX and
-    the calibration table (its keys are laya's temp_bucket keys)."""
-    man = tomllib.loads(MANIFEST.read_text())
+def check_manifest(cfg, model):
+    """classifier.toml must agree with the checkpoint's config: head_max_len,
+    max_len, KMAX and the calibration table (its keys are laya's temp_bucket
+    keys). Returns the manifest."""
+    path = manifest_path(model)
+    man = tomllib.loads(path.read_text())
     if man["classify"]["max_labels"] != KMAX:
-        raise SystemExit(f"{MANIFEST}: max_labels {man['classify']['max_labels']} != KMAX {KMAX}")
+        raise SystemExit(f"{path}: max_labels {man['classify']['max_labels']} != KMAX {KMAX}")
     if man["classify"]["laya"]["head_max_len"] != cfg["head_max_len"] or man["max_seq_len"] != cfg["max_len"]:
-        raise SystemExit(f"{MANIFEST}: head_max_len/max_seq_len disagree with rl_agent_config.json")
-    if man["source"]["revision"] != LAYA_REVISION:
-        raise SystemExit(f"{MANIFEST}: source revision is not {LAYA_REVISION}")
+        raise SystemExit(f"{path}: head_max_len/max_seq_len disagree with rl_agent_config.json")
+    if man["source"]["revision"] != MODELS[model]["revision"]:
+        raise SystemExit(f"{path}: source revision is not {MODELS[model]['revision']}")
     for key, t in man["classify"]["calibration"].items():
         fitted = cfg["temperature_by_options"].get(key)
         if fitted is None or abs(fitted - t) > 5e-4:
-            raise SystemExit(f"{MANIFEST}: calibration {key} = {t}, laya fitted {fitted}")
+            raise SystemExit(f"{path}: calibration {key} = {t}, the checkpoint fitted {fitted}")
+    return man
 
 
 def cases_for(items, refs):
@@ -277,13 +312,16 @@ def cases_for(items, refs):
 
 
 def main():
-    args = cli.parse(__doc__.split("\n\n")[0])
+    args = cli.parse(__doc__.split("\n\n")[0], default_buckets=None, flags=(
+        ("--model", {"default": "laya-en", "choices": sorted(MODELS), "help": "which laya-format checkpoint"}),
+        ("--laya-code", {"type": Path, "help": "laya-typed-decisions: the laya package's common.py"})))
     src, install_dir = args.src, args.install_dir
     install_dir.mkdir(parents=True, exist_ok=True)
 
-    rl = load_rl_common(src)
+    rl = load_rl_common(src, args.model, args.laya_code)
     cfg = json.loads((src / "rl_agent_config.json").read_text())
-    check_manifest(cfg)
+    man = check_manifest(cfg, args.model)
+    buckets = args.buckets or man["buckets"]
     tok = AutoTokenizer.from_pretrained(src / "tokenizer")
     items = gate_items(rl, tok, cfg)
     modernbert.install_patches()   # finite masks and traceable RoPE, for laya's own forward too
@@ -317,11 +355,11 @@ def main():
     ports = head.ports()
     make_wrapper, example = compose(backbone, head, ports)
     job = core.Job(
-        name="laya-en", buckets=args.buckets, ports=ports, output=head.output, make_wrapper=make_wrapper,
+        name=args.model, buckets=buckets, ports=ports, output=head.output, make_wrapper=make_wrapper,
         example=example, evaluation=cases_for(items, refs),
         gates=ClassifierGates(fp32_tol=FP32_TOL, margin=MARGIN, dp_gate=DP_GATE, gated_paths=("CPU_AND_NE",),
                               report_paths=("CPU_ONLY",), pad_value=PAD_LOGIT, pad_id_range=(1000, 40000)),
-        install_files=[(MANIFEST, "classifier.toml")], landing_required=True, gate_cases="landing",
+        install_files=[(manifest_path(args.model), "classifier.toml")], landing_required=True, gate_cases="landing",
         timing=args.time)
     core.run(job, install_dir)
 

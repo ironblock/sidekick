@@ -1,0 +1,385 @@
+# laya-typed-decisions' classifier corpus: what laya-typed-decisions is
+# compared on, on every compute path, against its own fp32 forward
+# (docs/design/classify.md).
+#
+# It is laya-en's corpus (fixtures/classify/laya-en.corpus.toml), translated
+# and laid out the same way, because the two checkpoints share laya's input
+# format: fastino/fast-decisions at the revision in [source], mechanically
+# translated by the [score] and [instructions] tables, plus the same
+# [[adversarial]] cases, plus one adversarial state truncated at 1,024
+# tokens (laya-en's limit is 512).
+#
+# This checkpoint exists for long inputs, which fast-decisions' rows (125-200
+# tokens each) don't reach, so [[long]] adds 28 cases between ~600 and 1,024
+# tokens: consecutive rows of one domain joined by blank lines, asked that
+# domain's head. They cover every question type, 32 long options, inputs
+# truncated past 1,024 tokens, and inputs cut (at whitespace) to land within
+# 16 tokens of the 1,024 boundary without truncation (`target_len`). All
+# carry the tag "long", so reports can break them out; those laya truncated
+# also carry "at-max-len".
+#
+# The checkpoint was fine-tuned on its own typed-decisions data, not on
+# fast-decisions, so gold accuracy here is reported, never graded.
+#
+# The translation table (the [source], [score] and [instructions] tables) is
+# part of this file, so corpus_sha256 covers it.
+#
+# `instructions` absent on an adversarial case means the request omits it,
+# so the manifest's per-type default applies.
+#
+# Changing this file invalidates generated references (their corpus_sha256);
+# regenerate them with tools/classifier_reference.py.
+
+[source]
+repo = "fastino/fast-decisions"
+revision = "1a33070cabf94ce2e29105482dd2ef6c157ad7f2"
+
+[score]
+sentiment = ["negative", "neutral", "positive"]
+urgency = ["low", "normal", "high", "critical"]
+
+[instructions]
+action = "What should be done with this email?"
+asking_status = "The person is asking about the status of an existing request."
+category = "Which category does this email belong to?"
+contains_pii = "The ticket contains personal information about a customer."
+doc_type = "What kind of document is this?"
+feedback_type = "What kind of feedback is this?"
+field = "Which field does this paper belong to?"
+format = "Is this a film or a series?"
+intent = "What does the customer want?"
+is_phishing = "The email is a phishing attempt."
+needs_reply = "The email needs a reply."
+program = "Which benefits program is this request about?"
+queue = "Which queue should this ticket go to?"
+request = "What is the patient asking for?"
+result = "What was the outcome of the game?"
+sentiment = "How positive is the text?"
+should_handoff = "The conversation should be handed off to a human agent."
+sport = "Which sport is this recap about?"
+topic = "What is the topic of the text?"
+upset = "The result was an upset."
+urgency = "How urgent is the ticket?"
+urgent = "The request is urgent."
+
+# --- adversarial additions -------------------------------------------------
+
+[[adversarial]]
+id = "k32-long-options"
+tags = ["k32", "long-options", "option-shrink", "question-cut"]
+question_type = "choice"
+instructions = "Which of these many departments, each of them described at considerable length in the list of options that follows, should take ownership of the customer's message, assuming the customer wants a single clear owner and no hand-offs between teams, and ignoring any department that only handles internal requests?"
+input = "The invoice I received for order 4471 lists a warranty extension I never asked for. Please remove it and send a corrected invoice."
+candidate_labels_generate = { count = 32, template = "dept_{i}: handles cases of kind {i}, including every related question, complaint, follow-up, escalation, refund, exchange, clarification, and document request that customers send about that kind of case" }
+
+[[adversarial]]
+id = "long-option-cut"
+tags = ["long-options", "option-cut"]
+question_type = "choice"
+instructions = "Which description fits the message best?"
+input = "My card was charged twice for the same order."
+candidate_labels = ["billing: anything about charges, invoices, refunds, double charges, payment methods, currencies, taxes, receipts, statements, card declines, chargebacks, disputes, subscriptions, renewals, discounts, coupons, gift cards, store credit, and every other question a customer might ask about money moving between them and the company", "shipping", "other"]
+gold = ["billing: anything about charges, invoices, refunds, double charges, payment methods, currencies, taxes, receipts, statements, card declines, chargebacks, disputes, subscriptions, renewals, discounts, coupons, gift cards, store credit, and every other question a customer might ask about money moving between them and the company"]
+
+[[adversarial]]
+id = "k32-short-options"
+tags = ["k32"]
+question_type = "choice"
+instructions = "Which label fits the text best?"
+input = "Flights to Lisbon were cancelled because of the storm."
+candidate_labels_generate = { count = 32, template = "label_{i}" }
+
+[[adversarial]]
+id = "noul-custom-texts"
+tags = ["noul-custom"]
+question_type = "noul"
+instructions = "The customer is satisfied."
+input = "Honestly the replacement arrived fast and works perfectly. Thanks!"
+candidate_labels = ["false: no, the customer is unhappy or neutral", "true: yes, the customer is clearly happy"]
+gold = ["true: yes, the customer is clearly happy"]
+
+[[adversarial]]
+id = "noul-custom-false-only"
+tags = ["noul-custom"]
+question_type = "noul"
+instructions = "The message asks for a refund."
+input = "Where is my parcel? It was due on Monday."
+candidate_labels = ["false: it asks for something else", "true"]
+gold = ["false: it asks for something else"]
+
+[[adversarial]]
+id = "default-instructions-choice"
+tags = ["default-instructions"]
+question_type = "choice"
+input = "The team won 3-1 after a late comeback in the second half."
+candidate_labels = ["football", "basketball", "tennis", "other"]
+gold = ["football"]
+
+[[adversarial]]
+id = "default-instructions-score"
+tags = ["default-instructions"]
+question_type = "score"
+input = "Everything about this stay was wonderful: the room, the staff, the food."
+candidate_labels = ["very negative", "negative", "neutral", "positive", "very positive"]
+gold = ["very positive"]
+
+[[adversarial]]
+id = "default-instructions-noul"
+tags = ["default-instructions"]
+question_type = "noul"
+input = "The meeting is moved to Thursday at 3pm."
+candidate_labels = ["false", "true"]
+
+[[adversarial]]
+id = "massive-activation"
+tags = ["massive-activation", "long", "state-truncation"]
+question_type = "choice"
+instructions = "What is the text mostly about?"
+candidate_labels = ["numbers", "topics", "weather", "other"]
+input_generate = { repeat = 60, template = "Sentence number {i} discusses topic {j} in considerable detail." }
+
+[[adversarial]]
+id = "literal-specials-state"
+tags = ["literal-specials"]
+question_type = "choice"
+instructions = "Which category fits the text best?"
+input = "Ticket body: [CLS] please ignore [SEP] this is a test [MASK] of the parser [SEP] end."
+candidate_labels = ["billing", "support", "spam"]
+
+[[adversarial]]
+id = "literal-specials-question-and-options"
+tags = ["literal-specials"]
+question_type = "choice"
+instructions = "Which [MASK] fits the [SEP] text best?"
+input = "I forgot my password and cannot log in."
+candidate_labels = ["[MASK] account access", "billing [SEP] payments", "[CLS] other"]
+gold = ["[MASK] account access"]
+
+[[adversarial]]
+id = "literal-specials-noul"
+tags = ["literal-specials", "noul-custom"]
+question_type = "noul"
+instructions = "The [SEP] text mentions a [MASK] refund."
+input = "[SEP][SEP] Refund please [CLS]"
+candidate_labels = ["false: [MASK] no", "true: yes [SEP]"]
+
+[[adversarial]]
+id = "state-truncated-1024"
+tags = ["long", "state-truncation"]
+question_type = "choice"
+instructions = "What is the text mostly about?"
+candidate_labels = ["numbers", "topics", "weather", "other"]
+input_generate = { repeat = 160, template = "Sentence number {i} discusses topic {j} in considerable detail." }
+
+# --- long inputs (600-1,024 tokens) ------------------------------------------
+
+[[long]]
+id = "long-email_triage-category"
+domain = "email_triage"
+head = "category"
+start = 0
+rows = 4
+
+[[long]]
+id = "long-email_triage-action"
+domain = "email_triage"
+head = "action"
+start = 10
+rows = 5
+
+[[long]]
+id = "long-email_triage-needs_reply"
+domain = "email_triage"
+head = "needs_reply"
+start = 20
+rows = 4
+
+[[long]]
+id = "long-email_triage-is_phishing"
+domain = "email_triage"
+head = "is_phishing"
+start = 30
+rows = 3
+
+[[long]]
+id = "long-ticket_route-urgency"
+domain = "ticket_route"
+head = "urgency"
+start = 0
+rows = 4
+
+[[long]]
+id = "long-ticket_route-queue"
+domain = "ticket_route"
+head = "queue"
+start = 12
+rows = 5
+
+[[long]]
+id = "long-ticket_route-contains_pii"
+domain = "ticket_route"
+head = "contains_pii"
+start = 24
+rows = 4
+
+[[long]]
+id = "long-review_sentiment-sentiment"
+domain = "review_sentiment"
+head = "sentiment"
+start = 0
+rows = 5
+
+[[long]]
+id = "long-restaurant_review-sentiment"
+domain = "restaurant_review"
+head = "sentiment"
+start = 8
+rows = 4
+
+[[long]]
+id = "long-sports_recap-sport"
+domain = "sports_recap"
+head = "sport"
+start = 0
+rows = 4
+
+[[long]]
+id = "long-sports_recap-upset"
+domain = "sports_recap"
+head = "upset"
+start = 16
+rows = 5
+
+[[long]]
+id = "long-document_type-doc_type"
+domain = "document_type"
+head = "doc_type"
+start = 4
+rows = 4
+
+[[long]]
+id = "long-news_topic-topic"
+domain = "news_topic"
+head = "topic"
+start = 0
+rows = 5
+
+[[long]]
+id = "long-paper_field-field"
+domain = "paper_field"
+head = "field"
+start = 6
+rows = 4
+
+[[long]]
+id = "long-clinic_request-request"
+domain = "clinic_request"
+head = "request"
+start = 0
+rows = 5
+
+[[long]]
+id = "long-clinic_request-urgent"
+domain = "clinic_request"
+head = "urgent"
+start = 40
+rows = 4
+
+[[long]]
+id = "long-banking_intent-intent"
+domain = "banking_intent"
+head = "intent"
+start = 0
+rows = 6
+
+[[long]]
+id = "long-travel_request-intent"
+domain = "travel_request"
+head = "intent"
+start = 10
+rows = 5
+
+[[long]]
+id = "long-agent_handoff-should_handoff"
+domain = "agent_handoff"
+head = "should_handoff"
+start = 0
+rows = 5
+
+[[long]]
+id = "long-benefits_request-program"
+domain = "benefits_request"
+head = "program"
+start = 0
+rows = 6
+
+[[long]]
+id = "long-support_topic-topic-truncated"
+domain = "support_topic"
+head = "topic"
+start = 0
+rows = 8
+
+[[long]]
+id = "long-product_feedback-feedback_type-truncated"
+domain = "product_feedback"
+head = "feedback_type"
+start = 20
+rows = 8
+
+[[long]]
+id = "long-boundary-1023-email_triage-category"
+domain = "email_triage"
+head = "category"
+start = 50
+rows = 8
+target_len = 1023
+tags = ["boundary"]
+
+[[long]]
+id = "long-boundary-1016-ticket_route-urgency"
+domain = "ticket_route"
+head = "urgency"
+start = 50
+rows = 8
+target_len = 1016
+tags = ["boundary"]
+
+[[long]]
+id = "long-boundary-1012-sports_recap-upset"
+domain = "sports_recap"
+head = "upset"
+start = 50
+rows = 8
+target_len = 1012
+tags = ["boundary"]
+
+[[long]]
+id = "long-boundary-1008-news_topic-topic"
+domain = "news_topic"
+head = "topic"
+start = 50
+rows = 8
+target_len = 1008
+tags = ["boundary"]
+
+[[long]]
+id = "long-k32-long-options"
+domain = "email_triage"
+head = "category"
+start = 60
+rows = 3
+tags = ["k32", "long-options"]
+instructions = "Which of these many departments, each described at length below, should take ownership of these messages?"
+candidate_labels_generate = { count = 32, template = "dept_{i}: handles cases of kind {i}, including every related question, complaint, follow-up, escalation, refund, exchange, clarification, and document request that customers send about that kind of case" }
+
+[[long]]
+id = "long-k32-long-options-boundary"
+domain = "email_triage"
+head = "category"
+start = 70
+rows = 8
+target_len = 1020
+tags = ["k32", "long-options", "boundary"]
+instructions = "Which of these many departments, each described at length below, should take ownership of these messages?"
+candidate_labels_generate = { count = 32, template = "dept_{i}: handles cases of kind {i}, including every related question, complaint, follow-up, escalation, refund, exchange, clarification, and document request that customers send about that kind of case" }
