@@ -97,7 +97,8 @@ is configured it guards `/v1/*` only; `/health` stays open for probes
 
 ## D14 — Compute units default to `.cpuAndNeuralEngine`
 Not `.all`: keeping background work off the GPU is the project's thesis. The
-wrapper exposes the choice; measurement can override.
+wrapper exposes the choice; measurement can override. (D31 lets a manifest
+name another choice, for a model the ANE runs badly; the default stands.)
 
 ## D15 — Per-bucket static artifacts, pooling baked into the model
 The design doc (§5) assumed enumerated shapes keep an encoder on the ANE.
@@ -1385,6 +1386,17 @@ corpus, the ceiling is |Δp| max 0.0252, p99 0.0038. The ANE grades C (p99
 0.0084 on the ANE, so the 1,024 bucket needs nothing beyond constraints E
 and F.
 
+**Amendment (October 2026): when a classifier is a preview.** laya-en
+shipped as a preview because it failed a hard gate. The rule from now on:
+a classifier is supported when it passes every hard gate on every path,
+its conversion is exact in fp32 with no known unfixed defect, and it
+grades A on at least one path; otherwise it is a preview. When the A path
+isn't the default served path, docs/MODELS.md says so, and a manifest's
+`compute_units` (D31) can serve it there. Under it, laya-en and
+laya-typed-decisions (A on the GPU, served on the ANE) and
+GLiNER2.5-Decide (A on the GPU, served there) are supported. Julia-1,
+whose fp16 paths are both capped at C by decision flips, stays a preview.
+
 ## D29 — Reranking: vLLM's and Cohere's contracts, a reranker is a classifier
 Reranking (scoring documents against a query) is how retrieval pipelines
 use cross-encoders, and it has the strongest API convention of anything
@@ -1491,6 +1503,84 @@ in fp32, with pairs encoded from the installed `tokenizer.json`.
 collides with SGLang's unrelated route); late interaction (ColBERT,
 MaxSim); LLM-based rerankers, which need decoder support and chat
 templates.
+
+## D30 — Two more zero-shot formats: Julia-1's rendering and gliner2
+D28 served zero-shot classification in one format, laya's. Two more decision
+models are worth serving, and both fit `/v1/classify`'s zero-shot contract
+(`candidate_labels`, one label per input) without changing it. The contract
+is in `docs/design/classify.md`.
+
+**Julia-1 is laya's format with another rendering.** Julia-1
+(SupersonicLabs/Julia-1, an mmBERT-small encoder with laya's decision head)
+builds laya's exact sequence but renders option text differently. Rather
+than a new format, `[classify.laya] option_rendering = "julia"` picks its
+rendering, so one input builder serves both. Its token fixture comes from
+Julia-1's own `julia/data.py`. Julia-1 takes 2 to 20 labels and has no
+default question, so a request without `instructions` is a 400.
+
+**gliner2 is a new format.** GLiNER2 models (GLiNER2.5-Decide, a
+DeBERTa-v3-large span extractor) classify from a schema written before the
+text, with an `[L]` marker per label. sidekick ports gliner2 2.0.0's input
+builder to Rust: word-level text splitting and lowercasing, per-item
+tokenization, word-level truncation that keeps the schema whole, and
+marker positions taken from the layout. The port matches gliner2's own
+processor on its fixture and on about 8,000 random requests, and its word
+splitter matches Python's `re` on all of Unicode 15.0. The graph emits one
+logit per token, read at the markers, so it needs no index inputs and no
+gather.
+
+**`multi_label`**, the name Hugging Face's zero-shot pipeline uses, asks a
+gliner2 model for independent per-label sigmoids instead of a softmax.
+`label` stays the argmax, because vLLM's response has one label per
+input; clients threshold `probs`. `multi_label: false` is accepted on
+every model as the default form (D22), and `true` is a 400 on formats
+other than gliner2. One task per request: scoring a task alone or jointly
+with others agreed on 83 of 85 fast-decisions tasks.
+
+**Discoverable requirements.** `/v1/models` lists each classifier's
+`required` request fields: `candidate_labels` on zero-shot models,
+`question_type` on laya-format models, and `instructions` where the
+manifest has no default. A client learns the fail-loud contract from the
+listing, not from a 400.
+
+**Compatibility.** A v0.4 daemon skips a gliner2 manifest (unknown format).
+It also skips the committed Julia-1 manifest, which has no
+`default_instructions`. A Julia manifest that does set them would load on
+v0.4 with laya's rendering, so they should stay unset while v0.4 daemons
+may read the directory.
+
+Both models are graded for parity, never accuracy: fast-decisions is
+fastino's own benchmark, and Julia-1's training data is private. Grades,
+against each model's ideal-fp16 ceiling (D28 amendment), are in
+docs/MODELS.md: GLiNER2.5-Decide is A on the GPU, where it's served
+(D31), and Julia-1 is C on its fp16 paths, a preview.
+
+## D31 — A manifest may name its compute units
+D14 loads every Core ML model with `.cpuAndNeuralEngine`. GLiNER2.5-Decide
+is the first model the ANE runs badly: its DeBERTa relative-position
+rewrite compiles onto the ANE (99.1% of operations) but runs 10–40× slower
+there than on the GPU (0.11, 0.34 and 1.28 s per prediction at 128, 256
+and 512 tokens, against ~34 ms on the GPU), and grades lower (C against
+the GPU's A). With several of its buckets loaded, the ANE also failed
+predictions after tens to hundreds of cases, for reasons not yet
+diagnosed. On the GPU it does neither.
+
+**Decision.** An optional top-level `compute_units` in `classifier.toml`
+and in an embedder's `manifest.toml`: `cpu_and_ne` (the default, D14
+unchanged), `cpu_and_gpu`, `cpu_only` or `all`. The daemon and
+`libsidekick.dylib` load every bucket with it. `sidekick-compute-units` and
+`/v1/models` report it. An unknown value skips the manifest with a reason
+(D28), and a static embedder rejects the key. D27's shape guard reads the
+model description, which doesn't depend on compute units, so it refuses a
+multi-shape artifact on macOS 27 whatever the manifest asks for.
+Converters gate the path the manifest serves and report the others.
+GLiNER2.5-Decide's manifest sets `cpu_and_gpu`.
+
+The default stays the ANE, even for laya-en and laya-typed-decisions,
+which grade A on the GPU and C on the ANE at about the same latency:
+keeping background work off the GPU is still the project's thesis, and a
+manifest that wants the GPU can say so. A v0.4 daemon ignores the key and
+loads on the ANE.
 
 ## Hardware verification status
 
