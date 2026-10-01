@@ -94,6 +94,17 @@ pub fn graded_problem(manifest: &ClassifierManifest) -> ProblemType {
     }
 }
 
+/// The activation one case is graded in: sigmoid per label for a case whose
+/// request asked for multi-label decoding, the model's graded problem
+/// otherwise.
+pub fn case_problem(manifest: &ClassifierManifest, case: &crate::classify_reference::ClassifyCase) -> ProblemType {
+    if case.multi_label == Some(true) {
+        ProblemType::MultiLabel
+    } else {
+        graded_problem(manifest)
+    }
+}
+
 /// max |a − b| elementwise; `None` for non-finite input or a length
 /// mismatch.
 pub fn max_abs_diff(a: &[f32], b: &[f32]) -> Option<f64> {
@@ -212,14 +223,14 @@ pub struct Ceiling {
 /// non-finite or missing value in it, which grades as no ceiling).
 pub fn ceiling(
     reference: &ClassifyReference,
-    problem: ProblemType,
+    problem: impl Fn(usize) -> ProblemType,
     select: impl Fn(usize) -> bool,
 ) -> Option<Ceiling> {
     let oracle = reference.logits.get(CEILING_ORACLE)?;
     let torch = &reference.logits["torch"];
     let mut d: Vec<f64> = Vec::new();
     for i in (0..reference.cases.len()).filter(|&i| select(i)) {
-        d.push(delta_p(problem, &oracle[i], &torch[i], None)?);
+        d.push(delta_p(problem(i), &oracle[i], &torch[i], None)?);
     }
     if d.is_empty() {
         return None;
@@ -294,7 +305,7 @@ pub fn grade(
     gates: &ClassifyGates,
     manifest: &ClassifierManifest,
 ) -> ClassifyGrade {
-    let problem = graded_problem(manifest);
+    let problem = |i: usize| case_problem(manifest, &reference.cases[i]);
     let torch = &reference.logits["torch"];
     let cases = &reference.cases;
     let mut failures = Vec::new();
@@ -345,7 +356,7 @@ pub fn grade(
         c.finite.then_some(c.logits.as_slice())
     }
     let per_case: Vec<Option<f64>> = (0..n)
-        .map(|i| finite(&result.cases[i]).and_then(|l| delta_p(problem, l, &torch[i], None)))
+        .map(|i| finite(&result.cases[i]).and_then(|l| delta_p(problem(i), l, &torch[i], None)))
         .collect();
     let dlogit: Vec<Option<f64>> = (0..n)
         .map(|i| finite(&result.cases[i]).and_then(|l| max_abs_diff(l, &torch[i])))
@@ -413,7 +424,7 @@ pub fn grade(
     let calibrated: Vec<Option<f64>> = (0..n)
         .filter_map(|i| {
             let t = manifest.temperature(cases[i].question_type, cases[i].k)?;
-            Some(finite(&result.cases[i]).and_then(|l| delta_p(problem, l, &torch[i], Some(t))))
+            Some(finite(&result.cases[i]).and_then(|l| delta_p(problem(i), l, &torch[i], Some(t))))
         })
         .collect();
     let calibrated_dp = (!calibrated.is_empty()).then(|| worst(&calibrated, |_| true).0).flatten();
@@ -450,13 +461,13 @@ pub fn grade(
         .filter(|(name, _)| *name != "torch")
         .map(|(name, oracle)| {
             let d: Vec<Option<f64>> = (0..n)
-                .map(|i| finite(&result.cases[i]).and_then(|l| delta_p(problem, l, &oracle[i], None)))
+                .map(|i| finite(&result.cases[i]).and_then(|l| delta_p(problem(i), l, &oracle[i], None)))
                 .collect();
             (name.clone(), worst(&d, |_| true).0)
         })
         .collect();
     let model_only: Vec<Option<f64>> = (0..n)
-        .filter_map(|i| result.cases[i].model_only.as_ref().map(|l| delta_p(problem, l, &torch[i], None)))
+        .filter_map(|i| result.cases[i].model_only.as_ref().map(|l| delta_p(problem(i), l, &torch[i], None)))
         .collect();
     let model_only_dp = (!model_only.is_empty()).then(|| worst(&model_only, |_| true).0).flatten();
 
@@ -738,7 +749,7 @@ mod tests {
     #[test]
     fn a_path_as_good_as_ideal_fp16_grades_by_its_ratio() {
         let reference = sample_with_ceiling();
-        let c = ceiling(&reference, ProblemType::SingleLabel, |_| true).unwrap();
+        let c = ceiling(&reference, |_| ProblemType::SingleLabel, |_| true).unwrap();
         assert!((c.max - 0.0202).abs() < 1e-4, "{c:?}");
         assert!((c.mean - c.max / 2.0).abs() < 1e-9, "one exact case of two");
         assert_eq!(c.p99, c.max);
@@ -768,7 +779,7 @@ mod tests {
     fn without_the_oracle_nothing_changes() {
         let (json, st) = sample();
         let reference = ClassifyReference::parse(&json, &st).unwrap();
-        assert!(ceiling(&reference, ProblemType::SingleLabel, |_| true).is_none());
+        assert!(ceiling(&reference, |_| ProblemType::SingleLabel, |_| true).is_none());
         let result = ClassifyWorkerResult {
             model: "z".into(),
             path: "ane".into(),
@@ -799,7 +810,7 @@ mod tests {
         let mut m = manifest();
         m.task = sidekick_core::ClassifyTask::TextRanking;
         m.problem_type = ProblemType::Regression;
-        let c = ceiling(&reference, graded_problem(&m), |_| true).unwrap();
+        let c = ceiling(&reference, |_| graded_problem(&m), |_| true).unwrap();
         assert!((c.max - 2.9e-5).abs() < 1e-6, "{c:?}");
     }
 
@@ -830,7 +841,7 @@ mod tests {
         let reference = ClassifyReference::parse(&json, &st).unwrap();
 
         let dp = |x: f32| (1.0 / (1.0 + (-x as f64).exp()) - 0.5).abs();
-        let c = ceiling(&reference, ProblemType::SingleLabel, |_| true).unwrap();
+        let c = ceiling(&reference, |_| ProblemType::SingleLabel, |_| true).unwrap();
         assert!((c.max - dp(0.1)).abs() < 1e-6 && (c.p99 - dp(0.05)).abs() < 1e-6, "{c:?}");
 
         let results = (0..n).map(|i| case(&format!("c{i}"), row(i, 0.17, 0.05).to_vec())).collect();
@@ -841,5 +852,35 @@ mod tests {
         // Absolute D (worst Δp 0.042); the ratio grades A, and that counts.
         assert_eq!((g.absolute_letter, g.letter), ('D', 'A'));
         assert_eq!(p99(&[1.0, 2.0, 3.0]), 3.0, "fewer than 100 values: the maximum");
+    }
+
+    #[test]
+    fn a_multi_label_case_is_graded_with_sigmoids() {
+        // Case b ([0.5, 0, -1] in fp32) asked for multi-label decoding; the
+        // path is off by 0.2 on its first logit. Softmax would spread that
+        // over all three labels, but each label is its own sigmoid.
+        let (json, st) = sample();
+        let json = json.replacen(r#""k":3"#, r#""k":3,"multi_label":true"#, 1);
+        let reference = ClassifyReference::parse(&json, &st).unwrap();
+        assert_eq!(reference.cases[1].multi_label, Some(true));
+        let m = manifest();
+        assert_eq!(case_problem(&m, &reference.cases[0]), ProblemType::SingleLabel);
+        assert_eq!(case_problem(&m, &reference.cases[1]), ProblemType::MultiLabel);
+
+        let got = vec![0.7f32, 0.0, -1.0];
+        let result = ClassifyWorkerResult {
+            model: "z".into(),
+            path: "ane".into(),
+            cases: vec![case("a", vec![1.0, 2.0]), case("b", got.clone())],
+            repeat_bitwise: true,
+            load_ms: 0.0,
+        };
+        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &m);
+        let sigmoid = |x: f32| 1.0 / (1.0 + (-x as f64).exp());
+        let want = sigmoid(0.7) - sigmoid(0.5);
+        assert!((g.per_case[1].unwrap() - want).abs() < 1e-6, "{:?} vs {want}", g.per_case[1]);
+        let softmax = delta_p(ProblemType::SingleLabel, &got, &[0.5, 0.0, -1.0], None).unwrap();
+        assert!((softmax - want).abs() > 1e-3, "the two activations must differ here");
+        assert_eq!(g.per_case[0], Some(0.0));
     }
 }

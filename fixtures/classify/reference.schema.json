@@ -47,6 +47,7 @@
           "markers": {"type": "array", "items": {"type": "integer"}},
           "qtype": {"type": ["integer", "null"]},
           "k": {"type": "integer", "description": "label count for this case"},
+          "multi_label": {"type": ["boolean", "null"], "description": "the request asked for multi-label decoding (gliner2): the case is graded with independent sigmoids, not the model's activation"},
           "gold": {"type": ["array", "null"], "items": {"type": "string"}, "description": "gold labels when the corpus has them (reported, never graded)"}
         }
       }

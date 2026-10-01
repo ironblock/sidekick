@@ -77,6 +77,11 @@ pub struct ClassifyCase {
     pub qtype: Option<i32>,
     /// Label count for this case.
     pub k: usize,
+    /// The request asked for multi-label decoding (gliner2's `multi_label`):
+    /// the case is graded with independent sigmoids, not the model's
+    /// activation.
+    #[serde(default)]
+    pub multi_label: Option<bool>,
     /// Gold labels, when the corpus has them (reported, never graded).
     #[serde(default)]
     pub gold: Option<Vec<String>>,
