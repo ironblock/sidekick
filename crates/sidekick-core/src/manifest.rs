@@ -153,6 +153,9 @@ fn default_problem_type() -> ProblemType {
 pub enum ClassifyFormat {
     /// laya's decision format: a `[MASK]` marker before each option.
     Laya,
+    /// GLiNER2's schema format: an `[L]` marker before each label, scored
+    /// per token (docs/design/classify.md).
+    Gliner2,
 }
 
 /// `[classify]` of a `classifier.toml`.
@@ -170,6 +173,8 @@ pub struct ClassifySection {
     pub labels: Vec<String>,
     #[serde(default)]
     pub laya: Option<LayaSection>,
+    #[serde(default)]
+    pub gliner2: Option<Gliner2Section>,
     /// Opt-in temperatures, keyed `"<question_type>:<k bucket>"`
     /// ([`calibration_key`]).
     #[serde(default)]
@@ -186,6 +191,13 @@ pub struct LayaSection {
     pub head_max_len: usize,
     /// Instructions used when a request sends none, per question type.
     pub default_instructions: DefaultInstructions,
+}
+
+/// `[classify.gliner2]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Gliner2Section {
+    /// The task prompt when a request sends no `instructions`.
+    pub default_instructions: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,8 +280,10 @@ impl ClassifierManifest {
         if !self.classify.calibration.is_empty() {
             fields.push("calibration");
         }
-        if self.classify.format == Some(ClassifyFormat::Laya) {
-            fields.extend(["question_type", "instructions"]);
+        match self.classify.format {
+            Some(ClassifyFormat::Laya) => fields.extend(["question_type", "instructions"]),
+            Some(ClassifyFormat::Gliner2) => fields.extend(["instructions", "multi_label"]),
+            None => {}
         }
         fields
     }
@@ -547,8 +561,8 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             if matches!(c.max_labels, Some(n) if n != c.labels.len()) {
                 return Err("`max_labels` must equal the number of `labels`".into());
             }
-            if c.laya.is_some() {
-                return Err("`[classify.laya]` is for the laya format".into());
+            if c.laya.is_some() || c.gliner2.is_some() {
+                return Err("`[classify.laya]` and `[classify.gliner2]` are for zero-shot formats".into());
             }
             if io.marker_pos.is_some() || io.qtype.is_some() {
                 return Err("text-classification's [classify.io] has input_ids, attention_mask and output only".into());
@@ -560,8 +574,8 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             }
         }
         ClassifyTask::TextRanking => {
-            if c.format.is_some() || c.laya.is_some() {
-                return Err("`format` and `[classify.laya]` are for zero-shot models".into());
+            if c.format.is_some() || c.laya.is_some() || c.gliner2.is_some() {
+                return Err("`format`, `[classify.laya]` and `[classify.gliner2]` are for zero-shot models".into());
             }
             if c.labels.len() != 1 {
                 return Err("a text-ranking model has one output: `labels` names it (e.g. [\"score\"])".into());
@@ -602,6 +616,33 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                     require("qtype", &io.qtype)?;
                     if io.token_type_ids.is_some() {
                         return Err("the laya format takes no `token_type_ids`".into());
+                    }
+                    if c.gliner2.is_some() {
+                        return Err("`[classify.gliner2]` is for the gliner2 format".into());
+                    }
+                }
+                ClassifyFormat::Gliner2 => {
+                    match &c.gliner2 {
+                        Some(g) if !g.default_instructions.trim().is_empty() => {}
+                        Some(_) => return Err("`[classify.gliner2] default_instructions` must not be empty".into()),
+                        None => return Err("the gliner2 format needs `[classify.gliner2]`".into()),
+                    }
+                    if c.laya.is_some() {
+                        return Err("`[classify.laya]` is for the laya format".into());
+                    }
+                    if io.marker_pos.is_some() || io.qtype.is_some() || io.token_type_ids.is_some() {
+                        return Err("the gliner2 format's [classify.io] has input_ids, attention_mask and output only".into());
+                    }
+                    // A request makes itself multi-label (`multi_label`);
+                    // the manifest's problem type is the default.
+                    if m.problem_type != ProblemType::SingleLabel {
+                        return Err("the gliner2 format's problem_type is `single_label`; requests opt into \
+                                    multi-label with `multi_label`".into());
+                    }
+                    // Calibration keys are per question type, which the
+                    // gliner2 format doesn't have.
+                    if !c.calibration.is_empty() {
+                        return Err("`[classify.calibration]` isn't supported by the gliner2 format".into());
                     }
                 }
             }
@@ -801,6 +842,61 @@ output = "logits"
             let tmp = tmp_dir(&format!("rank-{name}"));
             write_classifier(&tmp, name, &body);
             let reg = ModelRegistry::scan(&tmp).unwrap();
+            assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
+            std::fs::remove_dir_all(&tmp).unwrap();
+        }
+    }
+
+    const GLINER2: &str = r#"
+id = "gliner2.5-decide"
+task = "zero-shot-classification"
+source = { repo = "fastino/GLiNER2.5-Decide", revision = "5a7adf72a23b4d311abae6ce050d7f0012bb3416" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 32
+problem_type = "single_label"
+
+[classify]
+format = "gliner2"
+max_labels = 32
+
+[classify.gliner2]
+default_instructions = "label"
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
+"#;
+
+    #[test]
+    fn gliner2_classifiers_and_what_they_refuse() {
+        let tmp = tmp_dir("gliner2");
+        write_classifier(&tmp, "g", GLINER2);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped());
+        let m = &reg.classifier("gliner2.5-decide").unwrap().manifest;
+        assert_eq!(m.classify.format, Some(ClassifyFormat::Gliner2));
+        assert_eq!(m.max_labels(), 32);
+        assert_eq!(m.classify.gliner2.as_ref().unwrap().default_instructions, "label");
+        assert_eq!(m.extension_fields(), vec!["candidate_labels", "instructions", "multi_label"]);
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        for (name, body, want) in [
+            ("no-section", GLINER2.replace("[classify.gliner2]\ndefault_instructions = \"label\"\n", ""), "needs `[classify.gliner2]`"),
+            ("empty-default", GLINER2.replace("= \"label\"", "= \" \""), "must not be empty"),
+            ("marker-io", GLINER2.replace("output = ", "marker_pos = \"m\"\noutput = "), "output only"),
+            ("multi-label", GLINER2.replace("problem_type = \"single_label\"", "problem_type = \"multi_label\""), "`multi_label`"),
+            ("calibration", format!("{GLINER2}\n[classify.calibration]\n\"choice:2\" = 1.0\n"), "isn't supported by the gliner2"),
+            ("laya-section", format!("{GLINER2}\n[classify.laya]\nhead_max_len = 8\ndefault_instructions = {{ choice = \"a\", score = \"b\", noul = \"c\" }}\n"), "for the laya format"),
+            ("on-fixed", format!("{SENTIMENT}\n[classify.gliner2]\ndefault_instructions = \"x\"\n"), "zero-shot formats"),
+        ] {
+            let tmp = tmp_dir(&format!("gliner2-{name}"));
+            write_classifier(&tmp, name, &body);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            assert_eq!(reg.skipped().len(), 1, "{name}");
             assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
             std::fs::remove_dir_all(&tmp).unwrap();
         }
