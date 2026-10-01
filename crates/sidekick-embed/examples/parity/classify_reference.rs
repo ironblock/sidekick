@@ -5,7 +5,7 @@
 
 use crate::reference::{corpus_hash, sha256_hex};
 use serde::Deserialize;
-use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat};
+use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, OptionRendering};
 use sidekick_core::{ClassifyParams, ClassifyTask, QuestionType};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -39,6 +39,10 @@ pub struct RefModel {
     pub max_labels: usize,
     #[serde(default)]
     pub labels: Vec<String>,
+    /// laya format: how the reference rendered labels as options. Absent in
+    /// references that predate the field, which all used laya's rendering.
+    #[serde(default)]
+    pub option_rendering: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,6 +249,29 @@ impl ClassifyReference {
         if m.labels != manifest.classify.labels {
             why.push("labels changed".into());
         }
+        if let Some(laya) = &manifest.classify.laya {
+            let want = match laya.option_rendering {
+                OptionRendering::Laya => "laya",
+                OptionRendering::Julia => "julia",
+            };
+            let have = m.option_rendering.as_deref().unwrap_or("laya");
+            if have != want {
+                why.push(format!("option_rendering {have} != {want}"));
+            }
+        }
+        // The runtime ports one gliner2 release's input layout. A reference
+        // from another release lays inputs out differently. (References
+        // without the key came from a generator that refused any other.)
+        if manifest.classify.format == Some(ClassifyFormat::Gliner2) {
+            let have = self.versions.get("gliner2").cloned().flatten();
+            if have.as_deref().is_some_and(|v| v != sidekick_embed::gliner2::PORTED_VERSION) {
+                why.push(format!(
+                    "gliner2 {} != {}, the version the runtime ports",
+                    have.unwrap_or_default(),
+                    sidekick_embed::gliner2::PORTED_VERSION
+                ));
+            }
+        }
         (!why.is_empty()).then(|| {
             format!("stale reference ({}); regenerate it with the classifier reference generator", why.join("; "))
         })
@@ -314,5 +341,39 @@ pub(crate) mod tests {
         let (_, st) = sample();
         let bad = json.replace("\"k\":3", "\"k\":5");
         assert!(ClassifyReference::parse(&bad, &st).unwrap_err().contains("k = 5"));
+    }
+
+    #[test]
+    fn a_rendering_or_gliner2_change_makes_a_reference_stale() {
+        let manifest = |extra_top: &str, classify: &str| -> ClassifierManifest {
+            toml::from_str(&format!(
+                "id = \"z\"\ntask = \"zero-shot-classification\"\nartifact = \"m\"\ntokenizer = \"t\"\n\
+                 buckets = [128]\nmax_seq_len = 128\n{extra_top}\n[classify]\nmax_labels = 4\n{classify}"
+            ))
+            .unwrap()
+        };
+        let laya = |rendering: &str| {
+            manifest("", &format!("format = \"laya\"\n[classify.laya]\nhead_max_len = 64\noption_rendering = \"{rendering}\"\n"))
+        };
+        let (json, st) = sample();
+        let stale = |json: &str, m: &ClassifierManifest| {
+            ClassifyReference::parse(json, &st).unwrap().stale(m, "c", "t")
+        };
+        // Without the field the reference used laya's rendering.
+        assert_eq!(stale(&json, &laya("laya")), None);
+        let why = stale(&json, &laya("julia")).unwrap();
+        assert!(why.contains("option_rendering laya != julia"), "{why}");
+        let julia = json.replace("\"format\":\"laya\"", "\"format\":\"laya\",\"option_rendering\":\"julia\"");
+        assert_eq!(stale(&julia, &laya("julia")), None);
+
+        // gliner2: a recorded release other than the ported one is stale;
+        // none recorded (older generators refused any other) is not.
+        let g2 = manifest("", "format = \"gliner2\"\n[classify.gliner2]\ndefault_instructions = \"label\"\n");
+        let json = json.replace("\"format\":\"laya\"", "\"format\":\"gliner2\"");
+        assert_eq!(stale(&json, &g2), None);
+        let with = |v: &str| json.replace("\"cases\":", &format!("\"versions\":{{\"gliner2\":\"{v}\"}},\"cases\":"));
+        assert_eq!(stale(&with(sidekick_embed::gliner2::PORTED_VERSION), &g2), None);
+        let why = stale(&with("2.1.0"), &g2).unwrap();
+        assert!(why.contains("gliner2 2.1.0 != 2.0.0"), "{why}");
     }
 }

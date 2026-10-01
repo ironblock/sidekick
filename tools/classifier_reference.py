@@ -789,9 +789,14 @@ def main():
                   "max_labels": max_labels, "labels": cls.get("labels", [])},
         "source": source,
         "oracles": list(tensors),
-        "versions": {p: version(p) for p in ("torch", "transformers", "tokenizers", "numpy")},
+        "versions": {p: version(p) for p in ("torch", "transformers", "tokenizers", "numpy")
+                     + (("gliner2",) if gliner2 else ())},
         "cases": [],
     }
+    if laya:
+        # How labels became option texts: a reference made under one
+        # rendering is stale for a manifest that names another.
+        meta["model"]["option_rendering"] = cls["laya"].get("option_rendering", "laya")
     for c in cases:
         rec = {"id": c["id"], "tags": c["tags"], "input": c["input"]}
         if laya:

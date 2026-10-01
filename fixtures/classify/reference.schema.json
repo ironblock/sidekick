@@ -18,7 +18,8 @@
         "buckets": {"type": "array", "items": {"type": "integer"}},
         "max_seq_len": {"type": "integer"},
         "max_labels": {"type": "integer"},
-        "labels": {"type": "array", "items": {"type": "string"}}
+        "labels": {"type": "array", "items": {"type": "string"}},
+        "option_rendering": {"enum": ["laya", "julia"], "description": "laya format: how labels became option texts; absent means laya. A reference whose rendering differs from the manifest's is stale"}
       }
     },
     "source": {
@@ -27,7 +28,7 @@
       "properties": {"repo": {"type": "string"}, "revision": {"type": ["string", "null"]}}
     },
     "oracles": {"type": "array", "items": {"type": "string"}, "description": "\"torch\" (fp32, required); optionally \"fp16\", the model's outputs in ideal fp16 (the conversion library's simulation), which the suite grades each path's ratio against"},
-    "versions": {"type": "object"},
+    "versions": {"type": "object", "description": "the generator's Python packages; for the gliner2 format, `gliner2` too, which must be the release the runtime ports or the reference is stale"},
     "cases": {
       "type": "array",
       "items": {

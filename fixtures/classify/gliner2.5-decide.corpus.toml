@@ -22,7 +22,9 @@
 #    semantics differ, every terminal-punctuation case, and texts truncated at
 #    the largest bucket. With the shortest single-label and multi-label
 #    dataset requests they form the committed token-id fixture
-#    (fixtures/classify/gliner2.5-decide.tokens.json).
+#    (fixtures/classify/gliner2.5-decide.tokens.json). The generator adds
+#    two cases to the fixture only: texts at the truncation boundary built
+#    for the model's max_len, which depend on its tokenizer.
 #
 # Generated texts stay under the input builder's byte cap (16 bytes per token
 # of max_seq_len), so the reference's truncation and the server's agree
