@@ -26,7 +26,7 @@
       "required": ["repo", "revision"],
       "properties": {"repo": {"type": "string"}, "revision": {"type": ["string", "null"]}}
     },
-    "oracles": {"type": "array", "items": {"type": "string"}},
+    "oracles": {"type": "array", "items": {"type": "string"}, "description": "\"torch\" (fp32, required); optionally \"fp16\", the model's outputs in ideal fp16 (the conversion library's simulation), which the suite grades each path's ratio against"},
     "versions": {"type": "object"},
     "cases": {
       "type": "array",
@@ -47,6 +47,7 @@
           "markers": {"type": "array", "items": {"type": "integer"}},
           "qtype": {"type": ["integer", "null"]},
           "k": {"type": "integer", "description": "label count for this case"},
+          "multi_label": {"type": ["boolean", "null"], "description": "the request asked for multi-label decoding (gliner2): the case is graded with independent sigmoids, not the model's activation"},
           "gold": {"type": ["array", "null"], "items": {"type": "string"}, "description": "gold labels when the corpus has them (reported, never graded)"}
         }
       }

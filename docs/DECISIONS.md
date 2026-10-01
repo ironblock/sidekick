@@ -1313,6 +1313,45 @@ It exposed two CPU traps:
   attend to itself, by clearing the mask's diagonal, prevents it and is
   exact for real tokens.
 
+**Amendment (September 2026): classifiers are also graded against their
+ideal-fp16 ceiling.** The absolute scale (A for a worst-case |Δp| ≤ 1e-3)
+can't tell a perfect fp16 conversion of laya from a poor one. An ideal fp16
+engine moves laya's probabilities by up to ~0.017, so no fp16 path could
+grade laya above D however good its conversion. The 1e-3 bucket gate is
+unreachable for the same reason: laya's GPU path varies by 0.011 between
+buckets. Grading still has to work for models like nlptown, whose ideal
+fp16 error is tiny (5.4e-4) and whose absolute B is honest.
+
+- **The ceiling.** Each classifier reference may carry a second oracle,
+  `fp16`, beside `torch`: the model as published, run through
+  `sidekick_convert.fp16sim`. That simulates an ideal fp16 engine with
+  fp32 arithmetic inside each op and every input-dependent op output
+  stored in fp16. Constants (weights, buffers, RoPE tables) are stored in
+  fp16 once, and attention runs in the explicit form converted programs
+  use (docs/CONVERTING.md defines it). The ceiling is that oracle's |Δp|
+  against fp32 over the graded cases, and every model's is computed by the
+  same function.
+- **The ratio grade** is the path's p99 |Δp| divided by the ceiling's p99:
+  A ≤ 1.25×, B ≤ 2×, C ≤ 4×, D beyond. It is anchored on p99, not the
+  worst case. Two valid implementations of the same simulation agreed on
+  laya's mean and p99 within 15% but differed 1.7× on the worst case,
+  which depends on exactly which tensors are rounded. The worst-case ratio
+  is reported, not graded. With fewer than 100 cases the p99 is the
+  maximum, and the report says so.
+- **The grade that counts** is the better of the absolute grade and the
+  ratio grade. A model is credited either for being practically exact or
+  for being as good as fp16 allows, and a low ceiling never demotes an
+  honest absolute grade (nlptown's B). A graded decision flip still caps
+  the grade at C, and a failed gate is still F.
+- **Bucket invariance on fp16 paths** (GPU and ANE) passes at |Δp| ≤
+  max(1e-3, ceiling worst case). Variation between buckets that's within
+  what fp16 storage alone produces isn't a defect. The CPU path's exact
+  invariance gate is unchanged.
+- **Multi-label cases** (gliner2's `multi_label`) are graded on per-label
+  sigmoids. **Rerankers** use the same rules in sigmoid space (D29).
+- A reference without the `fp16` oracle grades exactly as before, so
+  models move to this scale as their references are regenerated.
+
 ## D29 — Reranking: vLLM's and Cohere's contracts, a reranker is a classifier
 Reranking (scoring documents against a query) is how retrieval pipelines
 use cross-encoders, and it has the strongest API convention of anything

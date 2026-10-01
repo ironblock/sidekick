@@ -38,7 +38,6 @@ pub fn worker(
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
         .map_err(|e| e.to_string())?
         .get_vocab_size(true) as u64;
-    let problem = crate::classify_grade::graded_problem(&model.manifest);
 
     let t0 = Instant::now();
     let clf = CoremlClassifier::load_with(model, units(path)).map_err(|e| e.to_string())?;
@@ -51,6 +50,7 @@ pub fn worker(
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
         let e = |e: sidekick_core::Error| format!("case {}: {e}", case.id);
+        let problem = crate::classify_grade::case_problem(&model.manifest, case);
         let max = model.manifest.max_seq_len;
         let prepared = match &case.query {
             Some(query) => clf.prepare_pair(query, &case.input, &case.pair_params(max)),
@@ -251,9 +251,9 @@ pub fn grade_model(
         ) {
             Ok(second) => {
                 let mut d = Delta::default();
-                for (a, b) in first.cases.iter().zip(&second.cases) {
+                for ((a, b), case) in first.cases.iter().zip(&second.cases).zip(&reference.cases) {
                     d.add(if a.finite && b.finite {
-                        delta_p(crate::classify_grade::graded_problem(m), &a.logits, &b.logits, None)
+                        delta_p(crate::classify_grade::case_problem(m, case), &a.logits, &b.logits, None)
                     } else {
                         None
                     });
@@ -357,6 +357,38 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
             inv(&g.pad_invariance),
             g.median_ms,
         );
+    }
+    if let Some(c) = grades.iter().find_map(|g| g.ceiling) {
+        println!(
+            "  fp16 ceiling (ideal fp16 vs fp32): max {}, p99 {}, mean {}",
+            fmt(Some(c.max)),
+            fmt(Some(c.p99)),
+            fmt(Some(c.mean))
+        );
+        let ratios: Vec<String> = grades
+            .iter()
+            .map(|g| match (g.ratio, g.max_ratio) {
+                (Some(r), max) => format!(
+                    "{} {r:.2}x ({}; absolute {}; max {})",
+                    g.path,
+                    crate::classify_grade::ratio_letter(r),
+                    g.absolute_letter,
+                    max.map_or("-".into(), |m| format!("{m:.2}x")),
+                ),
+                (None, _) => format!("{} -", g.path),
+            })
+            .collect();
+        println!(
+            "  p99 Δp / ceiling p99, the better of it and the absolute grade counts: {}",
+            ratios.join(", ")
+        );
+        if c.n < 100 {
+            println!(
+                "  note: p99 = max at this corpus size ({} values); the ratio inherits the \
+                 ceiling max's sensitivity",
+                c.n
+            );
+        }
     }
     if let Some(d) = &report.determinism {
         println!("  ANE across two processes: Δp {} over {} cases", fmt(d.max), d.n);
