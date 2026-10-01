@@ -27,6 +27,10 @@ struct Args {
     /// default: a default value would always override the config file.
     #[arg(long, env = "SIDEKICK_TIMEOUT_SECS")]
     request_timeout_secs: Option<u64>,
+    /// Load models served on the ANE even past Core ML's 1 GiB weight
+    /// limit, which it would run off the ANE (for experimentation)
+    #[arg(long)]
+    ignore_ane_weight_cap: bool,
 }
 
 /// `sidekickd --version`: the crate version plus the SDK the Foundation
@@ -67,6 +71,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(secs) = args.request_timeout_secs {
         config.request_timeout_secs = secs;
     }
+    if args.ignore_ane_weight_cap {
+        config.ignore_ane_weight_cap = true;
+    }
 
     let state = build_state(&config)?;
     let availability = state.chat.availability().await;
@@ -90,4 +97,16 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_ane_weight_cap_flag_parses() {
+        let args = Args::try_parse_from(["sidekickd", "--ignore-ane-weight-cap"]).unwrap();
+        assert!(args.ignore_ane_weight_cap);
+        assert!(!Args::try_parse_from(["sidekickd"]).unwrap().ignore_ane_weight_cap);
+    }
 }

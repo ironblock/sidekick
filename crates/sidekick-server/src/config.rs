@@ -27,6 +27,11 @@ pub struct Config {
     /// Hard cap on a single generation call. A hung Foundation Models call
     /// otherwise hangs its request forever.
     pub request_timeout_secs: u64,
+    /// Load models served on the ANE even when their compiled weights exceed
+    /// Core ML's 1 GiB limit, which Core ML would quietly run off the ANE.
+    /// For experimentation; a manifest's `ane_weight_limit = "ignore"` does
+    /// the same for one model.
+    pub ignore_ane_weight_cap: bool,
 }
 
 impl Default for Config {
@@ -38,6 +43,7 @@ impl Default for Config {
             session_ttl_secs: 300,
             model_idle_ttl_secs: 900,
             request_timeout_secs: 60,
+            ignore_ane_weight_cap: false,
         }
     }
 }
@@ -98,5 +104,8 @@ mod tests {
         let c: Config = toml::from_str("addr = \"127.0.0.1:9000\"").unwrap();
         assert_eq!(c.addr.port(), 9000);
         assert_eq!(c.model_idle_ttl_secs, 900);
+        assert!(!c.ignore_ane_weight_cap, "the ANE weight cap is enforced by default");
+        let c: Config = toml::from_str("ignore_ane_weight_cap = true").unwrap();
+        assert!(c.ignore_ane_weight_cap);
     }
 }

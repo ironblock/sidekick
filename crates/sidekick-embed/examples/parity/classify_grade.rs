@@ -552,6 +552,7 @@ mod tests {
     fn manifest() -> ClassifierManifest {
         ClassifierManifest {
             compute_units: Default::default(),
+            ane_weight_limit: Default::default(),
             id: "z".into(),
             task: ClassifyTask::ZeroShotClassification,
             source: None,
