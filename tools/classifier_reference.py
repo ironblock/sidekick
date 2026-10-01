@@ -450,7 +450,10 @@ def julia_build(cases, data, tok, manifest):
             raise SystemExit(f"{c['id']}: {len(enc['markers'])} markers for {k} labels")
         c.update(ids=enc["ids"], markers=enc["markers"], qtype=enc["qtype"], k=k)
         if enc["truncated"]:
-            c["tags"] = c["tags"] + ["truncated"]
+            # Not "truncated": that tag means the request carries
+            # truncate_prompt_tokens, which the laya format refuses because
+            # it truncates the state by design.
+            c["tags"] = c["tags"] + ["truncated-text"]
         kept.append(c)
     if over:
         print(f"left out {sum(over.values())} cases over max_labels {max_labels}: {over}", flush=True)

@@ -88,7 +88,9 @@ pub struct ClassifyCase {
 }
 
 /// Cases the reference truncated to the model's maximum length, as a
-/// client would ask with `truncate_prompt_tokens`.
+/// client would ask with `truncate_prompt_tokens`. A zero-shot format that
+/// truncates its text by design tags such cases `truncated-text` instead,
+/// and its requests never carry the field.
 pub const TRUNCATED_TAG: &str = "truncated";
 
 impl ClassifyCase {
@@ -96,7 +98,7 @@ impl ClassifyCase {
     /// `params` when tagged `truncated`.
     pub fn pair_params(&self, max_seq_len: usize) -> sidekick_core::PairParams {
         sidekick_core::PairParams {
-            truncate_prompt_tokens: self.params(max_seq_len).truncate_prompt_tokens,
+            truncate_prompt_tokens: self.params(max_seq_len, false).truncate_prompt_tokens,
             ..Default::default()
         }
     }
@@ -104,13 +106,12 @@ impl ClassifyCase {
     /// The request this case stands for. A case tagged `truncated` sends
     /// `truncate_prompt_tokens: max_seq_len` (HF truncation: special tokens
     /// kept, `max_seq_len` in total), since without it an over-length input
-    /// is a 400.
-    pub fn params(&self, max_seq_len: usize) -> ClassifyParams {
+    /// is a 400. A format that truncates its text itself (`self_truncating`:
+    /// laya, gliner2) refuses the field, so it is never sent there, whatever
+    /// the tags say.
+    pub fn params(&self, max_seq_len: usize, self_truncating: bool) -> ClassifyParams {
         ClassifyParams {
-            truncate_prompt_tokens: self
-                .tags
-                .iter()
-                .any(|t| t == TRUNCATED_TAG)
+            truncate_prompt_tokens: (!self_truncating && self.tags.iter().any(|t| t == TRUNCATED_TAG))
                 .then_some(max_seq_len),
             candidate_labels: self.candidate_labels.clone(),
             question_type: self.question_type,
@@ -293,11 +294,13 @@ pub(crate) mod tests {
         let r = ClassifyReference::parse(&json, &st).unwrap();
         assert_eq!(r.logits["torch"], vec![vec![1.0, 2.0], vec![0.5, 0.0, -1.0]]);
         assert_eq!(r.cases[0].question_type, Some(QuestionType::Noul));
-        assert_eq!(r.cases[0].params(128).candidate_labels, vec!["p", "q"]);
-        assert_eq!(r.cases[0].params(128).truncate_prompt_tokens, None);
+        assert_eq!(r.cases[0].params(128, false).candidate_labels, vec!["p", "q"]);
+        assert_eq!(r.cases[0].params(128, false).truncate_prompt_tokens, None);
         let mut truncated = r.cases[0].clone();
         truncated.tags.push(TRUNCATED_TAG.into());
-        assert_eq!(truncated.params(128).truncate_prompt_tokens, Some(128));
+        assert_eq!(truncated.params(128, false).truncate_prompt_tokens, Some(128));
+        // A self-truncating format never gets the field, even from a stale tag.
+        assert_eq!(truncated.params(128, true).truncate_prompt_tokens, None);
         assert_eq!(r.source_label(), "org/z@0123456789");
     }
 
