@@ -429,6 +429,7 @@ path.
 | [SupersonicLabs/Julia-1](https://huggingface.co/SupersonicLabs/Julia-1) as `julia-1` (**preview**) | zero-shot, laya's format with Julia-1's option rendering, 1,024 tokens | [convert_julia.py](../tools/convert_julia.py) | D 0.39 (39 flips; 5.3× ceiling) | **C** 0.053 (2 flips cap it; 1.07× ceiling, A level) | **C** 0.116 (7 flips cap it; 1.84× ceiling, B level) | 1647/1665 | 9.0 |
 | [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` (**preview**) | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.16 (13 flips; 6.1× ceiling) | **A** 0.037 (0.93× ceiling) | **C** 0.043 (1 flip caps it; 1.93× ceiling, B level) | 1701/1719 | 40 |
 | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` (**preview**) | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
+| [fastino/GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) as `gliner2.5-decide` (served on the GPU) | zero-shot, gliner2's format | [convert_gliner2.py](../tools/convert_gliner2.py) | D 0.024 | **A** 3.7e-3 | C 0.019 (512 bucket only) | 947/956 | 1,280 at 512 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -532,6 +533,54 @@ adversarial cases in Julia-1's terms.
   forward in every bucket). mmBERT's config gives RoPE in transformers 5's
   `rope_parameters` block, which transformers 4.57 ignores; the converter
   reads it and checks every layer's rotary frequencies.
+
+**GLiNER2.5-Decide is served on the GPU**, not the ANE: its manifest sets
+`compute_units = "cpu_and_gpu"`. It is fastino's DeBERTa-v3-large
+(486M parameters, Apache-2.0) with GLiNER2's per-token classifier, which
+scores an `[L]` marker placed before each candidate label. The converter
+replaces DeBERTa's relative-position gathers with a relative shift
+(per-bucket tables over the 2L−1 distances, then a reshape-and-slice
+skew), which is exact in fp32 and puts 99% of operations on the ANE.
+Measured on 2,916 cases: every classification head of
+fastino/fast-decisions sent as a gliner2 request, plus 16 adversarial
+cases.
+- **Graded against its fp16 ceiling**, as this section's introduction
+  describes. Its ideal-fp16 engine reaches |Δp| 3.5e-3 at most and
+  1.75e-3 at p99 on this corpus, so the absolute letters alone would cap
+  every fp16 path at B.
+- **GPU: A.** p99 at 1.14× the ceiling, worst |Δp| 3.7e-3, no decision
+  flips, 34 ms median. Bucket invariance is 3.3e-3, within the ceiling's
+  own 3.5e-3.
+- **ANE: C, and slow.** p99 at 3.3× the ceiling, worst |Δp| 0.019, one
+  flip on a near tie (fp32 margin 0.003 logits). A prediction takes about
+  0.11 s at 128 tokens, 0.34 s at 256 and 1.28 s at 512: 10–40× the
+  GPU. The relative-shift path compiles onto the ANE, but runs far slower
+  there than the attention of the other encoders here. That is not
+  diagnosed yet. The suite's worker completed all 2,916 cases. This grade
+  was computed from its output against the same reference and ceiling,
+  because the run outlasted the suite's time limit.
+- **CPU: D.** p99 at 5.5× the ceiling, worst |Δp| 0.024, no flips beyond
+  5 near ties, 131 ms median. As with laya, Core ML's fp16 CPU backend is
+  the least accurate path.
+- **An open observation on the ANE.** With all three buckets
+  (128/256/512) loaded in one process, the ANE path failed after 84 and
+  after 322 cases in two runs: Core ML returned "Unable to compute the
+  prediction using ML Program" on cases that predict correctly when run
+  again. One
+  bucket alone ran all 2,916 cases cleanly, so the ANE grade above comes
+  from a 512-only manifest (padding is exact, so every case can run
+  there). Other multi-bucket models, including ModernBERT-large ones, run
+  on the ANE without it. The cause is unknown. GPU serving avoids it.
+- **Parity only.** fast-decisions is fastino's own benchmark, so its gold
+  labels measure nothing independent. Agreement with them is the same on
+  every path (68.7% fp32, 68.8% CPU, 68.7% GPU) and isn't graded.
+- Its token layout is a port of gliner2's own code, checked token for
+  token against gliner2's Python on the adversarial cases and on a
+  single-label and a multi-label dataset request.
+
+The CPU path takes 25–30 minutes for the 2,916 cases on an M1 Max, past
+the suite's default per-worker limit, so run it with `--timeout 3600`. The
+ANE path at 512 needs about two hours, past even that.
 
 ## Rerankers (`/v1/rerank`)
 
