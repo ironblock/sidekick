@@ -7,10 +7,12 @@ own Python input builder, runs the model as published in fp32 on the CPU, one
 unpadded input at a time, and writes (docs/design/classify.md):
 
 - <out>/<model id>/reference.json + reference.safetensors: per-case ids,
-  markers, qtype, labels, gold labels and the fp32 logits ("torch", one
-  float32 [cases, max_labels] tensor, NaN beyond each case's label count),
-  with D26's staleness keys (corpus and tokenizer hashes, the checkpoint's
-  repo and revision). Schema: fixtures/classify/reference.schema.json. Not
+  markers, qtype, labels, gold labels and two oracles, each one float32
+  [cases, max_labels] tensor of logits, NaN beyond each case's label count:
+  "torch", the fp32 logits, and "fp16", the same model as an ideal fp16
+  engine would run it (sidekick_convert.fp16sim; docs/CONVERTING.md), the
+  ceiling the suite grades each path against. With D26's staleness keys
+  (corpus and tokenizer hashes, the checkpoint's repo and revision). Schema: fixtures/classify/reference.schema.json. Not
   committed: it derives from model weights.
 - with --tokens-fixture PATH, the token-id fixture: a small subset of cases
   with their ids and markers. Schema: fixtures/classify/tokens.schema.json.
@@ -53,6 +55,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import parity_reference as pr  # noqa: E402  (corpus hash and materialization, D26)
+from sidekick_convert import fp16sim  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 LAYA_CORPUS = REPO / "fixtures" / "classify" / "laya-en.corpus.toml"
@@ -178,17 +181,41 @@ def laya_build(cases, rl, tok, cfg, defaults, max_labels):
     return cases
 
 
-def laya_logits(dm, cases, max_labels, log_every=100):
-    out = np.full((len(cases), max_labels), np.nan, dtype=np.float32)
-    with torch.no_grad():
-        for i, c in enumerate(cases):
-            ids = torch.tensor([c["ids"]])
-            logits, _ = dm(ids, torch.ones_like(ids), torch.tensor([c["markers"]]),
-                           torch.ones((1, c["k"]), dtype=torch.bool), torch.tensor([c["qtype"]]))
-            out[i, : c["k"]] = logits[0].numpy()
-            if log_every and i % log_every == 0:
-                print(f"  fp32 {i}/{len(cases)}", flush=True)
+# how each oracle runs a model: as published in fp32, or as an ideal fp16 engine
+RUNS = {"torch": lambda model, *args, **kwargs: model(*args, **kwargs), "fp16": fp16sim.run}
+
+
+def oracles(forward, cases, width, log_every=100):
+    """Each oracle's logits, [cases, width] and NaN-padded. forward(run, case)
+    returns one case's logits, calling the model through run(model, ...). A
+    model that overflows fp16 as published has no ceiling: its fp16 oracle is
+    left out, and the run says why."""
+    out = {}
+    for name, run in RUNS.items():
+        logits = np.full((len(cases), width), np.nan, dtype=np.float32)
+        with torch.no_grad():
+            for i, c in enumerate(cases):
+                logits[i, : c["k"]] = forward(run, c)
+                if log_every and i % log_every == 0:
+                    print(f"  {name} {i}/{len(cases)}", flush=True)
+        out[name] = logits
+    lost = np.isfinite(out["torch"]) & ~np.isfinite(out["fp16"])
+    if lost.any():
+        bad = [cases[i]["id"] for i in sorted(set(np.nonzero(lost)[0]))]
+        print(f"WARNING: ideal fp16 is not finite on {len(bad)} cases ({bad[:5]}): "
+              "the model overflows fp16 as published; no fp16 oracle", flush=True)
+        del out["fp16"]
     return out
+
+
+def laya_logits(dm, cases, max_labels):
+    def forward(run, c):
+        ids = torch.tensor([c["ids"]])
+        args = (ids, torch.ones_like(ids), torch.tensor([c["markers"]]),
+                torch.ones((1, c["k"]), dtype=torch.bool), torch.tensor([c["qtype"]]))
+        logits, _ = run(dm, *args)
+        return logits[0].numpy()
+    return oracles(forward, cases, max_labels)
 
 
 def laya_fixture_subset(cases):
@@ -265,12 +292,12 @@ def run_text(args, manifest):
     logits = None
     if not args.fixture_only:
         model = AutoModelForSequenceClassification.from_pretrained(args.source, dtype=torch.float32).eval()
-        k = cases[0]["k"]
-        logits = np.full((len(cases), k), np.nan, dtype=np.float32)
-        with torch.no_grad():
-            for i, c in enumerate(cases):
-                ids = torch.tensor([c["ids"]])
-                logits[i] = model(input_ids=ids, attention_mask=torch.ones_like(ids)).logits[0].numpy()
+
+        def forward(run, c):
+            ids = torch.tensor([c["ids"]])
+            feed = {"input_ids": ids, "attention_mask": torch.ones_like(ids)}
+            return run(model, **feed).logits[0].numpy()
+        logits = oracles(forward, cases, cases[0]["k"])
     return cases, fixture, logits, pr.corpus_hash(corpus_text)
 
 
@@ -312,8 +339,10 @@ def main():
     from safetensors.numpy import save_file
     cls = manifest["classify"]
     max_labels = cls.get("max_labels", len(cls.get("labels", [])))
-    tensor = np.full((len(cases), max_labels), np.nan, dtype=np.float32)
-    tensor[:, : logits.shape[1]] = logits
+    tensors = {}
+    for name, values in logits.items():
+        tensors[name] = np.full((len(cases), max_labels), np.nan, dtype=np.float32)
+        tensors[name][:, : values.shape[1]] = values
     meta = {
         "format": FORMAT,
         "corpus_sha256": corpus_sha,
@@ -322,7 +351,7 @@ def main():
                   "buckets": manifest["buckets"], "max_seq_len": manifest["max_seq_len"],
                   "max_labels": max_labels, "labels": cls.get("labels", [])},
         "source": source,
-        "oracles": ["torch"],
+        "oracles": list(tensors),
         "versions": {p: version(p) for p in ("torch", "transformers", "tokenizers", "numpy")},
         "cases": [],
     }
@@ -338,8 +367,8 @@ def main():
     out = (args.out or args.model_dir / "parity") / manifest["id"]
     out.mkdir(parents=True, exist_ok=True)
     (out / "reference.json").write_text(json.dumps(meta, ensure_ascii=False))
-    save_file({"torch": tensor}, str(out / "reference.safetensors"))
-    print(f"wrote {len(cases)} cases x {max_labels} labels, oracles ['torch'], to {out}")
+    save_file(tensors, str(out / "reference.safetensors"))
+    print(f"wrote {len(cases)} cases x {max_labels} labels, oracles {list(tensors)}, to {out}")
 
 
 if __name__ == "__main__":

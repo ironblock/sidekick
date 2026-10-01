@@ -12,7 +12,8 @@ core.run():
 core.run() converts one static-shape artifact per bucket and gates each one
 (gates.py) before installing it. The techniques every backbone draws on live
 in sidekick_convert.techniques. docs/CONVERTING.md is the catalog: modules,
-gotchas, and how to add a family.
+gotchas, and how to add a family. fp16sim simulates an ideal fp16 engine,
+the ceiling the parity suite grades real paths against.
 
 The scripts in tools/ import this package directly (tools/ is on sys.path
 when they run). Requires arm64-native Python with torch, transformers,
