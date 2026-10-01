@@ -2,6 +2,9 @@ pub mod chat;
 pub mod classify;
 pub mod embeddings;
 pub mod misc;
+pub mod pooling;
+pub mod rerank;
+pub mod embed_v2;
 pub mod wire;
 
 use crate::state::AppState;
@@ -15,15 +18,22 @@ use axum::{Json, Router};
 use sidekick_core::{EmbeddingBackendKind, Error, UnavailableReason};
 
 pub fn build_router(state: AppState) -> Router {
-    let v1 = Router::new()
-        .route("/models", get(misc::list_models))
-        .route("/chat/completions", post(chat::chat_completions))
-        .route("/embeddings", post(embeddings::embeddings))
-        .route("/classify", post(classify::classify))
+    // Every inference and listing route needs the API key when one is set.
+    let api = Router::new()
+        .route("/v1/models", get(misc::list_models))
+        .route("/v1/chat/completions", post(chat::chat_completions))
+        .route("/v1/embeddings", post(embeddings::embeddings))
+        .route("/v1/classify", post(classify::classify))
+        // vLLM serves its rerank shape at both paths (D29).
+        .route("/v1/rerank", post(rerank::rerank_v1))
+        .route("/rerank", post(rerank::rerank_v1))
+        // Cohere's v2 shapes.
+        .route("/v2/rerank", post(rerank::rerank_v2))
+        .route("/v2/embed", post(embed_v2::embed_v2))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
-        .nest("/v1", v1)
+        .merge(api)
         .route("/health", get(misc::health))
         // axum's default; stated explicitly because it is what bounds the
         // tokenizer cost of one embeddings request.
@@ -59,10 +69,7 @@ where
 /// and for errors that send a request to the wrong route.
 pub fn model_task(state: &AppState, id: &str) -> Option<&'static str> {
     if let Ok(c) = state.registry.classifier(id) {
-        return Some(match c.manifest.task {
-            sidekick_core::ClassifyTask::TextClassification => "text-classification",
-            sidekick_core::ClassifyTask::ZeroShotClassification => "zero-shot-classification",
-        });
+        return Some(c.manifest.task.name());
     }
     if state.registry.get(id).is_ok() {
         return Some("feature-extraction");
@@ -75,6 +82,7 @@ pub fn wrong_route(id: &str, task: &str, route: &str) -> ApiError {
     let use_instead = match task {
         "feature-extraction" => "/v1/embeddings",
         "text-generation" => "/v1/chat/completions",
+        "text-ranking" => "/v1/rerank",
         _ => "/v1/classify",
     };
     ApiError::new(

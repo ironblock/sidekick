@@ -1,0 +1,48 @@
+program(1.3)
+[buildInfo = dict<string, string>({{"coremlc-component-MIL", "3600.16.1"}, {"coremlc-version", "3600.25.1"}, {"coremltools-component-torch", "2.7.1"}, {"coremltools-source-dialect", "TorchScript"}, {"coremltools-version", "9.0"}})]
+{
+    func main<ios18>(tensor<int32, [1, 32]> attention_mask, tensor<int32, [1, 32]> input_ids, tensor<int32, [1, 32]> token_type_ids) {
+            tensor<int32, [1]> m_axes_0 = const()[name = string("m_axes_0"), val = tensor<int32, [1]>([2])];
+            string var_11_to_fp16_dtype_0 = const()[name = string("op_11_to_fp16_dtype_0"), val = string("fp16")];
+            tensor<fp16, [1, 32]> attention_mask_to_fp16 = cast(dtype = var_11_to_fp16_dtype_0, x = attention_mask)[name = string("cast_10")];
+            tensor<fp16, [1, 32, 1]> m_cast_fp16 = expand_dims(axes = m_axes_0, x = attention_mask_to_fp16)[name = string("m_cast_fp16")];
+            int32 var_22_batch_dims_0 = const()[name = string("op_22_batch_dims_0"), val = int32(0)];
+            bool var_22_validate_indices_0 = const()[name = string("op_22_validate_indices_0"), val = bool(false)];
+            tensor<fp16, [32, 8]> emb_weight_to_fp16 = const()[name = string("emb_weight_to_fp16"), val = tensor<fp16, [32, 8]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(64)))];
+            string input_ids_to_int16_dtype_0 = const()[name = string("input_ids_to_int16_dtype_0"), val = string("int16")];
+            string cast_4_dtype_0 = const()[name = string("cast_4_dtype_0"), val = string("int32")];
+            int32 greater_equal_0_y_0 = const()[name = string("greater_equal_0_y_0"), val = int32(0)];
+            tensor<int16, [1, 32]> input_ids_to_int16 = cast(dtype = input_ids_to_int16_dtype_0, x = input_ids)[name = string("cast_9")];
+            tensor<int32, [1, 32]> cast_4 = cast(dtype = cast_4_dtype_0, x = input_ids_to_int16)[name = string("cast_8")];
+            tensor<bool, [1, 32]> greater_equal_0 = greater_equal(x = cast_4, y = greater_equal_0_y_0)[name = string("greater_equal_0")];
+            int32 slice_by_index_0 = const()[name = string("slice_by_index_0"), val = int32(32)];
+            tensor<int32, [1, 32]> add_0 = add(x = cast_4, y = slice_by_index_0)[name = string("add_0")];
+            tensor<int32, [1, 32]> select_0 = select(a = cast_4, b = add_0, cond = greater_equal_0)[name = string("select_0")];
+            int32 var_22_cast_fp16_cast_uint16_axis_0 = const()[name = string("op_22_cast_fp16_cast_uint16_axis_0"), val = int32(0)];
+            string select_0_to_int16_dtype_0 = const()[name = string("select_0_to_int16_dtype_0"), val = string("int16")];
+            tensor<int16, [1, 32]> select_0_to_int16 = cast(dtype = select_0_to_int16_dtype_0, x = select_0)[name = string("cast_7")];
+            tensor<fp16, [1, 32, 8]> var_22_cast_fp16_cast_uint16_cast_uint16 = gather(axis = var_22_cast_fp16_cast_uint16_axis_0, batch_dims = var_22_batch_dims_0, indices = select_0_to_int16, validate_indices = var_22_validate_indices_0, x = emb_weight_to_fp16)[name = string("op_22_cast_fp16_cast_uint16_cast_uint16")];
+            int32 var_31_axis_0 = const()[name = string("op_31_axis_0"), val = int32(0)];
+            int32 var_31_batch_dims_0 = const()[name = string("op_31_batch_dims_0"), val = int32(0)];
+            bool var_31_validate_indices_0 = const()[name = string("op_31_validate_indices_0"), val = bool(false)];
+            tensor<fp16, [2, 8]> types_weight_to_fp16 = const()[name = string("types_weight_to_fp16"), val = tensor<fp16, [2, 8]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(640)))];
+            string token_type_ids_to_uint16_dtype_0 = const()[name = string("token_type_ids_to_uint16_dtype_0"), val = string("uint16")];
+            tensor<uint16, [1, 32]> token_type_ids_to_uint16 = cast(dtype = token_type_ids_to_uint16_dtype_0, x = token_type_ids)[name = string("cast_6")];
+            tensor<fp16, [1, 32, 8]> var_31_cast_fp16_cast_uint16 = gather(axis = var_31_axis_0, batch_dims = var_31_batch_dims_0, indices = token_type_ids_to_uint16, validate_indices = var_31_validate_indices_0, x = types_weight_to_fp16)[name = string("op_31_cast_fp16_cast_uint16")];
+            tensor<fp16, [1, 32, 8]> var_33_cast_fp16 = add(x = var_22_cast_fp16_cast_uint16_cast_uint16, y = var_31_cast_fp16_cast_uint16)[name = string("op_33_cast_fp16")];
+            tensor<fp16, [1, 32, 8]> var_34_cast_fp16 = tanh(x = var_33_cast_fp16)[name = string("op_34_cast_fp16")];
+            tensor<fp16, [1, 32, 8]> h_cast_fp16 = mul(x = var_34_cast_fp16, y = m_cast_fp16)[name = string("h_cast_fp16")];
+            tensor<int32, [1]> var_40_axes_0 = const()[name = string("op_40_axes_0"), val = tensor<int32, [1]>([1])];
+            bool var_40_keep_dims_0 = const()[name = string("op_40_keep_dims_0"), val = bool(false)];
+            tensor<fp16, [1, 8]> var_40_cast_fp16 = reduce_sum(axes = var_40_axes_0, keep_dims = var_40_keep_dims_0, x = h_cast_fp16)[name = string("op_40_cast_fp16")];
+            tensor<int32, [1]> var_45_axes_0 = const()[name = string("op_45_axes_0"), val = tensor<int32, [1]>([1])];
+            bool var_45_keep_dims_0 = const()[name = string("op_45_keep_dims_0"), val = bool(false)];
+            tensor<fp16, [1, 1]> var_45_cast_fp16 = reduce_sum(axes = var_45_axes_0, keep_dims = var_45_keep_dims_0, x = m_cast_fp16)[name = string("op_45_cast_fp16")];
+            tensor<fp16, [1, 8]> input_cast_fp16 = real_div(x = var_40_cast_fp16, y = var_45_cast_fp16)[name = string("input_cast_fp16")];
+            tensor<fp16, [1, 8]> w_weight_to_fp16 = const()[name = string("w_weight_to_fp16"), val = tensor<fp16, [1, 8]>([[0x1.588p-4, 0x1.2c4p-2, -0x1.2ccp-3, -0x1.31cp-3, -0x1.39cp-2, -0x1.db8p-7, -0x1.57p-3, 0x1.d04p-7]])];
+            tensor<fp16, [1]> w_bias_to_fp16 = const()[name = string("w_bias_to_fp16"), val = tensor<fp16, [1]>([-0x1.28cp-4])];
+            tensor<fp16, [1, 1]> linear_0_cast_fp16 = linear(bias = w_bias_to_fp16, weight = w_weight_to_fp16, x = input_cast_fp16)[name = string("linear_0_cast_fp16")];
+            string linear_0_cast_fp16_to_fp32_dtype_0 = const()[name = string("linear_0_cast_fp16_to_fp32_dtype_0"), val = string("fp32")];
+            tensor<fp32, [1, 1]> logits = cast(dtype = linear_0_cast_fp16_to_fp32_dtype_0, x = linear_0_cast_fp16)[name = string("cast_5")];
+        } -> (logits);
+}

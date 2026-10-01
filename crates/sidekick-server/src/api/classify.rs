@@ -9,7 +9,7 @@
 //! (which needs the tokenizer, loaded with the model) before any input runs.
 
 use super::wire::*;
-use super::{model_task, wrong_route, ApiError, ApiJson, Provenance, CORE_ML_UNITS};
+use super::{model_task, pooling, wrong_route, ApiError, ApiJson, Provenance, CORE_ML_UNITS};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -27,8 +27,8 @@ pub async fn classify(
     ApiJson(req): ApiJson<ClassifyRequest>,
 ) -> Result<Response, ApiError> {
     let manifest = match state.registry.classifier(&req.model) {
-        Ok(c) => c.manifest.clone(),
-        Err(_) => {
+        Ok(c) if c.manifest.task != ClassifyTask::TextRanking => c.manifest.clone(),
+        _ => {
             return Err(match model_task(&state, &req.model) {
                 Some(task) => wrong_route(&req.model, task, "/v1/classify"),
                 None => ApiError::model_not_found(&req.model),
@@ -38,13 +38,13 @@ pub async fn classify(
     if !state.classifiers_supported {
         return Err(Error::Unavailable(UnavailableReason::NotSupportedInBuild).into());
     }
-    let request_id = request_id(&headers, &req)?;
-    check_pooling_fields(&req)?;
+    let request_id = pooling::request_id(&headers, &req.pooling)?;
+    pooling::check(&req.pooling)?;
     let inputs = parse_input(&req, &manifest)?;
     let request = parse_params(&req, &manifest)?;
     let (params, temperature, use_activation) = (request.params, request.temperature, request.use_activation);
     let k = match manifest.task {
-        ClassifyTask::TextClassification => manifest.classify.labels.len(),
+        ClassifyTask::TextClassification | ClassifyTask::TextRanking => manifest.classify.labels.len(),
         ClassifyTask::ZeroShotClassification => params.candidate_labels.len(),
     };
 
@@ -56,7 +56,7 @@ pub async fn classify(
         .await
         .map_err(|_| timeout_err())??;
     let labels: Vec<String> = match manifest.task {
-        ClassifyTask::TextClassification => classifier.labels().to_vec(),
+        ClassifyTask::TextClassification | ClassifyTask::TextRanking => classifier.labels().to_vec(),
         ClassifyTask::ZeroShotClassification => params.candidate_labels.clone(),
     };
 
@@ -128,83 +128,6 @@ pub async fn classify(
         })
         .into_response(),
     ))
-}
-
-/// The response id's suffix, as vLLM picks it: the `X-Request-Id` header,
-/// else the body's `request_id`, else a random UUID.
-fn request_id(headers: &HeaderMap, req: &ClassifyRequest) -> Result<String, ApiError> {
-    if let Some(h) = headers.get("x-request-id") {
-        return h
-            .to_str()
-            .map(str::to_string)
-            .map_err(|_| ApiError::invalid("the X-Request-Id header must be visible ASCII"));
-    }
-    match &req.request_id {
-        None => Ok(uuid::Uuid::new_v4().simple().to_string()),
-        Some(Value::String(id)) => Ok(id.clone()),
-        Some(_) => Err(ApiError::invalid("`request_id` must be a string")),
-    }
-}
-
-/// vLLM's pooling fields that sidekick has no use for: each is accepted in
-/// the form that changes nothing, and otherwise a 400.
-fn check_pooling_fields(req: &ClassifyRequest) -> Result<(), ApiError> {
-    // vLLM rejects these in any form, with these messages.
-    if req.normalize.is_some() {
-        return Err(ApiError::invalid("Parameter `normalize` was removed; use `use_activation` instead."));
-    }
-    match req.task.as_ref().and_then(Value::as_str) {
-        Some("score") => return Err(ApiError::invalid("`score` task was removed; use `classify` instead.")),
-        Some("encode") => {
-            return Err(ApiError::invalid(
-                "`encode` task was removed; use `token_embed` or `token_classify` instead.",
-            ))
-        }
-        _ => {}
-    }
-    // Priority scheduling: vLLM errors on any priority but 0 when the model
-    // isn't served with it, and sidekick never is.
-    match &req.priority {
-        None => {}
-        Some(v) if v.as_i64() == Some(0) => {}
-        Some(v) if v.is_i64() || v.is_u64() => {
-            return Err(ApiError::invalid("`priority` other than 0 isn't supported: sidekick has no priority scheduling"))
-        }
-        Some(_) => return Err(ApiError::invalid("`priority` must be an integer")),
-    }
-    // Every classifier here takes an attention mask, so the prompt is never
-    // padded (`do_not_pad`). `max_length` would add attended pad tokens.
-    match req.padding.as_ref() {
-        None => {}
-        Some(Value::String(p)) if p == "do_not_pad" => {}
-        Some(Value::String(p)) if p == "max_length" => {
-            return Err(ApiError::invalid("`padding: max_length` isn't supported; inputs are not padded (`do_not_pad`)"))
-        }
-        Some(_) => return Err(ApiError::invalid("`padding` must be `max_length` or `do_not_pad`")),
-    }
-    // A salt keeps vLLM's prefix cache from leaking prompts between users.
-    // sidekick keeps no prefix cache, so a valid salt has nothing to change;
-    // it's validated as vLLM does, so a request valid here is valid there.
-    match &req.cache_salt {
-        None => {}
-        Some(Value::String(salt))
-            if !salt.is_empty()
-                && salt.chars().count() <= 128
-                && !salt.chars().any(|c| matches!(c, '@' | '/' | '\\' | '\0')) => {}
-        Some(_) => {
-            return Err(ApiError::invalid(
-                "Parameter 'cache_salt' must be a non-empty string of at most 128 characters, \
-                 without '@', '/', '\\' or NUL.",
-            ))
-        }
-    }
-    // Multimodal processor options: this daemon takes text only.
-    match &req.mm_processor_kwargs {
-        None => {}
-        Some(Value::Object(o)) if o.is_empty() => {}
-        Some(_) => return Err(ApiError::invalid("`mm_processor_kwargs` isn't supported: inputs are text only")),
-    }
-    Ok(())
 }
 
 fn qtype_name(q: QuestionType) -> &'static str {
@@ -359,7 +282,7 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         }
     };
     let k = match m.task {
-        ClassifyTask::TextClassification => m.classify.labels.len(),
+        ClassifyTask::TextClassification | ClassifyTask::TextRanking => m.classify.labels.len(),
         ClassifyTask::ZeroShotClassification => candidate_labels.len(),
     };
     // Raw logits (`use_activation: false`) take no temperature.

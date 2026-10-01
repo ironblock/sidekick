@@ -60,6 +60,8 @@ Method, for every validated entry:
 | [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.99991 | 0.99999 | 773/778 (99.4%) | 2.49x / 1.91x / 1.66x (before the precision rewrite) |
 | [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.99992 | 0.99998 | 648/653 (99.2%) | 2.02x / 1.77x / 1.59x (before the precision rewrite) |
 | [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | 768 | CLS | [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py) | 0.99992 | 0.99998 | 794/805 (98.6%) | validated on macOS 27 (below) |
+| [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | 384 | mean | [convert_bert_embedder.py](../tools/convert_bert_embedder.py) | 0.999982 | 0.999971 | 146/168 (86.9%) | not measured yet (buckets 64/128/256) |
+| [intfloat/e5-small-v2](https://huggingface.co/intfloat/e5-small-v2) | 384 | mean | [convert_bert_embedder.py](../tools/convert_bert_embedder.py) | 0.999974 | 0.999963 | 290/312 (92.9%) | not measured yet |
 
 ANE ops are identical at every bucket. On every model, the operations off
 the ANE are mask and cast plumbing plus the embedding `gather` (e.g. bge:
@@ -198,6 +200,27 @@ Notes per model:
   - ~7.8 ms warm for a short text, including HTTP.
 
   ~285 MB per bucket, 0.86 GB installed.
+- **all-MiniLM-L6-v2**: a 6-layer BERT (22.7M parameters, Apache-2.0),
+  validated September 2026 on macOS 27. It was the first model converted by
+  the conversion library's BERT recipe
+  ([convert_bert_embedder.py](../tools/convert_bert_embedder.py)), with
+  explicit attention and mask-aware mean pooling in the graph.
+  - Its buckets stop at 256, sentence-transformers' `max_seq_length` for
+    it, which is what the model was trained and published at. Truncated at
+    512 instead, the embedding of a ~450-token text is only 0.973 cosine to
+    the one at 256.
+  - The published tokenizer.json pads every input to 128 and truncates at
+    128. Both are removed at install, and sidekick never pads a single
+    input.
+  - The mean-pooling tail (`reduce_sum`, `real_div`, `clip`) runs on the
+    CPU after the encoder. That is one extra hand-off, and it is why its
+    ANE share (86.9%) is below bge-small's; the encoder's heavy operations
+    are all on the ANE.
+  - ~43 MB per bucket.
+- **e5-small-v2**: a 12-layer BERT (33.4M parameters, MIT), validated with
+  the same recipe. The `query: ` / `passage: ` prefixes its model card
+  requires are in the manifest, and the server applies them; the
+  checkpoint publishes no prompts. ~64 MB per bucket.
 
 ## Confidence grades: the parity suite
 
@@ -246,6 +269,8 @@ the median per input, ANE (CPU).
 | F2LLM-v2-160M | B 0.99988 | A 0.999999 | **A** 0.99997 (a run of digits) | 0.002 (0.000) | 0 | 4.6 (13.0) |
 | embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.1 (20.3) |
 | LFM2.5-Embedding-350M | B 0.99986 | A 0.999999 | **A** 0.99999 (a delimiter flood) | 0.003 (0.000) | 0 | 14.9 (33.8) |
+| all-MiniLM-L6-v2 | A 0.99992 | A 0.999998 | **A** 0.99992 (empty input) | 0.003 (+0.000) | 0 | not measured |
+| e5-small-v2 | A 0.99995 | A 0.999997 | **A** 0.99995 (a 255-token boundary case) | 0.002 (−0.001) | 0 | not measured |
 
 - **Similarity drift** is the largest change in any pairwise similarity
   score against fp32. **Bias** is the mean signed change: LFM2.5's ANE
@@ -267,7 +292,7 @@ the median per input, ANE (CPU).
   on a Markdown list, drift 0.010. The rewrite costs its GPU path a little
   on one repeated-subword stress case (0.99998 → 0.99995).
 
-All five pass every hard gate on every path:
+All seven pass every hard gate on every path:
 - token ids identical to the reference pipeline's;
 - finite output;
 - exact pad invariance;
@@ -367,7 +392,7 @@ its grade as a starting expectation, not a promise, and run the suite.
 
 | family | validated | ANE grade | risks seen | inputs that find them |
 |---|---|---|---|---|
-| BERT (bge, MiniLM, e5) | bge-small-en-v1.5 | A | none | — |
+| BERT (bge, MiniLM, e5) | bge-small-en-v1.5, all-MiniLM-L6-v2, e5-small-v2 | A | none | — |
 | ModernBERT | gte-modernbert-base; laya-en (ModernBERT-large, classifier preview) | A (gte); D, failing bucket invariance (laya) | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate, and laya's head reads single-token vectors, where that loss isn't averaged away | pad and bucket invariance; delimiters |
 | Qwen3 decoder, last-token pooling | F2LLM-v2-160M | A | truncation must keep the final token; without the precision rewrite, the native SiLU costs ~0.03% on the ANE (graded B) | over-length; the ids gate; numbers |
 | Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
@@ -438,6 +463,65 @@ translated into laya's three question types, plus adversarial cases.
 The suite reports laya as FAIL until its bucket invariance is fixed. Its
 CPU path takes about 20 minutes for the 2,612 cases on an M1 Max, which is
 the suite's default per-worker limit, so run it with `--timeout 3600`.
+
+## Rerankers (`/v1/rerank`)
+
+Rerankers are cross-encoders served by `/v1/rerank`, `/rerank` and
+`/v2/rerank` (D29), from a `classifier.toml` with `task = "text-ranking"`
+([examples/classifiers/](../examples/classifiers/)). The parity suite
+grades them on [fixtures/rerank/corpus.toml](../fixtures/rerank/corpus.toml),
+51 (query, document) pairs in 13 groups, against `CrossEncoder` in fp32:
+- **Score fidelity** is graded as a probability, |Δ sigmoid(logit)|, with
+  the classifiers' letters (A ≤ 1e-3, B ≤ 5e-3, C ≤ 2e-2). Cross-encoders
+  are trained with a sigmoid objective. A model that serves raw logits
+  reports them unsquashed, and the sigmoid compresses errors at large
+  logits, so the table also gives the largest raw |Δlogit|.
+- **Ranking** is graded on raw logits: a flip is two documents of one
+  query in the opposite order, where fp32 separates them by at least 0.05
+  logits. Any flip caps the grade at C.
+
+M1 Max, macOS 27.0, September 2026.
+
+| model | conversion | CPU | GPU | ANE | rank flips | ANE ops | ANE ms |
+|---|---|---|---|---|---|---|---|
+| [cross-encoder/ms-marco-MiniLM-L6-v2](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) as `ms-marco-minilm-l6-v2` | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) `--twice-gelu` | B 3.2e-3 (Δlogit 0.082) | B 1.3e-3 (Δlogit 0.0091) | **B** 3.4e-3 (Δlogit 0.024) | 0 on every path | 168/183 | not measured |
+
+**ms-marco-MiniLM-L6-v2**: a 6-layer BERT cross-encoder (22.7M
+parameters, Apache-2.0), converted by the conversion library's BERT recipe.
+It uses explicit attention, the checkpoint's own classification head, and
+segment ids as a third int32 input (`token_type_ids`: 0 for the query, 1
+for the document).
+- Its score is the raw logit: the checkpoint pins sentence-transformers'
+  Identity activation, and vLLM serves the same.
+- **Converted with `--twice-gelu`.** BERT's erf GELU is built as
+  `x * (1 + erf(x/√2))`, with the 0.5 folded into each layer's output
+  projection, instead of Core ML's native `gelu`, which is coarse on the
+  ANE. Compared with the native op, on the ANE:
+  - mean Δp halves (2.9e-4 → 1.4e-4), and the worst Δlogit drops from 0.030
+    to 0.024;
+  - bucket invariance improves from 8.3e-4 to 1.4e-4, against the 1e-3
+    gate;
+  - 50 of the 51 pairs come within A (≤ 8.2e-4).
+  The CPU path gets a little worse (2.3e-3 → 3.2e-3; Core ML's CPU `erf` is
+  coarser than its native `gelu`), but sidekick serves the ANE.
+- **One pair keeps it at B.** `hardware-0` (fp32 logit −1.03) is at
+  Δp 3.4e-3 on the ANE with either GELU. Part of that is where it sits:
+  near logit 0 the sigmoid is steepest, so its logit error, about 0.018,
+  becomes a large Δp, though that error is within the ANE's range over the
+  corpus (worst 0.024). Part isn't fp16's: an ideal fp16 engine is off by
+  only 2.0e-4 on it (the corpus's fp16 ceiling is 9.6e-4 at most, mean
+  5.8e-5), so the ANE's own arithmetic costs it about 17x what fp16
+  storage does. That excess hasn't been diagnosed. The checkpoint's linear
+  inputs are not small (smallest rms 0.107), so the ANE `linear` precision
+  floor is an unlikely cause.
+- It passes every hard gate on every path:
+  - ids and segment ids equal `CrossEncoder`'s for all 51 pairs,
+    including a pair truncated to 512 tokens and an empty document;
+  - pad invariance is exact;
+  - ANE output is bit-identical across processes.
+- It ranks exactly as fp32 does, with no flips and no near-ties. That
+  includes five near-duplicate documents with fp32 logits from 7.1 to 9.7,
+  the closest two 0.24 apart.
 
 ## Incompatible / not integrated
 

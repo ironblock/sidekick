@@ -7,8 +7,9 @@
 use crate::laya;
 use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, LayaSection, ResolvedClassifier};
 use sidekick_core::{
-    ClassifyParams, ClassifyTask, Error, Prepared, Result, TruncationSide,
+    ClassifyParams, ClassifyTask, Error, PairParams, Prepared, Result, TruncationSide,
 };
+use tokenizers::utils::truncation::{truncate_encodings, TruncationParams, TruncationStrategy};
 use tokenizers::{Tokenizer, TruncationDirection};
 
 /// Everything `prepare` needs from a classifier's manifest and tokenizer.
@@ -21,6 +22,10 @@ pub struct InputBuilder {
     format: Option<Format>,
     /// Tokens the post-processor adds around one sequence ([CLS] … [SEP]).
     added_tokens: usize,
+    /// Tokens it adds around a pair ([CLS] q [SEP] d [SEP]: 3).
+    pair_added_tokens: usize,
+    /// The model's graph takes `token_type_ids`.
+    segment_ids: bool,
 }
 
 enum Format {
@@ -46,10 +51,23 @@ impl InputBuilder {
     }
 
     pub fn new(tokenizer: Tokenizer, m: &ClassifierManifest) -> Result<Self> {
-        let added_tokens = tokenizer
-            .encode("", true)
-            .map_err(|e| Error::Tokenizer(e.to_string()))?
-            .len();
+        let tok_err = |e: tokenizers::Error| Error::Tokenizer(e.to_string());
+        let added_tokens = tokenizer.encode("", true).map_err(tok_err)?.len();
+        let pair_added_tokens = tokenizer.encode(("", ""), true).map_err(tok_err)?.len();
+        let segment_ids = m.classify.io.token_type_ids.is_some();
+        // A tokenizer that marks the document with segment ids for a model
+        // whose graph can't take them would score every pair wrong.
+        if m.task == ClassifyTask::TextRanking && !segment_ids {
+            let pair = tokenizer.encode(("a", "b"), true).map_err(tok_err)?;
+            if pair.get_type_ids().iter().any(|&t| t != 0) {
+                return Err(Error::InvalidManifest {
+                    path: m.id.clone(),
+                    message: "the tokenizer gives pairs segment ids, but `[classify.io]` names no \
+                              `token_type_ids` input"
+                        .into(),
+                });
+            }
+        }
         let format = match (m.classify.format, &m.classify.laya) {
             (Some(ClassifyFormat::Laya), Some(section)) => Some(Format::Laya {
                 section: section.clone(),
@@ -71,6 +89,8 @@ impl InputBuilder {
             max_labels: m.max_labels(),
             format,
             added_tokens,
+            pair_added_tokens,
+            segment_ids,
         })
     }
 
@@ -95,6 +115,9 @@ impl InputBuilder {
     }
 
     pub fn prepare(&self, input: &str, params: &ClassifyParams) -> Result<Prepared> {
+        if self.task == ClassifyTask::TextRanking {
+            return Err(invalid("a text-ranking model scores (query, document) pairs; use a rerank route"));
+        }
         match &self.format {
             None => self.prepare_text(input, params),
             Some(Format::Laya { section, specials }) => {
@@ -161,7 +184,113 @@ impl InputBuilder {
         if ids.len() > max {
             return Err(too_long(format!("{} tokens", ids.len()), max));
         }
-        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, markers: vec![], qtype: None })
+        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids: vec![], markers: vec![], qtype: None })
+    }
+
+    /// A text-ranking model's (query, document) pair, as its tokenizer
+    /// pairs text: `[CLS] q [SEP] d [SEP]` with segment ids 0 then 1 for
+    /// BERT, `<s> q </s></s> d </s>` for XLM-R. `max_tokens_per_query` and
+    /// `max_tokens_per_doc` cut each text first, keeping its start. Then a
+    /// pair longer than the limit is truncated `longest_first` (vLLM's
+    /// default), or only in the document (`keep_query`, Cohere's contract,
+    /// or whenever `max_tokens_per_doc` is set, as in vLLM). Special tokens
+    /// are always kept, where vLLM's `truncation_side` slice can drop one.
+    /// With no limit, an over-length pair is a 400.
+    pub fn prepare_pair(&self, query: &str, document: &str, p: &PairParams) -> Result<Prepared> {
+        if self.task != ClassifyTask::TextRanking {
+            return Err(invalid("only text-ranking models score (query, document) pairs"));
+        }
+        let max = self.max_seq_len;
+        let limit = match (p.truncate_prompt_tokens, p.keep_query) {
+            (Some(n), _) if n > max => {
+                return Err(invalid(format!(
+                    "truncate_prompt_tokens {n} exceeds the model's maximum of {max} tokens"
+                )))
+            }
+            (Some(n), _) if n <= self.pair_added_tokens => {
+                return Err(invalid(format!(
+                    "truncate_prompt_tokens {n} leaves no room for text after the pair's {} special tokens",
+                    self.pair_added_tokens
+                )))
+            }
+            (Some(n), _) => Some(n),
+            (None, true) => Some(max),
+            (None, false) => None,
+        };
+        // Each text is cut to its own limit first, keeping its start (vLLM's
+        // truncate_text_to_tokens), then the pair is truncated. Byte caps
+        // bound the tokenizer's work per text (16 bytes per token is beyond
+        // any vocabulary), keeping the end that truncation keeps.
+        let cap = max.saturating_mul(16);
+        let bound = |text: &'_ str, cut: Option<usize>, what: &str, field: &str| -> Result<String> {
+            Ok(match (cut, limit, p.truncation_side) {
+                (Some(n), _, _) => crate::byte_cap(text, n),
+                (None, Some(_), TruncationSide::Right) => crate::byte_cap(text, max),
+                (None, Some(_), TruncationSide::Left) => byte_cap_end(text, max),
+                (None, None, _) if text.len() > cap => {
+                    return Err(invalid(format!(
+                        "the {what} ({} bytes) is longer than the model's maximum of {max} tokens; \
+                         set truncate_prompt_tokens or {field} to truncate it",
+                        text.len()
+                    )))
+                }
+                (None, None, _) => text,
+            }
+            .to_string())
+        };
+        let q = bound(query, p.max_tokens_per_query, "query", "max_tokens_per_query")?;
+        let d = bound(document, p.max_tokens_per_doc, "document", "max_tokens_per_doc")?;
+        let encode = |text: &str, cut: Option<usize>| -> Result<tokenizers::Encoding> {
+            let mut e = self.tokenizer.encode(text, false).map_err(|e| Error::Tokenizer(e.to_string()))?;
+            if let Some(n) = cut {
+                e.truncate(n, 0, TruncationDirection::Right);
+            }
+            Ok(e)
+        };
+        let (mut eq, mut ed) = (encode(&q, p.max_tokens_per_query)?, encode(&d, p.max_tokens_per_doc)?);
+        if let Some(n) = limit {
+            let budget = n - self.pair_added_tokens;
+            // Only the document is truncated under Cohere's contract, and,
+            // as in vLLM, whenever max_tokens_per_doc is set; otherwise
+            // tokenizers' longest_first, vLLM's default.
+            let only_document = p.keep_query || p.max_tokens_per_doc.is_some();
+            if only_document && eq.len() >= budget {
+                return Err(invalid(format!(
+                    "the query alone ({} tokens) fills the model's {n}-token input",
+                    eq.len()
+                )));
+            }
+            let params = TruncationParams {
+                max_length: budget,
+                strategy: if only_document { TruncationStrategy::OnlySecond } else { TruncationStrategy::LongestFirst },
+                stride: 0,
+                direction: match p.truncation_side {
+                    TruncationSide::Right => TruncationDirection::Right,
+                    TruncationSide::Left => TruncationDirection::Left,
+                },
+            };
+            let (a, b) = truncate_encodings(eq, Some(ed), &params).map_err(|e| Error::Tokenizer(e.to_string()))?;
+            eq = a;
+            ed = b.expect("a pair stays a pair");
+        }
+        let pair = self
+            .tokenizer
+            .post_process(eq, Some(ed), true)
+            .map_err(|e| Error::Tokenizer(e.to_string()))?;
+        let ids: Vec<i32> = pair.get_ids().iter().map(|&u| u as i32).collect();
+        if ids.len() > max {
+            return Err(invalid(format!(
+                "the (query, document) pair is {} tokens, more than the model's maximum of {max}; \
+                 set truncate_prompt_tokens or max_tokens_per_doc to truncate it",
+                ids.len()
+            )));
+        }
+        let type_ids = if self.segment_ids {
+            pair.get_type_ids().iter().map(|&u| u as i32).collect()
+        } else {
+            vec![]
+        };
+        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids, markers: vec![], qtype: None })
     }
 
     /// The laya format: the state is truncated by design, keeping its
@@ -231,6 +360,7 @@ impl InputBuilder {
         Ok(Prepared {
             bucket: self.bucket_for(ids.len()),
             ids,
+            type_ids: vec![],
             markers: seq.markers.iter().map(|&m| m as i32).collect(),
             qtype: Some(question_type.index()),
         })
@@ -265,7 +395,7 @@ fn too_long(size: String, max: usize) -> Error {
 
 /// The last bytes of `text` that `max_tokens` could need: `byte_cap` from
 /// the end, for left truncation.
-fn byte_cap_end(text: &str, max_tokens: usize) -> &str {
+pub(crate) fn byte_cap_end(text: &str, max_tokens: usize) -> &str {
     let cap = max_tokens.saturating_mul(16);
     if text.len() <= cap {
         return text;
@@ -285,6 +415,7 @@ mod tests {
 
     fn manifest(task: ClassifyTask) -> ClassifierManifest {
         let laya = task == ClassifyTask::ZeroShotClassification;
+        let ranking = task == ClassifyTask::TextRanking;
         ClassifierManifest {
             id: "m".into(),
             task,
@@ -298,7 +429,11 @@ mod tests {
             classify: ClassifySection {
                 format: laya.then_some(ClassifyFormat::Laya),
                 max_labels: laya.then_some(4),
-                labels: if laya { vec![] } else { vec!["neg".into(), "pos".into()] },
+                labels: match task {
+                    ClassifyTask::ZeroShotClassification => vec![],
+                    ClassifyTask::TextRanking => vec!["score".into()],
+                    ClassifyTask::TextClassification => vec!["neg".into(), "pos".into()],
+                },
                 laya: laya.then(|| LayaSection {
                     head_max_len: 16,
                     default_instructions: DefaultInstructions {
@@ -308,7 +443,10 @@ mod tests {
                     },
                 }),
                 calibration: Default::default(),
-                io: ClassifierIo::default(),
+                io: ClassifierIo {
+                    token_type_ids: ranking.then(|| "token_type_ids".to_string()),
+                    ..Default::default()
+                },
             },
         }
     }
@@ -411,5 +549,92 @@ mod tests {
             .prepare("a", &laya_params(QuestionType::Choice, &["a b c d", "a b c e", "f"]))
             .unwrap_err();
         assert!(e.to_string().contains("identical to the model"), "{e}");
+    }
+
+    fn pair(truncate: Option<usize>, keep_query: bool) -> PairParams {
+        PairParams { truncate_prompt_tokens: truncate, keep_query, ..Default::default() }
+    }
+
+    #[test]
+    fn pairs_use_the_tokenizers_pair_template_and_segment_ids() {
+        let b = builder(ClassifyTask::TextRanking);
+        let t = |w| crate::laya::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        let p = b.prepare_pair("a b", "c d", &PairParams::default()).unwrap();
+        assert_eq!(p.ids, vec![1, t("a"), t("b"), 2, t("c"), t("d"), 2]);
+        assert_eq!(p.type_ids, vec![0, 0, 0, 0, 1, 1, 1]);
+        assert_eq!(p.bucket, 8);
+        assert!(p.markers.is_empty() && p.qtype.is_none());
+        // A reranker scores pairs only, and only a reranker does.
+        assert!(matches!(b.prepare("a", &ClassifyParams::default()), Err(Error::InvalidRequest(_))));
+        let c = builder(ClassifyTask::TextClassification);
+        assert!(matches!(c.prepare_pair("a", "b", &PairParams::default()), Err(Error::InvalidRequest(_))));
+    }
+
+    #[test]
+    fn a_tokenizer_with_segment_ids_needs_the_input() {
+        let mut m = manifest(ClassifyTask::TextRanking);
+        m.classify.io.token_type_ids = None;
+        let e = InputBuilder::new(crate::laya::tests::tokenizer(), &m).err().unwrap();
+        assert!(e.to_string().contains("names no `token_type_ids`"), "{e}");
+    }
+
+    #[test]
+    fn pair_truncation_follows_vllm_and_cohere() {
+        let b = builder(ClassifyTask::TextRanking);
+        // Over-length with no limit: a 400, as vLLM.
+        let e = b.prepare_pair(&words(20), &words(20), &PairParams::default()).unwrap_err();
+        assert!(e.to_string().contains("pair is 43 tokens, more than the model's maximum of 32"), "{e}");
+
+        // longest_first to 8: 5 text tokens, split 2 + 3 (tokenizers' rule).
+        let p = b.prepare_pair(&words(10), &words(10), &pair(Some(8), false)).unwrap();
+        assert_eq!(p.ids.len(), 8);
+        assert_eq!(p.type_ids, vec![0, 0, 0, 0, 1, 1, 1, 1]);
+        // A short query leaves the rest to the document.
+        let p = b.prepare_pair("a", &words(40), &pair(Some(16), false)).unwrap();
+        assert_eq!((p.ids.len(), p.type_ids.iter().filter(|&&t| t == 0).count()), (16, 3));
+
+        // Cohere: the document alone is cut to fit, the query kept whole.
+        let p = b.prepare_pair(&words(3), &words(50), &pair(None, true)).unwrap();
+        assert_eq!(p.ids.len(), 32);
+        assert_eq!(p.type_ids.iter().filter(|&&t| t == 0).count(), 5, "[CLS] + 3 + [SEP]");
+        let e = b.prepare_pair(&words(40), "a", &pair(None, true)).unwrap_err();
+        assert!(e.to_string().contains("the query alone (40 tokens) fills"), "{e}");
+
+        // Per-text cuts come first.
+        let p = b
+            .prepare_pair(&words(5), &words(5), &PairParams { max_tokens_per_doc: Some(2), max_tokens_per_query: Some(1), ..Default::default() })
+            .unwrap();
+        assert_eq!(p.ids.len(), 1 + 1 + 1 + 2 + 1);
+
+        for n in [33, 3] {
+            assert!(matches!(b.prepare_pair("a", "b", &pair(Some(n), false)), Err(Error::InvalidRequest(_))), "{n}");
+        }
+    }
+
+    #[test]
+    fn a_long_document_that_max_tokens_per_doc_cuts_needs_no_other_truncation() {
+        let b = builder(ClassifyTask::TextRanking);
+        // 2,000 words: far past the model and its byte cap, but cut to 10
+        // tokens first, as vLLM cuts it, the pair fits.
+        let long = words(2000);
+        let per_doc = PairParams { max_tokens_per_doc: Some(10), ..Default::default() };
+        let p = b.prepare_pair("a b", &long, &per_doc).unwrap();
+        assert_eq!(p.ids.len(), 1 + 2 + 1 + 10 + 1);
+        // Without a cut, the message names the text and the fields to set.
+        let e = b.prepare_pair("a b", &long, &PairParams::default()).unwrap_err();
+        assert!(e.to_string().contains("the document (") && e.to_string().contains("max_tokens_per_doc"), "{e}");
+    }
+
+    #[test]
+    fn with_max_tokens_per_doc_only_the_document_is_truncated_as_in_vllm() {
+        let b = builder(ClassifyTask::TextRanking);
+        // longest_first would split 10 + 10 into 2 + 3 (see above); with
+        // max_tokens_per_doc set, vLLM truncates only the document.
+        let p = PairParams { truncate_prompt_tokens: Some(16), max_tokens_per_doc: Some(20), ..Default::default() };
+        let got = b.prepare_pair(&words(10), &words(40), &p).unwrap();
+        assert_eq!(got.ids.len(), 16);
+        assert_eq!(got.type_ids.iter().filter(|&&t| t == 0).count(), 12, "[CLS] + 10 + [SEP]: the query whole");
+        let e = b.prepare_pair(&words(14), &words(40), &p).unwrap_err();
+        assert!(e.to_string().contains("the query alone (14 tokens)"), "{e}");
     }
 }

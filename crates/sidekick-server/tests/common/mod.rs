@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat};
 use sidekick_core::{
     Availability, ChatBackend, ChatRequest, ChatResponse, Classifier, ClassifyParams,
-    ClassifyTask, DeltaSink, Error, FinishReason, ModelInfo, ModelRegistry, Prepared, ProblemType,
-    Result, Source, Usage,
+    ClassifyTask, DeltaSink, Error, FinishReason, ModelInfo, ModelRegistry, PairParams, Prepared,
+    ProblemType, Result, Source, Usage,
 };
 use sidekick_server::{build_router, AppState, ClassifierPool, EmbedderPool};
 use std::sync::{Arc, Mutex};
@@ -229,6 +229,47 @@ qtype = "qtype"
 output = "logits"
 "#;
 
+/// `classifier.toml` for a reranker that reports raw logits (the ms-marco
+/// cross-encoders' `Identity` activation).
+pub const RERANKER: &str = r#"
+id = "reranker"
+task = "text-ranking"
+source = { repo = "example/reranker", revision = "r1" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [64]
+max_seq_len = 64
+max_batch = 4
+problem_type = "regression"
+
+[classify]
+labels = ["score"]
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+token_type_ids = "token_type_ids"
+output = "logits"
+"#;
+
+/// The same with the single-output default activation: sigmoid.
+pub const SIGMOID_RERANKER: &str = r#"
+id = "sigmoid-reranker"
+task = "text-ranking"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [64]
+max_seq_len = 64
+
+[classify]
+labels = ["score"]
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
+"#;
+
 /// A classifier that answers from its manifest without a model, and records
 /// the params each input was prepared with. Its token ids are the input's
 /// bytes (truncated to `truncate_prompt_tokens`), which `run` reads back:
@@ -239,9 +280,16 @@ output = "logits"
 ///   contains it, else 0;
 /// - an input containing "nan" returns NaN logits; "fail" fails the run;
 ///   "reject" fails `prepare` with a client error.
+///
+/// As a reranker (`text-ranking`), a pair's ids are the bytes of
+/// `query|document` and its logit is the number of the query's words the
+/// document contains; "nan", "fail" and "reject" in the document behave as
+/// above.
 pub struct MockClassifier {
     pub manifest: ClassifierManifest,
     pub seen: Arc<Mutex<Vec<ClassifyParams>>>,
+    /// The pair params each rerank pair was prepared with.
+    pub pairs: Arc<Mutex<Vec<PairParams>>>,
     /// Inputs run so far.
     pub runs: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -290,12 +338,33 @@ impl Classifier for MockClassifier {
             None => (vec![], vec![]),
         };
         LABELS.with(|l| *l.borrow_mut() = labels);
-        Ok(Prepared { ids, markers, qtype: params.question_type.map(|q| q.index()), bucket: 64 })
+        Ok(Prepared { ids, type_ids: vec![], markers, qtype: params.question_type.map(|q| q.index()), bucket: 64 })
+    }
+
+    fn prepare_pair(&self, query: &str, document: &str, params: &PairParams) -> Result<Prepared> {
+        assert_eq!(self.manifest.task, ClassifyTask::TextRanking, "the server sends pairs to rerankers only");
+        self.pairs.lock().unwrap().push(params.clone());
+        if document.contains("reject") {
+            return Err(Error::InvalidRequest("rejected by prepare".into()));
+        }
+        let ids: Vec<i32> = format!("{query}|{document}").bytes().map(i32::from).collect();
+        Ok(Prepared { type_ids: vec![0; ids.len()], ids, markers: vec![], qtype: None, bucket: 64 })
     }
 
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {
         self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let text: String = prepared.ids.iter().map(|&b| b as u8 as char).collect();
+        if self.manifest.task == ClassifyTask::TextRanking {
+            let (query, document) = text.split_once('|').unwrap();
+            if document.contains("fail") {
+                return Err(Error::Inference("mock failure".into()));
+            }
+            if document.contains("nan") {
+                return Ok(vec![f32::NAN]);
+            }
+            let shared = query.split_whitespace().filter(|w| document.split_whitespace().any(|d| d == *w)).count();
+            return Ok(vec![shared as f32]);
+        }
         if text.contains("fail") {
             return Err(Error::Inference("mock failure".into()));
         }
@@ -338,6 +407,19 @@ pub fn test_state_probe(
     chat_available: bool,
     api_key: Option<&str>,
 ) -> (AppState, Arc<Mutex<Vec<ClassifyParams>>>, Arc<std::sync::atomic::AtomicUsize>) {
+    let p = test_state_full(chat_available, api_key);
+    (p.state, p.seen, p.runs)
+}
+
+/// A test state and everything its mock classifiers record.
+pub struct Probes {
+    pub state: AppState,
+    pub seen: Arc<Mutex<Vec<ClassifyParams>>>,
+    pub pairs: Arc<Mutex<Vec<PairParams>>>,
+    pub runs: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
     // A process-wide counter, not a timestamp: `Instant::now().elapsed()` is
     // ~0ns and collided across concurrently-running tests, letting one test
     // scan another's half-written fixture (observed as a ~1-in-5 flake).
@@ -348,19 +430,27 @@ pub fn test_state_probe(
         FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     write_embedding_fixture(&dir);
-    for (name, body) in [("sentiment", SENTIMENT), ("decider", ZERO_SHOT), ("broken", "id = ")] {
+    for (name, body) in [
+        ("sentiment", SENTIMENT),
+        ("decider", ZERO_SHOT),
+        ("reranker", RERANKER),
+        ("sigmoid-reranker", SIGMOID_RERANKER),
+        ("broken", "id = "),
+    ] {
         std::fs::create_dir_all(dir.join(name)).unwrap();
         std::fs::write(dir.join(name).join("classifier.toml"), body).unwrap();
     }
     let registry = Arc::new(ModelRegistry::scan(&dir).unwrap());
     let seen = Arc::new(Mutex::new(Vec::new()));
     let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let pairs = Arc::new(Mutex::new(Vec::new()));
     let classifiers = {
         let registry = registry.clone();
-        let (seen, runs) = (seen.clone(), runs.clone());
+        let (seen, runs, pairs) = (seen.clone(), runs.clone(), pairs.clone());
         ClassifierPool::new("classifier", Duration::from_secs(60), move |id| {
             let manifest = registry.classifier(id)?.manifest.clone();
-            Ok(Arc::new(MockClassifier { manifest, seen: seen.clone(), runs: runs.clone() }) as Arc<dyn Classifier>)
+            Ok(Arc::new(MockClassifier { manifest, seen: seen.clone(), pairs: pairs.clone(), runs: runs.clone() })
+                as Arc<dyn Classifier>)
         })
     };
     let state = AppState {
@@ -374,7 +464,7 @@ pub fn test_state_probe(
         started_at: Instant::now(),
         request_timeout: Duration::from_secs(60),
     };
-    (state, seen, runs)
+    Probes { state, seen, pairs, runs }
 }
 
 /// `call` that also returns the response headers.

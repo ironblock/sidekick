@@ -1313,6 +1313,113 @@ It exposed two CPU traps:
   attend to itself, by clearing the mask's diagonal, prevents it and is
   exact for real tokens.
 
+## D29 — Reranking: vLLM's and Cohere's contracts, a reranker is a classifier
+Reranking (scoring documents against a query) is how retrieval pipelines
+use cross-encoders, and it has the strongest API convention of anything
+sidekick didn't serve. The design is `docs/design/rerank.md`. This entry
+records the decisions and why.
+
+**The contracts.** As with classification (D28), sidekick follows the
+standard field for field and extends only where none exists:
+- `POST /v1/rerank` and `POST /rerank` are vLLM's `RerankRequest` and
+  `RerankResponse`, the Jina shape that vLLM, llama.cpp, LocalAI and
+  Infinity serve. Results are sorted by score, highest first, with ties in
+  request order. The response id has vLLM's `score-` prefix.
+- `POST /v2/rerank` is Cohere's v2 shape. Its response is a superset that
+  both clients parse: Cohere's `id`, `results[{index, relevance_score}]`
+  and `meta`, plus the `model`, `usage` and per-result `document` that
+  vLLM's response model requires. That was checked against both: vLLM's
+  `RerankResult.document` is required, and Cohere's SDK tolerates extra
+  fields.
+- `POST /v2/embed` is Cohere's v2 embed shape over the existing embedders,
+  as vLLM serves it: `input_type` maps to the manifest's prefixes, and
+  `embedding_types` covers `float`, `base64`, `binary` and `ubinary` (int8
+  and uint8 are 400s, as in vLLM). Cohere requires `input_type`. Without
+  it sidekick uses the document prefix, as `/v1/embeddings` does, so the
+  two embed routes agree for a given model.
+- The one extension is `return_documents` on `/v1/rerank`, from Jina and
+  Cohere v1. `/v2/rerank` ignores it, because vLLM requires `document`
+  there.
+- One shape per route. TEI's `/rerank` and SGLang's `/v1/rerank` return a
+  bare list. Serving them too would mean sniffing request bodies, so
+  sidekick serves vLLM's shape only.
+
+Every field these standards define is honored, accepted in the form that
+changes nothing, or rejected with a 400 (D22). The new routes sit behind
+the API key with the rest of the API.
+
+**Truncation follows vLLM, with three deliberate deviations.**
+`max_tokens_per_query` and `max_tokens_per_doc` cut each text first, as
+vLLM does. On `/v1/rerank`, a pair still too long is a 400 unless
+`truncate_prompt_tokens` is set; it is then truncated `longest_first`, or
+in the document only when `max_tokens_per_doc` is also set. On
+`/v2/rerank`, documents are truncated and the query kept whole, which is
+Cohere's contract. Each deviation keeps the model from seeing a sequence
+unlike its training data:
+- Special tokens are always kept. vLLM's sliced truncation can drop
+  `[CLS]` or the final `[SEP]`. This is classify's rule.
+- An empty document is paired, as `CrossEncoder` pairs it (`[CLS] q [SEP]
+  [SEP]`). A single-pair tokenizer call would read it as no pair.
+- `/v2/embed`'s `START` truncation keeps the model's prompt prefix (e5's
+  `query: `) whole, where vLLM's left slice would cut it off.
+
+**A reranker is a classifier.** Its manifest is a `classifier.toml` with
+`task = "text-ranking"` (Hugging Face's pipeline name) and one output.
+`[classify.io]` gains an optional int32 `token_type_ids`, for BERT's
+segment ids; XLM-R rerankers have none. The activation follows D28's
+`problem_type` rule, and the converter derives `problem_type` exactly as
+vLLM's `get_act_fn` does, so `relevance_score` is on the scale vLLM
+reports for the same model. Every pair runs as its own prediction, in the
+smallest bucket that fits, because each bucket is a static `[1, S]`
+artifact (D15). Each manifest sets `max_batch` so that a full request fits
+within the request timeout.
+
+**Compatibility.** A v0.3 daemon or library given a `text-ranking`
+manifest fails to parse its task and skips it with a warning (D28), so
+nothing breaks. But v0.3 ignores an unknown `[classify.io]` key, so a
+text-classification manifest naming `token_type_ids` would load there and
+fail every prediction. Two rules close that:
+- the converters write `token_type_ids` only for text-ranking models;
+- from this release, loading a classifier refuses an artifact that has an
+  input its manifest doesn't name. The check runs at classifier load, sees
+  multi-array inputs, and also refuses inputs marked optional. Embedders
+  aren't checked.
+Every installed artifact was verified to name all of its inputs.
+
+**Validation.** The parity suite grades rerankers with the classifier
+grader at k = 1, on a committed corpus of 51 pairs in 13 query groups
+(`fixtures/rerank/corpus.toml`), including adversarial pairs: an empty
+document, an over-length pair, literal special tokens, multilingual text
+and code. References come from `tools/rerank_reference.py`: `CrossEncoder`
+in fp32, with pairs encoded from the installed `tokenizer.json`.
+- **Graded in sigmoid space**, the score as a probability, whatever the
+  manifest serves. Cross-encoders are trained with a sigmoid (BCE)
+  objective. ms-marco serves raw logits of magnitude ~10, and against
+  thresholds meant for probabilities even an exact fp16 conversion would
+  grade D. Sigmoid compresses errors at saturated logits, so the largest
+  raw |Δlogit| is published beside each grade.
+- **Rank flips** count within each query's documents, on raw logits,
+  where the reference's gap is at least the flip margin. A gap that
+  sidekick collapses to an exact tie counts as a flip.
+
+**Measured** (M1 Max, macOS 27.0), converted with the conversion library
+(`tools/sidekick_convert`, `docs/CONVERTING.md`):
+- `cross-encoder/ms-marco-MiniLM-L6-v2` grades B on every path, with no
+  rank flips. On the ANE its worst |Δp| is 3.4e-3 (|Δlogit| 0.024). It is
+  converted with GELU built from erf (D28 amendment), which halves its
+  mean ANE error and leaves a single pair at B level.
+- The same release adds two embedders on the library's BERT recipe, both
+  grade A on every path: `sentence-transformers/all-MiniLM-L6-v2` (ANE
+  worst cosine 0.99992) and `intfloat/e5-small-v2` (0.99995).
+  all-MiniLM's largest bucket is 256, the sentence-transformers
+  `max_seq_length` it was trained with. Run at 512, its output moves to
+  cosine 0.973 on a ~450-token text.
+
+**Not in this release:** vLLM's `/score` and `/v1/score` (`/v1/score`
+collides with SGLang's unrelated route); late interaction (ColBERT,
+MaxSim); LLM-based rerankers, which need decoder support and chat
+templates.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

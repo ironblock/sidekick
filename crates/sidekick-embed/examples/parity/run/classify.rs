@@ -38,7 +38,7 @@ pub fn worker(
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
         .map_err(|e| e.to_string())?
         .get_vocab_size(true) as u64;
-    let problem = model.manifest.problem_type;
+    let problem = crate::classify_grade::graded_problem(&model.manifest);
 
     let t0 = Instant::now();
     let clf = CoremlClassifier::load_with(model, units(path)).map_err(|e| e.to_string())?;
@@ -51,12 +51,21 @@ pub fn worker(
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
         let e = |e: sidekick_core::Error| format!("case {}: {e}", case.id);
-        let prepared = clf.prepare(&case.input, &case.params(model.manifest.max_seq_len)).map_err(e)?;
+        let max = model.manifest.max_seq_len;
+        let prepared = match &case.query {
+            Some(query) => clf.prepare_pair(query, &case.input, &case.pair_params(max)),
+            None => clf.prepare(&case.input, &case.params(max)),
+        }
+        .map_err(e)?;
         let t = Instant::now();
         let logits = clf.run(&prepared).map_err(e)?;
         let ms = t.elapsed().as_secs_f64() * 1e3;
 
+        // Segment ids count only where the model takes them: an XLM-R
+        // reference may list all-zero ones that sidekick never builds.
+        let segments = model.manifest.classify.io.token_type_ids.is_some();
         let ids_match = prepared.ids == case.ids
+            && (!segments || prepared.type_ids == case.type_ids)
             && prepared.markers == case.markers
             && prepared.qtype == case.qtype;
         let model_only = if ids_match {
@@ -68,6 +77,7 @@ pub fn worker(
                 .ok_or("reference ids exceed buckets")?;
             let theirs = Prepared {
                 ids: case.ids.clone(),
+                type_ids: case.type_ids.clone(),
                 markers: case.markers.clone(),
                 qtype: case.qtype,
                 bucket,
@@ -107,7 +117,13 @@ pub fn worker(
     // After every bucket has run: the first cases again, bit for bit.
     let mut repeat_bitwise = true;
     for (case, first) in cases.iter().zip(&results).take(5) {
-        let again = clf.classify(&case.input, &case.params(model.manifest.max_seq_len)).map_err(|e| e.to_string())?;
+        let max = model.manifest.max_seq_len;
+        let again = match &case.query {
+            Some(query) => clf.prepare_pair(query, &case.input, &case.pair_params(max)),
+            None => clf.prepare(&case.input, &case.params(max)),
+        }
+        .and_then(|p| clf.run(&p))
+        .map_err(|e| e.to_string())?;
         let again: Vec<f32> = again.iter().map(|&x| if x.is_finite() { x } else { 0.0 }).collect();
         repeat_bitwise &= bitwise_eq(&first.logits, &again);
     }
@@ -237,7 +253,7 @@ pub fn grade_model(
                 let mut d = Delta::default();
                 for (a, b) in first.cases.iter().zip(&second.cases) {
                     d.add(if a.finite && b.finite {
-                        delta_p(m.problem_type, &a.logits, &b.logits, None)
+                        delta_p(crate::classify_grade::graded_problem(m), &a.logits, &b.logits, None)
                     } else {
                         None
                     });

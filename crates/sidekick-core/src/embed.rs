@@ -9,6 +9,28 @@ pub enum EmbedPurpose {
     Query,
 }
 
+/// Which end of an over-long input to keep (Cohere's `truncate`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Truncate {
+    /// Keep the start (every embedder's behavior without limits).
+    #[default]
+    End,
+    /// Keep the end.
+    Start,
+    /// Don't truncate: an over-long input is an `InvalidRequest`.
+    Reject,
+}
+
+/// Per-request input limits (Cohere `/v2/embed`'s `truncate` and
+/// `max_tokens`). The default is what [`Embedder::embed`] does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EmbedLimits {
+    pub truncate: Truncate,
+    /// At most this many tokens (special tokens included); `None`: the
+    /// model's maximum.
+    pub max_tokens: Option<usize>,
+}
+
 /// A text-embedding backend. Implementations: Core ML encoder on ANE,
 /// static (model2vec-style) CPU floor tier.
 ///
@@ -31,6 +53,23 @@ pub trait Embedder: Send + Sync {
     /// Embed a batch. Returns one unit-normalized vector of `dims()` length
     /// per input, in order.
     fn embed(&self, texts: &[&str], purpose: EmbedPurpose) -> Result<Vec<Vec<f32>>>;
+
+    /// [`embed`](Self::embed) with per-request limits. Backends that can't
+    /// honor limits other than the default refuse them.
+    fn embed_with(
+        &self,
+        texts: &[&str],
+        purpose: EmbedPurpose,
+        limits: EmbedLimits,
+    ) -> Result<Vec<Vec<f32>>> {
+        if limits == EmbedLimits::default() {
+            return self.embed(texts, purpose);
+        }
+        Err(crate::Error::InvalidRequest(format!(
+            "model `{}` supports only truncate `END` without `max_tokens`",
+            self.id()
+        )))
+    }
 }
 
 /// Truncate a unit vector to `dims` and re-normalize (Matryoshka truncation).

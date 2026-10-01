@@ -1,0 +1,29 @@
+# intfloat/e5-small-v2 as ANE-resident Core ML artifacts: a 12-layer BERT
+# (33.4M parameters, MIT), one static-shape model per sequence-length bucket
+# ({seq} resolves against `buckets`), with mask-aware mean pooling inside the
+# graph (output `embedding`, statically (1, 384)). The server L2-normalizes,
+# as the model's Normalize module does.
+#
+# Produce the artifacts with the conversion library's BERT recipe
+# (tools/sidekick_convert, docs/CONVERTING.md). The model card requires the
+# prefixes below; the checkpoint publishes no prompts, so they live here and
+# the server applies them (the artifact never does).
+
+id = "e5-small-v2"
+backend = "coreml"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+dims = 384
+pooling = "none"          # mean pooling happens inside the converted model
+buckets = [128, 256, 512]
+max_seq_len = 512
+source = { repo = "intfloat/e5-small-v2", revision = "ffb93f3bd4047442299a41ebb6fa998a38507c52" }
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "embedding"
+
+[prefixes]
+query = "query: "
+document = "passage: "

@@ -1,4 +1,5 @@
-//! Classification: the backend-neutral interface behind `POST /v1/classify`.
+//! Classification: the backend-neutral interface behind `POST /v1/classify`
+//! and the rerank routes (`/v1/rerank`, `/rerank`, `/v2/rerank`).
 //!
 //! The HTTP contract is vLLM's `/classify` and SGLang's `/v1/classify`
 //! exactly (docs/design/classify.md, D28). Two tasks share it:
@@ -23,6 +24,21 @@ pub enum ClassifyTask {
     TextClassification,
     /// Labels supplied per request as `candidate_labels`.
     ZeroShotClassification,
+    /// A cross-encoder reranker: one relevance score for a (query,
+    /// document) pair (docs/design/rerank.md).
+    TextRanking,
+}
+
+impl ClassifyTask {
+    /// The task's name: Hugging Face's pipeline name, as manifests and
+    /// /v1/models spell it.
+    pub fn name(self) -> &'static str {
+        match self {
+            ClassifyTask::TextClassification => "text-classification",
+            ClassifyTask::ZeroShotClassification => "zero-shot-classification",
+            ClassifyTask::TextRanking => "text-ranking",
+        }
+    }
 }
 
 /// How raw outputs become `probs`, following transformers'
@@ -87,11 +103,32 @@ pub struct ClassifyParams {
     pub instructions: Option<String>,
 }
 
+/// How a (query, document) pair is truncated (rerank; see
+/// docs/design/rerank.md).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PairParams {
+    /// Truncate the pair to this many tokens, special tokens included.
+    /// `None`: a pair longer than the model is a 400 (vLLM's behavior).
+    pub truncate_prompt_tokens: Option<usize>,
+    pub truncation_side: TruncationSide,
+    /// Cut the query, or each document, to this many tokens before pairing
+    /// (vLLM's `max_tokens_per_query` / `max_tokens_per_doc`).
+    pub max_tokens_per_query: Option<usize>,
+    pub max_tokens_per_doc: Option<usize>,
+    /// Truncate only the document, keeping the query whole (Cohere's
+    /// contract on `/v2/rerank`). Otherwise tokenizers' `longest_first`,
+    /// which is what vLLM's tokenizer call does.
+    pub keep_query: bool,
+}
+
 /// One input, tokenized and laid out for the model's graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prepared {
     /// Real token ids (specials included), before padding.
     pub ids: Vec<i32>,
+    /// Segment ids parallel to `ids` (0 for the query, 1 for the document)
+    /// for models whose graph takes `token_type_ids`; empty otherwise.
+    pub type_ids: Vec<i32>,
     /// Zero-shot formats: the position of each candidate label's marker
     /// token, in label order. Empty for text-classification.
     pub markers: Vec<i32>,
@@ -134,8 +171,15 @@ pub trait Classifier: Send + Sync {
     /// collide after the format's shrinking, …) or the tokenizer's.
     fn prepare(&self, input: &str, params: &ClassifyParams) -> Result<Prepared>;
 
+    /// Tokenize and lay out one (query, document) pair: `text-ranking`
+    /// models only. Errors as for [`prepare`](Self::prepare).
+    fn prepare_pair(&self, query: &str, document: &str, params: &PairParams) -> Result<Prepared> {
+        let _ = (query, document, params);
+        Err(crate::Error::InvalidRequest(format!("model `{}` doesn't score pairs", self.id())))
+    }
+
     /// Raw logits for `prepared`, one per label in label order (length
-    /// `labels().len()` or `candidate_labels.len()`).
+    /// `labels().len()` or `candidate_labels.len()`; 1 for a reranker).
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>>;
 
     /// `prepare` + `run`.
@@ -191,7 +235,10 @@ mod tests {
         );
         let q: QuestionType = serde_json::from_str("\"noul\"").unwrap();
         assert_eq!(q, QuestionType::Noul);
-        let t: ClassifyTask = serde_json::from_str("\"zero-shot-classification\"").unwrap();
-        assert_eq!(t, ClassifyTask::ZeroShotClassification);
+        for task in [ClassifyTask::TextClassification, ClassifyTask::ZeroShotClassification, ClassifyTask::TextRanking] {
+            let json = serde_json::to_string(&task).unwrap();
+            assert_eq!(json, format!("\"{}\"", task.name()));
+            assert_eq!(serde_json::from_str::<ClassifyTask>(&json).unwrap(), task);
+        }
     }
 }

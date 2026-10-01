@@ -1,0 +1,33 @@
+# cross-encoder/ms-marco-MiniLM-L6-v2 as an ANE-resident Core ML reranker
+# (docs/design/rerank.md): a 6-layer BERT cross-encoder (22.7M parameters,
+# Apache-2.0) scoring one (query, document) pair per prediction, one
+# static-shape artifact per sequence-length bucket ({seq} resolves against
+# `buckets`). The pair is `[CLS] query [SEP] document [SEP]` with segment
+# ids 0 then 1 in `token_type_ids`; the output is the raw logit, (1, 1).
+#
+# Produce the artifacts with the conversion library's BERT recipe
+# (tools/sidekick_convert, docs/CONVERTING.md):
+#   python tools/convert_bert_classifier.py <checkpoint> <models>/ms-marco-minilm-l6-v2 --twice-gelu
+# --twice-gelu builds BERT's GELU from erf instead of Core ML's native op,
+# which is coarse on the ANE (docs/MODELS.md has the measured difference). `problem_type` is the
+# activation vLLM derives from the checkpoint: it pins
+# sentence-transformers' Identity, so scores are raw logits (regression).
+
+id = "ms-marco-minilm-l6-v2"
+task = "text-ranking"
+source = { repo = "cross-encoder/ms-marco-MiniLM-L6-v2", revision = "233902d25c440f23af6f7d6e94d2946bac0bee0a" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 128           # documents per request
+problem_type = "regression"
+
+[classify]
+labels = ["score"]
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+token_type_ids = "token_type_ids"
+output = "logits"

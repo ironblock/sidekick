@@ -1,20 +1,25 @@
-//! `CoremlClassifier` on real Core ML, with the tiny laya-format artifacts
-//! in tests/fixtures/tiny-laya (built by tools/make_classifier_test_models.py):
-//! every bucket's interface is checked when the classifier loads, and
-//! predictions match the fp32 torch model they came from.
+//! `CoremlClassifier` on real Core ML, with the tiny artifacts in
+//! tests/fixtures (built by tools/make_classifier_test_models.py): a
+//! laya-format model and a pair-input reranker. Every bucket's interface is
+//! checked when the classifier loads, and predictions match the fp32 torch
+//! model they came from.
 //!
 //! macOS with `--features coreml` only; runs on the CPU, so it needs no ANE.
 #![cfg(all(target_os = "macos", feature = "coreml"))]
 
 use serde::Deserialize;
 use sidekick_core::manifest::ModelRegistry;
-use sidekick_core::{Classifier, ClassifyParams, Prepared, QuestionType};
+use sidekick_core::{Classifier, ClassifyParams, PairParams, Prepared, QuestionType};
 use sidekick_coreml::ComputeUnits;
 use sidekick_embed::CoremlClassifier;
 use std::path::{Path, PathBuf};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-laya")
+}
+
+fn reranker_fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-reranker")
 }
 
 const MANIFEST: &str = r#"
@@ -77,6 +82,16 @@ fn tokenizer() -> String {
 /// A model directory whose buckets link to the named fixture artifacts
 /// (`None`: that bucket's artifact is missing).
 fn model_dir(tag: &str, manifest: &str, bucket_16: Option<&str>, bucket_32: Option<&str>) -> PathBuf {
+    model_dir_in(&fixtures(), tag, manifest, bucket_16, bucket_32)
+}
+
+fn model_dir_in(
+    fixtures: &Path,
+    tag: &str,
+    manifest: &str,
+    bucket_16: Option<&str>,
+    bucket_32: Option<&str>,
+) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("sk-tiny-laya-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let model = dir.join("tiny-laya");
@@ -85,16 +100,20 @@ fn model_dir(tag: &str, manifest: &str, bucket_16: Option<&str>, bucket_32: Opti
     std::fs::write(model.join("tokenizer.json"), tokenizer()).unwrap();
     for (bucket, artifact) in [(16, bucket_16), (32, bucket_32)] {
         if let Some(a) = artifact {
-            std::os::unix::fs::symlink(fixtures().join(a), model.join(format!("model_{bucket}.mlmodelc"))).unwrap();
+            std::os::unix::fs::symlink(fixtures.join(a), model.join(format!("model_{bucket}.mlmodelc"))).unwrap();
         }
     }
     dir
 }
 
 fn load(dir: &Path) -> sidekick_core::Result<CoremlClassifier> {
+    load_id(dir, "tiny-laya")
+}
+
+fn load_id(dir: &Path, id: &str) -> sidekick_core::Result<CoremlClassifier> {
     let registry = ModelRegistry::scan(dir).unwrap();
     assert!(registry.skipped().is_empty(), "{:?}", registry.skipped());
-    CoremlClassifier::load_with(registry.classifier("tiny-laya").unwrap(), ComputeUnits::CpuOnly)
+    CoremlClassifier::load_with(registry.classifier(id).unwrap(), ComputeUnits::CpuOnly)
 }
 
 #[derive(Deserialize)]
@@ -118,7 +137,13 @@ fn predictions_match_torch_in_every_bucket() {
         serde_json::from_str(&std::fs::read_to_string(fixtures().join("expected.json")).unwrap()).unwrap();
     for case in &expected.cases {
         let bucket = if case.ids.len() <= 16 { 16 } else { 32 };
-        let prepared = Prepared { ids: case.ids.clone(), markers: case.markers.clone(), qtype: Some(case.qtype), bucket };
+        let prepared = Prepared {
+            ids: case.ids.clone(),
+            type_ids: vec![],
+            markers: case.markers.clone(),
+            qtype: Some(case.qtype),
+            bucket,
+        };
         // Its own bucket, the larger one, and random pad ids: all the same.
         let mut runs = vec![clf.run(&prepared).unwrap(), clf.run_in(&prepared, 32, &[]).unwrap()];
         runs.push(clf.run_in(&prepared, bucket, &[7; 32]).unwrap());
@@ -187,4 +212,72 @@ fn every_bucket_is_checked_at_load() {
         assert!(!err.contains(dir.to_str().unwrap()) || c.tag == "missing", "{}: {err}", c.tag);
         std::fs::remove_dir_all(&dir).unwrap();
     }
+}
+
+const RERANKER: &str = r#"
+id = "tiny-reranker"
+task = "text-ranking"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [16, 32]
+max_seq_len = 32
+problem_type = "regression"
+
+[classify]
+labels = ["score"]
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+token_type_ids = "token_type_ids"
+output = "logits"
+"#;
+
+#[derive(Deserialize)]
+struct ExpectedPairs {
+    cases: Vec<ExpectedPair>,
+}
+
+#[derive(Deserialize)]
+struct ExpectedPair {
+    ids: Vec<i32>,
+    type_ids: Vec<i32>,
+    score: f32,
+}
+
+#[test]
+fn a_reranker_feeds_segment_ids_and_matches_torch() {
+    let dir = model_dir_in(&reranker_fixtures(), "rerank", RERANKER, Some("model_16.mlmodelc"), Some("model_32.mlmodelc"));
+    let clf = load_id(&dir, "tiny-reranker").unwrap();
+    let expected: ExpectedPairs =
+        serde_json::from_str(&std::fs::read_to_string(reranker_fixtures().join("expected.json")).unwrap()).unwrap();
+    for case in &expected.cases {
+        let bucket = if case.ids.len() <= 16 { 16 } else { 32 };
+        let prepared = Prepared { ids: case.ids.clone(), type_ids: case.type_ids.clone(), markers: vec![], qtype: None, bucket };
+        for score in [clf.run(&prepared).unwrap(), clf.run_in(&prepared, 32, &[5; 32]).unwrap()] {
+            assert_eq!(score.len(), 1);
+            assert!((score[0] - case.score).abs() < 2e-2, "{score:?} vs {}", case.score);
+        }
+        // Segment ids matter: all-zero ones score differently.
+        let flat = Prepared { type_ids: vec![], ..prepared.clone() };
+        assert!((clf.run(&flat).unwrap()[0] - case.score).abs() > 1e-3);
+    }
+    // The product path: the tokenizer pairs the texts with segment ids.
+    let p = clf.prepare_pair("a b", "c d e", &PairParams::default()).unwrap();
+    assert_eq!(p.type_ids, vec![0, 0, 0, 0, 1, 1, 1, 1]);
+    assert_eq!(clf.run(&p).unwrap().len(), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    // An artifact input the manifest doesn't name fails the load.
+    let unnamed = RERANKER.replace("token_type_ids = \"token_type_ids\"\n", "");
+    let dir = model_dir_in(&reranker_fixtures(), "rerank-unnamed", &unnamed, Some("model_16.mlmodelc"), Some("model_32.mlmodelc"));
+    let registry = ModelRegistry::scan(&dir).unwrap();
+    let err = CoremlClassifier::load_with(registry.classifier("tiny-reranker").unwrap(), ComputeUnits::CpuOnly)
+        .err()
+        .unwrap()
+        .to_string();
+    // The artifact check runs before the tokenizer's (segment ids with no
+    // input), which would refuse this model too.
+    assert!(err.contains("takes input `token_type_ids`, which the manifest's [classify.io] doesn't name"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
 }
