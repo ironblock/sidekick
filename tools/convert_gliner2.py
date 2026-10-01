@@ -180,7 +180,7 @@ def main():
     job = core.Job(name=model_id, buckets=buckets, ports=ports, output=head.output, make_wrapper=make_wrapper,
                    example=example, evaluation=core.Evaluation(cases), gates=gates,
                    forbid_ops=frozenset({core.FUSED_ATTENTION}) | backbone.forbid_ops,
-                   install_files=[(path, "classifier.toml")], landing_required=True, timing=args.time)
+                   install_files=[(path, "classifier.toml")], landing_required=True, timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)
 
 

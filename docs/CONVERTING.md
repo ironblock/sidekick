@@ -409,6 +409,27 @@ pre-library builds at every bucket.
   cover fp16's full range; fp16's own 65,504 isn't the limit that matters.
 - **Multi-shape artifacts abort under `.cpuOnly`** on macOS 27 (D27). One
   static artifact per bucket, always.
+- **A program whose weights pass about 1 GiB runs entirely off the ANE**,
+  with no error and nothing in the log. On an M1 Max (macOS 27.0), a Qwen3
+  backbone with 0.964 GiB of weights ran 1,526 of its 1,535 operations on
+  the ANE, and with 1.022 GiB none; other chips or OS versions may draw the
+  line elsewhere. A model served on the ANE whose compiled weights pass
+  `plan.MAX_ANE_PROGRAM_WEIGHT_BYTES` (1 GiB) is refused after compiling,
+  with its options:
+  - serve it on the GPU (`compute_units = "cpu_and_gpu"`);
+  - convert with `--int8-embedding` (`Job(int8_embedding=True)`), which
+    stores the token-embedding table, the largest constant a gather reads,
+    in int8, linear symmetric with one scale per row. On agent-jev that
+    halves a 151,936 x 1,024 table from 311 to 155 MB, which brings 1.198 GB
+    of weights to 1.043 GB and the plan to 98.3% on the ANE. Its cost is
+    within fp16's own (GPU max |Δp| 4.5e-4 with it, 4.8e-4 without, against
+    an ideal-fp16 ceiling of 7.3e-4 on 8 cases). The lookup is a gather, off
+    the ANE either way;
+  - or pass `--ignore-ane-weight-cap` to try anyway. That turns the error
+    into a warning, and the compute-plan gate still judges where Core ML
+    places the program. A bypass is recorded in the run's output, in its
+    report (`ane_weight_cap`), and as a comment in the installed manifest,
+    so a bypassed artifact stays visible.
 - **An empty compute plan can come from a stale cache.** Core ML's cache of
   compiled bundles (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`)
   can hold a broken entry for an artifact's path; plans for that path then

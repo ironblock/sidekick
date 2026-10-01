@@ -148,7 +148,7 @@ def main():
         model_id=MODEL_ID, src=args.src, buckets=args.buckets, backbone=backbone, head=Pool("cls", l2=True),
         tok=tok, texts=[DOC_PREFIX + s for s in PARITY_SENTENCES], calibration=calibration,
         rewrites=[lfm2.precision_rewrite(calibration, tok)], strict_max_seq_len=False,
-        negative_control=negative_control, timing=args.time)
+        negative_control=negative_control, timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)
 
 

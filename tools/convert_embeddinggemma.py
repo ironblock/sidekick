@@ -181,7 +181,7 @@ def main():
         calibration=calibration, rewrites=[gemma3.fp16_range_rewrite(calibration, tok)],
         # the eps floor (constraint 5) perturbs exactness slightly, by design
         gates=EmbeddingGates(fp32_min_cos=0.9999, pad_id_range=(1000, 40000)),
-        strict_max_seq_len=False, timing=args.time)
+        strict_max_seq_len=False, timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)
 
 
