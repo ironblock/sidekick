@@ -581,7 +581,10 @@ def gliner2_build(cases, proc, tok, default, max_len, max_labels):
         if len(markers) != k:
             raise SystemExit(f"{c['id']}: {len(markers)} markers for {k} labels")
         if truncated:
-            c["tags"] = c["tags"] + ["truncated"]
+            # Not "truncated": that tag tells readers the request carries
+            # truncate_prompt_tokens, which this format refuses because it
+            # truncates the text by design.
+            c["tags"] = c["tags"] + ["truncated-text"]
         c.update(ids=ids, markers=markers, qtype=None, k=k)
     return cases
 
