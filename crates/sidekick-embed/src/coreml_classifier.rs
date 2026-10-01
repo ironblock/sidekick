@@ -15,7 +15,8 @@ use crate::bucket_models::BucketModels;
 use crate::classify_input::InputBuilder;
 use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, ResolvedClassifier};
 use sidekick_core::{
-    Classifier, ClassifyParams, ClassifyTask, Error, Prepared, ProblemType, Result, Source,
+    Classifier, ClassifyParams, ClassifyTask, Error, PairParams, Prepared, ProblemType, Result,
+    Source,
 };
 use sidekick_coreml::{ComputeUnits, Int32Input, ShapeVerdict};
 
@@ -30,6 +31,7 @@ pub struct CoremlClassifier {
 struct Io {
     input_ids: String,
     attention_mask: String,
+    token_type_ids: Option<String>,
     marker_pos: Option<String>,
     qtype: Option<String>,
     output: String,
@@ -58,19 +60,33 @@ fn check_interface(
     }
     let per_bucket = m.artifact.contains("{seq}");
     let seq = per_bucket.then(|| vec![1, bucket]);
-    let mut expect = vec![(&io.input_ids, seq.clone()), (&io.attention_mask, seq)];
+    let mut expect = vec![(&io.input_ids, seq.clone()), (&io.attention_mask, seq.clone())];
+    if let Some(types) = &io.token_type_ids {
+        expect.push((types, seq));
+    }
     if let (Some(marker), Some(qtype)) = (&io.marker_pos, &io.qtype) {
         expect.push((marker, Some(vec![1, m.max_labels()])));
         expect.push((qtype, Some(vec![1])));
     }
-    for (input, shape) in expect {
-        match (iface.inputs.get(input), shape) {
+    for (input, shape) in &expect {
+        match (iface.inputs.get(*input), shape) {
             (None, _) => return fail(format!("no int32 multi-array input `{input}`")),
-            (Some(got), Some(shape)) if *got != shape => {
+            (Some(got), Some(shape)) if got != shape => {
                 return fail(format!("input `{input}` is {got:?}, expected {shape:?}"))
             }
             _ => {}
         }
+    }
+    // Every multi-array input the artifact declares must be one the
+    // manifest names: an unnamed one would never be fed, and every
+    // prediction would fail. This runs at classifier load only (embedders
+    // don't read their artifacts' interfaces), and it refuses an unnamed
+    // input even if the model marks it optional.
+    let named: Vec<&String> = expect.iter().map(|(n, _)| *n).collect();
+    if let Some(extra) = iface.inputs.keys().find(|k| !named.contains(k)) {
+        return fail(format!(
+            "takes input `{extra}`, which the manifest's [classify.io] doesn't name"
+        ));
     }
     let labels = m.max_labels();
     match iface.outputs.get(&io.output) {
@@ -107,6 +123,7 @@ impl CoremlClassifier {
         let io = Io {
             input_ids: io_name(&io.input_ids, "input_ids")?,
             attention_mask: io_name(&io.attention_mask, "attention_mask")?,
+            token_type_ids: io.token_type_ids.clone(),
             marker_pos,
             qtype: if laya { Some(io_name(&io.qtype, "qtype")?) } else { None },
             output,
@@ -174,6 +191,14 @@ impl CoremlClassifier {
             Int32Input { name: &self.io.input_ids, shape: vec![1, bucket], data: input_ids },
             Int32Input { name: &self.io.attention_mask, shape: vec![1, bucket], data: mask },
         ];
+        if let Some(name) = &self.io.token_type_ids {
+            // Segment ids for the real tokens (none given: all segment 0),
+            // then 0 in the pads, which the mask hides.
+            let mut types = prepared.type_ids.clone();
+            types.resize(used, 0);
+            types.resize(bucket, 0);
+            inputs.push(Int32Input { name, shape: vec![1, bucket], data: types });
+        }
 
         let k = match (&self.io.marker_pos, &self.io.qtype) {
             (Some(marker_name), Some(qtype_name)) => {
@@ -245,6 +270,10 @@ impl Classifier for CoremlClassifier {
 
     fn prepare(&self, input: &str, params: &ClassifyParams) -> Result<Prepared> {
         self.inputs.prepare(input, params)
+    }
+
+    fn prepare_pair(&self, query: &str, document: &str, params: &PairParams) -> Result<Prepared> {
+        self.inputs.prepare_pair(query, document, params)
     }
 
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {

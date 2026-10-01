@@ -30,13 +30,11 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
     let classifiers = state.registry.classifiers().filter(|_| state.classifiers_supported);
     for c in classifiers {
         let m = &c.manifest;
-        let (task, labels, max_labels) = match m.task {
-            ClassifyTask::TextClassification => {
-                ("text-classification", Some(m.classify.labels.clone()), None)
-            }
-            ClassifyTask::ZeroShotClassification => {
-                ("zero-shot-classification", None, Some(m.max_labels()))
-            }
+        let (labels, max_labels) = match m.task {
+            ClassifyTask::TextClassification => (Some(m.classify.labels.clone()), None),
+            ClassifyTask::ZeroShotClassification => (None, Some(m.max_labels())),
+            // One score per pair: nothing to list.
+            ClassifyTask::TextRanking => (None, None),
         };
         data.push(ModelObject {
             labels,
@@ -44,7 +42,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             max_batch: Some(m.max_batch),
             extensions: Some(m.extension_fields()),
             calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
-            ..ModelObject::new(m.id.clone(), created, task)
+            ..ModelObject::new(m.id.clone(), created, m.task.name())
         });
     }
 

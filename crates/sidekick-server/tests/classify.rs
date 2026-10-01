@@ -394,7 +394,7 @@ async fn listings_are_task_aware() {
     assert!(d.get("labels").is_none());
 
     let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;
-    assert_eq!(health["classifiers"]["models"], json!(["decider", "sentiment"]));
+    assert_eq!(health["classifiers"]["models"], json!(["decider", "reranker", "sentiment", "sigmoid-reranker"]));
     assert_eq!(health["classifiers"]["resident"], 0);
     assert_eq!(health["embeddings"]["models"], json!(["test-static"]));
     let skipped = health["skipped_models"].as_array().unwrap();
