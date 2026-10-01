@@ -426,6 +426,7 @@ path.
 | model | task | conversion | CPU | GPU | ANE | ANE ops | ANE ms |
 |---|---|---|---|---|---|---|---|
 | [nlptown/bert-base-multilingual-uncased-sentiment](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment) as `nlptown-sentiment` | text-classification, 5 labels | [convert_bert_classifier.py](../tools/convert_bert_classifier.py) | B 3.4e-3 | A 6.6e-4 | **B** 2.6e-3 | 294/304 | 4.2 |
+| [SupersonicLabs/Julia-1](https://huggingface.co/SupersonicLabs/Julia-1) as `julia-1` (**preview**) | zero-shot, laya's format with Julia-1's option rendering, 1,024 tokens | [convert_julia.py](../tools/convert_julia.py) | D 0.39 (39 flips; 5.3× ceiling) | **C** 0.053 (2 flips cap it; 1.07× ceiling, A level) | **C** 0.116 (7 flips cap it; 1.84× ceiling, B level) | 1647/1665 | 9.0 |
 | [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` (**preview**) | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.16 (13 flips; 6.1× ceiling) | **A** 0.037 (0.93× ceiling) | **C** 0.043 (1 flip caps it; 1.93× ceiling, B level) | 1701/1719 | 40 |
 | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` (**preview**) | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
 
@@ -499,6 +500,38 @@ laya truncates at 1,024 tokens, and inputs within 16 tokens of the limit
 
 The suite passes both laya models on every path. laya-en's CPU path takes about 20 minutes for its 2,612 cases on an M1 Max, which is
 the suite's default per-worker limit, so run it with `--timeout 3600`.
+
+**julia-1 is a preview.** Julia-1 is an mmBERT-small encoder (a
+multilingual ModernBERT) with laya's decision head, so it runs on the laya
+format; only its option texts are rendered differently
+(`option_rendering = "julia"`). Measured on 2,510 cases: fastino/fast-decisions
+translated as for laya (heads of up to 20 labels, Julia-1's limit), plus
+adversarial cases in Julia-1's terms.
+- **Grades:** C on the ANE and on the GPU, both capped by flips; by their
+  p99 ratios alone they are B (ANE, 1.84× the ceiling) and A (GPU, 1.07×).
+  D on the CPU (39 flips).
+- **The ceiling is high.** An ideal fp16 engine moves Julia-1's
+  probabilities by up to 0.055 (p99 0.028), several times laya's, and
+  flips two of its decisions. About half of that is the weights alone:
+  rounded to fp16 with every activation exact, they reach p99 0.0135 and
+  flip one of the two. The embedding table is a small part of it; the
+  encoder's and head's other weights are most of it. Julia-1's decisions
+  resolve finer than its weights do in fp16.
+- **The ANE's 7 flips** have fp32 margins of 0.05 to 0.35 logits, and most
+  are borderline in fp16 already: one is also a flip of the ideal-fp16
+  engine (`ticket_route.contains_pii.077`), and four more are among the
+  101 inputs fp16 storage moves most. Read `probs`, not just `label`, when
+  a decision is close.
+- **Bucket invariance** is exact on the ANE (the converter builds every
+  softmax from exp and one matmul, as for laya); up to 0.049 on the GPU,
+  inside the ceiling. The ANE takes 9 ms per input.
+- **Gold accuracy** is 45% in fp32 and on every path (reported, not
+  graded). Julia-1's training data isn't published, so this corpus
+  measures conversion parity, not the model's accuracy.
+- The conversion is exact in fp32 (|Δlogit| ≤ 9.7e-5 against Julia-1's own
+  forward in every bucket). mmBERT's config gives RoPE in transformers 5's
+  `rope_parameters` block, which transformers 4.57 ignores; the converter
+  reads it and checks every layer's rotary frequencies.
 
 ## Rerankers (`/v1/rerank`)
 
