@@ -243,6 +243,10 @@ The parity suite gains classifiers. Per path:
 - **Graded:** raw Δp and Δlogit against the fp32 reference. Argmax flips
   count only where the reference's top-2 logit margin is ≥ 0.05; near-ties
   are reported, not graded. Calibrated Δp is reported separately.
+- **Against the ideal-fp16 ceiling**, when the reference carries the
+  `fp16` oracle: a ratio grade from p99 |Δp| over the ceiling's p99, and
+  the better of it and the absolute grade counts. On the GPU and ANE the
+  bucket gate passes within the ceiling's worst case (D28 amendment).
 - **Reported, never graded:** accuracy against gold labels. It measures the
   corpus translation as much as the model.
 

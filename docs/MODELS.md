@@ -409,6 +409,17 @@ caps the grade at C; F is a failed hard gate. Unlike the embedders, the
 classifiers have no per-chip floors yet, so the suite reports their
 accuracy without regression-testing it.
 
+Some models resolve decisions finer than fp16 can represent, so a second
+grade compares each path with the model's **ideal-fp16 ceiling**: what an
+ideal fp16 engine would lose, simulated by `sidekick_convert.fp16sim` and
+recorded in the reference as the `fp16` oracle. The ratio grade is the
+path's p99 |Δp| over the ceiling's p99: A ≤ 1.25×, B ≤ 2×, C ≤ 4×, D
+beyond. The grade that counts is the better of the two, so a model is
+credited for being practically exact or for being as good as fp16 allows.
+On the GPU and ANE, variation between buckets within the ceiling passes
+the bucket gate (D28 amendment). Models whose references don't yet carry
+the `fp16` oracle are graded on the absolute scale only.
+
 M1 Max, macOS 27.0, September 2026. ms is the median per input on that
 path.
 
