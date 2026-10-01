@@ -15,9 +15,12 @@ from .gates import ClassifierGates, EmbeddingGates
 from .wrapper import compose
 
 
-def evaluation(backbone, head, tok, texts, max_len, pairs=None):
+def evaluation(backbone, head, tok, texts, max_len, pairs=None, truncate=False):
     """Cases for gate texts (or (a, b) text pairs). A text longer than the
-    largest bucket is an error: it would silently gate nothing."""
+    largest bucket is an error, since it would silently gate nothing, unless
+    `truncate`: then it is cut as the server cuts it, keeping the first
+    max_len - 1 tokens and the final one (the EOS that last-token pooling
+    reads, docs/DECISIONS.md D20), and its reference is computed on that."""
     cases = []
     for i, item in enumerate(pairs if pairs is not None else texts):
         if pairs is not None:
@@ -25,6 +28,8 @@ def evaluation(backbone, head, tok, texts, max_len, pairs=None):
             extra = {"token_type_ids": types}
         else:
             ids, types, extra = _tok.encode(tok, item), None, {}
+        if len(ids) > max_len and truncate and types is None:
+            ids = ids[:max_len - 1] + ids[-1:]
         if len(ids) > max_len:
             raise SystemExit(f"gate input {i} is {len(ids)} tokens, longer than the largest bucket {max_len}")
         ref = head.reference(backbone.reference(ids, types))
@@ -39,7 +44,7 @@ def _apply(backbone, rewrites):
 
 def embedder(*, model_id, src, buckets, backbone, head, tok, texts, calibration=None, gates=None,
              forbid_ops=frozenset({FUSED_ATTENTION}), rewrites=(), strict_max_seq_len=True,
-             negative_control=False, timing=False):
+             truncate=False, negative_control=False, timing=False):
     """An embedding job; installs examples/manifests/<model_id>/manifest.toml.
     `rewrites` (functions of the backbone) run after the fp32 references are
     computed from the unmodified checkpoint."""
@@ -49,7 +54,7 @@ def embedder(*, model_id, src, buckets, backbone, head, tok, texts, calibration=
     _manifest.check_embedder(m, src=src, buckets=buckets, backbone=backbone, head=head,
                              strict_max_seq_len=strict_max_seq_len)
     ports = text_ports(token_type_ids=getattr(backbone, "token_types", None) == "input")
-    cases = evaluation(backbone, head, tok, texts, max(buckets))
+    cases = evaluation(backbone, head, tok, texts, max(buckets), truncate=truncate)
     _apply(backbone, rewrites)
     make_wrapper, example = compose(backbone, head, ports)
     return Job(name=model_id, buckets=buckets, ports=ports, output=head.output, make_wrapper=make_wrapper,

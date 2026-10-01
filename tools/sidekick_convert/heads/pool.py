@@ -4,6 +4,7 @@
 import dataclasses
 
 import numpy as np
+import torch
 
 from ..techniques import pooling
 
@@ -32,6 +33,10 @@ class Pool:
 
     def forward(self, w, x, backbone):
         hidden = backbone.call(w, x).last_hidden_state
+        if self.mode == "cls" and self.l2:
+            # as LFM2.5's converter wrote it, whose locals name the converted values
+            cls = pooling.cls(hidden, self.dims) * self.prescale
+            return cls / torch.linalg.vector_norm(cls, dim=-1, keepdim=True)
         if self.mode == "cls":
             y = pooling.cls(hidden, self.dims)
         elif self.mode == "mean":

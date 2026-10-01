@@ -116,12 +116,15 @@ around and where it was measured.
 | `pooling` | CLS, masked mean (by the attention_mask input, never by token id; summed at 1/32 for fp16 range), last token without a gather, L2 squared at 1/32; outputs end in a literal `(1, dims)` reshape | every pooled head | D15, D17, D20 |
 | `reduce` | `blocked_max()`: max over 128-wide slices, exact everywhere (macOS 27's CPU `reduce_max` over ≥ 256 elements returns max(x, 0)) | any explicit max over a long axis | laya |
 | `traceable` | `rotate_half`, `repeat_kv` without shape arithmetic; `install()` patches a transformers module | RoPE and grouped-query attention | D17 |
+| `attention.transformer_encoder_layer` | `nn.TransformerEncoderLayer(norm_first)` with its attention written out, so its fast path is never traced | task heads built from PyTorch encoder layers (laya) | D28 |
 | `onehot` | selections from int32 inputs by comparison with a position constant, instead of data-dependent gathers | inputs that index positions (laya's markers and question type) | D28 |
 
-The range rewrite for activations past fp16's own maximum (EmbeddingGemma's
-residual stream at ~1.5e5, D17) and pad zeroing for convolutional mixers
-(D19) live in their converters for now and move into the library with those
-families.
+Two rewrites are specific to one family so far and live in its backbone:
+the range rewrite for activations past fp16's own maximum (EmbeddingGemma's
+residual stream at ~1.5e5, D17; `backbones.gemma3.fp16_range_rewrite`), and
+pad zeroing before every convolution of a convolutional mixer (D19;
+`backbones.lfm2`, on by default, `--no-pad-zeroing` for the negative
+control).
 
 ## Calibration and evaluation
 
@@ -131,7 +134,9 @@ Two kinds of inputs, kept apart by type:
   anything that changes the artifact. It refuses texts from the graded parity
   corpus (`fixtures/parity/corpus.toml`), because calibrating on what is
   graded would flatter the grades. A converter's own texts, or a committed
-  calibration set, are fine.
+  calibration set, are fine. A text that ends with a corpus text counts as
+  the corpus text (a model's prompt prefix doesn't make it new);
+  `Calibration.without_graded()` drops such texts and says how many.
 - **`core.Evaluation`** holds the gate cases and their fp32 references. It
   judges and decides nothing. Checks that decide nothing, such as the BERT
   2^15 range check, may run on evaluation texts.
@@ -271,8 +276,11 @@ run on any mismatch with the checkpoint, where the field exists:
 | `convert_bge_small.py` | BERT, fused attention | CLS pool | fused attention kept for byte identity with the graded artifact; see its docstring |
 | `convert_bert_embedder.py` | BERT, explicit | CLS or mean pool (from the checkpoint) | MiniLM, e5 and other BERT-family sentence-transformers |
 | `convert_bert_classifier.py` | BERT, explicit | sequence classification | classifiers and rerankers; `--twice-gelu` opt-in |
-| `convert_gte_modernbert.py`, `convert_laya.py` | standalone | | move to a ModernBERT backbone next |
-| `convert_embeddinggemma.py`, `convert_lfm25_embedding.py`, `convert_qwen3_embedding.py` | standalone | | move to Gemma3, LFM2 and Qwen3 backbones after that |
+| `convert_gte_modernbert.py` | ModernBERT, explicit, residual K calibrated (2) | CLS pool | `--attn sdpa` builds the fused-attention negative control |
+| `convert_qwen3_embedding.py` | Qwen3 decoder, precision rewrite | last-token pool | F2LLM; any Qwen3 last-token embedder (manifest by install-dir name) |
+| `convert_laya.py` | ModernBERT, explicit, residual K pinned (2), TwiceGelu | laya's marker head (`heads/laya.py`) | the decision model's own forward is the fp32 reference; gated on CPU_AND_NE, CPU_ONLY reported |
+| `convert_embeddinggemma.py` | Gemma3, fp16 range rewrite (residual K = 32) and per-layer precision scales | mean pool, the two sentence-transformers dense layers, L2 (`heads/gemma_st.py`) | its calibration keeps one graded-corpus text under a logged legacy exemption, because the graded artifact was calibrated with it |
+| `convert_lfm25_embedding.py` | LFM2 (short convolutions with pad zeroing, attention), per-layer precision scales | CLS pool, L2 in graph | `--no-pad-zeroing` builds the negative control |
 
 Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
 `--time` and its own flags. The library needs arm64-native Python with
@@ -314,15 +322,21 @@ compare SHA-256 per bucket of:
 - `tokenizer.json` and the manifest.
 
 `coremldata.bin` (and `analytics/coremldata.bin`) are excluded: two builds by
-the same, unchanged converter differ there, per compile. When the hashes are
+the same, unchanged converter differ there, per compile.
+
+Identical math isn't enough for identical bytes. `torch.jit.trace` names each
+value after the Python local it is bound to (rebinding a name makes
+`name.1`), and those names become the converted program's variable names. A
+refactor keeps the old code's binding structure, and the wrapper's attribute
+names, which name the weights. When the hashes are
 identical, the compute plan and every grade are too. Where a change is
 intended (an opt-in technique turned on), acceptance is the same compute-plan
 op counts and parity-suite grades within the recorded floors instead
 (`fixtures/parity/expectations.toml`).
 
-The BERT converters passed this way: bge-small-en-v1.5 and
-nlptown-sentiment are byte-identical to their pre-library builds at every
-bucket.
+The converters passed this way: bge-small-en-v1.5, nlptown-sentiment,
+gte-modernbert-base and F2LLM-v2-160M are byte-identical to their
+pre-library builds at every bucket.
 
 ## Gotchas
 
@@ -387,6 +401,16 @@ bucket.
 - **sentence-transformers' `max_seq_length` isn't always 512**:
   all-MiniLM-L6-v2 uses 256, EmbeddingGemma 2048. A new model's manifest
   follows it, so truncation matches the reference; existing models cap at 512.
+  It matters: embedding a ~400–480-token text truncated at the model's own
+  length instead of at 512 gives cosine 0.973 for all-MiniLM-L6-v2 (256),
+  0.896 for all-MiniLM-L12-v2 (128) and 0.681 for
+  paraphrase-multilingual-MiniLM-L12-v2 (128).
+- **Configs saved by transformers 5 can be misread by transformers 4.57.**
+  ModernBERT checkpoints carry RoPE theta in a `rope_parameters` block,
+  which 4.57 ignores, falling back to 160000 / 10000; mmBERT's are
+  160000 / 160000. A reference built under the same misreading can't catch
+  it. The ModernBERT backbone applies the block and checks every layer's
+  rotary frequencies and attention type against config.json.
 - **Gate units**: a reranker's raw logit is |x| ~ 10, so its error is gated
   in sigmoid space (cross-encoders train with a binary cross-entropy), with
   |Δlogit| reported.

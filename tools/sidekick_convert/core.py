@@ -113,18 +113,46 @@ def _parity_corpus_texts():
     return {c["text"] for c in corpus.get("case", []) if "text" in c}
 
 
+def _graded(texts):
+    """Texts that are, or end with, a graded parity-corpus text: a model's
+    prompt prefix followed by a corpus text is still the corpus text. Short
+    corpus texts (under 12 characters: "a", "42") only match exactly."""
+    corpus = _parity_corpus_texts()
+    long = [c for c in corpus if len(c) >= 12]
+    return [t for t in texts if t in corpus or any(t.endswith(c) for c in long)]
+
+
 @dataclasses.dataclass(frozen=True)
 class Calibration:
     """Inputs that decide rewrites. Never the graded parity corpus (D26):
     calibrating on what is graded would flatter the grades. A converter's own
-    gate texts, or a committed calibration set, are fine."""
+    gate texts, or a committed calibration set, are fine.
+
+    `legacy_graded` is the one exception: a reason string that keeps graded
+    texts in an existing model's calibration, because dropping them would
+    change an artifact that is already graded and shipped. It is logged on
+    every run, and removing it is a separate, measured change."""
     texts: tuple
+    legacy_graded: str = None
 
     def __post_init__(self):
         object.__setattr__(self, "texts", tuple(self.texts))
-        graded = _parity_corpus_texts() & set(self.texts)
+        graded = _graded(self.texts)
+        if graded and not self.legacy_graded:
+            raise ValueError(f"calibration texts taken from the graded parity corpus: {graded[:3]}")
         if graded:
-            raise ValueError(f"calibration texts taken from the graded parity corpus: {sorted(graded)[:3]}")
+            print(f"WARNING: calibration keeps {len(graded)} graded parity-corpus text(s): {self.legacy_graded}",
+                  flush=True)
+
+    @classmethod
+    def without_graded(cls, texts, report=print):
+        """A Calibration of `texts` minus any the graded parity corpus holds,
+        reporting what it dropped (a converter's gate texts can overlap the
+        corpus, which was seeded from them)."""
+        dropped = _graded(texts)
+        if dropped:
+            report(f"calibration: dropped {len(dropped)} text(s) that the graded parity corpus holds")
+        return cls([t for t in texts if t not in dropped])
 
 
 @dataclasses.dataclass
@@ -156,6 +184,8 @@ class Job:
     negative_control: bool = False
     timing: bool = False
     landing_required: bool = False
+    gate_cases: str = "fitting"   # "fitting": every case that fits a bucket; "landing": those the server
+                                  # would send to it (for models whose accuracy varies by bucket)
 
 
 def trace_convert(wrapper, ports, seq, example, output):
@@ -210,7 +240,8 @@ def run(job, install_dir):
     reports = {}
     with tempfile.TemporaryDirectory() as work:
         for seq in job.buckets:
-            cases = job.evaluation.fitting(seq)
+            cases = (job.evaluation.landing(seq, job.buckets) if job.gate_cases == "landing"
+                     else job.evaluation.fitting(seq))
             if not cases:
                 raise GateFailure(f"{job.name}: no evaluation case fits bucket {seq}")
             if job.landing_required and not job.evaluation.landing(seq, job.buckets):

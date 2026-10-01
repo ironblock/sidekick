@@ -11,16 +11,33 @@ import numpy as np
 from sidekick_convert import core, manifest, metrics, tokenizer
 
 
-def corpus_text():
+def _corpus_texts():
     import tomllib
-    cases = tomllib.loads(core.PARITY_CORPUS.read_text())["case"]
-    return next(c["text"] for c in cases if "text" in c)
+    return [c["text"] for c in tomllib.loads(core.PARITY_CORPUS.read_text())["case"] if "text" in c]
+
+
+def corpus_text():
+    return _corpus_texts()[0]
 
 
 class CalibrationGuard(unittest.TestCase):
     def test_refuses_graded_corpus_texts(self):
         with self.assertRaises(ValueError):
             core.Calibration(["an unrelated calibration text", corpus_text()])
+
+    def test_refuses_prefixed_corpus_texts(self):
+        long = next(t for t in _corpus_texts() if len(t) >= 12)
+        with self.assertRaises(ValueError):
+            core.Calibration(["title: none | text: " + long])
+
+    def test_without_graded_drops_and_keeps(self):
+        long = next(t for t in _corpus_texts() if len(t) >= 12)
+        cal = core.Calibration.without_graded(["keep me", "query: " + long], report=lambda m: None)
+        self.assertEqual(cal.texts, ("keep me",))
+
+    def test_legacy_exemption_is_explicit(self):
+        cal = core.Calibration([corpus_text()], legacy_graded="kept for byte identity")
+        self.assertEqual(cal.texts, (corpus_text(),))
 
     def test_accepts_other_texts(self):
         cal = core.Calibration(["an unrelated calibration text"])
@@ -140,3 +157,44 @@ class Metrics(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WrapperForward(unittest.TestCase):
+    """The wrapper's forward takes the ports as named parameters, whether it
+    is built by compose() or constructed directly."""
+
+    def test_named_parameters_either_way(self):
+        import inspect
+
+        import torch
+
+        from sidekick_convert import wrapper
+
+        class Sum:
+            attr = "model"
+            model = torch.nn.Identity()
+
+            def buffers(self, seq):
+                return {}
+
+            def example(self, seq, ports):
+                return ()
+
+        class Head:
+            def bind(self, backbone):
+                return self
+
+            def register(self, w, seq):
+                pass
+
+            def forward(self, w, x, backbone):
+                return x["input_ids"] + 10 * x["attention_mask"]
+
+        ports = core.text_ports()
+        make_wrapper, _ = wrapper.compose(Sum(), Head(), ports)
+        built, direct = make_wrapper(4), wrapper.Wrapper(Sum(), Head(), ports, 4)
+        self.assertIs(type(built), type(direct))
+        names = list(inspect.signature(direct.forward).parameters)
+        self.assertEqual(names, [p.name for p in ports])
+        ids, mask = torch.ones((1, 4), dtype=torch.int32), torch.zeros((1, 4), dtype=torch.int32)
+        self.assertTrue(torch.equal(direct(ids, mask), ids))
