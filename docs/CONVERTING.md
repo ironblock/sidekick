@@ -353,9 +353,26 @@ pre-library builds at every bucket.
   softmax rewrites that divide by a row sum do too. The NaN then reaches
   every token through the next layer's value products. Use
   `masks.self_attending()` wherever a row can be fully masked.
-- **The fused attention op crashed the process on the CPU at head dim 16**
-  (SIGBUS/SIGSEGV, intermittently; macOS 27.0, M1 Max, coremltools 9). This
-  was observed, not investigated. The library never emits the fused op.
+- **The fused attention op crashes the process on the CPU at head dim 16**:
+  SIGBUS inside libBNNS, Core ML's CPU kernels, mostly on the first
+  prediction. With 12 heads over 128 tokens (CPU_ONLY; macOS 27.0, M1 Max,
+  coremltools 9), it crashed 10 of 13 processes at head dim 16, whether or
+  not the prediction inputs were kept referenced. It crashed none of 10 at
+  head dim 64, and none of 6 at head dim 16 with the same attention written
+  out explicitly. It is not the input-lifetime crash below. The library
+  never emits the fused op.
+- **coremltools crashes the process about a second after a prediction
+  whose inputs Python has freed.** Core ML keeps a prediction's inputs bound
+  to its execution stream and releases them, on a queue of its own, once the
+  stream has been idle for about a second. coremltools backs them with the
+  NumPy arrays, so a freed array is a use-after-free there (EXC_BAD_ACCESS on
+  `MLE5ExecutionStream`'s reset queue). Any model and any compute unit,
+  CPU_ONLY included (macOS 27.0, coremltools 9): `m.predict({"x":
+  np.ones(...)})` followed by a second of other work, or of predictions on
+  another model, crashes; a tight loop of predictions on one model never
+  does, which makes it look intermittent. Keep every input referenced until
+  the model is released. The gates' models do (`gates._Model`); a script
+  that calls `predict()` directly must too.
 - **CPU `reduce_max` over ≥ 256 elements returns max(x, 0)**, and
   `reduce_min` min(x, 0) (macOS 27). A small reduce can land on the CPU even
   under CPU_AND_NE. Use `reduce.blocked_max()` for any explicit max.
@@ -420,7 +437,8 @@ pre-library builds at every bucket.
 The logic that decides artifacts has torch-only unit tests (no Core ML), in
 `tools/sidekick_convert/tests`: the calibration guard, the tokenizer rule,
 masks, one-hots, the blocked max, the K choice, activations, pooling, the
-manifest rules, and the ideal-fp16 simulation. From the repository root:
+manifest rules, the ideal-fp16 simulation, and the gates' prediction
+inputs. From the repository root:
 
     python -m pytest tools/sidekick_convert/tests
 

@@ -33,9 +33,29 @@ from .metrics import activate, cosine, finite, largest, max_abs_diff, worst
 PATHS = {"CPU_AND_NE": "CPU_AND_NE", "CPU_ONLY": "CPU_ONLY"}
 
 
+# Every prediction input, referenced for the life of the process. Core ML
+# keeps a prediction's inputs bound to its execution stream and releases them
+# about a second after the stream goes idle, on a queue of its own;
+# coremltools backs them with the NumPy arrays, so an input Python has
+# already freed crashes the process then (EXC_BAD_ACCESS on
+# MLE5ExecutionStream's reset queue). Gates make few, small predictions.
+_INPUTS = []
+
+
+class _Model:
+    """A compiled model whose predict() keeps its inputs referenced."""
+
+    def __init__(self, model):
+        self._model = model
+
+    def predict(self, feed):
+        _INPUTS.append(feed)
+        return self._model.predict(feed)
+
+
 def _model(compiled, path):
     import coremltools as ct
-    return ct.models.CompiledMLModel(str(compiled), compute_units=getattr(ct.ComputeUnit, path))
+    return _Model(ct.models.CompiledMLModel(str(compiled), compute_units=getattr(ct.ComputeUnit, path)))
 
 
 def _run_torch(wrapper, feed, ports):
