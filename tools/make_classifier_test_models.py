@@ -25,10 +25,16 @@ tiny-gliner2/: the gliner2 format. `input_ids`/`attention_mask` [1, S] and
   load check must refuse;
 - `expected.json`: fp32 torch logits at the markers for fixed inputs.
 
+tiny-multishape/: one artifact, `model.mlmodelc`, whose `input_ids` and
+`attention_mask` each accept two enumerated shapes, [1, 16] and [1, 32],
+and whose `logits` are [1, 1]. Its layout is the one macOS 27 can abort
+on, which the loader must refuse there whatever the compute units (D27).
+
 Usage:
     python tools/make_classifier_test_models.py crates/sidekick-embed/tests/fixtures [name ...]
 
-    name    tiny-laya, tiny-reranker, tiny-gliner2 (default: all). Building
+    name    tiny-laya, tiny-reranker, tiny-gliner2, tiny-multishape (default:
+            all). Building
             only the one you changed keeps the others' committed bytes.
 
 Requires torch, coremltools and numpy (arm64-native Python 3.12 or
@@ -108,11 +114,29 @@ LAYA_INPUTS = lambda seq, k: [("input_ids", (1, seq)), ("attention_mask", (1, se
 PAIR_INPUTS = lambda seq: [("input_ids", (1, seq)), ("attention_mask", (1, seq)), ("token_type_ids", (1, seq))]
 
 
+class TinyPooled(nn.Module):
+    """A score from the mean of the real tokens' embeddings: any length."""
+
+    def __init__(self):
+        super().__init__()
+        self.emb = nn.Embedding(VOCAB, D)
+        self.w = nn.Linear(D, 1)
+
+    def forward(self, input_ids, attention_mask):
+        m = attention_mask.float()[..., None]
+        h = torch.tanh(self.emb(input_ids.long())) * m
+        return self.w(h.sum(1) / m.sum(1))
+
+
 def convert(model, shapes, out_dir, name):
-    traced = torch.jit.trace(model, [torch.zeros(s, dtype=torch.int32) for _, s in shapes])
+    """`shapes`: (name, shape) per input; a shape may be a list of shapes,
+    which the input then accepts as enumerated shapes."""
+    traced = torch.jit.trace(model, [torch.zeros(s[0] if isinstance(s, list) else s, dtype=torch.int32)
+                                     for _, s in shapes])
     ml = ct.convert(
         traced,
-        inputs=[ct.TensorType(name=n, shape=s, dtype=np.int32) for n, s in shapes],
+        inputs=[ct.TensorType(name=n, shape=ct.EnumeratedShapes(shapes=s) if isinstance(s, list) else s,
+                              dtype=np.int32) for n, s in shapes],
         outputs=[ct.TensorType(name="logits", dtype=np.float32)],
         convert_to="mlprogram",
         minimum_deployment_target=ct.target.macOS15,
@@ -130,13 +154,23 @@ def convert(model, shapes, out_dir, name):
 
 def main():
     root = sys.argv[1]
-    names = sys.argv[2:] or ["tiny-laya", "tiny-reranker", "tiny-gliner2"]
+    names = sys.argv[2:] or ["tiny-laya", "tiny-reranker", "tiny-gliner2", "tiny-multishape"]
     if "tiny-laya" in names:
         laya(root)
     if "tiny-reranker" in names:
         reranker(root)
     if "tiny-gliner2" in names:
         gliner2(root)
+    if "tiny-multishape" in names:
+        multishape(root)
+
+
+def multishape(root):
+    out = os.path.join(root, "tiny-multishape")
+    os.makedirs(out, exist_ok=True)
+    torch.manual_seed(3)
+    shapes = [(1, 16), (1, 32)]
+    convert(TinyPooled().eval(), [("input_ids", shapes), ("attention_mask", shapes)], out, "model")
 
 
 def laya(root):
