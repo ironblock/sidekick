@@ -35,7 +35,14 @@ usage: parity [options]
                        grade a model whose compute plan Core ML can't produce
                        (a warning, not a failure), provided its ANE output
                        isn't bit-identical to CPU_ONLY
-  --timeout SECS       per worker (default 1200)";
+  --timeout SECS       per worker (default 1200)
+  --bucket-invariance MODE
+                       classifiers: which larger buckets each case re-runs in
+                       for bucket invariance. full: every larger bucket.
+                       sampled: the next larger bucket for every case, every
+                       larger bucket for the adversarial cases and every 10th
+                       case. auto (default): sampled when the largest bucket
+                       is over 512 tokens, else full";
 
 /// The suite measures every compute path itself (its ANE plan check reports
 /// a model Core ML won't place on the ANE, and its CPU path reports the
@@ -268,15 +275,20 @@ fn worker(args: &[String]) -> Result<(), String> {
     let [models_dir, id, refs, path, out, rest @ ..] = args else {
         return Err("bad worker arguments".into());
     };
-    let limit: Option<usize> = rest
-        .first()
-        .map(|s| s.parse().map_err(|_| "bad limit"))
-        .transpose()?;
+    // The optional rest: a case limit, and `--bucket-invariance=MODE`.
+    let mut limit: Option<usize> = None;
+    let mut bucket_mode = BucketInvariance::Auto;
+    for a in rest {
+        match a.strip_prefix("--bucket-invariance=") {
+            Some(m) => bucket_mode = BucketInvariance::parse(m).ok_or("bad bucket-invariance mode")?,
+            None => limit = Some(a.parse().map_err(|_| "bad limit")?),
+        }
+    }
     let path = Path3::parse(path).ok_or("bad path")?;
     let refs = (refs != "-").then(|| PathBuf::from(refs));
     let registry = ModelRegistry::scan_with(Path::new(models_dir), &MEASURE_ALL).map_err(|e| e.to_string())?;
     if let Ok(model) = registry.classifier(id) {
-        return classify::worker(model, refs.as_deref(), path, out, limit);
+        return classify::worker(model, refs.as_deref(), path, out, limit, bucket_mode);
     }
     let model = load_model(Path::new(models_dir), id)?;
     let reference = Reference::load(&reference_dir(&model, refs.as_deref()))?;
@@ -394,6 +406,30 @@ struct Options {
     suggest: bool,
     allow_unverified: bool,
     timeout: Duration,
+    pub bucket_invariance: BucketInvariance,
+}
+
+/// Which larger buckets a classifier case re-runs in for bucket invariance
+/// (`--bucket-invariance`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BucketInvariance {
+    Auto,
+    Full,
+    Sampled,
+}
+
+impl BucketInvariance {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Full => "full",
+            Self::Sampled => "sampled",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        [Self::Auto, Self::Full, Self::Sampled].into_iter().find(|m| m.name() == s)
+    }
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
@@ -407,6 +443,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         suggest: false,
         allow_unverified: false,
         timeout: Duration::from_secs(1200),
+        bucket_invariance: BucketInvariance::Auto,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -431,6 +468,11 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--allow-unverified-plans" => o.allow_unverified = true,
             "--timeout" => {
                 o.timeout = Duration::from_secs(val()?.parse().map_err(|_| "bad --timeout")?)
+            }
+            "--bucket-invariance" => {
+                let v = val()?;
+                o.bucket_invariance =
+                    BucketInvariance::parse(&v).ok_or(format!("unknown --bucket-invariance {v:?}"))?
             }
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
@@ -595,12 +637,12 @@ fn check_plans(
 fn spawn_worker<T: serde::de::DeserializeOwned>(
     id: &str,
     models_dir: &Path,
-    refs: Option<&Path>,
     path: Path3,
     limit: Option<usize>,
-    timeout: Duration,
     scratch: &Path,
+    o: &Options,
 ) -> Result<T, String> {
+    let (refs, timeout) = (o.refs.as_deref(), o.timeout);
     let tag = format!(
         "{id}-{}-{}",
         path.name(),
@@ -619,6 +661,7 @@ fn spawn_worker<T: serde::de::DeserializeOwned>(
     if let Some(l) = limit {
         args.push(l.to_string().into());
     }
+    args.push(format!("--bucket-invariance={}", o.bucket_invariance.name()).into());
     run_child(&args, &out, &log, timeout)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
@@ -764,15 +807,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
 
         let mut results: Vec<(Path3, WorkerResult)> = Vec::new();
         for &path in &o.paths {
-            match spawn_worker::<WorkerResult>(
-                id,
-                models_dir,
-                o.refs.as_deref(),
-                path,
-                None,
-                o.timeout,
-                &scratch,
-            ) {
+            match spawn_worker::<WorkerResult>(id, models_dir, path, None, &scratch, &o) {
                 Ok(r) => results.push((path, r)),
                 Err(e) => {
                     println!("  {}: CRASHED: {e}", path.name());
@@ -785,15 +820,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
 
         // Determinism across processes: a second, independent ANE load.
         if let Some((_, first)) = results.iter().find(|(p, _)| *p == Path3::Ane) {
-            match spawn_worker::<WorkerResult>(
-                id,
-                models_dir,
-                o.refs.as_deref(),
-                Path3::Ane,
-                Some(DETERMINISM_CASES),
-                o.timeout,
-                &scratch,
-            ) {
+            match spawn_worker::<WorkerResult>(id, models_dir, Path3::Ane, Some(DETERMINISM_CASES), &scratch, &o) {
                 Ok(second) => {
                     let mut c = Check::default();
                     for (a, b) in first.cases.iter().zip(&second.cases) {
