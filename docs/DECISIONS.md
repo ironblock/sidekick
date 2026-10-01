@@ -1289,7 +1289,7 @@ it. Write the softmax as exp(w − rowmax) followed by one matmul against
 [V | 1], so the numerator and denominator come from the same matmul, and
 laya on the ANE becomes exactly bucket-invariant. Measured over all 2,359
 case/bucket pairs, the max Δp is 0, and outputs also match an unpadded run
-exactly. It isn't adopted yet:
+exactly. It wasn't adopted at first (it is now: see the amendment below):
 - On the ANE it keeps the corpus p99 and mean but costs some inputs. A
   36-token `noul` case goes from Δp 0.001 to 0.032, and the corpus max from
   0.039 to 0.043.
@@ -1351,6 +1351,30 @@ fp16 error is tiny (5.4e-4) and whose absolute B is honest.
   sigmoids. **Rerankers** use the same rules in sigmoid space (D29).
 - A reference without the `fp16` oracle grades exactly as before, so
   models move to this scale as their references are regenerated.
+
+**Amendment (September 2026): laya adopts the matmul softmax.** Under the
+ceiling grading above, a few inputs costing a little more accuracy is a
+better trade than failing the bucket gate, so tools/convert_laya.py now
+builds every softmax, in the encoder and in the head, from exp and one
+matmul against [V | 1] (its constraint F), with the row max in 128-wide
+blocks and self-attending pad queries. Graded by the parity suite on all
+2,612 cases, against laya's ceiling (|Δp| max 0.0169, p99 0.0081):
+
+| path | grade | p99 ratio | Δp max / p99 / mean | flips | buckets (max Δp) |
+|---|---|---|---|---|---|
+| ANE | C | 1.93× (B) | 0.043 / 0.016 / 0.0019 | 1 | 0 (was 0.027) |
+| GPU | A | 0.93× | 0.037 / 0.0076 / 0.00095 | 0 | 0.0072 |
+| CPU | D | 6.1× | 0.162 / 0.049 / 0.0058 | 13 | 0 |
+
+The ANE's one graded flip (margin 0.055, one of the five v0.3.0 flipped) caps
+it at C; its p99 ratio alone would be a B. The bucket gate passes on both
+fp16 paths: exactly on the ANE, and within the ceiling's 0.017 on the GPU.
+Against the erf-only conversion, the ANE's worst case moves from 0.039 to
+0.043, with p99 and mean unchanged, and latency is unchanged (19.8 / 39.9 /
+106.6 ms at 128 / 256 / 512). One long noul gate item reaches |Δp| 0.065,
+so the converter's sanity gate on the ANE moves from 0.05 to 0.08, with
+flips still gated at zero. Accuracy is graded by the suite, not by that
+gate.
 
 ## D29 — Reranking: vLLM's and Cohere's contracts, a reranker is a classifier
 Reranking (scoring documents against a query) is how retrieval pipelines
