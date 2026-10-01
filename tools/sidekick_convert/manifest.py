@@ -31,6 +31,20 @@ def load(path):
     return tomllib.loads(path.read_text())
 
 
+# A manifest's `compute_units` ("cpu_and_ne" when absent; docs/design/
+# classify.md, "Compute units") and the Core ML compute units it names.
+COMPUTE_UNITS = {"cpu_and_ne": "CPU_AND_NE", "cpu_and_gpu": "CPU_AND_GPU", "cpu_only": "CPU_ONLY", "all": "ALL"}
+
+
+def served_path(m):
+    """The Core ML compute units sidekick serves a manifest's model on: what
+    a converter gates."""
+    value = m.get("compute_units", "cpu_and_ne")
+    if value not in COMPUTE_UNITS:
+        raise SystemExit(f"manifest compute_units {value!r} is not one of {', '.join(COMPUTE_UNITS)}")
+    return COMPUTE_UNITS[value]
+
+
 def _check(errors, ok, message):
     if not ok:
         errors.append(message)

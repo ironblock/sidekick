@@ -12,9 +12,12 @@ For a static bucket of L tokens, r - c takes the 2L - 1 values
 -(L-1)..(L-1). So the table is expanded over those distances once, a
 weight-only constant per bucket (`query_side_index()` / `key_side_index()`
 pick its rows), and the term is read off one matmul by a relative shift
-(`skew()`), which is only reshape and slice. Exact in fp32 (tests); on the
-ANE, deberta-v3-small and DeBERTa-v3-large (GLiNER2.5-Decide) run 98.5% of
-their operations there, with one hand-off.
+(`skew()`), which is only reshape and slice. Exact in fp32 (tests). The
+ANE runs 99.1% of GLiNER2.5-Decide's operations (DeBERTa-v3-large, 947 of
+956 at every bucket) with one hand-off; the earlier probe build ran 98.5%
+of deberta-v3-small's and DeBERTa-v3-large's. It runs them slowly, though:
+about 1.3 s per input at 512 tokens for v3-large, against ~34 ms on the
+GPU, which is why GLiNER2.5-Decide is served there.
 
 The expanded table has 2L - 1 rows per term and layer, against the model's
 own 2 x buckets rows of relative embeddings (512 for DeBERTa-v3) shared by

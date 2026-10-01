@@ -151,7 +151,12 @@ class ClassifierGates:
     reference covers its real tokens, and its served logits are the output
     at case.meta["markers"], activated by case.meta["activation"] when set
     (a multi-label request) or `activation`. Flips, |dp| and pad invariance
-    are all measured on those logits, not on every token."""
+    are all measured on those logits, not on every token.
+
+    `plan_required` makes the compute plan a gate (every heavy op and
+    `plan_min_ane` of all ops on the ANE). Without it the plan is only
+    reported, for a model served off the ANE; `paths()` builds the paths
+    from the manifest's served path."""
     fp32_tol: float = 1e-3
     activation: str = "softmax"
     margin: float = 0.05
@@ -163,6 +168,15 @@ class ClassifierGates:
     markers: bool = False
     plan_min_ane: float = 0.8
     pad_id_range: tuple = (1000, 30000)
+    plan_required: bool = True
+
+    @staticmethod
+    def paths(served, report=("CPU_AND_NE", "CPU_ONLY")):
+        """Keyword arguments for a model served on `served` (manifest.served_path):
+        that path gated, the rest of `report` reported, and the compute plan a
+        gate only for a model served on the ANE."""
+        return {"gated_paths": (served,), "report_paths": tuple(p for p in report if p != served),
+                "plan_required": served == "CPU_AND_NE"}
 
     def _split(self, out, ref):
         k = len(ref)
@@ -211,7 +225,7 @@ class ClassifierGates:
         return f"fp32 wrapper vs the checkpoint, max |dlogit| {r.get('fp32', float('nan')):.1e}"
 
     def coreml(self, compiled, seq, cases, job, timing):
-        out = {"plan": _plan.gate(compiled, self.plan_min_ane)}
+        out = {"plan": _plan.gate(compiled, self.plan_min_ane) if self.plan_required else _plan.report(compiled)}
         padded = next((c for c in cases if c.n < seq), None)
         for path in tuple(self.gated_paths) + tuple(self.report_paths):
             m = _model(compiled, path)
@@ -248,7 +262,7 @@ class ClassifierGates:
         return out
 
     def describe_coreml(self, r):
-        lines = [_plan.describe(r["plan"])] if "plan" in r else []
+        lines = [_plan.describe(r["plan"])] if r.get("plan") else []
         for path in tuple(self.gated_paths) + tuple(self.report_paths):
             if path in r:
                 p = r[path]

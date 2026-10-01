@@ -540,7 +540,8 @@ adversarial cases in Julia-1's terms.
 scores an `[L]` marker placed before each candidate label. The converter
 replaces DeBERTa's relative-position gathers with a relative shift
 (per-bucket tables over the 2L−1 distances, then a reshape-and-slice
-skew), which is exact in fp32 and puts 99% of operations on the ANE.
+skew), which is exact in fp32 and puts 947 of its 956 operations (99.1%,
+every bucket) on the ANE.
 Measured on 2,916 cases: every classification head of
 fastino/fast-decisions sent as a gliner2 request, plus 16 adversarial
 cases.

@@ -1,5 +1,5 @@
-"""Convert a GLiNER2 checkpoint (fastino/GLiNER2.5-Decide) into ANE-resident
-Core ML artifacts for sidekick's `POST /v1/classify`, in the gliner2
+"""Convert a GLiNER2 checkpoint (fastino/GLiNER2.5-Decide) into Core ML
+artifacts for sidekick's `POST /v1/classify`, in the gliner2
 zero-shot format (docs/design/classify.md, "The gliner2 format").
 
 Produces one static-shape .mlmodelc per sequence-length bucket that takes
@@ -42,22 +42,26 @@ The recipe (tools/sidekick_convert; docs/CONVERTING.md):
 
 Gates, per bucket: the fp32 wrapper reproduces the checkpoint's own scoring
 at the markers (max |dlogit| <= 1e-3); no fused attention or
-gather_along_axis op; compute plan (every linear/matmul on the ANE and
->= 80% of ops); and on CPU_AND_NE, the served path, finite logits, argmax
-agreement with fp32 wherever its top-2 margin is >= 0.05, max raw |dp|
-<= 0.02 at the markers after each request's activation (softmax, or sigmoid
-for a multi-label request, whose decisions are each label's own yes/no, so
-a flip there is a clear label changing sign), and pad invariance. CPU_ONLY is reported, not
-gated: Core ML's fp16 CPU backend measured |dp| 0.027 at buckets 256 and 512
-on fast-decisions (0.0092 on the ANE), the same CPU-path weakness laya's
-converter reports (D28).
+gather_along_axis op; and on the path the manifest's `compute_units` serves
+(CPU_AND_GPU for GLiNER2.5-Decide), finite logits, argmax agreement with
+fp32 wherever its top-2 margin is >= 0.05, max raw |dp| <= 0.02 at the
+markers after each request's activation (softmax, or sigmoid for a
+multi-label request, whose decisions are each label's own yes/no, so a flip
+there is a clear label changing sign), and pad invariance. The other paths
+(CPU_AND_NE, CPU_ONLY) are reported, not gated, and so is the compute plan
+unless the manifest serves the ANE, where every linear/matmul must land
+there with >= 80% of ops.
 
-Measured with tools/probe_deberta.py (M1 Max, macOS 27.0) on
-fastino/fast-decisions against gliner2's own fp32 scoring: 1039 of 1055
-operations on the ANE at every bucket; every argmax agrees on both paths;
-max |dp| on the ANE 0.0073 / 0.0082 / 0.0092 at 128 / 256 / 512; pad
-invariance exact. Conversion takes 30-47 s per bucket at ~10 GB peak memory;
-the first ANE compile 18 / 32 / 129 s, once per artifact path.
+GLiNER2.5-Decide is served on the GPU: on the ANE it grades C against its
+fp16 ceiling and takes about 1.3 s per input at 512 tokens (docs/MODELS.md).
+Core ML's fp16 CPU backend is its least accurate path, the same weakness
+laya's converter reports (D28).
+
+Measured on the converter's artifacts (M1 Max, macOS 27.0): 947 of 956
+operations on the ANE (99.1%) at every bucket; on the gate requests, max
+|dp| 0.0011 on the ANE and 0.0020 on CPU_ONLY; pad invariance exact. All
+three buckets convert in about 9 minutes at 8.4 GB peak memory. The earlier
+tools/probe_deberta.py build measured 1039 of 1055 ops on the ANE (98.5%).
 """
 
 import numpy as np
@@ -122,7 +126,7 @@ def layout(proc, text, prompt, labels, max_len):
     if len(ids) <= max_len:
         return ids, markers
     ends = [e for _, _, e in proc.word_splitter(text, lower=False)]
-    lo, hi = 0, len(ends) - 1
+    lo, hi = 0, len(ends)
     while lo < hi:
         n = (lo + hi + 1) // 2
         if len(run(text[: ends[n - 1]])[0]) <= max_len:
@@ -171,8 +175,7 @@ def main():
 
     ports = core.text_ports()
     make_wrapper, example = compose(backbone, head, ports)
-    gates = ClassifierGates(markers=True, activation="softmax", gated_paths=("CPU_AND_NE",),
-                            report_paths=("CPU_ONLY",),
+    gates = ClassifierGates(markers=True, activation="softmax", **ClassifierGates.paths(manifest.served_path(m)),
                             pad_id_range=(1000, min(30000, backbone.vocab_size)))
     job = core.Job(name=model_id, buckets=buckets, ports=ports, output=head.output, make_wrapper=make_wrapper,
                    example=example, evaluation=core.Evaluation(cases), gates=gates,
