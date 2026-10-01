@@ -353,9 +353,14 @@ pre-library builds at every bucket.
   softmax rewrites that divide by a row sum do too. The NaN then reaches
   every token through the next layer's value products. Use
   `masks.self_attending()` wherever a row can be fully masked.
-- **The fused attention op crashed the process on the CPU at head dim 16**
-  (SIGBUS/SIGSEGV, intermittently; macOS 27.0, M1 Max, coremltools 9). This
-  was observed, not investigated. The library never emits the fused op.
+- **The fused attention op crashes the process on the CPU at head dim 16**:
+  SIGBUS inside libBNNS, Core ML's CPU kernels, mostly on the first
+  prediction. With 12 heads over 128 tokens (CPU_ONLY; macOS 27.0, M1 Max,
+  coremltools 9), it crashed 10 of 13 processes at head dim 16, whether or
+  not the prediction inputs were kept referenced. It crashed none of 10 at
+  head dim 64, and none of 6 at head dim 16 with the same attention written
+  out explicitly. It is not the input-lifetime crash below. The library
+  never emits the fused op.
 - **coremltools crashes the process about a second after a prediction
   whose inputs Python has freed.** Core ML keeps a prediction's inputs bound
   to its execution stream and releases them, on a queue of its own, once the
