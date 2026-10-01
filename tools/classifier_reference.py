@@ -578,7 +578,8 @@ def gliner2_build(cases, proc, tok, default, max_len, max_labels):
         labels = c["candidate_labels"]
         k = len(labels)
         keys = [split_label(l)[0] for l in labels]
-        if not 2 <= k <= max_labels or len(set(labels)) != k or len(set(keys)) != k or "" in keys:
+        least = 1 if c["multi_label"] else 2   # one label is a multi-label yes/no question
+        if not least <= k <= max_labels or len(set(labels)) != k or len(set(keys)) != k or "" in keys:
             raise SystemExit(f"{c['id']}: {k} labels, duplicates or an empty name: the server would reject it")
         if len({tuple(tok.encode(key, add_special_tokens=False).ids) for key in keys}) != k:
             raise SystemExit(f"{c['id']}: labels identical at the token level")

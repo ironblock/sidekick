@@ -357,13 +357,25 @@ async fn gliner2_requests_are_validated_against_the_format() {
     classify_400(with("truncate_prompt_tokens", json!(8)), "gliner2 format").await;
     classify_400(with("truncation_side", json!("left")), "gliner2 format").await;
     classify_400(with("candidate_labels", json!(["a", "b", "c", "d", "e"])), "maximum of 4").await;
-    // multi_label is the gliner2 format's alone.
+    // multi_label: true is the gliner2 format's alone; false, the default,
+    // is accepted everywhere, as Hugging Face clients send it.
     for model in [json!({"model": "sentiment", "input": "x"}),
                   json!({"model": "decider", "input": "x", "candidate_labels": ["a", "b"], "question_type": "choice"})] {
         let mut b = model.clone();
         b["multi_label"] = json!(true);
-        classify_400(b, "`multi_label` isn't supported").await;
+        classify_400(b.clone(), "`multi_label` isn't supported").await;
+        b["multi_label"] = json!(false);
+        classify_ok(b).await;
     }
+    // One label is a yes/no question when each label is scored alone, as
+    // gliner2 allows; a softmax over one label would always be 1.
+    let one = with("candidate_labels", json!(["refund"]));
+    classify_400(one.clone(), "at least 2 labels").await;
+    let mut one_multi = one;
+    one_multi["multi_label"] = json!(true);
+    let body = classify_ok(one_multi).await;
+    assert_eq!(probs(&body["data"][0]).len(), 1);
+    assert_eq!(body["data"][0]["num_classes"], 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

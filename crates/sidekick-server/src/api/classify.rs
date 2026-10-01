@@ -246,9 +246,18 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         }
     };
 
+    // `multi_label: false` is the default, so every model takes it, as
+    // Hugging Face clients send it; `true` is the gliner2 format's alone.
+    let multi_label = match (req.multi_label, gliner2) {
+        (Some(true), false) => return Err(unsupported("multi_label")),
+        (value, _) => value.unwrap_or(false),
+    };
     let candidate_labels = match (&req.candidate_labels, zero_shot) {
         (Some(labels), true) => {
-            sidekick_embed::classify_input::check_labels(labels, m.max_labels())?;
+            // A multi-label request scores each label alone, so one label
+            // is a yes/no question, as gliner2 allows; a softmax needs two.
+            let min = if multi_label { 1 } else { 2 };
+            sidekick_embed::classify_input::check_labels(labels, min, m.max_labels())?;
             labels.clone()
         }
         (None, true) => return Err(ApiError::invalid(format!("model `{}` needs `candidate_labels`", m.id))),
@@ -278,10 +287,6 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
     if req.instructions.is_some() && !(laya || gliner2) {
         return Err(unsupported("instructions"));
     }
-    let multi_label = match (req.multi_label, gliner2) {
-        (Some(_), false) => return Err(unsupported("multi_label")),
-        (value, _) => value.unwrap_or(false),
-    };
     // The labels must render (noul's are fixed: `false`, `true`), and a
     // model without default instructions needs them; checked here, where
     // the manifest alone can answer, not after the model loads.

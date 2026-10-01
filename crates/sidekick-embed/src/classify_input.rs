@@ -324,7 +324,7 @@ impl InputBuilder {
             return Err(invalid("question_type is required by this model (choice, score or noul)"));
         };
         let labels = &params.candidate_labels;
-        check_labels(labels, self.max_labels)?;
+        check_labels(labels, 2, self.max_labels)?;
         let options = laya::render_options(question_type, labels, section.option_rendering)?;
         let instructions = params
             .instructions
@@ -401,7 +401,9 @@ impl InputBuilder {
             return Err(invalid("question_type is for the laya format"));
         }
         let labels = &params.candidate_labels;
-        check_labels(labels, self.max_labels)?;
+        // One label is a multi-label request's yes/no question; the server
+        // requires two otherwise, before the model loads.
+        check_labels(labels, 1, self.max_labels)?;
         let prompt = params.instructions.as_deref().unwrap_or(&section.default_instructions);
         // Byte caps bound tokenizer and splitter work: the schema has to fit
         // the model whole, and the text is truncated anyway.
@@ -434,10 +436,12 @@ impl InputBuilder {
     }
 }
 
-/// Zero-shot label checks that don't need the tokenizer.
-pub fn check_labels(labels: &[String], max_labels: usize) -> Result<()> {
-    if labels.len() < 2 {
-        return Err(invalid("candidate_labels needs at least 2 labels"));
+/// Zero-shot label checks that don't need the tokenizer. `min_labels` is 2,
+/// except for a gliner2 request with `multi_label`, where one label is a
+/// yes/no question (gliner2 takes one).
+pub fn check_labels(labels: &[String], min_labels: usize, max_labels: usize) -> Result<()> {
+    if labels.len() < min_labels {
+        return Err(invalid(format!("candidate_labels needs at least {min_labels} labels")));
     }
     if labels.len() > max_labels {
         return Err(invalid(format!(
@@ -677,13 +681,16 @@ mod tests {
             ClassifyParams { truncation_side: TruncationSide::Left, ..ok.clone() },
             ClassifyParams { question_type: Some(QuestionType::Choice), ..ok.clone() },
             ClassifyParams { instructions: Some("x".repeat(600)), ..ok.clone() },
-            gliner2_params(&["c"]),
+            gliner2_params(&[]),
             gliner2_params(&["a", "b", "c", "d", "e"]),
             gliner2_params(&["c: x", "c: y"]),
         ];
         for params in cases {
             assert!(matches!(b.prepare("a", &params), Err(Error::InvalidRequest(_))), "{params:?}");
         }
+        // One label lays out (a multi-label yes/no question; the server
+        // requires two for a single-label request before the model loads).
+        assert_eq!(b.prepare("a", &gliner2_params(&["c"])).unwrap().markers.len(), 1);
     }
 
     fn pair(truncate: Option<usize>, keep_query: bool) -> PairParams {
