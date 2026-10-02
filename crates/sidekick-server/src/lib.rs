@@ -29,7 +29,10 @@ use std::time::Instant;
 /// Assemble state from config with the default (Foundation Models) chat
 /// backend. Tests inject their own backend via `AppState` directly.
 pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
-    let options = ScanOptions { ignore_ane_weight_cap: config.ignore_ane_weight_cap };
+    let options = ScanOptions {
+        ignore_ane_weight_cap: config.ignore_ane_weight_cap,
+        ignore_cpu_seq_cap: config.ignore_cpu_seq_cap,
+    };
     let registry = Arc::new(ModelRegistry::scan_with(&config.models_dir(), &options)?);
     if registry.is_empty() && registry.classifier_ids().next().is_none() {
         tracing::warn!(

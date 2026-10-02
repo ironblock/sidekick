@@ -510,6 +510,11 @@ pub struct ModelObject {
     /// send, a subset of `extensions`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<&'static str>>,
+    /// Extension, embedders and classifiers: a sequence-length cap in effect
+    /// (D33: a `cpu_only` model past 1,024 tokens), with the manifest's own
+    /// length and why.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq_cap: Option<sidekick_core::manifest::SeqCap>,
     /// Extension, embedders and classifiers: the compute units the model is
     /// loaded with (`cpu` for a static model), as `sidekick-compute-units`
     /// reports them.
@@ -534,6 +539,7 @@ impl ModelObject {
             max_batch: None,
             extensions: None,
             required: None,
+            seq_cap: None,
             compute_units: None,
             calibration: None,
         }

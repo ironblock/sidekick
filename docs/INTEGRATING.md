@@ -182,3 +182,10 @@ check it when your model id isn't listed. That includes a model served
 on the ANE whose compiled weights exceed Core ML's 1 GiB limit, which
 Core ML would otherwise run off the ANE without telling you; the reason
 names the fixes (`docs/design/classify.md`, "The ANE weight cap").
+
+A model served on the CPU (`compute_units = "cpu_only"`) runs no longer
+than 1,024 tokens, past which Core ML's CPU gives slightly different
+results in different buckets. Its `/v1/models` entry then shows the
+effective maximum under `seq_cap`, beside the manifest's own; send longer
+inputs to a model served on the GPU or the ANE (`docs/design/classify.md`,
+"The CPU sequence cap").

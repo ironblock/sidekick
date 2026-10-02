@@ -255,10 +255,11 @@ addr = "127.0.0.1:8790"        # loopback only by default
 session_ttl_secs = 300         # Foundation Models session reuse window
 model_idle_ttl_secs = 900      # model residency (embedders, classifiers) after last use
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
+ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
 ```
 
 CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...
---ignore-ane-weight-cap`.
+--ignore-ane-weight-cap --ignore-cpu-seq-cap`.
 
 ## Memory
 

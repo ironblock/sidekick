@@ -329,6 +329,45 @@ so the registry skips it, as D28 skips any bad manifest:
   the parity suite's registry: it measures every compute path itself, and
   its ANE plan check reports a model Core ML doesn't place on the ANE.
 
+### The CPU sequence cap
+
+Core ML's fp16 CPU matmul sums in an order that depends on the contraction
+length past 1,024 keys. Each result is accurate within its own rounding,
+but a model then gives slightly different answers for the same input in
+different buckets: up to 0.021 in probability between Lumma-fev's 1,024-
+and 2,048-token buckets, 0.018 for agent-jev. Running the matmul in slices
+restores invariance only at about 13 times the error, so no conversion
+fixes it (D33 records the measurement and its reproduction).
+Up to 1,024 tokens the CPU is bucket-invariant, and the GPU and the ANE
+are unaffected.
+
+So a model served on the CPU runs no longer than
+`MAX_CPU_INVARIANT_SEQ` (1,024 tokens):
+- For `compute_units = "cpu_only"` and a `max_seq_len` over 1,024, the
+  registry drops the buckets above it, and the largest bucket kept becomes
+  the model's effective `max_seq_len`. Longer inputs then follow the
+  model's usual over-length rules: a 400, or truncation where the format
+  truncates its own text. A model with no bucket of at most 1,024 tokens
+  is skipped, with the fixes as the reason.
+- The capped manifest is validated again (laya's head budget, for
+  example, must still fit), and a model that no longer validates is
+  skipped with the reason.
+- The model's `/v1/models` entry gains `seq_cap` (`limit`,
+  `manifest_max_seq_len` and `reason`), and `/health` lists every capped
+  model under `seq_caps`.
+- `all` isn't capped: Core ML chooses the device per operation, may not
+  use the CPU at all, and `all` exists for measuring what it does.
+- To serve every bucket anyway, accepting differences between buckets past
+  1,024 tokens: `cpu_seq_limit = "ignore"` (top level, either manifest
+  file, coreml backend only), or `sidekickd --ignore-cpu-seq-cap`
+  (`ignore_cpu_seq_cap = true` in the config) for every model.
+- The parity suite serves every bucket. On its CPU path it reports a
+  bucket comparison into a bucket past 1,024 tokens as this documented
+  limit, with the variation it measured, instead of gating it; up to 1,024
+  tokens the CPU's bucket gate stays exact, and the GPU and ANE paths are
+  gated as before. Its worker output records each bucket comparison, so a
+  saved run can be graded again under a changed rule.
+
 Compatibility: sidekick 0.4 and earlier ignore unknown keys in both
 manifest files. A 0.4 daemon given a manifest with `compute_units` loads it
 with `.cpuAndNeuralEngine` and reports `cpu_and_ne`; it doesn't fail. (A

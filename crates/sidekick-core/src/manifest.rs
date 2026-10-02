@@ -101,6 +101,37 @@ pub enum AneWeightLimit {
     Ignore,
 }
 
+/// Core ML's fp16 CPU matmul sums in an order that depends on the
+/// contraction length past 1,024 keys: accurate within its own rounding,
+/// but a model's results then differ slightly between buckets (by up to
+/// 0.021 in probability between Lumma-fev's 1,024 and 2,048 buckets, 0.018
+/// for agent-jev). No conversion restores invariance (D33). A model served
+/// with `cpu_only` therefore runs with its sequence length capped here.
+pub const MAX_CPU_INVARIANT_SEQ: usize = 1024;
+
+/// A manifest's `cpu_seq_limit`: whether the registry caps a `cpu_only`
+/// model's sequence length at [`MAX_CPU_INVARIANT_SEQ`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpuSeqLimit {
+    /// Cap it (the default).
+    #[default]
+    Enforce,
+    /// Serve every bucket, accepting small bucket-dependent differences
+    /// past 1,024 tokens.
+    Ignore,
+}
+
+/// A sequence-length cap the registry applied to a model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SeqCap {
+    /// The effective `max_seq_len`: the largest bucket kept.
+    pub limit: usize,
+    /// The manifest's own `max_seq_len`.
+    pub manifest_max_seq_len: usize,
+    pub reason: &'static str,
+}
+
 /// `manifest.toml` for an embedding model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelManifest {
@@ -146,6 +177,12 @@ pub struct ModelManifest {
     /// Whether the ANE weight cap is enforced (coreml backend only).
     #[serde(default)]
     pub ane_weight_limit: Option<AneWeightLimit>,
+    /// Whether a `cpu_only` model's length is capped (coreml backend only).
+    #[serde(default)]
+    pub cpu_seq_limit: Option<CpuSeqLimit>,
+    /// The cap the registry applied, if any (never read from the file).
+    #[serde(skip)]
+    pub seq_cap: Option<SeqCap>,
 }
 
 impl ModelManifest {
@@ -214,6 +251,12 @@ pub struct ClassifierManifest {
     /// Whether the ANE weight cap is enforced (default `enforce`).
     #[serde(default)]
     pub ane_weight_limit: AneWeightLimit,
+    /// Whether a `cpu_only` model's length is capped (default `enforce`).
+    #[serde(default)]
+    pub cpu_seq_limit: CpuSeqLimit,
+    /// The cap the registry applied, if any (never read from the file).
+    #[serde(skip)]
+    pub seq_cap: Option<SeqCap>,
     pub classify: ClassifySection,
 }
 
@@ -473,6 +516,47 @@ pub struct ScanOptions {
     /// --ignore-ane-weight-cap`, or the parity suite, which measures every
     /// compute path itself).
     pub ignore_ane_weight_cap: bool,
+    /// Serve `cpu_only` models past [`MAX_CPU_INVARIANT_SEQ`] (`sidekickd
+    /// --ignore-cpu-seq-cap`, or the parity suite, which grades every
+    /// bucket and reports the CPU's past-1,024 variation itself).
+    pub ignore_cpu_seq_cap: bool,
+}
+
+/// The reason a capped model's listing gives.
+const CPU_SEQ_CAP_REASON: &str =
+    "served cpu_only: Core ML's CPU sums in a length-dependent order past 1,024 tokens, so buckets past it \
+     would give slightly different results (D33)";
+
+/// Cap a `cpu_only` model's buckets at [`MAX_CPU_INVARIANT_SEQ`]: keep the
+/// buckets up to it, and make the largest kept bucket the effective
+/// `max_seq_len`. `None` when no cap applies; an error when no bucket is
+/// short enough.
+fn cpu_seq_cap(
+    buckets: &mut Vec<usize>,
+    max_seq_len: &mut usize,
+    units: ComputeUnits,
+    limit: CpuSeqLimit,
+    options: &ScanOptions,
+) -> std::result::Result<Option<SeqCap>, String> {
+    if units != ComputeUnits::CpuOnly
+        || limit == CpuSeqLimit::Ignore
+        || options.ignore_cpu_seq_cap
+        || *max_seq_len <= MAX_CPU_INVARIANT_SEQ
+    {
+        return Ok(None);
+    }
+    buckets.retain(|&b| b <= MAX_CPU_INVARIANT_SEQ);
+    let Some(&largest) = buckets.last() else {
+        return Err(format!(
+            "every bucket is longer than {MAX_CPU_INVARIANT_SEQ} tokens, past which Core ML's CPU gives \
+             bucket-dependent results (D33), and the model is served `cpu_only`. Serve it on the GPU or \
+             the ANE, convert a bucket of at most {MAX_CPU_INVARIANT_SEQ} tokens, or set \
+             `cpu_seq_limit = \"ignore\"` (or start sidekickd with --ignore-cpu-seq-cap)"
+        ));
+    };
+    let cap = SeqCap { limit: largest, manifest_max_seq_len: *max_seq_len, reason: CPU_SEQ_CAP_REASON };
+    *max_seq_len = largest;
+    Ok(Some(cap))
 }
 
 /// The bytes of a compiled Core ML artifact's weights: every file under its
@@ -604,6 +688,18 @@ impl ModelRegistry {
                     let units = m.compute_units.unwrap_or_default();
                     let limit = m.ane_weight_limit.unwrap_or_default();
                     check_ane_weights(dir, &m.artifact, &m.buckets, units, limit, options).map(|()| m)
+                })
+                .and_then(|mut m| {
+                    if m.backend != EmbeddingBackendKind::Coreml {
+                        return Ok(m);
+                    }
+                    let units = m.compute_units.unwrap_or_default();
+                    let limit = m.cpu_seq_limit.unwrap_or_default();
+                    m.seq_cap = cpu_seq_cap(&mut m.buckets, &mut m.max_seq_len, units, limit, options)?;
+                    if m.seq_cap.is_some() {
+                        validate_embedder(&m).map_err(|e| format!("with its length capped for the CPU (D33): {e}"))?;
+                    }
+                    Ok(m)
                 });
             match loaded {
                 Ok(manifest) => match reg.owner(&manifest.id) {
@@ -625,6 +721,13 @@ impl ModelRegistry {
                 .and_then(|m| {
                     check_ane_weights(dir, &m.artifact, &m.buckets, m.compute_units, m.ane_weight_limit, options)
                         .map(|()| m)
+                })
+                .and_then(|mut m| {
+                    m.seq_cap = cpu_seq_cap(&mut m.buckets, &mut m.max_seq_len, m.compute_units, m.cpu_seq_limit, options)?;
+                    if m.seq_cap.is_some() {
+                        validate_classifier(&m).map_err(|e| format!("with its length capped for the CPU (D33): {e}"))?;
+                    }
+                    Ok(m)
                 });
             match loaded {
                 Ok(manifest) => match reg.owner(&manifest.id) {
@@ -746,6 +849,9 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
     }
     if m.backend != EmbeddingBackendKind::Coreml && m.ane_weight_limit.is_some() {
         return Err("`ane_weight_limit` is only valid for the coreml backend".into());
+    }
+    if m.backend != EmbeddingBackendKind::Coreml && m.cpu_seq_limit.is_some() {
+        return Err("`cpu_seq_limit` is only valid for the coreml backend".into());
     }
     Ok(())
 }
@@ -1407,7 +1513,7 @@ max_seq_len = 512
                     assert!(reason.contains(want), "{name}: {reason}");
                     assert!(reason.contains("cpu_and_gpu") && reason.contains("ane_weight_limit"), "{name}: {reason}");
                     // The daemon's --ignore-ane-weight-cap loads it.
-                    let opts = ScanOptions { ignore_ane_weight_cap: true };
+                    let opts = ScanOptions { ignore_ane_weight_cap: true, ..Default::default() };
                     assert!(ModelRegistry::scan_with(&tmp, &opts).unwrap().classifier("sentiment").is_ok(), "{name}");
                 }
                 None => assert!(reg.skipped().is_empty(), "{name}: {:?}", reg.skipped().first().map(|s| &s.reason)),
@@ -1432,6 +1538,77 @@ max_seq_len = 512
         let tmp = tmp_dir("ane-cap-static");
         write_manifest(&tmp, "s", "id = \"s\"\nbackend = \"static\"\nartifact = \"m\"\ntokenizer = \"t\"\ndims = 4\nmax_seq_len = 8\nane_weight_limit = \"ignore\"\n");
         let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped()[0].reason.contains("only valid for the coreml backend"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn cpu_only_models_are_capped_at_1024_tokens() {
+        let long = SENTIMENT.replace("buckets = [128, 512]", "buckets = [128, 1024, 2048]").replace("max_seq_len = 512", "max_seq_len = 2048");
+        let with = |top: &str| long.replace("\n[classify]", &format!("{top}\n\n[classify]"));
+        let scan = |body: &str, opts: &ScanOptions| {
+            let tmp = tmp_dir("cpu-cap");
+            write_classifier(&tmp, "s", body);
+            let reg = ModelRegistry::scan_with(&tmp, opts).unwrap();
+            let out = (
+                reg.classifier("sentiment").ok().map(|c| c.manifest.clone()),
+                reg.skipped().first().map(|s| s.reason.clone()),
+            );
+            std::fs::remove_dir_all(&tmp).unwrap();
+            out
+        };
+        let default = ScanOptions::default();
+
+        // cpu_only past 1,024: the buckets above it are dropped and the
+        // largest kept one becomes the effective maximum.
+        let (m, _) = scan(&with("compute_units = \"cpu_only\""), &default);
+        let m = m.unwrap();
+        assert_eq!((m.buckets.clone(), m.max_seq_len), (vec![128, 1024], 1024));
+        let cap = m.seq_cap.unwrap();
+        assert_eq!((cap.limit, cap.manifest_max_seq_len), (1024, 2048));
+        assert!(cap.reason.contains("D33"));
+
+        // Not capped: on the ANE, on the GPU, `all` (it's for measuring),
+        // the manifest's opt-out, and the daemon's.
+        for (top, opts) in [
+            ("", &default),
+            ("compute_units = \"cpu_and_gpu\"", &default),
+            ("compute_units = \"all\"", &default),
+            ("compute_units = \"cpu_only\"\ncpu_seq_limit = \"ignore\"", &default),
+            ("compute_units = \"cpu_only\"", &ScanOptions { ignore_cpu_seq_cap: true, ..Default::default() }),
+        ] {
+            let (m, why) = scan(&with(top), opts);
+            let m = m.unwrap_or_else(|| panic!("{top}: skipped: {why:?}"));
+            assert_eq!((m.max_seq_len, m.seq_cap), (2048, None), "{top}");
+        }
+
+        // No bucket short enough: skipped, naming the fixes.
+        let only_long = long.replace("buckets = [128, 1024, 2048]", "buckets = [2048]");
+        let (m, why) = scan(&only_long.replace("\n[classify]", "compute_units = \"cpu_only\"\n\n[classify]"), &default);
+        assert!(m.is_none());
+        let why = why.unwrap();
+        assert!(why.contains("every bucket is longer than 1024") && why.contains("cpu_seq_limit"), "{why}");
+
+        // A capped manifest must still validate: laya's head budget has to
+        // fit the capped length.
+        let laya = LAYA
+            .replace("buckets = [128, 256, 512]", "buckets = [128, 512, 2048]")
+            .replace("max_seq_len = 512", "max_seq_len = 2048")
+            .replace("head_max_len = 192", "head_max_len = 1500")
+            .replace("\n[classify]", "compute_units = \"cpu_only\"\n\n[classify]");
+        let tmp = tmp_dir("cpu-cap-laya");
+        write_classifier(&tmp, "l", &laya);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped()[0].reason.contains("with its length capped for the CPU (D33)"), "{}", reg.skipped()[0].reason);
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // Embedders too; the key is for the coreml backend only.
+        let tmp = tmp_dir("cpu-cap-embedder");
+        write_manifest(&tmp, "e", "id = \"e\"\nbackend = \"coreml\"\nartifact = \"m_{seq}\"\ntokenizer = \"t\"\ndims = 4\nbuckets = [512, 2048]\nmax_seq_len = 2048\ncompute_units = \"cpu_only\"\n");
+        write_manifest(&tmp, "s", "id = \"s\"\nbackend = \"static\"\nartifact = \"m\"\ntokenizer = \"t\"\ndims = 4\nmax_seq_len = 8\ncpu_seq_limit = \"ignore\"\n");
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        let e = &reg.get("e").unwrap().manifest;
+        assert_eq!((e.buckets.clone(), e.max_seq_len, e.seq_cap.as_ref().map(|c| c.limit)), (vec![512], 512, Some(512)));
         assert!(reg.skipped()[0].reason.contains("only valid for the coreml backend"));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
