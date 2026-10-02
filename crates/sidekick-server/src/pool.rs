@@ -4,12 +4,24 @@
 //! first use and drops them after `idle_ttl` without traffic, so a burst of
 //! calls pays the load once and an idle daemon holds no weights. One pool
 //! per kind of model: [`EmbedderPool`] and [`ClassifierPool`].
+//!
+//! Each pool sweeps itself on a timer: an expired model is dropped within a
+//! quarter of `idle_ttl` (at most 30 s) of expiring, whether or not any
+//! request arrives. Without the sweep, expiry only took effect on the
+//! pool's next use, so a daemon left alone kept its weights indefinitely.
+//! A model in use by a request is freed when that request finishes.
 
 use sidekick_core::{Classifier, Embedder, Error, ModelRegistry, Result};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Weak};
+use std::time::Duration;
 use tokio::sync::Mutex;
+// tokio's clock, so tests can pause it; in a running daemon it is the
+// system's monotonic clock.
+use tokio::time::Instant;
+
+/// Most time between two sweeps of a pool.
+const MAX_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Loads one model by id. Runs on a blocking thread.
 pub type Loader<T> = Arc<dyn Fn(&str) -> Result<Arc<T>> + Send + Sync>;
@@ -25,6 +37,41 @@ pub struct ModelPool<T: ?Sized> {
     idle_ttl: Duration,
     loader: Loader<T>,
     entries: Arc<Mutex<HashMap<String, Entry<T>>>>,
+}
+
+type Entries<T> = Mutex<HashMap<String, Entry<T>>>;
+
+/// Drop `entries`' expired models, as `get` and `resident` do.
+async fn evict_expired<T: ?Sized>(entries: &Entries<T>, ttl: Duration, kind: &str) {
+    let mut entries = entries.lock().await;
+    let before = entries.len();
+    entries.retain(|_, e| e.last_used.elapsed() < ttl);
+    let dropped = before - entries.len();
+    if dropped > 0 {
+        tracing::info!("unloaded {dropped} idle {kind}{}", if dropped == 1 { "" } else { "s" });
+    }
+}
+
+/// Sweep `entries` every quarter of `ttl` (at most every 30 s) until the
+/// pool is dropped: the task holds the entries weakly, so it never keeps a
+/// pool alive. Outside a tokio runtime there is no sweep, and expiry takes
+/// effect on the pool's next use.
+fn spawn_sweeper<T: ?Sized + Send + Sync + 'static>(entries: Weak<Entries<T>>, ttl: Duration, kind: &'static str) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        tracing::debug!("no tokio runtime: {kind} pool won't sweep idle models");
+        return;
+    };
+    let every = (ttl / 4).clamp(Duration::from_millis(10), MAX_SWEEP_INTERVAL);
+    runtime.spawn(async move {
+        let mut tick = tokio::time::interval(every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick.tick().await; // the first tick is immediate
+        loop {
+            tick.tick().await;
+            let Some(entries) = entries.upgrade() else { break };
+            evict_expired(&entries, ttl, kind).await;
+        }
+    });
 }
 
 pub type EmbedderPool = ModelPool<dyn Embedder>;
@@ -54,12 +101,9 @@ impl<T: ?Sized + Send + Sync + 'static> ModelPool<T> {
         idle_ttl: Duration,
         loader: impl Fn(&str) -> Result<Arc<T>> + Send + Sync + 'static,
     ) -> Self {
-        Self {
-            kind,
-            idle_ttl,
-            loader: Arc::new(loader),
-            entries: Arc::new(Mutex::new(HashMap::new())),
-        }
+        let entries = Arc::new(Mutex::new(HashMap::new()));
+        spawn_sweeper(Arc::downgrade(&entries), idle_ttl, kind);
+        Self { kind, idle_ttl, loader: Arc::new(loader), entries }
     }
 
     pub async fn get(&self, id: &str) -> Result<Arc<T>> {
@@ -137,5 +181,46 @@ mod tests {
         assert_eq!(pool.resident().await, 0);
         pool.get("a").await.unwrap();
         assert_eq!(loads.load(Ordering::SeqCst), 3);
+    }
+
+    /// A model `get` handed out, and whether the pool has let go of it: the
+    /// pool's `Arc` is the only other one once the caller drops theirs.
+    fn held(model: &Arc<str>) -> bool {
+        Arc::strong_count(model) > 1
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_model_is_dropped_without_any_further_call() {
+        let ttl = Duration::from_secs(900);
+        let pool: ModelPool<str> = ModelPool::new("test model", ttl, |id| Ok(Arc::from(id)));
+        let model = pool.get("a").await.unwrap();
+        assert!(held(&model));
+        // Just under the TTL: still resident.
+        tokio::time::sleep(ttl - Duration::from_secs(1)).await;
+        assert!(held(&model), "dropped before its TTL");
+        // Past the TTL plus one sweep interval (ttl/4 capped at 30 s), with
+        // no get() or resident() in between: the sweep alone dropped it.
+        tokio::time::sleep(Duration::from_secs(1) + MAX_SWEEP_INTERVAL + Duration::from_secs(1)).await;
+        assert!(!held(&model), "still resident past its TTL with no traffic");
+        assert_eq!(pool.resident().await, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_sweep_stops_with_its_pool() {
+        let pool: ModelPool<str> = ModelPool::new("test model", Duration::from_secs(1), |id| Ok(Arc::from(id)));
+        let entries = Arc::downgrade(&pool.entries);
+        drop(pool);
+        // The sweeper holds the entries weakly: they're gone with the pool,
+        // and its next tick ends the task.
+        assert!(entries.upgrade().is_none());
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+
+    #[test]
+    fn a_pool_built_outside_a_runtime_still_works() {
+        // No runtime: no sweeper (and no panic); expiry applies on next use.
+        let pool: ModelPool<str> = ModelPool::new("test model", Duration::from_secs(1), |id| Ok(Arc::from(id)));
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        assert_eq!(&*rt.block_on(pool.get("a")).unwrap(), "a");
     }
 }

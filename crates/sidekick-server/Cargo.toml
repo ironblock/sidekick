@@ -43,5 +43,6 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true, features = ["test-util"] }
 http-body-util = "0.1"
 safetensors = { workspace = true }
