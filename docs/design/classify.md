@@ -345,7 +345,8 @@ but a model then gives slightly different answers for the same input in
 different buckets: up to 0.021 in probability between Lumma-fev's 1,024-
 and 2,048-token buckets, 0.018 for agent-jev. Running the matmul in slices
 restores invariance only at about 13 times the error, so no conversion
-fixes it (D33 records the measurement and its reproduction).
+fixes it (D33 records the measurement; `tools/repro_cpu_matmul_accumulation.py`
+reproduces it standalone).
 Up to 1,024 tokens the CPU is bucket-invariant, and the GPU and the ANE
 are unaffected.
 
