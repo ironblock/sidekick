@@ -260,6 +260,48 @@ ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB wei
 CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...
 --ignore-ane-weight-cap`.
 
+## Memory
+
+What sidekick holds while a model is loaded, measured on an M1 Max under
+macOS 27.0 (numbers are approximate: system-wide counters move with
+everything else the machine runs):
+
+- **Models load lazily.** A model loads on its first request, and each of
+  its sequence-length buckets, its own compiled program, loads the first
+  time an input needs it. A short-input workload never loads the large
+  buckets.
+- **On the ANE (the default), little of it is counted against
+  sidekickd.** Its own footprint stays at tens to a couple of hundred MB:
+  57 MB with bge-small's three buckets, 55 MB with nlptown-sentiment's
+  three (1 GB of weights), about 200 MB with laya-typed-decisions' four
+  (3.2 GB) or Lumma-fev's five (2.3 GB). The rest shows up elsewhere in
+  Activity Monitor, in two parts:
+  - most of it under **Cached Files**: Core ML compiles each bucket into a
+    bundle about the size of its weights, and the ANE reads it through
+    macOS's file cache, which macOS can reclaim when another app needs
+    the memory;
+  - a smaller share under **Wired Memory**, which the ANE pins while the
+    model is resident and macOS can't reclaim: about 0.8 GB with
+    laya-typed-decisions' four buckets. It is released when the model
+    unloads.
+- **On the GPU (`compute_units = "cpu_and_gpu"`), the weights are mapped
+  into sidekickd.** Each loaded bucket adds about its weight size to its
+  memory: nlptown-sentiment's resident size grows from 0.6 to 1.3 GB as
+  its three 320 MB buckets load, about 0.2 GB of it counted as footprint.
+- **The first load of a bucket costs more, once.** It compiles the bucket:
+  Apple's ANE compiler service grew to 1.3 GB, for four minutes, compiling
+  Lumma-fev's 2,048-token bucket. The compiled bundles stay on disk, about
+  the weights' size again (3.5 GB for laya-typed-decisions), so later
+  loads take seconds. A first request that has to wait for a long compile
+  can outlast `request_timeout_secs` (default 60) and fail with a 504;
+  the load continues, and a retry finds the bucket ready.
+- **Releasing memory.** A model unloads `model_idle_ttl_secs` (default
+  900) after its last use, whether or not anything else reaches the
+  daemon. Lower it to give memory back sooner, at the cost of a reload
+  (seconds, from the compiled cache) the next time the model is used.
+  sidekickd's footprint shrinks over the following seconds rather than at
+  once, as Core ML releases what it held.
+
 ## Workspace layout
 
 | Crate | What it is |
