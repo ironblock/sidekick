@@ -22,14 +22,15 @@ pub use config::Config;
 pub use pool::{ClassifierPool, EmbedderPool, ModelPool};
 pub use state::AppState;
 
-use sidekick_core::{ChatBackend, ModelRegistry};
+use sidekick_core::{ChatBackend, ModelRegistry, ScanOptions};
 use std::sync::Arc;
 use std::time::Instant;
 
 /// Assemble state from config with the default (Foundation Models) chat
 /// backend. Tests inject their own backend via `AppState` directly.
 pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
-    let registry = Arc::new(ModelRegistry::scan(&config.models_dir())?);
+    let options = ScanOptions { ignore_ane_weight_cap: config.ignore_ane_weight_cap };
+    let registry = Arc::new(ModelRegistry::scan_with(&config.models_dir(), &options)?);
     if registry.is_empty() && registry.classifier_ids().next().is_none() {
         tracing::warn!(
             dir = %config.models_dir().display(),

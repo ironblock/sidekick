@@ -105,16 +105,47 @@ def summarize(ops):
             "masked_fused_attention": masked_fused_attention(ops)}
 
 
+MAX_ANE_PROGRAM_WEIGHT_BYTES = 1 << 30
+"""The most weight one ML program can carry and still run on the Neural
+Engine: 1 GiB. Past it, Core ML runs the whole program on the CPU, with no
+error and nothing in the log. Measured on an M1 Max under macOS 27.0, where
+a Qwen3 backbone with 0.964 GiB of weights ran 1,526 of its 1,535
+operations on the ANE, and with 1.022 GiB none of them. The true limit lies
+in that bracket, and other chips or OS versions may set it elsewhere: the
+compute-plan gate still judges where Core ML actually places a program."""
+
+_CAP_OPTIONS = ('serve it on the GPU (compute_units = "cpu_and_gpu"), convert with --int8-embedding '
+                "(or a chunked variant, planned), or pass --ignore-ane-weight-cap to try anyway")
+
+
+def weights_bytes(compiled):
+    """The compiled model's weight files, in bytes."""
+    return sum(f.stat().st_size for f in (Path(compiled) / "weights").rglob("*") if f.is_file())
+
+
+def over_cap(model, seq, size):
+    """Why a program of `size` bytes of weights won't run on the ANE."""
+    return (f"{model}'s {seq} bucket has {size / 2**30:.3f} GiB of weights, over the Neural Engine's 1 GiB "
+            f"per-program limit (MAX_ANE_PROGRAM_WEIGHT_BYTES), so Core ML would run it on the CPU. "
+            f"Options: {_CAP_OPTIONS}.")
+
+
 def gate(compiled, min_ane=0.8):
     """The ane_check verdict: every compute-heavy op on the ANE, at least
     `min_ane` of assigned ops on the ANE, and no fused attention that would
-    drop its mask. Returns the summary; raises GateFailure."""
+    drop its mask. Returns the summary; raises GateFailure. (core.run checks
+    the weights against MAX_ANE_PROGRAM_WEIGHT_BYTES before this.)"""
     s = summarize(read(compiled))
     share = s["ane"] / s["assigned"] if s["assigned"] else 0.0
     s["share"] = share
     if s["heavy_off"] or share < min_ane:
+        hint = ""
+        size = weights_bytes(compiled)
+        if s["ane"] == 0 and size > 0.9 * MAX_ANE_PROGRAM_WEIGHT_BYTES:
+            hint = (f"; its {size / 2**30:.3f} GiB of weights are near the Neural Engine's 1 GiB per-program "
+                    f"limit (MAX_ANE_PROGRAM_WEIGHT_BYTES), which shows up this way. Options: {_CAP_OPTIONS}")
         raise GateFailure(f"compute plan: {s['ane']}/{s['assigned']} ops on the ANE ({share:.1%}); "
-                          f"off the ANE: {s['off']}")
+                          f"off the ANE: {s['off']}{hint}")
     if s["masked_fused_attention"]:
         raise GateFailure(f"compute plan: fused attention on the ANE reads a mask built outside its "
                           f"procedure, which the ANE ignores (D25): {s['masked_fused_attention'][:3]}")

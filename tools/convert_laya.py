@@ -360,7 +360,7 @@ def main():
         gates=ClassifierGates(fp32_tol=FP32_TOL, margin=MARGIN, dp_gate=DP_GATE, gated_paths=("CPU_AND_NE",),
                               report_paths=("CPU_ONLY",), pad_value=PAD_LOGIT, pad_id_range=(1000, 40000)),
         install_files=[(manifest_path(args.model), "classifier.toml")], landing_required=True, gate_cases="landing",
-        timing=args.time)
+        timing=args.time, **cli.job_options(args))
     core.run(job, install_dir)
 
 

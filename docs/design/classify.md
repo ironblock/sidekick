@@ -302,6 +302,33 @@ names its compute units with an optional top-level key, in
   path a model is served on, so it is the grade that matters for that
   model.
 
+### The ANE weight cap
+
+Core ML runs an ML program on the ANE only while its weights stay under
+about 1 GiB. Past that it runs the whole program elsewhere, with no error
+and nothing in the log: measured on an M1 Max under macOS 27.0, a program
+with 0.964 GiB of weights ran on the ANE and one with 1.022 GiB didn't, and
+coremltools documents a 1 GB Neural Engine limit. A model served on the
+ANE (`compute_units` `cpu_and_ne` or `all`) whose compiled weights exceed
+`MAX_ANE_PROGRAM_WEIGHT_BYTES` (1 GiB) would look ANE-served and not be,
+so the registry skips it, as D28 skips any bad manifest:
+- Each bucket is its own program, and each is checked. The weights are
+  the files under the artifact's `weights/` directory (an `.mlmodelc`, or
+  `Data/com.apple.CoreML/weights/` in an `.mlpackage`), measured as the
+  converters measure them (`tools/sidekick_convert/plan.py`), from file
+  metadata, without reading them.
+- The reason, in `/health`'s `skipped_models` and in `sk_pool_skipped`,
+  names the bucket, its weights and the fixes: serve it on the GPU
+  (`compute_units = "cpu_and_gpu"`), convert a quantized or chunked
+  variant, or load it anyway.
+- Loading it anyway, for experimentation: `ane_weight_limit = "ignore"`
+  in the manifest (top level, either manifest file), or `sidekickd
+  --ignore-ane-weight-cap` (`ignore_ane_weight_cap = true` in the config)
+  for every model.
+- Models served on `cpu_and_gpu` or `cpu_only` aren't checked. Neither is
+  the parity suite's registry: it measures every compute path itself, and
+  its ANE plan check reports a model Core ML doesn't place on the ANE.
+
 Compatibility: sidekick 0.4 and earlier ignore unknown keys in both
 manifest files. A 0.4 daemon given a manifest with `compute_units` loads it
 with `.cpuAndNeuralEngine` and reports `cpu_and_ne`; it doesn't fail. (A

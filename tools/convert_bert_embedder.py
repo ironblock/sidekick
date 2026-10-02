@@ -81,7 +81,7 @@ def main():
           f"{factor:.1f}x under the ANE linear's 2^15")
     job = recipes.embedder(model_id=model_id, src=args.src, buckets=buckets, backbone=backbone,
                            head=Pool(pooling), tok=tok, texts=texts,
-                           rewrites=[bert.twice_gelu] if args.twice_gelu else (), timing=args.time)
+                           rewrites=[bert.twice_gelu] if args.twice_gelu else (), timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)
 
 

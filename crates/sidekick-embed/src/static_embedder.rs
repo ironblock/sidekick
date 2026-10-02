@@ -236,6 +236,7 @@ mod tests {
                 prefixes: Default::default(),
                 source: None,
                 compute_units: None,
+                ane_weight_limit: None,
             },
             dir: dir.clone(),
         }

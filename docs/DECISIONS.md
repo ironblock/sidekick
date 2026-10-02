@@ -1582,6 +1582,43 @@ keeping background work off the GPU is still the project's thesis, and a
 manifest that wants the GPU can say so. A v0.4 daemon ignores the key and
 loads on the ANE.
 
+## D32 — Refuse ANE-served models over the Neural Engine's weight limit
+Core ML places an ML program on the Neural Engine only if its weights are
+under about 1 GiB. Above that, a model loaded with `.cpuAndNeuralEngine`
+runs entirely on the CPU, with no error and no log line. Measured on an
+M1 Max with macOS 27.0, a Qwen3 backbone truncated to 23 layers
+(0.964 GiB of fp16 weights) put 99.4% of its operations on the ANE, and
+at 25 layers (1.022 GiB) none. agent-jev (Qwen3-0.6B, 1.12 GiB) found it.
+Apple's coremltools guide states the same 1 GB Neural Engine limit for
+iPhone, and ships `bisect_model` to split larger models. The limit is per
+program: two 0.85 GB laya buckets run together on the ANE without trouble.
+Other chips and OS versions may draw it elsewhere.
+
+**Decision.** `MAX_ANE_PROGRAM_WEIGHT_BYTES` (1 GiB), measured from an
+artifact's weight files, is a hard limit wherever a model would be served
+on the ANE, with a bypass for trying anyway:
+- **Converters** fail an ANE-served artifact over it, naming the limit and
+  the fixes: serve it on the GPU (`compute_units = "cpu_and_gpu"`, D31),
+  convert with `--int8-embedding`, or pass `--ignore-ane-weight-cap`. The
+  bypass warns per bucket and is recorded in the report and in a comment in
+  the installed manifest. The compute-plan gate still judges the actual
+  placement.
+- **sidekickd and `libsidekick.dylib`** skip a bucket over it when the
+  model's compute units are `cpu_and_ne` or `all` (D28's skip-and-warn),
+  with the reason and the fixes in `/health` and `sk_pool_skipped`. A
+  manifest can opt out with `ane_weight_limit = "ignore"`, and the daemon
+  with `--ignore-ane-weight-cap` (or `ignore_ane_weight_cap` in its
+  config). GPU- and CPU-served models aren't checked. The parity suite
+  scans with the limit off, so it can still grade an over-limit model's
+  CPU and GPU paths.
+
+A model that silently runs on the CPU is slower than its owner expects and
+holds the same memory, so failing loudly is the right default, in line with
+D22. `--int8-embedding` is the first weight quantization: it stores only the
+token table (a CPU-side lookup) as per-row int8, and is graded against the
+model's ideal-fp16 ceiling like any other rewrite. Chunked variants, which
+lose no precision, are planned.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
