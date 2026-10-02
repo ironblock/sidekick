@@ -227,6 +227,20 @@ pub struct ClassifyGrade {
     /// Raw Δp per case, in reference order.
     pub per_case: Vec<Option<f64>>,
     pub failures: Vec<String>,
+    /// Set when the runtime wouldn't serve this path at all (the ANE path of
+    /// a model over the ANE weight limit, D32): the path is measured and
+    /// reported, not graded. Its gate failures move to `reported`.
+    pub not_served: Option<String>,
+    pub reported: Vec<String>,
+}
+
+impl ClassifyGrade {
+    /// Report this path rather than grade it: the runtime refuses to serve
+    /// the model on it, for `why`.
+    pub fn report_only(&mut self, why: String) {
+        self.reported = std::mem::take(&mut self.failures);
+        self.not_served = Some(why);
+    }
 }
 
 /// The reference oracle with the model's ideal-fp16 outputs.
@@ -554,6 +568,8 @@ pub fn grade(
         median_ms,
         per_case,
         failures,
+        not_served: None,
+        reported: Vec::new(),
     }
 }
 
@@ -688,6 +704,35 @@ mod tests {
             assert!(all.contains(want), "{all}");
         }
         assert_eq!(g.worst_dp, None, "a non-finite case poisons the worst");
+    }
+
+    #[test]
+    fn a_path_the_runtime_wont_serve_is_reported_not_graded() {
+        // The ANE path of a model over the ANE weight limit (D32) runs on the
+        // CPU, and its 1,024-to-2,048 comparison fails the fp16 bucket gate.
+        let (json, st) = sample();
+        let reference = ClassifyReference::parse(&json, &st).unwrap();
+        let mut a = case("a", vec![1.0, 2.0]);
+        a.bucket_invariance = Delta { n: 1, max: Some(0.02) };
+        a.bucket_pairs = vec![BucketPair { from: 1024, to: 2048, dp: Some(0.02) }];
+        let result = ClassifyWorkerResult {
+            bucket_coverage: None,
+            model: "z".into(),
+            path: "ane".into(),
+            cases: vec![a, case("b", vec![0.5, 0.0, -1.0])],
+            repeat_bitwise: true,
+            load_ms: 0.0,
+        };
+        let mut g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &manifest());
+        assert!(g.failures.iter().any(|f| f.contains("bucket invariance")), "graded: {:?}", g.failures);
+        assert_eq!(g.not_served, None);
+        // Reported instead: still measured, its gate failures kept as data.
+        let failed = g.failures.clone();
+        g.report_only("over the weight limit".into());
+        assert!(g.failures.is_empty());
+        assert_eq!(g.reported, failed);
+        assert_eq!(g.not_served.as_deref(), Some("over the weight limit"));
+        assert_eq!(g.bucket_invariance.max, Some(0.02), "the measurement is kept");
     }
 
     #[test]

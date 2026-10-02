@@ -35,6 +35,13 @@ The recipe (tools/sidekick_convert; docs/CONVERTING.md):
   angles near 2,047 radians; explicit attention (sdpa with a scale);
 - heads.agentjev: the candidates' last states selected by a one-hot of
   `cand_end`, then AgentJev's set transformer (written out) and scorer;
+- a bucket-invariant softmax (qwen3.matmul_softmax, as fev's constraint
+  D): every attention computes exp(w - rowmax) and one matmul against
+  [V | 1]. Core ML's own softmax, after the in-graph score matmul, rounds
+  differently on the CPU for different key lengths below 1,024
+  (tools/repro_cpu_softmax_length.py), so the same input differed between
+  the 512 and 1,024 buckets by up to |dp| 0.019; the matmul form is
+  bit-identical across them, at the same accuracy against fp32;
 - no precision or range rewrites: the model is GPU-served, where the
   fp16 graph is already at its ideal-fp16 ceiling, and a 2^-6 RMSNorm
   pre-scale measured worse on every path;
@@ -55,7 +62,11 @@ fp16 weights (1.2 GB) exceed Core ML's ~1 GiB limit for the ANE.
 Measured with a probe of this graph (M1 Max, macOS 27): the fp32 graph
 matches AgentJev's per-path scoring within |dp| 5e-7; on the GPU, 76 ms at
 512 tokens and 381 ms at 2,048, max |dp| 4.8e-4 against an ideal-fp16
-ceiling of 7.3e-4.
+ceiling of 7.3e-4. Graded by the parity suite on 2,627 cases, with the
+bucket-invariant softmax: GPU A (p99 at 0.85x the ceiling, no flips,
+buckets exact); CPU exact across buckets up to 1,024 tokens, D on
+accuracy; the ANE path reported, not graded, as the runtime doesn't serve
+it there (over the weight limit, D32). docs/MODELS.md has the details.
 """
 
 import json
@@ -191,6 +202,8 @@ def main():
     print(f"gate set: {len(cases)} requests, {min(c.n for c in cases)}-{max(c.n for c in cases)} tokens, "
           f"buckets {[core.bucket_of(c.n, buckets) for c in cases]}", flush=True)
 
+    # After the references: the fp32 gate proves the rewrite exact.
+    qwen3.matmul_softmax(backbone)
     ports = head.ports()
     make_wrapper, example = compose(backbone, head, ports)
     gates = ClassifierGates(activation="softmax", pad_value=PAD_LOGIT, pad_id_range=(1000, 30000),

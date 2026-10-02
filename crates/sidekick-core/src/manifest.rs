@@ -755,27 +755,52 @@ fn check_ane_weights(
     if !on_ane || limit == AneWeightLimit::Ignore || options.ignore_ane_weight_cap {
         return Ok(());
     }
+    match over_ane_weight_limit(dir, artifact, buckets) {
+        None => Ok(()),
+        Some(reason) => Err(format!(
+            "{reason}; served with `{}`, Core ML would run it off the ANE without an error. Serve it on the \
+             GPU (`compute_units = \"cpu_and_gpu\"`), convert a quantized or chunked variant, or set \
+             `ane_weight_limit = \"ignore\"` (or start sidekickd with --ignore-ane-weight-cap) to load it anyway",
+            units.name()
+        )),
+    }
+}
+
+/// The first bucket whose compiled weights exceed
+/// [`MAX_ANE_PROGRAM_WEIGHT_BYTES`], as a sentence: "`model_512.mlmodelc` has
+/// 1.115 GiB of weights, past Core ML's 1 GiB limit for running a program on
+/// the ANE (MAX_ANE_PROGRAM_WEIGHT_BYTES)". Each `{seq}` bucket is its own
+/// program and is checked on its own.
+fn over_ane_weight_limit(dir: &Path, artifact: &str, buckets: &[usize]) -> Option<String> {
     let mut names: Vec<String> = if artifact.contains("{seq}") {
         buckets.iter().map(|b| artifact.replace("{seq}", &b.to_string())).collect()
     } else {
         vec![artifact.to_string()]
     };
     names.dedup();
-    for name in names {
+    names.into_iter().find_map(|name| {
         let bytes = artifact_weight_bytes(&dir.join(&name));
-        if bytes > MAX_ANE_PROGRAM_WEIGHT_BYTES {
-            return Err(format!(
-                "`{name}` has {:.3} GiB of weights, past Core ML's 1 GiB limit for running a program on \
-                 the ANE (MAX_ANE_PROGRAM_WEIGHT_BYTES); served with `{}`, Core ML would run it off the \
-                 ANE without an error. Serve it on the GPU (`compute_units = \"cpu_and_gpu\"`), convert \
-                 a quantized or chunked variant, or set `ane_weight_limit = \"ignore\"` (or start \
-                 sidekickd with --ignore-ane-weight-cap) to load it anyway",
-                bytes as f64 / (1u64 << 30) as f64,
-                units.name()
-            ));
-        }
+        (bytes > MAX_ANE_PROGRAM_WEIGHT_BYTES).then(|| {
+            format!(
+                "`{name}` has {:.3} GiB of weights, past Core ML's 1 GiB limit for running a program on the ANE \
+                 (MAX_ANE_PROGRAM_WEIGHT_BYTES)",
+                bytes as f64 / (1u64 << 30) as f64
+            )
+        })
+    })
+}
+
+/// Why the runtime would refuse to serve this model on the ANE (D32), whatever
+/// compute units its manifest names: the reason a `cpu_and_ne` manifest would
+/// be skipped for, without the fixes the registry's message lists. `None`
+/// when every bucket fits, or when the manifest opts out with
+/// `ane_weight_limit = "ignore"`. The parity suite reports, rather than
+/// grades, the ANE path of a model the runtime would refuse there.
+pub fn ane_weight_refusal(dir: &Path, artifact: &str, buckets: &[usize], limit: AneWeightLimit) -> Option<String> {
+    if limit == AneWeightLimit::Ignore {
+        return None;
     }
-    Ok(())
+    over_ane_weight_limit(dir, artifact, buckets)
 }
 
 /// A manifest the registry skipped, and why.
@@ -1968,6 +1993,29 @@ max_seq_len = 512
             }
             std::fs::remove_dir_all(&tmp).unwrap();
         }
+    }
+
+    #[test]
+    fn ane_weight_refusal_answers_for_the_ane_whatever_the_units() {
+        const CAP: u64 = MAX_ANE_PROGRAM_WEIGHT_BYTES;
+        let tmp = tmp_dir("ane-refusal");
+        let dir = tmp.join("s");
+        weights(&dir, "model_128.mlmodelc", "weights", 1 << 20);
+        weights(&dir, "model_512.mlmodelc", "weights", CAP + 1);
+        let buckets = [128, 512];
+        // Over the cap: refused, though the call names no compute units (a
+        // GPU-served manifest gets the same answer).
+        let why = ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &buckets, AneWeightLimit::Enforce).unwrap();
+        // The reason alone: the registry's fixes aren't part of it.
+        assert_eq!(
+            why,
+            "`model_512.mlmodelc` has 1.000 GiB of weights, past Core ML's 1 GiB limit for running a program \
+             on the ANE (MAX_ANE_PROGRAM_WEIGHT_BYTES)"
+        );
+        // The opt-out is honored, and a model that fits isn't refused.
+        assert_eq!(ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &buckets, AneWeightLimit::Ignore), None);
+        assert_eq!(ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &[128], AneWeightLimit::Enforce), None);
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]

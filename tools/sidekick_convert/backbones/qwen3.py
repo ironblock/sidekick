@@ -30,7 +30,7 @@ from pathlib import Path
 
 import torch
 
-from ..techniques import activations, masks, precision, traceable
+from ..techniques import activations, attention, masks, precision, traceable
 from ..techniques.onehot import positions, positions_onehot
 from ..calibrate import collect
 from . import Backbone
@@ -143,7 +143,14 @@ class Qwen3TreeBackbone(Qwen3Backbone):
     cos/sin tables through a one-hot of `position_ids` rather than computing
     angles: an angle like 2,047 radians stored in fp16 is off by up to 0.5,
     while the tables are exact constants. Positions never exceed the bucket,
-    so one table row per position is enough."""
+    so one table row per position is enough.
+
+    The matmul_softmax() rewrite computes attention's softmax with the value
+    matmul (techniques.attention.matmul_softmax), as fev's constraint D does.
+    Core ML's own softmax, after an in-graph score matmul, rounds differently
+    on the CPU for different key lengths below 1,024, so the same input
+    differed between buckets; the matmul form is bit-identical across them
+    (tools/repro_cpu_softmax_length.py)."""
 
     def buffers(self, seq):
         rope = self.model.rotary_emb
@@ -162,9 +169,47 @@ class Qwen3TreeBackbone(Qwen3Backbone):
         rope = (onehot @ w.rope_cos, onehot @ w.rope_sin)                              # [1, S, head_dim]
         h = m.embed_tokens(x["input_ids"].long())
         for layer in m.layers:
+            layer.self_attn.sidekick_seq = seq      # the key length, a Python int, for _matmul_softmax_attention
             h = layer(h, attention_mask=bias, position_embeddings=rope)
             h = h[0] if isinstance(h, tuple) else h
+        for layer in m.layers:
+            layer.self_attn.sidekick_seq = None     # eager runs (references) use the keys' own length
         return types.SimpleNamespace(last_hidden_state=m.norm(h))
+
+
+MATMUL_SOFTMAX = "sidekick_matmul_softmax"
+
+
+def _matmul_softmax_attention(module, query, key, value, attention_mask, dropout=0.0, scaling=None, **kwargs):
+    """transformers' attention-function interface (as sdpa_attention_forward),
+    with the softmax computed by the value matmul. Traced, the key length
+    comes from module.sidekick_seq, set per bucket by Qwen3TreeBackbone.call:
+    a size read from a traced tensor can't be converted under static shapes.
+    Run eagerly (an fp32 reference), it is the keys' own length."""
+    from transformers.models.qwen3.modeling_qwen3 import repeat_kv
+    k = repeat_kv(key, module.num_key_value_groups)
+    v = repeat_kv(value, module.num_key_value_groups)
+    seq = getattr(module, "sidekick_seq", None) or int(key.shape[-2])
+    o = attention.matmul_softmax(query, k, v, attention_mask, scaling, seq)
+    return o.transpose(1, 2).contiguous(), None
+
+
+def matmul_softmax(backbone):
+    """A rewrite: every layer's attention computes its softmax with the value
+    matmul (_matmul_softmax_attention) instead of transformers' sdpa path,
+    which converts to Core ML's softmax. Apply it after the fp32 references
+    are computed, so the fp32 gate proves it exact.
+
+    Process-global in part: it registers _matmul_softmax_attention under a
+    new name in transformers' ALL_ATTENTION_FUNCTIONS (adding a name changes
+    no other model), and switches this backbone's config to it. A model is
+    affected only through its own config, so F2LLM's converter, which
+    doesn't call it, and the other Qwen3 tests keep sdpa. Don't apply it to a
+    backbone shared between tests or converters."""
+    from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+    ALL_ATTENTION_FUNCTIONS[MATMUL_SOFTMAX] = _matmul_softmax_attention
+    backbone.model.config._attn_implementation = MATMUL_SOFTMAX
+    return backbone
 
 
 def load_tree(src, tok, prefix=""):

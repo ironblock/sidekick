@@ -281,6 +281,10 @@ pub fn grade_model(
         }
     };
     report.source = reference.source_label();
+    // D32: a model whose buckets are over the ANE weight limit, without the
+    // opt-out, isn't served on the ANE (the runtime refuses it there), so its
+    // ANE path is measured and reported, not graded.
+    let ane_refused = sidekick_core::ane_weight_refusal(&model.dir, &m.artifact, &m.buckets, m.ane_weight_limit);
     let stale = match corpus_sha256(m) {
         Ok(corpus) => reference.stale(m, &corpus, &tokenizer_sha(&model.tokenizer_path())),
         Err(e) => Some(format!("no corpus to check the reference against: {e}")),
@@ -323,7 +327,11 @@ pub fn grade_model(
             Err(e) => {
                 println!("  {}: CRASHED: {e}", path.name());
                 report.crashed.push((path.name().into(), e.clone()));
-                report.failures.push(format!("{}: worker failed: {e}", path.name()));
+                if path == Path3::Ane && ane_refused.is_some() {
+                    report.warnings.push(format!("ane (not served: D32): worker failed: {e}"));
+                } else {
+                    report.failures.push(format!("{}: worker failed: {e}", path.name()));
+                }
             }
         }
     }
@@ -343,7 +351,8 @@ pub fn grade_model(
                     });
                 }
                 if !d.within(gates.determinism) {
-                    report.failures.push(format!(
+                    let to = if ane_refused.is_some() { &mut report.warnings } else { &mut report.failures };
+                    to.push(format!(
                         "ANE output differs between processes: Δp {} > {}",
                         fmt(d.max),
                         gates.determinism
@@ -351,12 +360,20 @@ pub fn grade_model(
                 }
                 report.determinism = Some(d);
             }
+            Err(e) if ane_refused.is_some() => {
+                report.warnings.push(format!("ane (second process, not served: D32): worker failed: {e}"))
+            }
             Err(e) => report.failures.push(format!("ane (second process): worker failed: {e}")),
         }
     }
 
-    let grades: Vec<ClassifyGrade> =
+    let mut grades: Vec<ClassifyGrade> =
         results.iter().map(|(p, r)| grade(&reference, r, *p, gates, m)).collect();
+    if let Some(why) = &ane_refused {
+        for g in grades.iter_mut().filter(|g| g.path == Path3::Ane.name()) {
+            g.report_only(why.clone());
+        }
+    }
 
     // As for embedders: a bucket graded without a compute plan must show it
     // ran somewhere other than the CPU.
@@ -428,7 +445,7 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
         println!(
             "  {:<4} {:<5} {:>10} {:<24} {:>10} {:>10.2e} {:>10} {:>5} {:>5} {:>10} {:>10} {:>10} {:>8.1}",
             g.path,
-            g.letter,
+            if g.not_served.is_some() { '-' } else { g.letter },
             fmt(g.worst_dp),
             format!("({})", g.worst_case),
             if has_stress { fmt(g.stress_dp) } else { "-".into() },
@@ -475,7 +492,13 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
         }
     }
     if let Some(d) = &report.determinism {
-        println!("  ANE across two processes: Δp {} over {} cases", fmt(d.max), d.n);
+        let ane_not_served = grades.iter().any(|g| g.path == Path3::Ane.name() && g.not_served.is_some());
+        println!(
+            "  ANE across two processes: Δp {} over {} cases{}",
+            fmt(d.max),
+            d.n,
+            if ane_not_served { " (report-only: not served on the ANE, D32)" } else { "" }
+        );
     }
     for g in grades.iter().filter(|g| g.bucket_past_cpu_cap.n > 0) {
         println!(
@@ -486,6 +509,15 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
             fmt(g.bucket_past_cpu_cap.max),
             g.bucket_past_cpu_cap.n
         );
+    }
+    for g in grades {
+        if let Some(why) = &g.not_served {
+            println!(
+                "  {} not served there (D32: {why}): measured and reported, not graded{}",
+                g.path,
+                if g.reported.is_empty() { String::new() } else { format!("; its gates: {}", g.reported.join("; ")) }
+            );
+        }
     }
     if let Some(c) = &report.bucket_coverage {
         println!("  bucket invariance: {c}");
