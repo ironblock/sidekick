@@ -4,12 +4,13 @@
 //! `classify_grade`.
 
 use super::{
-    bitwise_eq, check_plans, spawn_worker, units, BucketInfo, Options, XorShift, DETERMINISM_CASES,
+    bitwise_eq, check_plans, spawn_worker, units, BucketInfo, BucketInvariance, Options, XorShift,
+    DETERMINISM_CASES,
 };
 use crate::classify_grade::{
     delta_p, fmt, grade, BucketPair, ClassifyCaseResult, ClassifyGrade, ClassifyWorkerResult, Delta,
 };
-use crate::classify_reference::{corpus_sha256, tokenizer_sha, ClassifyReference};
+use crate::classify_reference::{corpus_sha256, tokenizer_sha, ClassifyCase, ClassifyReference};
 use crate::expect::{Expectations, Path3};
 use serde::Serialize;
 use sidekick_core::manifest::ResolvedClassifier;
@@ -33,6 +34,7 @@ pub fn worker(
     path: Path3,
     out: &str,
     limit: Option<usize>,
+    bucket_mode: BucketInvariance,
 ) -> Result<(), String> {
     let reference = ClassifyReference::load(&reference_dir(model, refs))?;
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
@@ -46,6 +48,7 @@ pub fn worker(
     let cases = &reference.cases[..limit.unwrap_or(reference.cases.len()).min(reference.cases.len())];
     let full = limit.is_none();
     let mut rng = XorShift(0x5eed_1234_abcd_0002);
+    let coverage = BucketCoverage::new(bucket_mode, &buckets);
 
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
@@ -68,7 +71,8 @@ pub fn worker(
         let ids_match = prepared.ids == case.ids
             && (!segments || prepared.type_ids == case.type_ids)
             && prepared.markers == case.markers
-            && prepared.qtype == case.qtype;
+            && prepared.qtype == case.qtype
+            && prepared.decide_pos == case.decide;
         let model_only = if ids_match {
             None
         } else {
@@ -82,6 +86,7 @@ pub fn worker(
                 markers: case.markers.clone(),
                 qtype: case.qtype,
                 bucket,
+                decide_pos: case.decide,
             };
             Some(clf.run(&theirs).map_err(e)?)
         };
@@ -90,7 +95,7 @@ pub fn worker(
         let mut bucket_pairs = Vec::new();
         let mut pad_invariance = Delta::default();
         if full {
-            for &b in buckets.iter().filter(|&&b| b > prepared.bucket) {
+            for b in coverage.larger(&buckets, prepared.bucket, results.len(), &case.tags) {
                 let other = clf.run_in(&prepared, b, &[]).map_err(e)?;
                 let dp = delta_p(problem, &logits, &other, None);
                 bucket_invariance.add(dp);
@@ -137,12 +142,83 @@ pub fn worker(
     let result = ClassifyWorkerResult {
         model: model.manifest.id.clone(),
         path: path.name().into(),
+        bucket_coverage: Some(coverage.describe(bucket_mode, &buckets, cases)),
         cases: results,
         repeat_bitwise,
         load_ms,
     };
     std::fs::write(out, serde_json::to_vec(&result).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
+}
+
+/// Which larger buckets a case re-runs in for bucket invariance. Every
+/// bucket is its own artifact (D15), and a mask or position defect shows in
+/// any bucket larger than the case's, so `Sampled` keeps both kinds of
+/// coverage at a fraction of the cost: every case in its next larger bucket
+/// (every bucket but the smallest sees every case that falls just below
+/// it), and every larger bucket for the adversarial cases and a
+/// deterministic every-`SAMPLE_EVERY`th case, so each bucket also sees
+/// inputs of every length below it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BucketCoverage {
+    Full,
+    Sampled,
+}
+
+/// The sampled stride: every 10th case re-runs in every larger bucket.
+pub const SAMPLE_EVERY: usize = 10;
+
+/// Above this largest bucket, `auto` samples: a larger bucket's prediction
+/// costs about its length's square on a transformer, and at 2,048 tokens
+/// re-running every case in every larger bucket takes hours.
+pub const SAMPLE_ABOVE: usize = 512;
+
+impl BucketCoverage {
+    pub fn new(mode: BucketInvariance, buckets: &[usize]) -> Self {
+        match mode {
+            BucketInvariance::Full => Self::Full,
+            BucketInvariance::Sampled => Self::Sampled,
+            BucketInvariance::Auto if buckets.last().is_some_and(|&b| b > SAMPLE_ABOVE) => Self::Sampled,
+            BucketInvariance::Auto => Self::Full,
+        }
+    }
+
+    /// Whether case `index` (with `tags`) re-runs in every larger bucket.
+    fn every_bucket(self, index: usize, tags: &[String]) -> bool {
+        self == Self::Full || index.is_multiple_of(SAMPLE_EVERY) || tags.iter().any(|t| t == "adversarial")
+    }
+
+    /// The larger buckets case `index`, prepared for `bucket`, re-runs in.
+    pub fn larger(self, buckets: &[usize], bucket: usize, index: usize, tags: &[String]) -> Vec<usize> {
+        let mut larger = buckets.iter().copied().filter(|&b| b > bucket);
+        if self.every_bucket(index, tags) {
+            larger.collect()
+        } else {
+            larger.next().into_iter().collect()
+        }
+    }
+
+    /// The report line: what was run, and why (`mode` as asked).
+    pub fn describe(self, mode: BucketInvariance, buckets: &[usize], cases: &[ClassifyCase]) -> String {
+        match self {
+            Self::Full => "every larger bucket for every case".into(),
+            Self::Sampled => {
+                let n = cases.iter().enumerate().filter(|(i, c)| self.every_bucket(*i, &c.tags)).count();
+                let why = match mode {
+                    BucketInvariance::Auto => format!(
+                        "the largest bucket, {}, is over {SAMPLE_ABOVE}",
+                        buckets.last().copied().unwrap_or(0)
+                    ),
+                    _ => "--bucket-invariance sampled".into(),
+                };
+                format!(
+                    "sampled ({why}): the next larger bucket for every case; every larger bucket for {n} of \
+                     {} cases (the adversarial ones and every {SAMPLE_EVERY}th)",
+                    cases.len()
+                )
+            }
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -155,6 +231,8 @@ pub struct ClassifierReport {
     crashed: Vec<(String, String)>,
     /// Largest |Δp| between two ANE processes.
     determinism: Option<Delta>,
+    /// Which larger buckets the bucket-invariance gate re-ran cases in.
+    bucket_coverage: Option<String>,
     failures: Vec<String>,
     warnings: Vec<String>,
 }
@@ -182,6 +260,7 @@ pub fn grade_model(
         paths: Vec::new(),
         crashed: Vec::new(),
         determinism: None,
+        bucket_coverage: None,
         failures: Vec::new(),
         warnings: Vec::new(),
     };
@@ -235,7 +314,7 @@ pub fn grade_model(
 
     let mut results: Vec<(Path3, ClassifyWorkerResult)> = Vec::new();
     for &path in &o.paths {
-        match spawn_worker::<ClassifyWorkerResult>(id, models_dir, o.refs.as_deref(), path, None, o.timeout, scratch) {
+        match spawn_worker::<ClassifyWorkerResult>(id, models_dir, path, None, scratch, o) {
             Ok(r) => results.push((path, r)),
             Err(e) => {
                 println!("  {}: CRASHED: {e}", path.name());
@@ -245,17 +324,11 @@ pub fn grade_model(
         }
     }
 
+    report.bucket_coverage = results.iter().find_map(|(_, r)| r.bucket_coverage.clone());
+
     // Determinism across processes: a second, independent ANE load.
     if let Some((_, first)) = results.iter().find(|(p, _)| *p == Path3::Ane) {
-        match spawn_worker::<ClassifyWorkerResult>(
-            id,
-            models_dir,
-            o.refs.as_deref(),
-            Path3::Ane,
-            Some(DETERMINISM_CASES),
-            o.timeout,
-            scratch,
-        ) {
+        match spawn_worker::<ClassifyWorkerResult>(id, models_dir, Path3::Ane, Some(DETERMINISM_CASES), scratch, o) {
             Ok(second) => {
                 let mut d = Delta::default();
                 for ((a, b), case) in first.cases.iter().zip(&second.cases).zip(&reference.cases) {
@@ -410,6 +483,9 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
             g.bucket_past_cpu_cap.n
         );
     }
+    if let Some(c) = &report.bucket_coverage {
+        println!("  bucket invariance: {c}");
+    }
     for g in grades {
         for f in &g.flips {
             println!("  {} flip: {f}", g.path);
@@ -455,5 +531,73 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
             .map(|g| format!("{} {}", g.path, fmt(g.per_case.get(i).copied().flatten())))
             .collect();
         println!("    {:<26} {:>4} tok k={:<2} {}  [{}]", c.id, c.ids.len(), c.k, cells.join("  "), c.tags.join(","));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tags(t: &[&str]) -> Vec<String> {
+        t.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn auto_samples_only_above_512_tokens() {
+        let auto = |b: &[usize]| BucketCoverage::new(BucketInvariance::Auto, b);
+        assert_eq!(auto(&[128, 256, 512]), BucketCoverage::Full);
+        assert_eq!(auto(&[128, 512, 1024]), BucketCoverage::Sampled);
+        assert_eq!(BucketCoverage::new(BucketInvariance::Full, &[128, 2048]), BucketCoverage::Full);
+        assert_eq!(BucketCoverage::new(BucketInvariance::Sampled, &[128, 256]), BucketCoverage::Sampled);
+    }
+
+    #[test]
+    fn sampled_cases_run_in_the_next_bucket_and_a_sample_in_every_one() {
+        let b = [128, 256, 512, 1024, 2048];
+        let s = BucketCoverage::Sampled;
+        // Every case: its next larger bucket.
+        assert_eq!(s.larger(&b, 128, 3, &[]), vec![256]);
+        assert_eq!(s.larger(&b, 1024, 7, &[]), vec![2048]);
+        // Every 10th case and every adversarial one: all larger buckets.
+        assert_eq!(s.larger(&b, 128, 20, &[]), vec![256, 512, 1024, 2048]);
+        assert_eq!(s.larger(&b, 256, 3, &tags(&["adversarial"])), vec![512, 1024, 2048]);
+        // The largest bucket has none above it.
+        assert!(s.larger(&b, 2048, 0, &[]).is_empty());
+        // Full: every larger bucket for every case.
+        assert_eq!(BucketCoverage::Full.larger(&b, 512, 3, &[]), vec![1024, 2048]);
+    }
+
+    #[test]
+    fn the_report_says_what_was_sampled() {
+        let case = |id: &str, t: &[&str]| ClassifyCase {
+            id: id.into(),
+            tags: tags(t),
+            input: String::new(),
+            query: None,
+            group: None,
+            candidate_labels: vec![],
+            question_type: None,
+            instructions: None,
+            ids: vec![],
+            type_ids: vec![],
+            markers: vec![],
+            qtype: None,
+            decide: None,
+            k: 2,
+            multi_label: None,
+            gold: None,
+        };
+        // 25 cases: indexes 0, 10 and 20, plus one adversarial at 5.
+        let cases: Vec<ClassifyCase> =
+            (0..25).map(|i| case(&i.to_string(), if i == 5 { &["adversarial"] } else { &[] })).collect();
+        let line = BucketCoverage::Sampled.describe(BucketInvariance::Auto, &[128, 2048], &cases);
+        assert!(line.contains("every larger bucket for 4 of 25 cases"), "{line}");
+        assert!(line.contains("the largest bucket, 2048, is over 512"), "{line}");
+        let forced = BucketCoverage::Sampled.describe(BucketInvariance::Sampled, &[128, 256], &cases);
+        assert!(forced.starts_with("sampled (--bucket-invariance sampled)"), "{forced}");
+        assert_eq!(
+            BucketCoverage::Full.describe(BucketInvariance::Full, &[128], &cases),
+            "every larger bucket for every case"
+        );
     }
 }

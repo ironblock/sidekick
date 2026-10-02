@@ -38,8 +38,8 @@ POST /v1/classify
 | `user` | SGLang, OpenAI | accepted and ignored |
 | `candidate_labels` ([str]) | extension (HF zero-shot's name) | required on zero-shot models; 400 on fixed-label models |
 | `calibration` (`none` \| `model`) | extension | only on models that declare temperatures (every value, `none` included, is a 400 elsewhere); default `none`; `model` applies the manifest's temperature, and with `use_activation: false` needs none |
-| `question_type` (`choice` \| `score` \| `noul`) | extension, laya format | required on laya |
-| `instructions` (str) | extension, laya and gliner2 formats | laya: the question text, with the manifest's per-type default when absent; required by a model whose manifest has none (Julia-1). gliner2: the task prompt (below), with the manifest's default when absent |
+| `question_type` (`choice` \| `score` \| `noul`) | extension, laya and fev formats | required on both |
+| `instructions` (str) | extension, laya, gliner2 and fev formats | laya: the question text, with the manifest's per-type default when absent; required by a model whose manifest has none (Julia-1). gliner2: the task prompt (below), with the manifest's default when absent. fev: the question text; absent, the question is empty, as fev's own API sends it |
 | `multi_label` (bool, default false) | extension (HF zero-shot's name), gliner2 format | `true` (gliner2 only; a 400 elsewhere) scores each label independently: `probs` are per-label sigmoids instead of a softmax, and one candidate label is allowed. `false`, the default, is accepted on every model, as Hugging Face clients send it |
 
 Any other top-level field is ignored, as D22 already does. Extension fields
@@ -60,6 +60,10 @@ Over-length input:
   appended as for any text. The schema is never truncated: a schema that
   doesn't fit on its own is a 400.
   `truncate_prompt_tokens` and `truncation_side: left` are 400s.
+- **fev format:** the state is truncated to `state_max_len` tokens,
+  keeping its start. The question and options are never cut: a row that
+  still exceeds the window is a 400 naming their token count.
+  `truncate_prompt_tokens` and `truncation_side: left` are 400s.
 
 Other 400s:
 - an empty batch, or more inputs than `max_batch`;
@@ -72,6 +76,9 @@ Other 400s:
 - with Julia-1's option rendering: a noul question that describes only
   one of `false` and `true`, a label that renders as an empty option, or
   two labels that render alike (`"b"` and `"x: b"`);
+- with the fev format: two labels that render alike once control tokens
+  are rewritten (`"<|x|>"` and `"<¦x¦>"`), or a label that renders as an
+  empty option;
 - no `instructions` for a model whose manifest has no default;
 - `multi_label: true` on any format but gliner2;
 - `calibration: model` where the model declares no temperature for that
@@ -155,7 +162,7 @@ problem_type = "single_label"             # single_label | multi_label | regress
 compute_units = "cpu_and_ne"              # cpu_and_ne (default) | cpu_and_gpu | cpu_only | all
 
 [classify]
-format = "laya"                           # zero-shot formats: "laya", "gliner2"
+format = "laya"                           # zero-shot formats: "laya", "gliner2", "fev"
 max_labels = 32                           # laya: must equal the artifact's marker_pos width (checked at load)
 labels = []                               # text-classification: output order (id2label)
 
@@ -252,6 +259,7 @@ Every input is int32, which is what the runtime's `predict_int32` feeds.
 | text-classification | `input_ids [1,S]`, `attention_mask [1,S]` | `logits [1,N]` |
 | laya | `input_ids [1,S]`, `attention_mask [1,S]`, `marker_pos [1,KMAX]` (−1 pads unused slots), `qtype [1]` (rank 1) | `logits [1,KMAX]`, padded slots at −1e4 |
 | gliner2 | `input_ids [1,S]`, `attention_mask [1,S]` | `logits [1,S]`, one per token |
+| fev | `input_ids [1,S]`, `attention_mask [1,S]`, `marker_pos [1,KMAX]` (each option's `<option_end>` position, −1 pads unused slots), `decide_pos [1]` (rank 1) | `logits [1,KMAX]`, padded slots at −1e4 |
 
 laya's graph builds the one-hot marker selection and the question-type
 embedding from these inputs itself. It pins the residual range rewrite at
@@ -337,7 +345,8 @@ but a model then gives slightly different answers for the same input in
 different buckets: up to 0.021 in probability between Lumma-fev's 1,024-
 and 2,048-token buckets, 0.018 for agent-jev. Running the matmul in slices
 restores invariance only at about 13 times the error, so no conversion
-fixes it (D33 records the measurement and its reproduction).
+fixes it (D33 records the measurement; `tools/repro_cpu_matmul_accumulation.py`
+reproduces it standalone).
 Up to 1,024 tokens the CPU is bucket-invariant, and the GPU and the ANE
 are unaffected.
 
@@ -352,8 +361,12 @@ So a model served on the CPU runs no longer than
 - The capped manifest is validated again (laya's head budget, for
   example, must still fit), and a model that no longer validates is
   skipped with the reason.
+- A fev model's state limit becomes `min(state_max_len, limit − 640)`:
+  fev's own formula for a window, applied to the capped one (see "The fev
+  format").
 - The model's `/v1/models` entry gains `seq_cap` (`limit`,
-  `manifest_max_seq_len` and `reason`), and `/health` lists every capped
+  `manifest_max_seq_len` and `reason`, plus `state_max_len` when the cap
+  lowered a fev model's), and `/health` lists every capped
   model under `seq_caps`.
 - `all` isn't capped: Core ML chooses the device per operation, may not
   use the CPU at all, and `all` exists for measuring what it does.
@@ -480,13 +493,116 @@ Scope, per request:
 - **No long-text chunking.** gliner2's `classify_long` repeats the schema
   over word windows and merges the logits; sidekick truncates instead.
 
+## The fev format
+
+Lumma-fev decision models (FrontiersMind/Lumma-fev, Apache-2.0) are causal
+decoders that read a request's state and one question in a single row, and
+compare the hidden state at a final decide token with the hidden state at
+the end of each option. The Rust port of their input builder
+(`modeling_fev.py` at the pinned revision: `option_text`, `pack`,
+`text_ids`, `encode`) must copy these exactly:
+- The row is `<state> state <question> instructions (<option> option
+  <option_end>)… <decide>`, where the five delimiters are the tokens the
+  manifest's `[classify.fev] delimiters` names by role (`<|reserved_0|>` to
+  `<|reserved_4|>` in Lumma-fev-0.1b). There is no BOS, EOS or other
+  special token.
+- Each fragment (the state, the instructions, each option's text) is
+  tokenized on its own with the model's tokenizer and no special tokens,
+  and the ids are concatenated with the delimiters between them.
+- In every fragment, `<|name|>` (name: ASCII letters, digits and `_`) is
+  rewritten to `<¦name¦>` before tokenizing, so no request text, label
+  included, can forge a delimiter or another control token. The response's
+  `label` is the request's label as sent.
+- The instructions are the request's `instructions`, or empty when there
+  are none: the model has no default question text, and an empty question
+  is what its own API sends.
+- Options are rendered from the request's labels as fev's `option_text`
+  renders criteria. A label's description is the text after its first
+  `": "`; an empty description counts as none:
+  - choice: the label as given, or the key alone when its description is
+    empty;
+  - score: the label as given;
+  - noul: labels `false` then `true`, each optionally described, rendered
+    `"no"` and `"yes"`, or `"no: <description>"` and `"yes: <description>"`.
+    Each side is rendered on its own, so describing only one is allowed.
+- The state keeps its first `state_max_len` tokens, its delimiter
+  included: 1,408 for Lumma-fev-0.1b, which is `min(8192, window − 640)`
+  for the 2,048-token window its config gives. (Its card says 1,024; its
+  code, which is what the model was served with, says 1,408.)
+- Served `cpu_only`, the window is capped at 1,024 tokens (see "The CPU
+  sequence cap"), and the state keeps `min(state_max_len, 1,024 − 640)`:
+  384 for Lumma-fev-0.1b. That is sidekick's choice, not the model's
+  limit. It applies fev's formula to the capped window, so the question
+  and options keep their 640 tokens. The checkpoint itself never sees a
+  1,024-token window: its own code keeps a 1,408-token state and refuses
+  rows over 2,048. The references and the token fixture use 1,408.
+- A row longer than the window (`max_seq_len`) after that is a 400: fev
+  never shrinks options or the question, and neither does sidekick.
+- The logits are read at each option's `<option_end>` and at the final
+  `<decide>`. Their positions come from the layout, never from searching
+  for delimiter ids (which the rewrite keeps out of the text anyway).
+- Each fragment is capped at 16 bytes per token of its budget before
+  tokenizing (the state's own, the window for the rest), which bounds the
+  tokenizer's work and never changes a row that fits.
+
+The probabilities are a softmax over the option logits, which is what fev's
+`decide()` reports at its checkpoint temperature. The converter folds that
+temperature into the graph (it is 1.0 for Lumma-fev-0.1b), so the manifest
+has neither a temperature nor a calibration table. The graph selects the
+option and decide states with one-hot matmuls against a position constant,
+as laya's does, and applies the pointer head, `logits_i = k(h[end_i]) ·
+q(h[decide]) / sqrt(head_dim)`. A causal model never attends forward, so
+pads never reach a real token; the pad-invariance gate checks it.
+
+Scope, per request:
+- **One question.** fev scores several questions per request, each on its
+  own row with the shared state, so one question never sees another. A
+  sidekick request is one question, which is the same computation.
+- **String states only.** fev also renders JSON objects and arrays as
+  indented text; a sidekick input is a string. An array of strings is a
+  batch, and each input is its own row with the request's question, as on
+  the laya format.
+- **`question_type` is required:** the model never sees the type, but noul
+  labels render differently. `required` in `/v1/models` lists
+  `candidate_labels` and `question_type`.
+- **Labels:** 2 to `max_labels` per request, as on every zero-shot format
+  (fev allows 1 to 255).
+
+```toml
+[classify]
+format = "fev"
+max_labels = 32
+labels = []
+
+[classify.fev]
+state_max_len = 1408          # the state's tokens at most, its delimiter included
+delimiters = { state = "<|reserved_0|>", question = "<|reserved_1|>", option = "<|reserved_2|>", option_end = "<|reserved_3|>", decide = "<|reserved_4|>" }
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+marker_pos = "marker_pos"     # each option's <option_end> position
+decide_pos = "decide_pos"
+output = "logits"
+```
+
+Validation for `format = "fev"`: the `[classify.fev]` section, with five
+different delimiters, each one token of the tokenizer (checked at load);
+`1 ≤ state_max_len < max_seq_len`; `marker_pos` and `decide_pos` in
+`[classify.io]`, and no `qtype` or `token_type_ids`; `single_label`; no
+calibration table. `decide_pos` is an explicit input although it is always
+the row's last real token, so the token-id fixture pins it like the option
+positions.
+
 ## Fixtures and references (frozen formats)
 
 - **Token-id fixture**, `fixtures/classify/<model id>.tokens.json`,
   generated by `tools/classifier_reference.py` with the model's own Python:
   laya's `rl_common.py` for laya-en, the laya package's `common.py` for
-  laya-typed-decisions, Julia-1's `julia/data.py` for Julia-1, and the
-  gliner2 package's processor for gliner2. gliner2's fixture also has two
+  laya-typed-decisions, Julia-1's `julia/data.py` for Julia-1, the
+  gliner2 package's processor for gliner2, and Lumma-fev's
+  `modeling_fev.py` (`encode`) for fev, with each case's `decide`
+  position. gliner2's fixture also has two
   cases the generator builds at the truncation boundary (a text ending in
   `!` or `?` and a space, one token over only because of the appended
   `.`), which aren't in the corpus. `crates/sidekick-embed/tests/classify_tokens.rs`
@@ -539,6 +655,14 @@ Corpora:
   literal `<bos>`, `<eos>` and `<mask>`). Inputs are built by Julia-1's own
   `julia/data.py` with options rendered as its typed API renders them, and
   the oracles run its `JuliaDecisionModel`.
+- **fev** (`fixtures/classify/lumma-fev-0.1b.corpus.toml`): the laya
+  translation of fast-decisions with fev's rendering, plus adversarial
+  cases: delimiter and other control strings in the state, the
+  instructions and an option; the rewritten form itself; an empty state; no
+  instructions; half-described noul labels; empty descriptions; 32 long
+  and 32 short options; states truncated at 1,408 tokens; and rows that end
+  exactly at the 2,048-token window and just under it. Lumma-fev's training
+  data isn't published, so it measures conversion parity only.
 - **gliner2:** fastino/fast-decisions at revision `1a33070`, each task
   sent as its own request, with multi-label tasks as `multi_label: true`.
   It is fastino's own benchmark, so it grades parity only; gold accuracy
@@ -559,6 +683,8 @@ First models:
   generates one, and the Python reference tokenizes with that same file.
 - `SupersonicLabs/Julia-1` (zero-shot, laya format with Julia-1's option
   rendering; mmBERT-small).
+- `FrontiersMind/Lumma-fev-0.1b` (zero-shot, fev format; a causal decoder
+  with a pointer head).
 - `fastino/GLiNER2.5-Decide` (zero-shot, gliner2 format; DeBERTa-v3-large),
   served on the GPU (`compute_units = "cpu_and_gpu"`): it passes the gates
   there (grade A), while the ANE grades C and is 10–40× slower

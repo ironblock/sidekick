@@ -36,6 +36,8 @@ struct Io {
     token_type_ids: Option<String>,
     marker_pos: Option<String>,
     qtype: Option<String>,
+    /// fev: the decide token's position, `[1]`.
+    decide_pos: Option<String>,
     output: String,
     /// gliner2: the output is one logit per token, read at the markers.
     per_token: bool,
@@ -43,9 +45,10 @@ struct Io {
 
 /// Check one bucket's artifact against the manifest: `input_ids` and
 /// `attention_mask` are `[1, bucket]` (for per-bucket `{seq}` artifacts;
-/// a shared artifact must only have them); laya's `marker_pos` is
-/// `[1, max_labels]` and `qtype` is `[1]`; the output has one slot per label
-/// (`max_labels` for laya), or exactly `[1, bucket]` for gliner2's per-token
+/// a shared artifact must only have them); laya's and fev's `marker_pos` is
+/// `[1, max_labels]`, laya's `qtype` and fev's `decide_pos` are `[1]`; the
+/// output has one slot per label (`max_labels` for laya and fev), or exactly
+/// `[1, bucket]` for gliner2's per-token
 /// logits; and the inputs pass the flexible-shape guard (D27). Errors name
 /// the artifact relative to the model directory.
 fn check_interface(
@@ -69,9 +72,11 @@ fn check_interface(
     if let Some(types) = &io.token_type_ids {
         expect.push((types, seq));
     }
-    if let (Some(marker), Some(qtype)) = (&io.marker_pos, &io.qtype) {
+    if let Some(marker) = &io.marker_pos {
         expect.push((marker, Some(vec![1, m.max_labels()])));
-        expect.push((qtype, Some(vec![1])));
+    }
+    for one in [&io.qtype, &io.decide_pos].into_iter().flatten() {
+        expect.push((one, Some(vec![1])));
     }
     for (input, shape) in &expect {
         match (iface.inputs.get(*input), shape) {
@@ -129,7 +134,8 @@ impl CoremlClassifier {
         let m = &model.manifest;
         let io = &m.classify.io;
         let laya = m.classify.format == Some(ClassifyFormat::Laya);
-        let marker_pos = if laya { Some(io_name(&io.marker_pos, "marker_pos")?) } else { None };
+        let fev = m.classify.format == Some(ClassifyFormat::Fev);
+        let marker_pos = if laya || fev { Some(io_name(&io.marker_pos, "marker_pos")?) } else { None };
         let output = io_name(&io.output, "output")?;
 
         let models = BucketModels::new(&model.dir, &m.artifact, units);
@@ -139,6 +145,7 @@ impl CoremlClassifier {
             token_type_ids: io.token_type_ids.clone(),
             marker_pos,
             qtype: if laya { Some(io_name(&io.qtype, "qtype")?) } else { None },
+            decide_pos: if fev { Some(io_name(&io.decide_pos, "decide_pos")?) } else { None },
             output,
             per_token: m.classify.format == Some(ClassifyFormat::Gliner2),
         };
@@ -223,23 +230,40 @@ impl CoremlClassifier {
             inputs.push(Int32Input { name, shape: vec![1, bucket], data: types });
         }
 
-        let k = match (&self.io.marker_pos, &self.io.qtype) {
-            (Some(marker_name), Some(qtype_name)) => {
+        let k = match &self.io.marker_pos {
+            Some(marker_name) => {
                 let kmax = self.manifest.max_labels();
                 let k = prepared.markers.len();
                 if k == 0 || k > kmax {
                     return Err(Error::Inference(format!("{k} markers for a model of {kmax} labels")));
                 }
-                let qtype = prepared
-                    .qtype
-                    .ok_or_else(|| Error::Inference("laya input without a qtype".into()))?;
                 let mut markers = prepared.markers.clone();
                 markers.resize(kmax, -1);
                 inputs.push(Int32Input { name: marker_name, shape: vec![1, kmax], data: markers });
-                inputs.push(Int32Input { name: qtype_name, shape: vec![1], data: vec![qtype] });
+                if let Some(qtype_name) = &self.io.qtype {
+                    let qtype = prepared
+                        .qtype
+                        .ok_or_else(|| Error::Inference("laya input without a qtype".into()))?;
+                    inputs.push(Int32Input { name: qtype_name, shape: vec![1], data: vec![qtype] });
+                }
+                if let Some(decide_name) = &self.io.decide_pos {
+                    // fev reads hidden states at these positions: each must
+                    // be a real token's, or a pad's state would be read.
+                    let decide = prepared
+                        .decide_pos
+                        .ok_or_else(|| Error::Inference("fev input without a decide position".into()))?;
+                    let real = |p: i32| p >= 0 && (p as usize) < used;
+                    if !real(decide) || !prepared.markers.iter().all(|&m| real(m)) {
+                        return Err(Error::Inference(format!(
+                            "positions {:?} and {decide} aren't all among the {used} real tokens",
+                            prepared.markers
+                        )));
+                    }
+                    inputs.push(Int32Input { name: decide_name, shape: vec![1], data: vec![decide] });
+                }
                 k
             }
-            _ => self.manifest.classify.labels.len(),
+            None => self.manifest.classify.labels.len(),
         };
 
         if self.io.per_token {

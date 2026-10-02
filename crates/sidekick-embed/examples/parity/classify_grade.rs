@@ -170,6 +170,9 @@ pub struct BucketPair {
 pub struct ClassifyWorkerResult {
     pub model: String,
     pub path: String,
+    /// Which larger buckets the bucket-invariance gate re-ran cases in.
+    #[serde(default)]
+    pub bucket_coverage: Option<String>,
     pub cases: Vec<ClassifyCaseResult>,
     pub repeat_bitwise: bool,
     pub load_ms: f64,
@@ -626,7 +629,7 @@ mod tests {
     fn run(cases: Vec<ClassifyCaseResult>) -> ClassifyGrade {
         let (json, st) = sample();
         let reference = ClassifyReference::parse(&json, &st).unwrap();
-        let result = ClassifyWorkerResult { model: "z".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
+        let result = ClassifyWorkerResult { bucket_coverage: None, model: "z".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
         grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &manifest())
     }
 
@@ -657,6 +660,7 @@ mod tests {
         let (json, st) = sample();
         let reference = ClassifyReference::parse(&json, &st).unwrap();
         let result = ClassifyWorkerResult {
+            bucket_coverage: None,
             model: "z".into(),
             path: "ane".into(),
             cases: vec![case("a", vec![1.0, 2.0]), case("b", vec![0.0, 0.5, -1.0])],
@@ -702,6 +706,7 @@ mod tests {
             let mut a = case("a", vec![1.0, 2.0]);
             pairs(&mut a);
             let result = ClassifyWorkerResult {
+                bucket_coverage: None,
                 model: "z".into(),
                 path: path.name().into(),
                 cases: vec![a, case("b", vec![0.5, 0.0, -1.0])],
@@ -722,6 +727,7 @@ mod tests {
         let mut old = case("a", vec![1.0, 2.0]);
         old.bucket_invariance = Delta { n: 2, max: Some(0.02) };
         let result = ClassifyWorkerResult {
+            bucket_coverage: None,
             model: "z".into(),
             path: "cpu".into(),
             cases: vec![old, case("b", vec![0.5, 0.0, -1.0])],
@@ -787,7 +793,7 @@ mod tests {
         let got = [0.9f32, 1.05, 1.0, 5.0];
         // (Below: a0 tied with a1 exactly also loses a0's order.)
         let cases = reference.cases.iter().zip(got).map(|(c, s)| case(&c.id, vec![s])).collect();
-        let result = ClassifyWorkerResult { model: "r".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
+        let result = ClassifyWorkerResult { bucket_coverage: None, model: "r".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
         let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &m);
         assert_eq!(g.flips.len(), 2, "{:?}", g.flips);
         assert!(g.flips.iter().all(|f| f.starts_with("a: a0 vs")), "{:?}", g.flips);
@@ -798,7 +804,7 @@ mod tests {
         // A 2.0 reference gap collapsed to an exact tie is a flip.
         let tied = [1.0f32, 1.0, 1.02, 5.0];
         let cases = reference.cases.iter().zip(tied).map(|(c, s)| case(&c.id, vec![s])).collect();
-        let result = ClassifyWorkerResult { model: "r".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
+        let result = ClassifyWorkerResult { bucket_coverage: None, model: "r".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
         let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &m);
         assert!(g.flips.iter().any(|f| f.starts_with("a: a0 vs a1")), "{:?}", g.flips);
     }
@@ -848,7 +854,7 @@ mod tests {
         let mut a = case("a", vec![1.1, 2.0]);
         a.bucket_invariance = Delta { n: 1, max: Some(0.015) };
         let cases = vec![a, case("b", vec![0.5, 0.0, -1.0])];
-        let result = ClassifyWorkerResult { model: "z".into(), path: "ane".into(), cases: cases.clone(), repeat_bitwise: true, load_ms: 0.0 };
+        let result = ClassifyWorkerResult { bucket_coverage: None, model: "z".into(), path: "ane".into(), cases: cases.clone(), repeat_bitwise: true, load_ms: 0.0 };
         let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &manifest());
         assert!(g.failures.is_empty(), "{:?}", g.failures);
         assert_eq!((g.absolute_letter, g.letter), ('D', 'A'));
@@ -869,6 +875,7 @@ mod tests {
         let reference = ClassifyReference::parse(&json, &st).unwrap();
         assert!(ceiling(&reference, |_| ProblemType::SingleLabel, |_| true).is_none());
         let result = ClassifyWorkerResult {
+            bucket_coverage: None,
             model: "z".into(),
             path: "ane".into(),
             cases: vec![case("a", vec![1.1, 2.0]), case("b", vec![0.5, 0.0, -1.0])],
@@ -933,7 +940,7 @@ mod tests {
         assert!((c.max - dp(0.1)).abs() < 1e-6 && (c.p99 - dp(0.05)).abs() < 1e-6, "{c:?}");
 
         let results = (0..n).map(|i| case(&format!("c{i}"), row(i, 0.17, 0.05).to_vec())).collect();
-        let result = ClassifyWorkerResult { model: "z".into(), path: "ane".into(), cases: results, repeat_bitwise: true, load_ms: 0.0 };
+        let result = ClassifyWorkerResult { bucket_coverage: None, model: "z".into(), path: "ane".into(), cases: results, repeat_bitwise: true, load_ms: 0.0 };
         let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &manifest());
         assert!((g.ratio.unwrap() - 1.0).abs() < 1e-6, "p99 vs p99: {:?}", g.ratio);
         assert!((g.max_ratio.unwrap() - dp(0.17) / dp(0.1)).abs() < 1e-3, "reported: {:?}", g.max_ratio); // f32 softmax
@@ -957,6 +964,7 @@ mod tests {
 
         let got = vec![0.7f32, 0.0, -1.0];
         let result = ClassifyWorkerResult {
+            bucket_coverage: None,
             model: "z".into(),
             path: "ane".into(),
             cases: vec![case("a", vec![1.0, 2.0]), case("b", got.clone())],

@@ -438,6 +438,7 @@ path.
 | [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.16 (13 flips; 6.1× ceiling) | **A** 0.037 (0.93× ceiling) | **C** 0.043 (1 flip caps it; 1.93× ceiling, B level) | 1701/1719 | 40 |
 | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
 | [fastino/GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) as `gliner2.5-decide` (served on the GPU) | zero-shot, gliner2's format | [convert_gliner2.py](../tools/convert_gliner2.py) | D 0.024 | **A** 3.7e-3 | C 0.019 (512 bucket only) | 947/956 | 1,280 at 512 |
+| [FrontiersMind/Lumma-fev-0.1b](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b) as `lumma-fev-0.1b` | zero-shot, fev format, 2,048 tokens | [convert_fev.py](../tools/convert_fev.py) | D 0.033 (5.8× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.021) | **A** 6.6e-3 (0.95× ceiling) | **B** 0.010 (1.57× ceiling) | 3698/3715 | 33 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -598,6 +599,67 @@ cases.
 The CPU path takes 25–30 minutes for the 2,916 cases on an M1 Max, past
 the suite's default per-worker limit, so run it with `--timeout 3600`. The
 ANE path at 512 needs about two hours, past even that.
+
+**lumma-fev-0.1b** is supported: it passes every gate and grades A on the
+GPU and B on the ANE, where it is served. Its CPU path is subject to the
+documented CPU limit over 1,024 tokens (D33, below). It is FrontiersMind's Lumma-fev-0.1b (154M parameters, Apache-2.0): a
+causal decoder (Nandi, Llama-style, with each of its 16 layers applied
+twice) and a pointer head that compares the hidden state at a final
+`<decide>` token with the hidden state at the end of each option, on the
+fev format (docs/design/classify.md). Measured on 2,630 cases:
+fastino/fast-decisions translated as for laya, rendered in fev's terms,
+plus fev's adversarial cases (delimiter strings in every field, an empty
+state, no instructions, 32 long options) and 15 long cases up to the
+2,048-token window, two of them landing at 2,040 and 2,048 tokens.
+- **Grades,** against the ideal-fp16 ceiling (|Δp| at most 0.0059, p99
+  0.0028; no decision flips): GPU A (p99 0.95× the ceiling, worst |Δp|
+  0.0066), ANE B (p99 1.57×, worst 0.010). Neither changes a decision.
+  Long inputs are as accurate as short ones on both (worst |Δp| 0.0031 on
+  the ANE over the long cases).
+- **Bucket invariance** is exact on the ANE and 0.0034 on the GPU, inside
+  the ceiling. On the CPU every bucket up to 1,024 is bit-identical, but
+  inputs over 512 tokens move by up to 0.021 between the 1,024 and 2,048
+  buckets. Core ML's fp16 CPU matmul sums a contraction over 1,024 in a
+  different order from a shorter one (accurately, within its own rounding;
+  tools/repro_cpu_matmul_accumulation.py), and the 32 layer applications
+  amplify the difference. Slicing the contraction makes the buckets agree
+  but costs far more accuracy, so the converter keeps the single matmul.
+  This is the documented CPU limit over 1,024 tokens (D33): a model served
+  on the CPU is capped at 1,024 tokens by default, and the suite reports
+  the CPU's bucket check above 1,024 as that limit rather than failing it.
+- **CPU:** D on accuracy (p99 5.8× the ceiling, worst |Δp| 0.033, one flip
+  at a 0.054 margin). As with laya, Core ML's fp16 CPU backend is the
+  least accurate path.
+- **Latency** grows with the bucket: 13, 33, 98, 269 and 1,243 ms on the
+  ANE at 128, 256, 512, 1,024 and 2,048 tokens, timed by the converter on
+  a loaded machine. Most fast-decisions inputs land at 256. The ANE and the
+  GPU take the same 33 ms median on this corpus, so it is served on the
+  ANE, the default.
+- **Size:** about 455 MB per bucket. The checkpoint's factorized embedding
+  (a 131k × 196 table and a projection) is folded into one 131k × 832
+  table: Core ML keeps the first linear after the CPU gather on the CPU
+  however it is written, and every linear of the graph runs on the ANE
+  only without it.
+- **The fp16 range.** The residual stream reaches ~870, and each RMSNorm
+  squares its input, past fp16's 65504. The converter pre-scales those
+  norms by a power of two (exact). The published graph run as an ideal
+  fp16 engine overflows the same way, which is why the ceiling's
+  simulation runs a normalization as one operation.
+- **Gold accuracy** is 30.7% in fp32 and on every path (reported, not
+  graded). The checkpoint's training data isn't published, so this corpus
+  measures conversion parity. FrontiersMind reports 0.49 on its own
+  typed-decisions benchmark, 0.89 on AG News, 0.68 on DAIR Emotion and
+  0.47 on Banking77 for this size: whether that is enough is the
+  consumer's call.
+- The conversion is exact in fp32 (|Δlogit| ≤ 1.6e-5 against the
+  checkpoint's own forward in every bucket). The checkpoint's code needs
+  transformers 5; the reference generator runs it on transformers 4.57
+  with shims that leave its computation untouched, and the converter's
+  backbone is a plain-torch port (sidekick_convert/backbones/nandi.py).
+
+The suite samples bucket invariance for buckets over 512 tokens; even so,
+Lumma-fev's CPU path took about four hours on a heavily loaded M1 Max, so run
+it with `--timeout 14400`.
 
 ## Rerankers (`/v1/rerank`)
 

@@ -1,0 +1,106 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Mixed (Float16, Int32)",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 4)",
+        "shortDescription" : "",
+        "shape" : "[1, 4]",
+        "name" : "logits",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 9,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios18.linear" : 2,
+      "Identity" : 1,
+      "Ios18.matmul" : 2,
+      "Select" : 2,
+      "Ios18.expandDims" : 3,
+      "Ios16.fillLike" : 1,
+      "Ios18.gather" : 1,
+      "Ios16.cumsum" : 1,
+      "Ios18.add" : 1,
+      "Ios18.tanh" : 1,
+      "Ios18.cast" : 6,
+      "Ios16.reduceSum" : 1,
+      "Ios18.equal" : 2,
+      "Ios18.greaterEqual" : 1,
+      "Ios18.less" : 1,
+      "Ios18.mul" : 3
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int16, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "15.0",
+      "tvOS" : "18.0",
+      "visionOS" : "2.0",
+      "watchOS" : "11.0",
+      "iOS" : "18.0",
+      "macCatalyst" : "18.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-10-01",
+      "com.github.apple.coremltools.source" : "torch==2.7.1",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1 × 32)",
+        "shortDescription" : "",
+        "shape" : "[1, 32]",
+        "name" : "input_ids",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1 × 32)",
+        "shortDescription" : "",
+        "shape" : "[1, 32]",
+        "name" : "attention_mask",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1 × 4)",
+        "shortDescription" : "",
+        "shape" : "[1, 4]",
+        "name" : "marker_pos",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1)",
+        "shortDescription" : "",
+        "shape" : "[1]",
+        "name" : "decide_pos",
+        "type" : "MultiArray"
+      }
+    ],
+    "generatedClassName" : "model_32",
+    "method" : "predict"
+  }
+]

@@ -79,6 +79,9 @@ pub struct ClassifyCase {
     pub markers: Vec<i32>,
     #[serde(default)]
     pub qtype: Option<i32>,
+    /// fev: the decide token's position.
+    #[serde(default)]
+    pub decide: Option<i32>,
     /// Label count for this case.
     pub k: usize,
     /// The request asked for multi-label decoding (gliner2's `multi_label`):
@@ -236,6 +239,7 @@ impl ClassifyReference {
         let format = manifest.classify.format.map(|f| match f {
             ClassifyFormat::Laya => "laya".to_string(),
             ClassifyFormat::Gliner2 => "gliner2".to_string(),
+            ClassifyFormat::Fev => "fev".to_string(),
         });
         if m.format != format {
             why.push("format changed".into());
@@ -329,6 +333,11 @@ pub(crate) mod tests {
         // A self-truncating format never gets the field, even from a stale tag.
         assert_eq!(truncated.params(128, true).truncate_prompt_tokens, None);
         assert_eq!(r.source_label(), "org/z@0123456789");
+        // Only fev references carry a decide position.
+        assert_eq!(r.cases[0].decide, None);
+        let fev = json.replace("\"qtype\":2", "\"qtype\":null,\"decide\":1");
+        let r = ClassifyReference::parse(&fev, &st).unwrap();
+        assert_eq!(r.cases[0].decide, Some(1));
     }
 
     #[test]

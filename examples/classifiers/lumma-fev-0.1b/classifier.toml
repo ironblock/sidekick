@@ -1,0 +1,42 @@
+# Lumma-fev-0.1b as a zero-shot classifier: a 154M-parameter causal decoder
+# (FrontiersMind's Nandi-Mini-150M) with a pointer head that compares the
+# hidden state at a final <decide> token with the hidden state at the end of
+# each option (docs/design/classify.md, "The fev format"). Each request is one
+# row: the state, then the question and its options.
+#
+# Its limits are the checkpoint's own, from its code and config: a 2,048-token
+# window, and a state cut to 1,408 tokens, its delimiter included
+# (min(8192, window - 640) in modeling_fev.py). Its probabilities are a plain
+# softmax over the option logits at temperature 1.0, so the manifest has no
+# calibration table, and it has no default instructions.
+#
+# fixtures/classify/lumma-fev-0.1b.tokens.json pins the input builder to the
+# checkpoint's own modeling_fev.py, generated with its corpus
+# (fixtures/classify/lumma-fev-0.1b.corpus.toml) by
+# tools/classifier_reference.py.
+
+id = "lumma-fev-0.1b"
+task = "zero-shot-classification"
+source = { repo = "FrontiersMind/Lumma-fev-0.1b", revision = "085f4705aa860a6404d6cc3ff17de8a2969ac0f4" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512, 1024, 2048]
+max_seq_len = 2048
+max_batch = 32
+problem_type = "single_label"
+
+[classify]
+format = "fev"
+max_labels = 32
+labels = []
+
+[classify.fev]
+state_max_len = 1408
+delimiters = { state = "<|reserved_0|>", question = "<|reserved_1|>", option = "<|reserved_2|>", option_end = "<|reserved_3|>", decide = "<|reserved_4|>" }
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+marker_pos = "marker_pos"
+decide_pos = "decide_pos"
+output = "logits"

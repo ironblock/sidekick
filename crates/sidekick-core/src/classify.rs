@@ -134,6 +134,8 @@ pub struct Prepared {
     pub markers: Vec<i32>,
     /// laya format: the question type index. `None` otherwise.
     pub qtype: Option<i32>,
+    /// fev format: the decide token's position. `None` otherwise.
+    pub decide_pos: Option<i32>,
     /// The smallest bucket that fits `ids`.
     pub bucket: usize,
 }

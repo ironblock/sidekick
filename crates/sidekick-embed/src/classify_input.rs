@@ -4,8 +4,10 @@
 //! Platform-neutral, so the token-level contract (docs/design/classify.md)
 //! is tested everywhere; [`crate::CoremlClassifier`] runs the result.
 
-use crate::{gliner2, laya};
-use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, Gliner2Section, LayaSection, ResolvedClassifier};
+use crate::{fev, gliner2, laya};
+use sidekick_core::manifest::{
+    ClassifierManifest, ClassifyFormat, FevSection, Gliner2Section, LayaSection, ResolvedClassifier,
+};
 use sidekick_core::{
     ClassifyParams, ClassifyTask, Error, PairParams, Prepared, Result, TruncationSide,
 };
@@ -31,6 +33,7 @@ pub struct InputBuilder {
 enum Format {
     Laya { section: LayaSection, specials: laya::Specials },
     Gliner2 { section: Gliner2Section, specials: gliner2::Specials },
+    Fev { section: FevSection, delimiters: fev::Delimiters },
 }
 
 fn invalid(message: impl Into<String>) -> Error {
@@ -82,6 +85,11 @@ impl InputBuilder {
                 section: m.classify.gliner2.clone().ok_or_else(|| missing("gliner2"))?,
                 specials: gliner2::Specials::from_tokenizer(&tokenizer)?,
             }),
+            Some(ClassifyFormat::Fev) => {
+                let section = m.classify.fev.clone().ok_or_else(|| missing("fev"))?;
+                let delimiters = fev::Delimiters::from_tokenizer(&tokenizer, &section.delimiters)?;
+                Some(Format::Fev { section, delimiters })
+            }
             None => None,
         };
         Ok(Self {
@@ -129,6 +137,7 @@ impl InputBuilder {
             Some(Format::Gliner2 { section, specials }) => {
                 self.prepare_gliner2(input, params, section, specials)
             }
+            Some(Format::Fev { section, delimiters }) => self.prepare_fev(input, params, section, delimiters),
         }
     }
 
@@ -190,7 +199,7 @@ impl InputBuilder {
         if ids.len() > max {
             return Err(too_long(format!("{} tokens", ids.len()), max));
         }
-        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids: vec![], markers: vec![], qtype: None })
+        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids: vec![], markers: vec![], qtype: None, decide_pos: None })
     }
 
     /// A text-ranking model's (query, document) pair, as its tokenizer
@@ -296,7 +305,7 @@ impl InputBuilder {
         } else {
             vec![]
         };
-        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids, markers: vec![], qtype: None })
+        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids, markers: vec![], qtype: None, decide_pos: None })
     }
 
     /// The laya format: the state is truncated by design, keeping its
@@ -370,6 +379,7 @@ impl InputBuilder {
             type_ids: vec![],
             markers: seq.markers.iter().map(|&m| m as i32).collect(),
             qtype: Some(question_type.index()),
+            decide_pos: None,
         })
     }
 }
@@ -432,6 +442,58 @@ impl InputBuilder {
             type_ids: vec![],
             markers: seq.markers.iter().map(|&m| m as i32).collect(),
             qtype: None,
+            decide_pos: None,
+        })
+    }
+}
+
+impl InputBuilder {
+    /// The fev format (docs/design/classify.md): the state is truncated by
+    /// design, keeping its start, so `truncate_prompt_tokens` and left
+    /// truncation are 400s; the question and options are never cut.
+    fn prepare_fev(
+        &self,
+        input: &str,
+        params: &ClassifyParams,
+        section: &FevSection,
+        delimiters: &fev::Delimiters,
+    ) -> Result<Prepared> {
+        if params.truncate_prompt_tokens.is_some() {
+            return Err(invalid(
+                "truncate_prompt_tokens isn't supported by the fev format, which truncates the text \
+                 itself, keeping its start",
+            ));
+        }
+        if params.truncation_side == TruncationSide::Left {
+            return Err(invalid(
+                "truncation_side `left` isn't supported by the fev format, which keeps the text's start",
+            ));
+        }
+        let Some(question_type) = params.question_type else {
+            return Err(invalid("question_type is required by this model (choice, score or noul)"));
+        };
+        let labels = &params.candidate_labels;
+        check_labels(labels, 2, self.max_labels)?;
+        let options = fev::render_options(question_type, labels)?;
+        // No instructions is an empty question, as fev's own API sends it.
+        let instructions = params.instructions.as_deref().unwrap_or("");
+        let seq = fev::build_sequence(
+            &self.tokenizer,
+            delimiters,
+            input,
+            instructions,
+            &options,
+            section.state_max_len,
+            self.max_seq_len,
+        )?;
+        let ids: Vec<i32> = seq.ids.iter().map(|&u| u as i32).collect();
+        Ok(Prepared {
+            bucket: self.bucket_for(ids.len()),
+            ids,
+            type_ids: vec![],
+            markers: seq.option_ends.iter().map(|&m| m as i32).collect(),
+            qtype: None,
+            decide_pos: Some(seq.decide as i32),
         })
     }
 }
@@ -481,7 +543,7 @@ pub(crate) fn byte_cap_end(text: &str, max_tokens: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sidekick_core::manifest::{ClassifierIo, ClassifySection, DefaultInstructions, OptionRendering};
+    use sidekick_core::manifest::{ClassifierIo, ClassifySection, DefaultInstructions, FevSection, OptionRendering};
     use sidekick_core::{ProblemType, QuestionType};
 
     fn manifest(task: ClassifyTask) -> ClassifierManifest {
@@ -510,6 +572,7 @@ mod tests {
                     ClassifyTask::TextClassification => vec!["neg".into(), "pos".into()],
                 },
                 gliner2: None,
+                fev: None,
                 laya: laya.then(|| LayaSection {
                     head_max_len: 16,
                     default_instructions: Some(DefaultInstructions {
@@ -694,6 +757,67 @@ mod tests {
         // One label lays out (a multi-label yes/no question; the server
         // requires two for a single-label request before the model loads).
         assert_eq!(b.prepare("a", &gliner2_params(&["c"])).unwrap().markers.len(), 1);
+    }
+
+    fn fev_builder(state_max_len: usize) -> InputBuilder {
+        let mut m = manifest(ClassifyTask::ZeroShotClassification);
+        m.classify.format = Some(ClassifyFormat::Fev);
+        m.classify.laya = None;
+        m.classify.fev = Some(FevSection { delimiters: crate::fev::tests::delimiters(), state_max_len });
+        InputBuilder::new(crate::fev::tests::tokenizer(), &m).unwrap()
+    }
+
+    fn fev_params(qt: QuestionType, labels: &[&str]) -> ClassifyParams {
+        ClassifyParams {
+            question_type: Some(qt),
+            candidate_labels: labels.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fev_lays_out_options_and_the_decide_position() {
+        let b = fev_builder(8);
+        let t = |w| crate::fev::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        let p = b.prepare("a", &fev_params(QuestionType::Noul, &["false", "true: dry"])).unwrap();
+        // [s a] [q] [o no c] [o yes : ␣ d? …] [d]: no instructions is an
+        // empty question.
+        assert_eq!(p.ids[..4], [t("<|s|>"), t("a"), t("<|q|>"), t("<|o|>")]);
+        assert_eq!(p.ids[4], t("no"));
+        assert!(p.markers.iter().all(|&m| p.ids[m as usize] == t("<|c|>")));
+        assert_eq!(p.markers.len(), 2);
+        assert_eq!(p.decide_pos, Some(p.ids.len() as i32 - 1));
+        assert_eq!(p.ids[p.ids.len() - 1], t("<|d|>"));
+        assert_eq!(p.qtype, None);
+        // A long state is cut, not refused.
+        let p = b.prepare(&"a ".repeat(100), &fev_params(QuestionType::Choice, &["b", "c"])).unwrap();
+        assert_eq!(p.ids[8], t("<|q|>"), "the state keeps state_max_len = 8 tokens, its delimiter included");
+    }
+
+    #[test]
+    fn fev_rejects_what_it_cannot_honor() {
+        let b = fev_builder(8);
+        let ok = fev_params(QuestionType::Choice, &["b", "c"]);
+        let cases = [
+            ClassifyParams { truncate_prompt_tokens: Some(8), ..ok.clone() },
+            ClassifyParams { truncation_side: TruncationSide::Left, ..ok.clone() },
+            ClassifyParams { question_type: None, ..ok.clone() },
+            fev_params(QuestionType::Choice, &["b"]),
+            fev_params(QuestionType::Choice, &["a", "b", "c", "d", "e"]),
+            fev_params(QuestionType::Choice, &["b", "b: "]),
+            fev_params(QuestionType::Noul, &["yes", "no"]),
+        ];
+        for params in cases {
+            assert!(matches!(b.prepare("a", &params), Err(Error::InvalidRequest(_))), "{params:?}");
+        }
+        // The window, max_seq_len 32: an option of 12 words (23 tokens with
+        // their spaces) makes the row exactly 32 and fits; one word more is
+        // a 400, as options are never cut.
+        let option = |words: usize| "d ".repeat(words).trim().to_string();
+        let p = b.prepare("a", &fev_params(QuestionType::Choice, &[&option(12), "c"])).unwrap();
+        assert_eq!((p.ids.len(), p.bucket), (32, 32));
+        let e = b.prepare("a", &fev_params(QuestionType::Choice, &[&option(13), "c"])).unwrap_err();
+        assert!(e.to_string().contains("the model's input holds 32"), "{e}");
     }
 
     fn pair(truncate: Option<usize>, keep_query: bool) -> PairParams {

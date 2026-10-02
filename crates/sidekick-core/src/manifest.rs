@@ -130,6 +130,10 @@ pub struct SeqCap {
     /// The manifest's own `max_seq_len`.
     pub manifest_max_seq_len: usize,
     pub reason: &'static str,
+    /// fev's state limit under the cap, when the model is fev and the cap
+    /// lowered it; the manifest's own is `[classify.fev] state_max_len`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_max_len: Option<usize>,
 }
 
 /// `manifest.toml` for an embedding model.
@@ -277,6 +281,10 @@ pub enum ClassifyFormat {
     /// GLiNER2's schema format: an `[L]` marker before each label, scored
     /// per token (docs/design/classify.md).
     Gliner2,
+    /// Lumma-fev's decision format: a causal row of the state, one question
+    /// and its options, scored at each option's end and a final decide
+    /// token (docs/design/classify.md).
+    Fev,
 }
 
 /// `[classify]` of a `classifier.toml`.
@@ -296,6 +304,8 @@ pub struct ClassifySection {
     pub laya: Option<LayaSection>,
     #[serde(default)]
     pub gliner2: Option<Gliner2Section>,
+    #[serde(default)]
+    pub fev: Option<FevSection>,
     /// Opt-in temperatures, keyed `"<question_type>:<k bucket>"`
     /// ([`calibration_key`]).
     #[serde(default)]
@@ -325,6 +335,41 @@ pub struct LayaSection {
 pub struct Gliner2Section {
     /// The task prompt when a request sends no `instructions`.
     pub default_instructions: String,
+}
+
+/// `[classify.fev]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FevSection {
+    /// The row's delimiter tokens, by role; each is one added token of the
+    /// tokenizer, resolved at load.
+    pub delimiters: FevDelimiters,
+    /// The state's tokens at most, its delimiter included (the checkpoint's
+    /// own limit); a longer state is truncated, keeping its start.
+    pub state_max_len: usize,
+}
+
+/// fev's delimiters: `<state> text <question> instructions (<option> text
+/// <option_end>)… <decide>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FevDelimiters {
+    pub state: String,
+    pub question: String,
+    pub option: String,
+    pub option_end: String,
+    pub decide: String,
+}
+
+impl FevDelimiters {
+    /// (role, token) in row order.
+    pub fn by_role(&self) -> [(&'static str, &str); 5] {
+        [
+            ("state", &self.state),
+            ("question", &self.question),
+            ("option", &self.option),
+            ("option_end", &self.option_end),
+            ("decide", &self.decide),
+        ]
+    }
 }
 
 impl LayaSection {
@@ -382,6 +427,9 @@ pub struct ClassifierIo {
     /// laya: `[1]` int32 question type.
     #[serde(default)]
     pub qtype: Option<String>,
+    /// fev: `[1]` int32 position of the decide token.
+    #[serde(default)]
+    pub decide_pos: Option<String>,
     /// `[1, S]` int32 segment ids, for models that take them (BERT pairs).
     #[serde(default)]
     pub token_type_ids: Option<String>,
@@ -435,6 +483,7 @@ impl ClassifierManifest {
         match self.classify.format {
             Some(ClassifyFormat::Laya) => fields.extend(["question_type", "instructions"]),
             Some(ClassifyFormat::Gliner2) => fields.extend(["instructions", "multi_label"]),
+            Some(ClassifyFormat::Fev) => fields.extend(["question_type", "instructions"]),
             None => {}
         }
         fields
@@ -453,6 +502,11 @@ impl ClassifierManifest {
             if laya.default_instructions.is_none() {
                 fields.push("instructions");
             }
+        }
+        // fev renders noul labels differently, so it needs the type; its
+        // instructions may be empty, as fev's own API sends them.
+        if self.classify.format == Some(ClassifyFormat::Fev) {
+            fields.push("question_type");
         }
         fields
     }
@@ -554,9 +608,21 @@ fn cpu_seq_cap(
              `cpu_seq_limit = \"ignore\"` (or start sidekickd with --ignore-cpu-seq-cap)"
         ));
     };
-    let cap = SeqCap { limit: largest, manifest_max_seq_len: *max_seq_len, reason: CPU_SEQ_CAP_REASON };
+    let cap = SeqCap { limit: largest, manifest_max_seq_len: *max_seq_len, reason: CPU_SEQ_CAP_REASON, state_max_len: None };
     *max_seq_len = largest;
     Ok(Some(cap))
+}
+
+/// The question and options' share of a fev window, which fev's own
+/// `limits()` keeps free of the state: the state gets `window - 640`.
+const FEV_QUESTION_RESERVE: usize = 640;
+
+/// fev's state limit for a window, by fev's own formula, applied when the
+/// CPU cap shrinks the window (D33). It is sidekick's choice, not the
+/// checkpoint's: the model is never served a shorter window by its own
+/// code. 0 when the window leaves no room, which then fails validation.
+fn fev_state_max_len(window: usize) -> usize {
+    window.saturating_sub(FEV_QUESTION_RESERVE)
 }
 
 /// The bytes of a compiled Core ML artifact's weights: every file under its
@@ -724,6 +790,13 @@ impl ModelRegistry {
                 })
                 .and_then(|mut m| {
                     m.seq_cap = cpu_seq_cap(&mut m.buckets, &mut m.max_seq_len, m.compute_units, m.cpu_seq_limit, options)?;
+                    if let (Some(cap), Some(fev)) = (&mut m.seq_cap, &mut m.classify.fev) {
+                        let capped = fev_state_max_len(m.max_seq_len);
+                        if capped < fev.state_max_len {
+                            fev.state_max_len = capped;
+                            cap.state_max_len = Some(capped);
+                        }
+                    }
                     if m.seq_cap.is_some() {
                         validate_classifier(&m).map_err(|e| format!("with its length capped for the CPU (D33): {e}"))?;
                     }
@@ -889,10 +962,10 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             if matches!(c.max_labels, Some(n) if n != c.labels.len()) {
                 return Err("`max_labels` must equal the number of `labels`".into());
             }
-            if c.laya.is_some() || c.gliner2.is_some() {
-                return Err("`[classify.laya]` and `[classify.gliner2]` are for zero-shot formats".into());
+            if c.laya.is_some() || c.gliner2.is_some() || c.fev.is_some() {
+                return Err("`[classify.laya]`, `[classify.gliner2]` and `[classify.fev]` are for zero-shot formats".into());
             }
-            if io.marker_pos.is_some() || io.qtype.is_some() {
+            if io.marker_pos.is_some() || io.qtype.is_some() || io.decide_pos.is_some() {
                 return Err("text-classification's [classify.io] has input_ids, attention_mask and output only".into());
             }
             // Calibration keys are per question type, which fixed-label
@@ -902,8 +975,8 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             }
         }
         ClassifyTask::TextRanking => {
-            if c.format.is_some() || c.laya.is_some() || c.gliner2.is_some() {
-                return Err("`format`, `[classify.laya]` and `[classify.gliner2]` are for zero-shot models".into());
+            if c.format.is_some() || c.laya.is_some() || c.gliner2.is_some() || c.fev.is_some() {
+                return Err("`format` and the format sections are for zero-shot models".into());
             }
             if c.labels.len() != 1 {
                 return Err("a text-ranking model has one output: `labels` names it (e.g. [\"score\"])".into());
@@ -911,7 +984,7 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             if matches!(c.max_labels, Some(n) if n != 1) {
                 return Err("a text-ranking model's `max_labels` is 1".into());
             }
-            if io.marker_pos.is_some() || io.qtype.is_some() {
+            if io.marker_pos.is_some() || io.qtype.is_some() || io.decide_pos.is_some() {
                 return Err("text-ranking's [classify.io] has input_ids, attention_mask, token_type_ids and output only".into());
             }
             if !c.calibration.is_empty() {
@@ -931,6 +1004,19 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             match c.max_labels {
                 Some(n) if n >= 2 => {}
                 _ => return Err("zero-shot models need `max_labels` ≥ 2".into()),
+            }
+            // Each format's section belongs to that format alone.
+            for (section, present, owner) in [
+                ("laya", c.laya.is_some(), ClassifyFormat::Laya),
+                ("gliner2", c.gliner2.is_some(), ClassifyFormat::Gliner2),
+                ("fev", c.fev.is_some(), ClassifyFormat::Fev),
+            ] {
+                if present && format != owner {
+                    return Err(format!("`[classify.{section}]` is for the {section} format"));
+                }
+            }
+            if format != ClassifyFormat::Fev && io.decide_pos.is_some() {
+                return Err("`decide_pos` is for the fev format".into());
             }
             match format {
                 ClassifyFormat::Laya => {
@@ -953,18 +1039,12 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                     if io.token_type_ids.is_some() {
                         return Err("the laya format takes no `token_type_ids`".into());
                     }
-                    if c.gliner2.is_some() {
-                        return Err("`[classify.gliner2]` is for the gliner2 format".into());
-                    }
                 }
                 ClassifyFormat::Gliner2 => {
                     match &c.gliner2 {
                         Some(g) if !g.default_instructions.trim().is_empty() => {}
                         Some(_) => return Err("`[classify.gliner2] default_instructions` must not be empty".into()),
                         None => return Err("the gliner2 format needs `[classify.gliner2]`".into()),
-                    }
-                    if c.laya.is_some() {
-                        return Err("`[classify.laya]` is for the laya format".into());
                     }
                     if io.marker_pos.is_some() || io.qtype.is_some() || io.token_type_ids.is_some() {
                         return Err("the gliner2 format's [classify.io] has input_ids, attention_mask and output only".into());
@@ -979,6 +1059,34 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                     // gliner2 format doesn't have.
                     if !c.calibration.is_empty() {
                         return Err("`[classify.calibration]` isn't supported by the gliner2 format".into());
+                    }
+                }
+                ClassifyFormat::Fev => {
+                    let Some(fev) = &c.fev else {
+                        return Err("the fev format needs `[classify.fev]`".into());
+                    };
+                    if fev.state_max_len == 0 || fev.state_max_len >= m.max_seq_len {
+                        return Err("`[classify.fev] state_max_len` must be in 1..max_seq_len".into());
+                    }
+                    let names: Vec<&str> = fev.delimiters.by_role().iter().map(|(_, t)| *t).collect();
+                    if names.iter().any(|t| t.is_empty()) {
+                        return Err("`[classify.fev] delimiters` must name a token for every role".into());
+                    }
+                    if first_duplicate(&names.iter().map(|t| t.to_string()).collect::<Vec<_>>()).is_some() {
+                        return Err("`[classify.fev] delimiters` must be five different tokens".into());
+                    }
+                    require("marker_pos", &io.marker_pos)?;
+                    require("decide_pos", &io.decide_pos)?;
+                    if io.qtype.is_some() || io.token_type_ids.is_some() {
+                        return Err("the fev format takes no `qtype` or `token_type_ids`".into());
+                    }
+                    if m.problem_type != ProblemType::SingleLabel {
+                        return Err("the fev format's problem_type is `single_label`".into());
+                    }
+                    // The checkpoint's probabilities are a plain softmax; it
+                    // has no calibration of its own.
+                    if !c.calibration.is_empty() {
+                        return Err("`[classify.calibration]` isn't supported by the fev format".into());
                     }
                 }
             }
@@ -1237,6 +1345,101 @@ output = "logits"
             assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
             std::fs::remove_dir_all(&tmp).unwrap();
         }
+    }
+
+    const FEV: &str = r#"
+id = "lumma-fev"
+task = "zero-shot-classification"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 2048]
+max_seq_len = 2048
+problem_type = "single_label"
+
+[classify]
+format = "fev"
+max_labels = 32
+
+[classify.fev]
+state_max_len = 1408
+delimiters = { state = "<|r0|>", question = "<|r1|>", option = "<|r2|>", option_end = "<|r3|>", decide = "<|r4|>" }
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+marker_pos = "marker_pos"
+decide_pos = "decide_pos"
+output = "logits"
+"#;
+
+    #[test]
+    fn fev_classifiers_and_what_they_refuse() {
+        let tmp = tmp_dir("fev");
+        write_classifier(&tmp, "f", FEV);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        let m = &reg.classifier("lumma-fev").unwrap().manifest;
+        let fev = m.classify.fev.as_ref().unwrap();
+        assert_eq!((fev.state_max_len, fev.delimiters.decide.as_str()), (1408, "<|r4|>"));
+        assert_eq!(m.extension_fields(), vec!["candidate_labels", "question_type", "instructions"]);
+        assert_eq!(m.required_fields(), vec!["candidate_labels", "question_type"]);
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        for (name, body, want) in [
+            ("no-section", FEV.replace("[classify.fev]", "[classify.other]"), "needs `[classify.fev]`"),
+            ("state-too-long", FEV.replace("state_max_len = 1408", "state_max_len = 2048"), "state_max_len"),
+            ("state-zero", FEV.replace("state_max_len = 1408", "state_max_len = 0"), "state_max_len"),
+            ("same-delimiter", FEV.replace("decide = \"<|r4|>\"", "decide = \"<|r3|>\""), "five different tokens"),
+            ("empty-delimiter", FEV.replace("decide = \"<|r4|>\"", "decide = \"\""), "every role"),
+            ("missing-role", FEV.replace(", decide = \"<|r4|>\"", ""), "decide"),
+            ("no-decide-io", FEV.replace("decide_pos = \"decide_pos\"\n", ""), "`decide_pos`"),
+            ("no-marker-io", FEV.replace("marker_pos = \"marker_pos\"\n", ""), "`marker_pos`"),
+            ("qtype-io", FEV.replace("output = ", "qtype = \"qtype\"\noutput = "), "no `qtype`"),
+            ("multi-label", FEV.replace("problem_type = \"single_label\"", "problem_type = \"multi_label\""), "single_label"),
+            ("calibration", format!("{FEV}\n[classify.calibration]\n\"choice:2\" = 1.0\n"), "isn't supported by the fev"),
+            ("laya-section", format!("{FEV}\n[classify.laya]\nhead_max_len = 8\n"), "for the laya format"),
+            ("fev-on-laya", format!("{LAYA}\n[classify.fev]\nstate_max_len = 8\ndelimiters = {{ state = \"a\", question = \"b\", option = \"c\", option_end = \"d\", decide = \"e\" }}\n"), "for the fev format"),
+            ("decide-on-laya", LAYA.replace("qtype = \"qtype\"", "qtype = \"qtype\"\ndecide_pos = \"d\""), "`decide_pos` is for the fev format"),
+            ("fev-on-fixed", format!("{SENTIMENT}\n[classify.fev]\nstate_max_len = 8\ndelimiters = {{ state = \"a\", question = \"b\", option = \"c\", option_end = \"d\", decide = \"e\" }}\n"), "zero-shot formats"),
+        ] {
+            let tmp = tmp_dir(&format!("fev-{name}"));
+            write_classifier(&tmp, name, &body);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            assert_eq!(reg.skipped().len(), 1, "{name}");
+            assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
+            std::fs::remove_dir_all(&tmp).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_cpu_capped_fev_window_keeps_fevs_question_reserve() {
+        let cpu = |body: &str| body.replace("\n[classify]", "compute_units = \"cpu_only\"\n\n[classify]");
+        let scan = |name: &str, body: &str| {
+            let tmp = tmp_dir(&format!("fev-cap-{name}"));
+            write_classifier(&tmp, name, body);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            let out = (reg.classifier("lumma-fev").ok().map(|c| c.manifest.clone()), reg.skipped().first().map(|s| s.reason.clone()));
+            std::fs::remove_dir_all(&tmp).unwrap();
+            out
+        };
+        // Capped at 1,024, the state gets fev's own window - 640: 384.
+        let three = FEV.replace("buckets = [128, 2048]", "buckets = [128, 1024, 2048]");
+        let m = scan("capped", &cpu(&three)).0.unwrap();
+        let cap = m.seq_cap.as_ref().unwrap();
+        assert_eq!((m.max_seq_len, m.classify.fev.as_ref().unwrap().state_max_len), (1024, 384));
+        assert_eq!(cap.state_max_len, Some(384));
+        assert_eq!(serde_json::to_value(cap).unwrap()["state_max_len"], 384);
+        // A state limit already under it is kept, and not reported.
+        let m = scan("short", &cpu(&three.replace("state_max_len = 1408", "state_max_len = 300"))).0.unwrap();
+        assert_eq!((m.classify.fev.as_ref().unwrap().state_max_len, m.seq_cap.as_ref().unwrap().state_max_len), (300, None));
+        assert!(serde_json::to_value(m.seq_cap.as_ref().unwrap()).unwrap().get("state_max_len").is_none());
+        // Not capped: the manifest's own limit.
+        let m = scan("gpu", &three).0.unwrap();
+        assert_eq!((m.max_seq_len, m.classify.fev.as_ref().unwrap().state_max_len), (2048, 1408));
+        // A capped window with no room for a state is skipped.
+        let (m, why) = scan("tiny", &cpu(FEV));
+        assert!(m.is_none());
+        assert!(why.as_deref().unwrap().contains("with its length capped for the CPU (D33)"), "{why:?}");
     }
 
     #[test]

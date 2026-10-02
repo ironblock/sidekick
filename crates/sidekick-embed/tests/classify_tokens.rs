@@ -41,6 +41,9 @@ struct Case {
     markers: Vec<i32>,
     #[serde(default)]
     qtype: Option<i32>,
+    /// fev: the decide token's position.
+    #[serde(default)]
+    decide: Option<i32>,
 }
 
 fn fixtures_dir() -> PathBuf {
@@ -120,6 +123,7 @@ fn input_builder_reproduces_every_token_fixture() {
             assert_eq!(prepared.ids, case.ids, "{}/{}: ids", fixture.model, case.id);
             assert_eq!(prepared.markers, case.markers, "{}/{}: markers", fixture.model, case.id);
             assert_eq!(prepared.qtype, case.qtype, "{}/{}: qtype", fixture.model, case.id);
+            assert_eq!(prepared.decide_pos, case.decide, "{}/{}: decide", fixture.model, case.id);
             assert!(builder.buckets().contains(&prepared.bucket));
         }
         eprintln!("{}: {} cases reproduced", fixture.model, fixture.cases.len());
