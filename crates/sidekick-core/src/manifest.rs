@@ -130,6 +130,10 @@ pub struct SeqCap {
     /// The manifest's own `max_seq_len`.
     pub manifest_max_seq_len: usize,
     pub reason: &'static str,
+    /// fev's state limit under the cap, when the model is fev and the cap
+    /// lowered it; the manifest's own is `[classify.fev] state_max_len`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_max_len: Option<usize>,
 }
 
 /// `manifest.toml` for an embedding model.
@@ -604,9 +608,21 @@ fn cpu_seq_cap(
              `cpu_seq_limit = \"ignore\"` (or start sidekickd with --ignore-cpu-seq-cap)"
         ));
     };
-    let cap = SeqCap { limit: largest, manifest_max_seq_len: *max_seq_len, reason: CPU_SEQ_CAP_REASON };
+    let cap = SeqCap { limit: largest, manifest_max_seq_len: *max_seq_len, reason: CPU_SEQ_CAP_REASON, state_max_len: None };
     *max_seq_len = largest;
     Ok(Some(cap))
+}
+
+/// The question and options' share of a fev window, which fev's own
+/// `limits()` keeps free of the state: the state gets `window - 640`.
+const FEV_QUESTION_RESERVE: usize = 640;
+
+/// fev's state limit for a window, by fev's own formula, applied when the
+/// CPU cap shrinks the window (D33). It is sidekick's choice, not the
+/// checkpoint's: the model is never served a shorter window by its own
+/// code. 0 when the window leaves no room, which then fails validation.
+fn fev_state_max_len(window: usize) -> usize {
+    window.saturating_sub(FEV_QUESTION_RESERVE)
 }
 
 /// The bytes of a compiled Core ML artifact's weights: every file under its
@@ -774,6 +790,13 @@ impl ModelRegistry {
                 })
                 .and_then(|mut m| {
                     m.seq_cap = cpu_seq_cap(&mut m.buckets, &mut m.max_seq_len, m.compute_units, m.cpu_seq_limit, options)?;
+                    if let (Some(cap), Some(fev)) = (&mut m.seq_cap, &mut m.classify.fev) {
+                        let capped = fev_state_max_len(m.max_seq_len);
+                        if capped < fev.state_max_len {
+                            fev.state_max_len = capped;
+                            cap.state_max_len = Some(capped);
+                        }
+                    }
                     if m.seq_cap.is_some() {
                         validate_classifier(&m).map_err(|e| format!("with its length capped for the CPU (D33): {e}"))?;
                     }
@@ -1386,6 +1409,37 @@ output = "logits"
             assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
             std::fs::remove_dir_all(&tmp).unwrap();
         }
+    }
+
+    #[test]
+    fn a_cpu_capped_fev_window_keeps_fevs_question_reserve() {
+        let cpu = |body: &str| body.replace("\n[classify]", "compute_units = \"cpu_only\"\n\n[classify]");
+        let scan = |name: &str, body: &str| {
+            let tmp = tmp_dir(&format!("fev-cap-{name}"));
+            write_classifier(&tmp, name, body);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            let out = (reg.classifier("lumma-fev").ok().map(|c| c.manifest.clone()), reg.skipped().first().map(|s| s.reason.clone()));
+            std::fs::remove_dir_all(&tmp).unwrap();
+            out
+        };
+        // Capped at 1,024, the state gets fev's own window - 640: 384.
+        let three = FEV.replace("buckets = [128, 2048]", "buckets = [128, 1024, 2048]");
+        let m = scan("capped", &cpu(&three)).0.unwrap();
+        let cap = m.seq_cap.as_ref().unwrap();
+        assert_eq!((m.max_seq_len, m.classify.fev.as_ref().unwrap().state_max_len), (1024, 384));
+        assert_eq!(cap.state_max_len, Some(384));
+        assert_eq!(serde_json::to_value(cap).unwrap()["state_max_len"], 384);
+        // A state limit already under it is kept, and not reported.
+        let m = scan("short", &cpu(&three.replace("state_max_len = 1408", "state_max_len = 300"))).0.unwrap();
+        assert_eq!((m.classify.fev.as_ref().unwrap().state_max_len, m.seq_cap.as_ref().unwrap().state_max_len), (300, None));
+        assert!(serde_json::to_value(m.seq_cap.as_ref().unwrap()).unwrap().get("state_max_len").is_none());
+        // Not capped: the manifest's own limit.
+        let m = scan("gpu", &three).0.unwrap();
+        assert_eq!((m.max_seq_len, m.classify.fev.as_ref().unwrap().state_max_len), (2048, 1408));
+        // A capped window with no room for a state is skipped.
+        let (m, why) = scan("tiny", &cpu(FEV));
+        assert!(m.is_none());
+        assert!(why.as_deref().unwrap().contains("with its length capped for the CPU (D33)"), "{why:?}");
     }
 
     #[test]

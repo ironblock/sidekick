@@ -360,8 +360,12 @@ So a model served on the CPU runs no longer than
 - The capped manifest is validated again (laya's head budget, for
   example, must still fit), and a model that no longer validates is
   skipped with the reason.
+- A fev model's state limit becomes `min(state_max_len, limit − 640)`:
+  fev's own formula for a window, applied to the capped one (see "The fev
+  format").
 - The model's `/v1/models` entry gains `seq_cap` (`limit`,
-  `manifest_max_seq_len` and `reason`), and `/health` lists every capped
+  `manifest_max_seq_len` and `reason`, plus `state_max_len` when the cap
+  lowered a fev model's), and `/health` lists every capped
   model under `seq_caps`.
 - `all` isn't capped: Core ML chooses the device per operation, may not
   use the CPU at all, and `all` exists for measuring what it does.
@@ -524,6 +528,13 @@ the end of each option. The Rust port of their input builder
   included: 1,408 for Lumma-fev-0.1b, which is `min(8192, window − 640)`
   for the 2,048-token window its config gives. (Its card says 1,024; its
   code, which is what the model was served with, says 1,408.)
+- Served `cpu_only`, the window is capped at 1,024 tokens (see "The CPU
+  sequence cap"), and the state keeps `min(state_max_len, 1,024 − 640)`:
+  384 for Lumma-fev-0.1b. That is sidekick's choice, not the model's
+  limit. It applies fev's formula to the capped window, so the question
+  and options keep their 640 tokens. The checkpoint itself never sees a
+  1,024-token window: its own code keeps a 1,408-token state and refuses
+  rows over 2,048. The references and the token fixture use 1,408.
 - A row longer than the window (`max_seq_len`) after that is a 400: fev
   never shrinks options or the question, and neither does sidekick.
 - The logits are read at each option's `<option_end>` and at the final
