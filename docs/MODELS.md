@@ -439,7 +439,7 @@ path.
 | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
 | [fastino/GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) as `gliner2.5-decide` (served on the GPU) | zero-shot, gliner2's format | [convert_gliner2.py](../tools/convert_gliner2.py) | D 0.024 | **A** 3.7e-3 | C 0.019 (512 bucket only) | 947/956 | 1,280 at 512 |
 | [FrontiersMind/Lumma-fev-0.1b](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b) as `lumma-fev-0.1b` | zero-shot, fev format, 2,048 tokens | [convert_fev.py](../tools/convert_fev.py) | D 0.033 (5.8× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.021) | **A** 6.6e-3 (0.95× ceiling) | **B** 0.010 (1.57× ceiling) | 3698/3715 | 33 |
-| [aimeigaoshou/agent-jev](https://huggingface.co/aimeigaoshou/agent-jev) as `agent-jev` (served on the GPU; **preview**) | zero-shot, agentjev's format, 2,048 tokens | [convert_agentjev.py](../tools/convert_agentjev.py) | **F** 0.020 (bucket invariance 0.019; 5.9× ceiling) | **A** 4.2e-3 (0.70× ceiling) | **F**, as the CPU (it runs on the CPU: over the ANE's ~1 GiB weight limit) | 0/1963 | 221 (CPU) |
+| [aimeigaoshou/agent-jev](https://huggingface.co/aimeigaoshou/agent-jev) as `agent-jev` (served on the GPU) | zero-shot, agentjev's format, 2,048 tokens | [convert_agentjev.py](../tools/convert_agentjev.py) | D 0.025 (5.9× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.005) | **A** 3.2e-3 (0.85× ceiling) | reported, not graded: not served on the ANE (over the D32 weight limit, it runs on the CPU) | 0 (of 2,467–3,475) | 253 (CPU) |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -687,28 +687,33 @@ exactly 2,048 tokens.
   ANE in a probe), but the ANE was then slower than the GPU at every
   length (124 vs 76 ms at 512 tokens, 1,317 vs 381 ms at 2,048), and
   slower than the CPU at 2,048, and less accurate.
-- **GPU: A.** p99 |Δp| at 0.70× the ideal-fp16 ceiling's p99 (the ceiling:
-  4.3e-3 at most, 2.1e-3 at p99), worst 4.2e-3, mean 4.3e-4, no decision
-  flips, 5 near ties. Bucket invariance is 2.5e-3, within the ceiling.
-  Pad invariance is exact. 77 ms median.
-- **CPU: F, from bucket invariance.** p99 |Δp| at 5.9× the ceiling
-  (absolute 0.020, D level), no flips beyond 28 near ties, 220 ms median.
-  It fails the CPU's exact bucket gate below 1,024 tokens: the same
-  input moves by up to |Δp| 0.019 between its 512 and 1,024 buckets
-  (1e-5 allowed). On 12 inputs of at most 512 tokens, the CPU was about
-  equally accurate against fp32 in every bucket (|Δp| 6–8e-3) but
-  differed between the 512 and 1,024 buckets by 7.2e-3, so its fp16
-  arithmetic depends on the bucket here, not only past 1,024, unlike
-  lumma-fev's, whose CPU buckets up to 1,024 are bit-identical. That is
-  observed, not yet isolated. Past 1,024
-  tokens the difference (1.1e-2 over 282 comparisons) is reported as
-  D33's documented limit, not gated. agent-jev isn't CPU-served.
-- **ANE: F, the same numbers as the CPU.** Over the weight limit, Core ML
-  runs it entirely on the CPU (its output is bit-identical to
-  `CPU_ONLY`).
-- **Preview until the CPU passes.** Under the supported-or-preview rule
-  above, the CPU and ANE paths fail a hard gate, though the served GPU
-  path grades A.
+- **Supported.** It passes every hard gate on every path, its conversion
+  is exact in fp32, and its served GPU path grades A.
+- **GPU: A.** p99 |Δp| at 0.85× the ideal-fp16 ceiling's p99 (the ceiling:
+  4.3e-3 at most, 2.1e-3 at p99), worst 3.2e-3 (0.76× the ceiling's
+  worst), mean 5.2e-4, no decision flips, 2 near ties. Bucket invariance
+  is exact, and so is pad invariance. 85 ms median. Its agreement with
+  the gold labels equals fp32's.
+- **A bucket-invariant softmax.** Every attention computes its softmax
+  as exp(w − rowmax) and one matmul against [V | 1], as lumma-fev's does.
+  Converted through transformers' sdpa path, the attention used Core ML's
+  softmax, and on the CPU Core ML's softmax after the in-graph score
+  matmul rounds differently for different key lengths, below 1,024 too
+  (tools/repro_cpu_softmax_length.py). That first build's CPU moved by up
+  to |Δp| 0.019 between its 512 and 1,024 buckets and failed the CPU's
+  exact gate. The matmul form is exact in fp32 and bit-identical across
+  buckets; on the GPU it moved p99 from 0.70× to 0.85× the ceiling and
+  the worst case from 4.2e-3 to 3.2e-3, and made the GPU's buckets exact
+  too (they were 2.5e-3 apart).
+- **CPU: D, on accuracy.** p99 |Δp| at 5.9× the ceiling, worst 0.025,
+  one flip at a 0.053 fp32 margin, 31 near ties, 257 ms median. Bucket
+  invariance is exact up to 1,024 tokens. Past 1,024 the difference
+  (5.0e-3 over 282 comparisons) is D33's documented limit, reported, not
+  gated. agent-jev isn't CPU-served.
+- **ANE: reported, not graded.** Over the weight limit (D32), the
+  runtime doesn't serve it on the ANE, and Core ML runs it entirely on
+  the CPU (its output is bit-identical to `CPU_ONLY`), so the suite
+  measures that path and reports it.
 - **No precision rewrites.** Its residual stream reaches about 6,800 on
   one dimension of the first token (the attention sink, which every
   candidate's path shares). Squared in fp16, as RMSNorm squares its input,
@@ -720,8 +725,8 @@ exactly 2,048 tokens.
   final training stage (0.5 is chance). Its service calls its probabilities "model distribution;
   domain calibration is not guaranteed".
 - **Parity only.** fast-decisions isn't AgentJev's domain. Agreement with
-  its gold labels is reported, not graded: 55.0% on the GPU and 55.1% in
-  fp32.
+  its gold labels is reported, not graded: 55.1% on the GPU, as in fp32,
+  and 55.0% on the CPU.
 - AgentJev's per-type temperatures are in the manifest; `calibration:
   model` applies them.
 

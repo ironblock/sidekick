@@ -1816,6 +1816,38 @@ where 0.5 is chance. Their service says its calibration isn't guaranteed.
 sidekick grades fidelity only, so those numbers are the consumer's call and
 are in docs/MODELS.md.
 
+**Amendment (October 2026, macOS 27.0, M1 Max): the CPU's bucket
+dependence below 1,024, isolated and fixed; agent-jev is supported.** The
+cause was the softmax. Converted through transformers' sdpa path, every
+attention became matmul → softmax → matmul with Core ML's own softmax op.
+On the CPU, that softmax, reading the score matmul's output in the same
+program, rounds differently for different key lengths below 1,024: with
+the same real scores and the rest masked, 512 and 1,024 keys differ by up
+to 1.5e-3 in a probability. The same softmax fed the scores as an input
+is bit-identical across lengths. tools/repro_cpu_softmax_length.py
+reproduces it standalone and exits 1 while the CPU behaves this way.
+Bisecting one input through agent-jev's own graph agreed: the embedding,
+tree mask, RoPE tables, norms, projections and MLP were bit-identical
+between the buckets, the attention scores too, and the softmax was the
+first step to differ.
+- **The fix** is the softmax lumma-fev already used (D34, its converter's
+  constraint D): exp(w − rowmax) and one matmul against [V | 1], whose
+  matmul doesn't depend on the length up to 1,024. The library's
+  `qwen3.matmul_softmax` rewrite routes every layer's attention through
+  it, and the converter applies it after its fp32 references, so the
+  fp32 gate proves it exact.
+- **Graded on 2,627 cases.** The GPU stays A (p99 at 0.85× the ceiling,
+  worst 3.2e-3, no flips) and its buckets become exact too. The CPU is
+  exact in every bucket up to 1,024 (it moved by up to 0.019 before) and
+  D on accuracy; past 1,024 its 5.0e-3 is D33's limit, reported. The ANE
+  path, which the runtime doesn't serve because the model is over the
+  weight limit (D32), is reported, not graded: the parity suite now
+  reports, rather than grades, a path the runtime refuses to serve that
+  way.
+- Every hard gate passes on every path, the conversion is exact in fp32,
+  and the GPU grades A, so agent-jev is supported (D28 amendment). It is
+  still served on the GPU.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

@@ -62,7 +62,11 @@ fp16 weights (1.2 GB) exceed Core ML's ~1 GiB limit for the ANE.
 Measured with a probe of this graph (M1 Max, macOS 27): the fp32 graph
 matches AgentJev's per-path scoring within |dp| 5e-7; on the GPU, 76 ms at
 512 tokens and 381 ms at 2,048, max |dp| 4.8e-4 against an ideal-fp16
-ceiling of 7.3e-4.
+ceiling of 7.3e-4. Graded by the parity suite on 2,627 cases, with the
+bucket-invariant softmax: GPU A (p99 at 0.85x the ceiling, no flips,
+buckets exact); CPU exact across buckets up to 1,024 tokens, D on
+accuracy; the ANE path reported, not graded, as the runtime doesn't serve
+it there (over the weight limit, D32). docs/MODELS.md has the details.
 """
 
 import json
