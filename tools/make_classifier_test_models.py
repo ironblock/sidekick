@@ -33,6 +33,18 @@ of the embeddings up to it, so pads after the row change nothing.
 - `model_16.mlmodelc`, `model_32.mlmodelc`: K = 4;
 - `expected.json`: fp32 torch logits for fixed (ids, ends, decide).
 
+tiny-agentjev/: the agentjev format, a tree. `input_ids`/`attention_mask`/
+`seg`/`position_ids` [1, S], `cand_end` [1, K] (each candidate's last
+token, -1 in unused slots), and `logits` [1, K], unused slots at -1e4. One
+attention layer masked by sidekick_convert's own masks.tree (siblings never
+see each other, pads see only themselves), positions through a one-hot
+table, and a head that mixes each candidate's state with the mean of the
+real candidates', so the order of candidates doesn't matter. It imports
+the mask from tools/sidekick_convert (techniques.masks, torch only), so the
+fixture is built with the production mask, not a copy.
+- `model_16.mlmodelc`, `model_32.mlmodelc`: K = 4;
+- `expected.json`: fp32 torch logits for fixed (ids, seg, positions, ends).
+
 tiny-multishape/: one artifact, `model.mlmodelc`, whose `input_ids` and
 `attention_mask` each accept two enumerated shapes, [1, 16] and [1, 32],
 and whose `logits` are [1, 1]. Its layout is the one macOS 27 can abort
@@ -41,8 +53,9 @@ on, which the loader must refuse there whatever the compute units (D27).
 Usage:
     python tools/make_classifier_test_models.py crates/sidekick-embed/tests/fixtures [name ...]
 
-    name    tiny-laya, tiny-reranker, tiny-gliner2, tiny-fev, tiny-multishape
-            (default: all). Building
+    name    tiny-laya, tiny-reranker, tiny-gliner2, tiny-fev, tiny-multishape,
+            tiny-agentjev (default: all but tiny-agentjev, which is built
+            only when named). Building
             only the one you changed keeps the others' committed bytes.
 
 Requires torch, coremltools and numpy (arm64-native Python 3.12 or
@@ -142,6 +155,43 @@ class TinyFev(nn.Module):
         return torch.where(marker_pos < 0, torch.full_like(logits, -1e4), logits)
 
 
+class TinyAgentJev(nn.Module):
+    """A tree: one attention layer under masks.tree, positions from a
+    one-hot table, and a head over the candidate ends that adds the mean of
+    the real candidates' states, so it is permutation-equivariant."""
+
+    def __init__(self, seq):
+        super().__init__()
+        from sidekick_convert.techniques import masks
+        self.masks, self.seq = masks, seq
+        self.emb = nn.Embedding(VOCAB, D)
+        self.pos = nn.Parameter(torch.randn(32, D) * 0.5)
+        self.q, self.k, self.v = nn.Linear(D, D), nn.Linear(D, D), nn.Linear(D, D)
+        self.w = nn.Linear(D, 1)
+        # per-bucket constants, not weights: kept out of state_dict
+        for name, t in masks.tree_buffers(seq).items():
+            self.register_buffer(name, t, persistent=False)
+        self.register_buffer("positions", torch.arange(seq, dtype=torch.int32).reshape(1, 1, seq), persistent=False)
+
+    def forward(self, input_ids, attention_mask, seg, position_ids, cand_end):
+        seq = self.seq
+        onehot = (position_ids.reshape(1, seq, 1) == self.positions).float()
+        x = torch.tanh(self.emb(input_ids.long()) + onehot @ self.pos[:seq])
+        add = self.masks.tree(seg, attention_mask, self.tree_causal, self.tree_eye, seq)
+        att = torch.softmax(self.q(x) @ self.k(x).transpose(1, 2) / D ** 0.5 + add[:, 0], -1)
+        h = x + att @ self.v(x)
+        sel = (cand_end.reshape(1, -1, 1) == self.positions).float()
+        valid = (cand_end >= 0).float()
+        c = sel @ h
+        ctx = (c * valid[..., None]).sum(1, keepdim=True) / valid.sum(1, keepdim=True)[..., None]
+        logits = self.w(torch.tanh(c + ctx)).squeeze(-1)
+        return torch.where(cand_end < 0, torch.full_like(logits, -1e4), logits)
+
+
+AGENTJEV_INPUTS = lambda seq, k: [("input_ids", (1, seq)), ("attention_mask", (1, seq)), ("seg", (1, seq)),
+                                  ("position_ids", (1, seq)), ("cand_end", (1, k))]
+
+
 FEV_INPUTS = lambda seq, k: [("input_ids", (1, seq)), ("attention_mask", (1, seq)), ("marker_pos", (1, k)), ("decide_pos", (1,))]
 
 
@@ -196,6 +246,47 @@ def main():
         fev(root)
     if "tiny-multishape" in names:
         multishape(root)
+    if "tiny-agentjev" in names:
+        agentjev(root)
+
+
+def agentjev(root):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    out = os.path.join(root, "tiny-agentjev")
+    os.makedirs(out, exist_ok=True)
+    torch.manual_seed(5)
+    model16 = TinyAgentJev(16).eval()
+    with torch.no_grad():   # spread the logits well past fp16 rounding, so a wrong slot or a pad leak shows
+        model16.w.weight.mul_(8.0)
+        model16.w.bias.mul_(8.0)
+    model32 = TinyAgentJev(32).eval()
+    model32.load_state_dict(model16.state_dict())     # the same weights in both buckets
+    convert(model16, AGENTJEV_INPUTS(16, 4), out, "model_16")
+    convert(model32, AGENTJEV_INPUTS(32, 4), out, "model_32")
+    # Fixed trees: a prefix (segment 0), then each candidate's branch, its
+    # positions continuing from the prefix's end.
+    def tree(prefix, branches):
+        ids, seg, pos, ends = list(prefix), [0] * len(prefix), list(range(len(prefix))), []
+        for c, b in enumerate(branches, 1):
+            ids += b; seg += [c] * len(b); pos += range(len(prefix), len(prefix) + len(b)); ends.append(len(ids) - 1)
+        return ids, seg, pos, ends
+    cases = [tree([5, 6, 7, 8], [[9, 10], [11]]),
+             tree([5, 12, 13, 14, 15, 16], [[17, 18], [19], [20, 21, 22]]),
+             tree([5] + [23] * 14, [[24, 25], [26, 27], [28], [29, 30]])]
+    expected = []
+    for ids, seg, pos, ends in cases:
+        seq = 16 if len(ids) <= 16 else 32
+        model = model16 if seq == 16 else model32
+        pad = seq - len(ids)
+        t = lambda v, fill: torch.tensor([v + [fill] * pad], dtype=torch.int32)  # noqa: E731
+        with torch.no_grad():
+            logits = model(t(ids, 0), t([1] * len(ids), 0), t(seg, -1), t(pos, 0),
+                           torch.tensor([ends + [-1] * (4 - len(ends))], dtype=torch.int32))[0][: len(ends)]
+        expected.append({"ids": ids, "seg": seg, "position_ids": pos, "markers": ends,
+                         "logits": [float(x) for x in logits]})
+    with open(os.path.join(out, "expected.json"), "w") as f:
+        json.dump({"cases": expected}, f, indent=1)
+        f.write("\n")
 
 
 def fev(root):
