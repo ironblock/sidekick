@@ -9,7 +9,8 @@
 //! quarter of `idle_ttl` (at most 30 s) of expiring, whether or not any
 //! request arrives. Without the sweep, expiry only took effect on the
 //! pool's next use, so a daemon left alone kept its weights indefinitely.
-//! A model in use by a request is freed when that request finishes.
+//! A model a request still holds is never evicted, and its idle time
+//! counts from when the last request finished (within one sweep).
 
 use sidekick_core::{Classifier, Embedder, Error, ModelRegistry, Result};
 use std::collections::HashMap;
@@ -31,6 +32,23 @@ struct Entry<T: ?Sized> {
     last_used: Instant,
 }
 
+impl<T: ?Sized> Entry<T> {
+    /// Whether the pool keeps this entry. One a request still holds (its
+    /// `Arc` cloned out of the pool) is never evicted, however long the
+    /// request runs, and its idle time restarts: so the TTL counts from
+    /// about when the last request finished (within one sweep), not from
+    /// when it started. Otherwise a request outlasting the TTL, such as one
+    /// waiting on a long bucket compile, had its model dropped mid-use, and
+    /// the next request reloaded it from scratch.
+    fn keep(&mut self, ttl: Duration) -> bool {
+        if Arc::strong_count(&self.model) > 1 {
+            self.last_used = Instant::now();
+            return true;
+        }
+        self.last_used.elapsed() < ttl
+    }
+}
+
 pub struct ModelPool<T: ?Sized> {
     /// What the pool holds, for logs ("embedding model", "classifier").
     kind: &'static str,
@@ -45,7 +63,7 @@ type Entries<T> = Mutex<HashMap<String, Entry<T>>>;
 async fn evict_expired<T: ?Sized>(entries: &Entries<T>, ttl: Duration, kind: &str) {
     let mut entries = entries.lock().await;
     let before = entries.len();
-    entries.retain(|_, e| e.last_used.elapsed() < ttl);
+    entries.retain(|_, e| e.keep(ttl));
     let dropped = before - entries.len();
     if dropped > 0 {
         tracing::info!("unloaded {dropped} idle {kind}{}", if dropped == 1 { "" } else { "s" });
@@ -110,7 +128,7 @@ impl<T: ?Sized + Send + Sync + 'static> ModelPool<T> {
         let ttl = self.idle_ttl;
         {
             let mut entries = self.entries.lock().await;
-            entries.retain(|_, e| e.last_used.elapsed() < ttl);
+            entries.retain(|_, e| e.keep(ttl));
             if let Some(entry) = entries.get_mut(id) {
                 entry.last_used = Instant::now();
                 return Ok(entry.model.clone());
@@ -151,7 +169,7 @@ impl<T: ?Sized + Send + Sync + 'static> ModelPool<T> {
     pub async fn resident(&self) -> usize {
         let mut entries = self.entries.lock().await;
         let ttl = self.idle_ttl;
-        entries.retain(|_, e| e.last_used.elapsed() < ttl);
+        entries.retain(|_, e| e.keep(ttl));
         entries.len()
     }
 }
@@ -183,26 +201,49 @@ mod tests {
         assert_eq!(loads.load(Ordering::SeqCst), 3);
     }
 
-    /// A model `get` handed out, and whether the pool has let go of it: the
-    /// pool's `Arc` is the only other one once the caller drops theirs.
-    fn held(model: &Arc<str>) -> bool {
-        Arc::strong_count(model) > 1
-    }
-
     #[tokio::test(start_paused = true)]
     async fn an_idle_model_is_dropped_without_any_further_call() {
         let ttl = Duration::from_secs(900);
         let pool: ModelPool<str> = ModelPool::new("test model", ttl, |id| Ok(Arc::from(id)));
-        let model = pool.get("a").await.unwrap();
-        assert!(held(&model));
+        // The request finishes at once; only the pool holds the model, and
+        // a Weak watches it without keeping it in use.
+        let watch = Arc::downgrade(&pool.get("a").await.unwrap());
         // Just under the TTL: still resident.
         tokio::time::sleep(ttl - Duration::from_secs(1)).await;
-        assert!(held(&model), "dropped before its TTL");
+        assert!(watch.upgrade().is_some(), "dropped before its TTL");
         // Past the TTL plus one sweep interval (ttl/4 capped at 30 s), with
         // no get() or resident() in between: the sweep alone dropped it.
         tokio::time::sleep(Duration::from_secs(1) + MAX_SWEEP_INTERVAL + Duration::from_secs(1)).await;
-        assert!(!held(&model), "still resident past its TTL with no traffic");
+        assert!(watch.upgrade().is_none(), "still resident past its TTL with no traffic");
         assert_eq!(pool.resident().await, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_model_in_use_is_never_evicted_and_its_ttl_counts_from_the_end_of_use() {
+        // A request that outlasts the TTL, as one waiting on a long bucket
+        // compile does (240 s measured for a 2,048-token bucket).
+        let ttl = Duration::from_secs(45);
+        let loads = Arc::new(AtomicUsize::new(0));
+        let counter = loads.clone();
+        let pool: ModelPool<str> = ModelPool::new("test model", ttl, move |id| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(Arc::from(id))
+        });
+        let in_flight = pool.get("a").await.unwrap();
+        tokio::time::sleep(Duration::from_secs(240)).await;
+        // The sweep ran many times past the TTL and kept it: the next
+        // request finds it instead of reloading it.
+        let next = pool.get("a").await.unwrap();
+        assert_eq!(loads.load(Ordering::SeqCst), 1, "reloaded while in use");
+        let watch = Arc::downgrade(&in_flight);
+        drop((in_flight, next));
+        // Idle from here: still resident well within the TTL...
+        tokio::time::sleep(ttl / 2).await;
+        assert!(watch.upgrade().is_some(), "evicted before its TTL from the end of use");
+        // ...and unloaded within one sweep after it.
+        tokio::time::sleep(ttl / 2 + ttl / 4 + Duration::from_secs(1)).await;
+        assert!(watch.upgrade().is_none(), "still resident past its TTL after use ended");
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test(start_paused = true)]
