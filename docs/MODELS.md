@@ -704,7 +704,9 @@ exactly 2,048 tokens.
   exact gate. The matmul form is exact in fp32 and bit-identical across
   buckets; on the GPU it moved p99 from 0.70× to 0.85× the ceiling and
   the worst case from 4.2e-3 to 3.2e-3, and made the GPU's buckets exact
-  too (they were 2.5e-3 apart).
+  too (they were 2.5e-3 apart). An artifact converted before this fix (as
+  in sidekick 0.6.0) keeps working at its GPU grade; reconvert it for
+  exact buckets.
 - **CPU: D, on accuracy.** p99 |Δp| at 5.9× the ceiling, worst 0.025,
   one flip at a 0.053 fp32 margin, 31 near ties, 257 ms median. Bucket
   invariance is exact up to 1,024 tokens. Past 1,024 the difference

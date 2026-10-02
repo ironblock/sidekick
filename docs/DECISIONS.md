@@ -1847,6 +1847,9 @@ first step to differ.
 - Every hard gate passes on every path, the conversion is exact in fp32,
   and the GPU grades A, so agent-jev is supported (D28 amendment). It is
   still served on the GPU.
+- Artifacts converted with an earlier `convert_agentjev.py` keep working
+  and keep their GPU grade, but their buckets agree exactly only once
+  reconverted.
 
 ## Hardware verification status
 
