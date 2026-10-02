@@ -439,6 +439,7 @@ path.
 | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
 | [fastino/GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) as `gliner2.5-decide` (served on the GPU) | zero-shot, gliner2's format | [convert_gliner2.py](../tools/convert_gliner2.py) | D 0.024 | **A** 3.7e-3 | C 0.019 (512 bucket only) | 947/956 | 1,280 at 512 |
 | [FrontiersMind/Lumma-fev-0.1b](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b) as `lumma-fev-0.1b` | zero-shot, fev format, 2,048 tokens | [convert_fev.py](../tools/convert_fev.py) | D 0.033 (5.8× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.021) | **A** 6.6e-3 (0.95× ceiling) | **B** 0.010 (1.57× ceiling) | 3698/3715 | 33 |
+| [aimeigaoshou/agent-jev](https://huggingface.co/aimeigaoshou/agent-jev) as `agent-jev` (served on the GPU; **preview** until its CPU and ANE paths are graded) | zero-shot, agentjev's format, 2,048 tokens | [convert_agentjev.py](../tools/convert_agentjev.py) | not yet graded | **A** 4.2e-3 (0.70× ceiling) | not yet graded (runs on the CPU: over the ANE's ~1 GiB weight limit) | 0/1963 | — |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -660,6 +661,58 @@ state, no instructions, 32 long options) and 15 long cases up to the
 The suite samples bucket invariance for buckets over 512 tokens; even so,
 Lumma-fev's CPU path took about four hours on a heavily loaded M1 Max, so run
 it with `--timeout 14400`.
+
+**agent-jev is served on the GPU** (`compute_units = "cpu_and_gpu"`). It is
+AgentJev-0.6B (Apache-2.0): Qwen3-0.6B without its language-model head, and
+a candidate head that scores a question's candidates as a set (a two-layer
+transformer over the candidates, with no positions, then a scorer).
+AgentJev's service scores each candidate on its own causal path: the
+state, the question, then that candidate. sidekick lays a question out
+once, as a tree: the state and question as a shared prefix, then every
+candidate as its own branch. A branch sees only the prefix and its own
+earlier tokens, and its positions continue from the prefix's end, so one
+pass scores every candidate exactly as AgentJev would (docs/design/classify.md,
+"The agentjev format"). In fp32 the converted tree matches AgentJev's
+per-path scoring within |Δp| 5e-7, and the input layout reproduces
+AgentJev's own `encode_paths` on all 2,627 corpus cases.
+
+Measured on 2,627 cases: laya's translation of fastino/fast-decisions,
+plus adversarial and long cases in AgentJev's terms, up to a tree of
+exactly 2,048 tokens.
+- **Why the GPU.** Its fp16 weights (1.2 GB, 1.12 GiB) exceed Core ML's
+  ~1 GiB limit for placing a program on the ANE (see the size note under
+  "Quick triage"). With `cpu_and_ne`, Core ML runs the whole model on the
+  CPU, so its compute plan has 0 of 1,963 operations on the ANE. Storing
+  the embedding table in int8 would bring it under the limit (98% on the
+  ANE in a probe), but the ANE was then slower than the GPU at every
+  length (124 vs 76 ms at 512 tokens, 1,317 vs 381 ms at 2,048), and
+  slower than the CPU at 2,048, and less accurate.
+- **GPU: A.** p99 |Δp| at 0.70× the ideal-fp16 ceiling's p99 (the ceiling:
+  4.3e-3 at most, 2.1e-3 at p99), worst 4.2e-3, mean 4.3e-4, no decision
+  flips, 5 near ties. Bucket invariance is 2.5e-3, within the ceiling.
+  Pad invariance is exact. 77 ms median.
+- **CPU and ANE: not yet graded.** Both run on the CPU here. The
+  converter's gate requests measured |Δp| up to 1.8e-2 on that path. The
+  CPU's accuracy also depends on the bucket: on the same requests it was
+  1.8e-2 in the 1,024 bucket and 2.1e-3 in the 2,048 bucket, and one
+  787-token request moved by 1.8e-2 between them. So the difference isn't
+  only a reordered sum. D33 caps CPU-served models at 1,024 tokens for
+  this reason; agent-jev isn't CPU-served.
+- **No precision rewrites.** Its residual stream reaches about 6,800 on
+  one dimension of the first token (the attention sink, which every
+  candidate's path shares). Squared in fp16, as RMSNorm squares its input,
+  that would overflow, but the converted model shows no sign of it: without
+  any rewrite the GPU is within its ceiling, and a 2^-6 pre-scale on the
+  norms measured worse on every path.
+- **Quality, as its authors report it.** On its own coding-completion
+  benchmark, accuracy is 57.8% and AUROC 0.589, up from 0.516 before its
+  final training stage (0.5 is chance). Its service calls its probabilities "model distribution;
+  domain calibration is not guaranteed".
+- **Parity only.** fast-decisions isn't AgentJev's domain. Agreement with
+  its gold labels is reported, not graded: 55.0% on the GPU and 55.1% in
+  fp32.
+- AgentJev's per-type temperatures are in the manifest; `calibration:
+  model` applies them.
 
 ## Rerankers (`/v1/rerank`)
 
