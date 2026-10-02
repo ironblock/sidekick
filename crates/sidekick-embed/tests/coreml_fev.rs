@@ -105,7 +105,7 @@ fn prepared(case: &ExpectedCase, bucket: usize) -> Prepared {
         type_ids: vec![],
         markers: case.markers.clone(),
         qtype: None,
-        decide_pos: Some(case.decide),
+        decide_pos: Some(case.decide), seg: vec![], position_ids: vec![],
         bucket,
     }
 }

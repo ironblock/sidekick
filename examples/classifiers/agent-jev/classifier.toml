@@ -1,0 +1,49 @@
+# AgentJev (aimeigaoshou/agent-jev) as a Core ML zero-shot classifier served
+# on the GPU: a Qwen3-0.6B decoder and AgentJev's candidate head, which scores
+# a question's candidates as a set. A request is laid out as a tree: the state
+# and question once, then each candidate as its own branch, so one pass
+# scores every candidate exactly as AgentJev scores each on its own path. One
+# static-shape artifact per sequence-length bucket ({seq} resolves against
+# `buckets`), outputting one logit per candidate slot.
+#
+# `compute_units = "cpu_and_gpu"`: the fp16 model's 1.2 GB of weights exceed
+# Core ML's ~1 GiB limit for the ANE, which would run it on the CPU, and the
+# GPU is both faster and more accurate (docs/MODELS.md).
+#
+# The request format, validation and this manifest's fields are specified in
+# docs/design/classify.md ("The agentjev format"). The temperatures are
+# AgentJev's own (temperatures.json), per question type at every label count
+# the type can reach; `calibration: model` applies them.
+
+id = "agent-jev"
+task = "zero-shot-classification"
+source = { repo = "aimeigaoshou/agent-jev", revision = "0e2593e6e6c0eade0700712ac13c4389aa7654cc" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [512, 1024, 2048]
+max_seq_len = 2048
+max_batch = 32
+problem_type = "single_label"
+compute_units = "cpu_and_gpu"
+
+[classify]
+format = "agentjev"
+max_labels = 32
+
+[classify.calibration]
+"noul:2" = 1.0717734625362931
+"choice:2" = 1.0352649238413776
+"choice:3-5" = 1.0352649238413776
+"choice:6-10" = 1.0352649238413776
+"choice:11+" = 1.0352649238413776
+"score:2" = 1.0717734625362931
+"score:3-5" = 1.0717734625362931
+"score:6-10" = 1.0717734625362931
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+seg = "seg"
+position_ids = "position_ids"
+marker_pos = "cand_end"
+output = "logits"

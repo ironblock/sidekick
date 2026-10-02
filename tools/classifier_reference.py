@@ -44,6 +44,13 @@ Corpora:
   by the checkpoint's own modeling_fev.py (pack, encode) and the oracles run
   its FevForDecision, both sha256-pinned and run on transformers 4.x with
   the shims load_fev() documents. --source is the Lumma-fev snapshot.
+- agentjev format (AgentJev): fixtures/classify/<id>.corpus.toml, laya's
+  dataset translation with AgentJev's own adversarial and long cases. Inputs
+  come from AgentJev's own jev_service/contract.py (prepare, encode_paths),
+  laid out as the format's tree, and the oracles score each path as its
+  service does, through its own head modules (agentjev/model.py), both
+  sha256-pinned; the backbone is transformers' Qwen3Model. --source is the
+  agent-jev snapshot, --agentjev-code a checkout of its code.
 - text-classification: the embedding parity corpus
   (fixtures/parity/corpus.toml), materialized with the model's
   tokenizer.json. Inputs longer than the largest bucket are truncated to it
@@ -732,6 +739,239 @@ def run_fev(args, manifest):
     return cases, fixture, logits, pr.corpus_hash(corpus_text)
 
 
+# --- agentjev (AgentJev) -------------------------------------------------------------
+
+# AgentJev's code (github.com/malevrigns/agent-jev at a965ca8, Apache-2.0): the
+# input contract, and the candidate head's modules.
+AGENTJEV_SHA256 = {"jev_service/contract.py": "5a28b220a830e816f7b4fe2bf46b314f7aa7d3cffa4d096037bddf7d566353e6",
+                   "agentjev/model.py": "91c28187ebbb15c75382d832bb9b75b58e333575d169fd5350ff049aab019566"}
+
+
+def agentjev_candidates(question_type, labels):
+    """The request's labels as AgentJev's candidate texts, in label order
+    (docs/design/classify.md, "The agentjev format"): a choice label's
+    description, else the label; a score label as given; a noul question's
+    descriptions, else FALSE and TRUE."""
+    if question_type == "choice":
+        out = []
+        for label in labels:
+            key, sep, desc = label.partition(": ")
+            out.append(desc if sep and desc else key if sep else label)
+        return out
+    if question_type == "score":
+        return list(labels)
+    f, t = noul_description(labels[0], "false"), noul_description(labels[1], "true")
+    if f is None or t is None:
+        raise SystemExit(f"noul labels {labels}: false then true")
+    return [f or "FALSE", t or "TRUE"]
+
+
+def agentjev_question(question_type, labels, instructions):
+    """The request as the question AgentJev's prepare() reads, and the map
+    from its candidate order to label order. A noul question is AgentJev's
+    boolean, whose candidates are true then false; a choice's options and a
+    score's levels are lists in label order."""
+    if question_type == "noul":
+        f, t = noul_description(labels[0], "false"), noul_description(labels[1], "true")
+        criteria = {k: v for k, v in (("true", t), ("false", f)) if v}
+        return {"id": "q", "type": "boolean", "question": instructions, "criteria": criteria}, [1, 0]
+    candidates = agentjev_candidates(question_type, labels)
+    if question_type == "choice":
+        return {"id": "q", "type": "choice", "question": instructions, "options": candidates}, list(range(len(labels)))
+    return {"id": "q", "type": "score", "question": instructions, "levels": candidates}, list(range(len(labels)))
+
+
+def load_agentjev_code(code):
+    """AgentJev's contract and model modules from a checkout of its
+    repository at the pinned revision (sha256-checked)."""
+    for name, want in AGENTJEV_SHA256.items():
+        if sha256(code / name) != want:
+            raise SystemExit(f"{code / name} is not the pinned AgentJev code (sha256 {sha256(code / name)})")
+    sys.path.insert(0, str(code))
+    from jev_service import contract
+    from agentjev import model
+    return contract, model
+
+
+def agentjev_build(cases, contract, tok, manifest):
+    """AgentJev's own prepare() and encode_paths() per case, laid out as the
+    tree the format specifies: the prefix, then each candidate's suffix in
+    label order, with segments and positions. Every path encode_paths
+    returns must be the prefix followed by that suffix. A tree over
+    max_seq_len is a 400 for the server, so it is an error here, except that
+    `target_len` first cuts the input at whitespace to the longest prefix
+    whose tree fits in that many tokens."""
+    max_len, max_labels = manifest["max_seq_len"], manifest["classify"]["max_labels"]
+
+    def layout(text, question, order):
+        prepared = contract.prepare({"state": text, "questions": [question]})
+        paths, _, rows = contract.encode_paths(prepared, tok, max_len)
+        state = prepared[0]["state"]
+        prefix = tok.encode(state if state.startswith("[STATE]") else "[STATE] " + state, add_special_tokens=False)
+        prefix += tok.encode("\n[QUESTION] " + rows[0]["text"], add_special_tokens=False)
+        ids, seg, pos, ends = list(prefix), [0] * len(prefix), list(range(len(prefix))), []
+        for c, theirs in enumerate(order, 1):
+            path = paths[theirs]
+            if path[: len(prefix)] != prefix or len(path) == len(prefix):
+                raise SystemExit("an AgentJev path isn't its question's prefix and a candidate suffix")
+            suffix = path[len(prefix):]
+            ids += suffix
+            seg += [c] * len(suffix)
+            pos += range(len(prefix), len(prefix) + len(suffix))
+            ends.append(len(ids) - 1)
+        return rows[0], ids, seg, pos, ends
+
+    def size(text, question, order):
+        try:
+            return len(layout(text, question, order)[1])
+        except ValueError:   # AgentJev's own over-limit refusal (one path over max_len)
+            return max_len + 1
+
+    kept, over = [], {}
+    for c in cases:
+        labels, k = c["candidate_labels"], len(c["candidate_labels"])
+        if k > max_labels:
+            over[c["head"] or c["id"]] = over.get(c["head"] or c["id"], 0) + 1
+            continue
+        if k < 2 or len(set(labels)) != k:
+            raise SystemExit(f"{c['id']}: {k} labels, or duplicates: the server would reject it")
+        question, order = agentjev_question(c["question_type"], labels, c["instructions"])
+        if c.get("target_len") and size(c["input"], question, order) > c["target_len"]:
+            text = c["input"]
+            cuts = [i for i, ch in enumerate(text) if ch.isspace()]
+            lo, hi = 0, len(cuts) - 1
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                lo, hi = (mid, hi) if size(text[: cuts[mid]], question, order) <= c["target_len"] else (lo, mid - 1)
+            c["input"] = text[: cuts[lo]]
+        row, ids, seg, pos, ends = layout(c["input"], question, order)
+        want = agentjev_candidates(c["question_type"], labels)
+        if [row["candidates"][i] for i in order] != want:
+            raise SystemExit(f"{c['id']}: AgentJev reads {row['candidates']}, the contract says {want}")
+        if len(ids) > max_len:
+            raise SystemExit(f"{c['id']}: the tree takes {len(ids)} tokens, over {max_len}: the server would "
+                             "refuse it, so it can't be in the corpus")
+        if c.get("target_len") and not c["target_len"] - 16 <= len(ids) <= c["target_len"]:
+            raise SystemExit(f"{c['id']}: cut to {len(ids)} tokens, not within 16 of {c['target_len']}")
+        c.update(ids=ids, seg=seg, position_ids=pos, markers=ends, qtype=None, k=k, order=order,
+                 question=question)
+        kept.append(c)
+    if over:
+        print(f"left out {sum(over.values())} cases over max_labels {max_labels}: {over}", flush=True)
+    return kept
+
+
+class AgentJevPaths(torch.nn.Module):
+    """AgentJev's scoring as its service runs it per path: each candidate's
+    path encoded on its own (right-padded, as its PathEncoder batches them),
+    the hidden state at the path's last token, then the checkpoint's own
+    candidate head (proj_in, CandidateSetEncoder, proj_out, ScalarScorer,
+    through AgentJevModel._score). Logits come out in AgentJev's candidate
+    order."""
+
+    def __init__(self, backbone, model_module, head_state):
+        super().__init__()
+        self.backbone = backbone
+        hidden = backbone.config.hidden_size
+        self.proj_in = torch.nn.Linear(hidden, 256)
+        self.set_encoder = model_module.CandidateSetEncoder(256, 4, 2)
+        self.proj_out = torch.nn.Linear(256, hidden)
+        self.scorer = model_module.ScalarScorer(hidden, 256)
+        missing, unexpected = self.load_state_dict(head_state, strict=False)
+        if unexpected or any(not k.startswith("backbone.") for k in missing):
+            raise SystemExit(f"the checkpoint's head and AgentJev's modules differ: {unexpected or missing}")
+        self._score = lambda v, m: model_module.AgentJevModel._score(self, v, m)
+
+    # Paths encoded per forward: a question's paths are encoded a few at a
+    # time, as AgentJev's service batches them, so 32 paths of 2,048 tokens
+    # never materialize one [32, heads, 2048, 2048] attention tensor.
+    CHUNK = 2
+
+    def forward(self, ids, mask, last):
+        vectors = []
+        for i in range(0, ids.shape[0], self.CHUNK):
+            h = self.backbone(input_ids=ids[i:i + self.CHUNK], attention_mask=mask[i:i + self.CHUNK],
+                              use_cache=False).last_hidden_state
+            vectors.append(h[torch.arange(h.shape[0]), last[i:i + self.CHUNK]])
+        vectors = torch.cat(vectors)[None]
+        return self._score(vectors, torch.ones(vectors.shape[:2], dtype=torch.bool))[0]
+
+
+def load_agentjev(src, model_module):
+    """The checkpoint in fp32: transformers' Qwen3Model for the backbone and
+    AgentJev's own head modules, each loaded strictly from model.safetensors."""
+    from safetensors.torch import load_file
+    from transformers import Qwen3Config, Qwen3Model
+    weights = load_file(str(src / "model.safetensors"))
+    cfg = Qwen3Config.from_pretrained(src)
+    cfg._attn_implementation = "eager"
+    # Built without allocating weights, then given the checkpoint's own
+    # tensors, so the model never exists twice (~2.4 GB each in fp32). RoPE's
+    # inv_freq isn't in the checkpoint, so the rotary embedding is rebuilt.
+    from transformers.models.qwen3.modeling_qwen3 import Qwen3RotaryEmbedding
+    with torch.device("meta"):
+        backbone = Qwen3Model(cfg)
+    prefix = "path_encoder.backbone."
+    backbone.load_state_dict({k[len(prefix):]: v for k, v in weights.items() if k.startswith(prefix)}, strict=True,
+                             assign=True)
+    backbone.rotary_emb = Qwen3RotaryEmbedding(config=cfg)
+    head = {k: v for k, v in weights.items() if not k.startswith(prefix)}
+    return AgentJevPaths(backbone.float().eval(), model_module, head).eval()
+
+
+def agentjev_logits(model, cases, max_labels):
+    def forward(run, c):
+        prefix_len = c["seg"].index(1)
+        starts = [prefix_len] + [e + 1 for e in c["markers"][:-1]]
+        paths = [c["ids"][:prefix_len] + c["ids"][s: e + 1] for s, e in zip(starts, c["markers"])]
+        theirs = [None] * len(paths)
+        for label, t in enumerate(c["order"]):
+            theirs[t] = paths[label]
+        width = max(map(len, theirs))
+        ids = torch.zeros((len(theirs), width), dtype=torch.long)
+        mask = torch.zeros_like(ids)
+        for i, p in enumerate(theirs):
+            ids[i, : len(p)] = torch.tensor(p)
+            mask[i, : len(p)] = 1
+        last = torch.tensor([len(p) - 1 for p in theirs])
+        logits = run(model, ids, mask, last).numpy()
+        return logits[c["order"]]
+    return oracles(forward, cases, max_labels)
+
+
+def run_agentjev(args, manifest):
+    """An agentjev-format model (AgentJev): the corpus is
+    fixtures/classify/<id>.corpus.toml (laya's dataset translation, AgentJev's
+    adversarial cases, long cases), inputs come from AgentJev's own
+    contract.py, and the oracles score each path as its service does, with
+    its own head modules. --source is the agent-jev snapshot; --agentjev-code
+    a checkout of its code at the pinned revision."""
+    if args.agentjev_code is None:
+        raise SystemExit("the agentjev format needs --agentjev-code (a checkout of malevrigns/agent-jev)")
+    from transformers import AutoTokenizer
+    src = args.source
+    contract, model_module = load_agentjev_code(args.agentjev_code)
+    if sha256(src / "tokenizer.json") != sha256(args.model_dir / "tokenizer.json"):
+        raise SystemExit("the installed tokenizer.json differs from the checkpoint's")
+    tok = AutoTokenizer.from_pretrained(src)
+    corpus_text = (REPO / "fixtures" / "classify" / f"{manifest['id']}.corpus.toml").read_text()
+    corpus = tomllib.loads(corpus_text)
+    dataset = args.dataset
+    if dataset is None:
+        from huggingface_hub import snapshot_download
+        dataset = Path(snapshot_download(corpus["source"]["repo"], repo_type="dataset",
+                                         revision=corpus["source"]["revision"], local_files_only=True))
+    cases = agentjev_build(laya_cases(corpus, dataset), contract, tok, manifest)
+    print(f"{len(cases)} cases; max {max(len(c['ids']) for c in cases)} tokens", flush=True)
+    fixture = laya_fixture_subset(cases)
+    logits = None
+    if not args.fixture_only:
+        model = load_agentjev(src, model_module)
+        cases = limited(args, cases)
+        logits = agentjev_logits(model, cases, manifest["classify"]["max_labels"])
+    return cases, fixture, logits, pr.corpus_hash(corpus_text)
+
+
 # --- gliner2 ------------------------------------------------------------------------
 
 
@@ -976,15 +1216,17 @@ def main():
     ap.add_argument("--fixture-only", action="store_true", help="write the token fixture and stop")
     ap.add_argument("--laya-code", type=Path,
                     help="laya-typed-decisions: the laya package's common.py (tools/convert_laya.py)")
+    ap.add_argument("--agentjev-code", type=Path,
+                    help="agentjev: a checkout of malevrigns/agent-jev at the pinned revision")
     ap.add_argument("--limit", type=int, help="smoke run: only the first N cases (not a usable reference)")
     args = ap.parse_args()
     manifest = tomllib.loads((args.model_dir / "classifier.toml").read_text())
     fmt = manifest["classify"].get("format")
-    laya, gliner2, fev = fmt == "laya", fmt == "gliner2", fmt == "fev"
+    laya, gliner2, fev, agentjev = fmt == "laya", fmt == "gliner2", fmt == "fev", fmt == "agentjev"
     julia = laya and manifest["classify"]["laya"].get("option_rendering") == "julia"
     run = (run_julia if julia else run_laya if laya else run_gliner2 if gliner2 else run_fev if fev
-           else run_text)
-    zero_shot = laya or fev
+           else run_agentjev if agentjev else run_text)
+    zero_shot = laya or fev or agentjev
     cases, fixture, logits, corpus_sha = run(args, manifest)
     tokenizer_sha = sha256(args.model_dir / "tokenizer.json")
     source = {"repo": manifest["source"]["repo"], "revision": manifest["source"].get("revision")}
@@ -1004,6 +1246,8 @@ def main():
                 rec.update(markers=c["markers"], qtype=c["qtype"])
             if fev:
                 rec["decide"] = c["decide"]
+            if agentjev:
+                rec.update(seg=c["seg"], position_ids=c["position_ids"])
             if gliner2:
                 rec.update(markers=c["markers"], qtype=None)
             fx["cases"].append(rec)
@@ -1050,6 +1294,8 @@ def main():
             rec.update(markers=c["markers"], qtype=c["qtype"])
         if fev:
             rec["decide"] = c["decide"]
+        if agentjev:
+            rec.update(seg=c["seg"], position_ids=c["position_ids"])
         meta["cases"].append(rec)
     out = (args.out or args.model_dir / "parity") / manifest["id"]
     out.mkdir(parents=True, exist_ok=True)

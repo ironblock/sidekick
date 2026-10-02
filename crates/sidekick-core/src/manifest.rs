@@ -359,6 +359,10 @@ pub enum ClassifyFormat {
     /// and its options, scored at each option's end and a final decide
     /// token (docs/design/classify.md).
     Fev,
+    /// AgentJev's decision format: the state and question as a shared
+    /// prefix, then each candidate as its own branch of a tree, scored by a
+    /// head over the candidate set (docs/design/classify.md).
+    Agentjev,
 }
 
 /// `[classify]` of a `classifier.toml`.
@@ -504,6 +508,14 @@ pub struct ClassifierIo {
     /// fev: `[1]` int32 position of the decide token.
     #[serde(default)]
     pub decide_pos: Option<String>,
+    /// agentjev: `[1, S]` int32 tree segments (0 prefix, `c` candidate `c`,
+    /// −1 pads), from which the graph builds its attention mask.
+    #[serde(default)]
+    pub seg: Option<String>,
+    /// agentjev: `[1, S]` int32 positions; each candidate's restart at the
+    /// prefix's end.
+    #[serde(default)]
+    pub position_ids: Option<String>,
     /// `[1, S]` int32 segment ids, for models that take them (BERT pairs).
     #[serde(default)]
     pub token_type_ids: Option<String>,
@@ -558,6 +570,7 @@ impl ClassifierManifest {
             Some(ClassifyFormat::Laya) => fields.extend(["question_type", "instructions"]),
             Some(ClassifyFormat::Gliner2) => fields.extend(["instructions", "multi_label"]),
             Some(ClassifyFormat::Fev) => fields.extend(["question_type", "instructions"]),
+            Some(ClassifyFormat::Agentjev) => fields.extend(["question_type", "instructions"]),
             None => {}
         }
         fields
@@ -581,6 +594,10 @@ impl ClassifierManifest {
         // instructions may be empty, as fev's own API sends them.
         if self.classify.format == Some(ClassifyFormat::Fev) {
             fields.push("question_type");
+        }
+        // AgentJev's API requires a nonempty question and has no default.
+        if self.classify.format == Some(ClassifyFormat::Agentjev) {
+            fields.extend(["question_type", "instructions"]);
         }
         fields
     }
@@ -1053,7 +1070,9 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             if c.laya.is_some() || c.gliner2.is_some() || c.fev.is_some() {
                 return Err("`[classify.laya]`, `[classify.gliner2]` and `[classify.fev]` are for zero-shot formats".into());
             }
-            if io.marker_pos.is_some() || io.qtype.is_some() || io.decide_pos.is_some() {
+            if io.marker_pos.is_some() || io.qtype.is_some() || io.decide_pos.is_some() || io.seg.is_some()
+                || io.position_ids.is_some()
+            {
                 return Err("text-classification's [classify.io] has input_ids, attention_mask and output only".into());
             }
             // Calibration keys are per question type, which fixed-label
@@ -1072,7 +1091,9 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             if matches!(c.max_labels, Some(n) if n != 1) {
                 return Err("a text-ranking model's `max_labels` is 1".into());
             }
-            if io.marker_pos.is_some() || io.qtype.is_some() || io.decide_pos.is_some() {
+            if io.marker_pos.is_some() || io.qtype.is_some() || io.decide_pos.is_some() || io.seg.is_some()
+                || io.position_ids.is_some()
+            {
                 return Err("text-ranking's [classify.io] has input_ids, attention_mask, token_type_ids and output only".into());
             }
             if !c.calibration.is_empty() {
@@ -1105,6 +1126,9 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             }
             if format != ClassifyFormat::Fev && io.decide_pos.is_some() {
                 return Err("`decide_pos` is for the fev format".into());
+            }
+            if format != ClassifyFormat::Agentjev && (io.seg.is_some() || io.position_ids.is_some()) {
+                return Err("`seg` and `position_ids` are for the agentjev format".into());
             }
             match format {
                 ClassifyFormat::Laya => {
@@ -1175,6 +1199,17 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                     // has no calibration of its own.
                     if !c.calibration.is_empty() {
                         return Err("`[classify.calibration]` isn't supported by the fev format".into());
+                    }
+                }
+                ClassifyFormat::Agentjev => {
+                    require("marker_pos", &io.marker_pos)?;
+                    require("seg", &io.seg)?;
+                    require("position_ids", &io.position_ids)?;
+                    if io.qtype.is_some() || io.token_type_ids.is_some() {
+                        return Err("the agentjev format takes no `qtype` or `token_type_ids`".into());
+                    }
+                    if m.problem_type != ProblemType::SingleLabel {
+                        return Err("the agentjev format's problem_type is `single_label`".into());
                     }
                 }
             }
@@ -1491,6 +1526,74 @@ output = "logits"
             ("fev-on-fixed", format!("{SENTIMENT}\n[classify.fev]\nstate_max_len = 8\ndelimiters = {{ state = \"a\", question = \"b\", option = \"c\", option_end = \"d\", decide = \"e\" }}\n"), "zero-shot formats"),
         ] {
             let tmp = tmp_dir(&format!("fev-{name}"));
+            write_classifier(&tmp, name, &body);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            assert_eq!(reg.skipped().len(), 1, "{name}");
+            assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
+            std::fs::remove_dir_all(&tmp).unwrap();
+        }
+    }
+
+    const AGENTJEV: &str = r#"
+id = "agent-jev"
+task = "zero-shot-classification"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [512, 2048]
+max_seq_len = 2048
+problem_type = "single_label"
+compute_units = "cpu_and_gpu"
+
+[classify]
+format = "agentjev"
+max_labels = 32
+
+[classify.calibration]
+"noul:2" = 1.0718
+"choice:2" = 1.0353
+"choice:3-5" = 1.0353
+"choice:6-10" = 1.0353
+"choice:11+" = 1.0353
+"score:2" = 1.0718
+"score:3-5" = 1.0718
+"score:6-10" = 1.0718
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+seg = "seg"
+position_ids = "position_ids"
+marker_pos = "cand_end"
+output = "logits"
+"#;
+
+    #[test]
+    fn agentjev_classifiers_and_what_they_refuse() {
+        let tmp = tmp_dir("agentjev");
+        write_classifier(&tmp, "j", AGENTJEV);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        let m = &reg.classifier("agent-jev").unwrap().manifest;
+        assert_eq!(m.classify.format, Some(ClassifyFormat::Agentjev));
+        assert_eq!((m.classify.io.seg.as_deref(), m.classify.io.position_ids.as_deref()), (Some("seg"), Some("position_ids")));
+        assert_eq!(m.extension_fields(), vec!["candidate_labels", "calibration", "question_type", "instructions"]);
+        assert_eq!(m.required_fields(), vec!["candidate_labels", "question_type", "instructions"]);
+        assert_eq!(m.temperature(Some(QuestionType::Noul), 2), Some(1.0718));
+        assert_eq!(m.temperature(Some(QuestionType::Choice), 32), Some(1.0353));
+        assert_eq!(m.temperature(Some(QuestionType::Score), 10), Some(1.0718));
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        for (name, body, want) in [
+            ("no-seg-io", AGENTJEV.replace("seg = \"seg\"\n", ""), "`seg`"),
+            ("no-position-io", AGENTJEV.replace("position_ids = \"position_ids\"\n", ""), "`position_ids`"),
+            ("no-marker-io", AGENTJEV.replace("marker_pos = \"cand_end\"\n", ""), "`marker_pos`"),
+            ("qtype-io", AGENTJEV.replace("output = ", "qtype = \"qtype\"\noutput = "), "no `qtype`"),
+            ("multi-label", AGENTJEV.replace("problem_type = \"single_label\"", "problem_type = \"multi_label\""), "single_label"),
+            ("laya-section", format!("{AGENTJEV}\n[classify.laya]\nhead_max_len = 8\n"), "for the laya format"),
+            ("seg-on-laya", LAYA.replace("qtype = \"qtype\"", "qtype = \"qtype\"\nseg = \"seg\""), "for the agentjev format"),
+            ("seg-on-fixed", SENTIMENT.replace("output = ", "position_ids = \"p\"\noutput = "), "input_ids, attention_mask and output only"),
+        ] {
+            let tmp = tmp_dir(&format!("agentjev-{name}"));
             write_classifier(&tmp, name, &body);
             let reg = ModelRegistry::scan(&tmp).unwrap();
             assert_eq!(reg.skipped().len(), 1, "{name}");

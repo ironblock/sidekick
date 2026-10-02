@@ -82,6 +82,11 @@ pub struct ClassifyCase {
     /// fev: the decide token's position.
     #[serde(default)]
     pub decide: Option<i32>,
+    /// agentjev: each token's tree segment and position.
+    #[serde(default)]
+    pub seg: Vec<i32>,
+    #[serde(default)]
+    pub position_ids: Vec<i32>,
     /// Label count for this case.
     pub k: usize,
     /// The request asked for multi-label decoding (gliner2's `multi_label`):
@@ -240,6 +245,7 @@ impl ClassifyReference {
             ClassifyFormat::Laya => "laya".to_string(),
             ClassifyFormat::Gliner2 => "gliner2".to_string(),
             ClassifyFormat::Fev => "fev".to_string(),
+            ClassifyFormat::Agentjev => "agentjev".to_string(),
         });
         if m.format != format {
             why.push("format changed".into());

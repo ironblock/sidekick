@@ -38,6 +38,9 @@ struct Io {
     qtype: Option<String>,
     /// fev: the decide token's position, `[1]`.
     decide_pos: Option<String>,
+    /// agentjev: the tree's segments and positions, `[1, S]` each.
+    seg: Option<String>,
+    position_ids: Option<String>,
     output: String,
     /// gliner2: the output is one logit per token, read at the markers.
     per_token: bool,
@@ -45,9 +48,10 @@ struct Io {
 
 /// Check one bucket's artifact against the manifest: `input_ids` and
 /// `attention_mask` are `[1, bucket]` (for per-bucket `{seq}` artifacts;
-/// a shared artifact must only have them); laya's and fev's `marker_pos` is
+/// a shared artifact must only have them), and so are agentjev's `seg` and
+/// `position_ids`; laya's, fev's and agentjev's `marker_pos` is
 /// `[1, max_labels]`, laya's `qtype` and fev's `decide_pos` are `[1]`; the
-/// output has one slot per label (`max_labels` for laya and fev), or exactly
+/// output has one slot per label (`max_labels` for those formats), or exactly
 /// `[1, bucket]` for gliner2's per-token
 /// logits; and the inputs pass the flexible-shape guard (D27). Errors name
 /// the artifact relative to the model directory.
@@ -69,8 +73,8 @@ fn check_interface(
     let per_bucket = m.artifact.contains("{seq}");
     let seq = per_bucket.then(|| vec![1, bucket]);
     let mut expect = vec![(&io.input_ids, seq.clone()), (&io.attention_mask, seq.clone())];
-    if let Some(types) = &io.token_type_ids {
-        expect.push((types, seq));
+    for per_token in [&io.token_type_ids, &io.seg, &io.position_ids].into_iter().flatten() {
+        expect.push((per_token, seq.clone()));
     }
     if let Some(marker) = &io.marker_pos {
         expect.push((marker, Some(vec![1, m.max_labels()])));
@@ -135,7 +139,8 @@ impl CoremlClassifier {
         let io = &m.classify.io;
         let laya = m.classify.format == Some(ClassifyFormat::Laya);
         let fev = m.classify.format == Some(ClassifyFormat::Fev);
-        let marker_pos = if laya || fev { Some(io_name(&io.marker_pos, "marker_pos")?) } else { None };
+        let agentjev = m.classify.format == Some(ClassifyFormat::Agentjev);
+        let marker_pos = if laya || fev || agentjev { Some(io_name(&io.marker_pos, "marker_pos")?) } else { None };
         let output = io_name(&io.output, "output")?;
 
         let models = BucketModels::new(&model.dir, &m.artifact, units);
@@ -146,6 +151,8 @@ impl CoremlClassifier {
             marker_pos,
             qtype: if laya { Some(io_name(&io.qtype, "qtype")?) } else { None },
             decide_pos: if fev { Some(io_name(&io.decide_pos, "decide_pos")?) } else { None },
+            seg: if agentjev { Some(io_name(&io.seg, "seg")?) } else { None },
+            position_ids: if agentjev { Some(io_name(&io.position_ids, "position_ids")?) } else { None },
             output,
             per_token: m.classify.format == Some(ClassifyFormat::Gliner2),
         };
@@ -228,6 +235,34 @@ impl CoremlClassifier {
             types.resize(used, 0);
             types.resize(bucket, 0);
             inputs.push(Int32Input { name, shape: vec![1, bucket], data: types });
+        }
+        if let (Some(seg_name), Some(pos_name)) = (&self.io.seg, &self.io.position_ids) {
+            // agentjev's tree: pads get attention_mask 0, segment -1 and
+            // position 0. The graph's mask requires attention_mask 1 and a
+            // segment >= 0 on every key, so no real token attends a pad and
+            // random pad ids change nothing; the -1 keeps each pad's own row
+            // from attending the prefix.
+            if prepared.seg.len() != used || prepared.position_ids.len() != used {
+                return Err(Error::Inference(format!(
+                    "{used} tokens but {} segments and {} positions",
+                    prepared.seg.len(),
+                    prepared.position_ids.len()
+                )));
+            }
+            let mut seg = prepared.seg.clone();
+            seg.resize(bucket, -1);
+            let mut positions = prepared.position_ids.clone();
+            positions.resize(bucket, 0);
+            inputs.push(Int32Input { name: seg_name, shape: vec![1, bucket], data: seg });
+            inputs.push(Int32Input { name: pos_name, shape: vec![1, bucket], data: positions });
+            // The head reads hidden states at the candidates' ends: each
+            // must be a real token's, or a pad's state would be read.
+            if prepared.markers.iter().any(|&m| m < 0 || m as usize >= used) {
+                return Err(Error::Inference(format!(
+                    "candidate ends {:?} aren't all among the {used} real tokens",
+                    prepared.markers
+                )));
+            }
         }
 
         let k = match &self.io.marker_pos {

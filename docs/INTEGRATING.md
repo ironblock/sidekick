@@ -156,6 +156,10 @@ or SGLang works unchanged. What a host needs to know beyond that:
   beside a state is a 400. gliner2 drops whole words from the end and
   then ends the text with `.` as its training inputs did; its labels and
   instructions must fit the model whole, or the request is a 400.
+  agentjev models (AgentJev) never truncate, as AgentJev's own service
+  doesn't: a request whose input, instructions and labels don't fit the
+  model together is a 400, and so are `truncate_prompt_tokens` and
+  `truncation_side: left`. Send a shorter input.
 - **Errors are data.** Every error, malformed JSON included, is the
   OpenAI shape `{"error": {"message", "type", "code"}}`. A 400 names the
   field it rejected. Sending a classifier to `/v1/embeddings`, or an

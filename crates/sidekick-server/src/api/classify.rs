@@ -193,12 +193,15 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
     let laya = m.classify.format == Some(ClassifyFormat::Laya);
     let gliner2 = m.classify.format == Some(ClassifyFormat::Gliner2);
     let fev = m.classify.format == Some(ClassifyFormat::Fev);
+    // agentjev never truncates: an over-long tree is a 400, as AgentJev
+    // refuses an over-long path.
+    let agentjev = m.classify.format == Some(ClassifyFormat::Agentjev);
     // Formats that truncate the text themselves, keeping its start.
     let self_truncating = match m.classify.format {
         Some(ClassifyFormat::Laya) => Some("laya"),
         Some(ClassifyFormat::Gliner2) => Some("gliner2"),
         Some(ClassifyFormat::Fev) => Some("fev"),
-        None => None,
+        Some(ClassifyFormat::Agentjev) | None => None,
     };
     let zero_shot = m.task == ClassifyTask::ZeroShotClassification;
     let unsupported = |field: &str| {
@@ -210,6 +213,7 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
                 (_, Some(ClassifyFormat::Laya)) => "a zero-shot model in the laya format",
                 (_, Some(ClassifyFormat::Gliner2)) => "a zero-shot model in the gliner2 format",
                 (_, Some(ClassifyFormat::Fev)) => "a zero-shot model in the fev format",
+                (_, Some(ClassifyFormat::Agentjev)) => "a zero-shot model in the agentjev format",
                 _ => "a zero-shot model",
             }
         ))
@@ -217,6 +221,12 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
 
     if req.add_special_tokens == Some(false) {
         return Err(ApiError::invalid("`add_special_tokens: false` isn't supported"));
+    }
+    if agentjev && (req.truncate_prompt_tokens.is_some() || req.truncation_side.as_deref() == Some("left")) {
+        return Err(ApiError::invalid(
+            "the agentjev format never truncates, so `truncate_prompt_tokens` and `truncation_side: left` \
+             aren't supported; shorten the input instead",
+        ));
     }
     let truncation_side = match req.truncation_side.as_deref() {
         None | Some("right") => TruncationSide::Right,
@@ -270,7 +280,7 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         (Some(_), false) => return Err(unsupported("candidate_labels")),
         (None, false) => vec![],
     };
-    let question_type = match (req.question_type.as_deref(), laya || fev) {
+    let question_type = match (req.question_type.as_deref(), laya || fev || agentjev) {
         (Some(q), true) => Some(match q {
             "choice" => QuestionType::Choice,
             "score" => QuestionType::Score,
@@ -290,8 +300,14 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         (Some(_), false) => return Err(unsupported("question_type")),
         (None, false) => None,
     };
-    if req.instructions.is_some() && !(laya || gliner2 || fev) {
+    if req.instructions.is_some() && !(laya || gliner2 || fev || agentjev) {
         return Err(unsupported("instructions"));
+    }
+    if agentjev && req.instructions.is_none() {
+        return Err(ApiError::invalid(format!(
+            "model `{}` needs `instructions`: the question to decide",
+            m.id
+        )));
     }
     // The labels must render (noul's are fixed: `false`, `true`), and a
     // model without default instructions needs them; checked here, where
@@ -304,6 +320,9 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
     }
     if let (Some(q), true) = (question_type, fev) {
         sidekick_embed::fev::render_options(q, &candidate_labels)?;
+    }
+    if let (Some(q), true) = (question_type, agentjev) {
+        sidekick_embed::agentjev::render_candidates(q, &candidate_labels)?;
     }
 
     // Calibration is an extension of models that declare temperatures;

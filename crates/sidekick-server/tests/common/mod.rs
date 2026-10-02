@@ -319,6 +319,40 @@ decide_pos = "decide_pos"
 output = "logits"
 "#;
 
+/// `classifier.toml` for a zero-shot model in the agentjev format. AgentJev's
+/// temperatures are per question type, whatever the label count, so the
+/// manifest declares each type's at every label-count bucket it can reach.
+pub const AGENTJEV_ZERO_SHOT: &str = r#"
+id = "jev-decider"
+task = "zero-shot-classification"
+source = { repo = "example/jev-decider" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [64]
+max_seq_len = 64
+max_batch = 2
+compute_units = "cpu_and_gpu"
+
+[classify]
+format = "agentjev"
+max_labels = 4
+
+[classify.calibration]
+"noul:2" = 1.0718
+"choice:2" = 1.0353
+"choice:3-5" = 1.0353
+"score:2" = 1.0718
+"score:3-5" = 1.0718
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+seg = "seg"
+position_ids = "position_ids"
+marker_pos = "cand_end"
+output = "logits"
+"#;
+
 /// `classifier.toml` for a reranker that reports raw logits (the ms-marco
 /// cross-encoders' `Identity` activation).
 pub const RERANKER: &str = r#"
@@ -444,17 +478,29 @@ impl Classifier for MockClassifier {
                 sidekick_embed::fev::render_options(qt, &params.candidate_labels)?;
                 (vec![0; params.candidate_labels.len()], params.candidate_labels.clone())
             }
+            Some(ClassifyFormat::Agentjev) => {
+                let qt = params.question_type.expect("the server requires question_type");
+                assert!(params.instructions.is_some(), "the server requires instructions");
+                assert!(params.truncate_prompt_tokens.is_none(), "agentjev never truncates");
+                sidekick_embed::agentjev::render_candidates(qt, &params.candidate_labels)?;
+                (vec![0; params.candidate_labels.len()], params.candidate_labels.clone())
+            }
             None => (vec![], vec![]),
         };
         LABELS.with(|l| *l.borrow_mut() = labels);
         let fev = self.manifest.classify.format == Some(ClassifyFormat::Fev);
+        let agentjev = self.manifest.classify.format == Some(ClassifyFormat::Agentjev);
+        let tree = |f: fn(usize) -> i32| if agentjev { (0..ids.len()).map(f).collect() } else { vec![] };
+        let (seg, position_ids) = (tree(|_| 0), tree(|i| i as i32));
         Ok(Prepared {
             bucket: self.bucket(ids.len()),
-            ids,
             type_ids: vec![],
             markers,
-            qtype: params.question_type.filter(|_| !fev).map(|q| q.index()),
+            qtype: params.question_type.filter(|_| !fev && !agentjev).map(|q| q.index()),
             decide_pos: fev.then_some(0),
+            seg,
+            position_ids,
+            ids,
         })
     }
 
@@ -465,7 +511,16 @@ impl Classifier for MockClassifier {
             return Err(Error::InvalidRequest("rejected by prepare".into()));
         }
         let ids: Vec<i32> = format!("{query}|{document}").bytes().map(i32::from).collect();
-        Ok(Prepared { type_ids: vec![0; ids.len()], bucket: self.bucket(ids.len()), ids, markers: vec![], qtype: None, decide_pos: None })
+        Ok(Prepared {
+            type_ids: vec![0; ids.len()],
+            bucket: self.bucket(ids.len()),
+            ids,
+            markers: vec![],
+            qtype: None,
+            decide_pos: None,
+            seg: vec![],
+            position_ids: vec![],
+        })
     }
 
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {
@@ -560,6 +615,7 @@ pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
         ("schema-decider", SCHEMA_ZERO_SHOT),
         ("cpu-capped", capped.as_str()),
         ("fev-decider", FEV_ZERO_SHOT),
+        ("jev-decider", AGENTJEV_ZERO_SHOT),
         ("julia", julia.as_str()),
         ("reranker", RERANKER),
         ("sigmoid-reranker", SIGMOID_RERANKER),
