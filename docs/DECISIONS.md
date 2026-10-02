@@ -1619,6 +1619,58 @@ token table (a CPU-side lookup) as per-row int8, and is graded against the
 model's ideal-fp16 ceiling like any other rewrite. Chunked variants, which
 lose no precision, are planned.
 
+## D33 — Cap CPU-served models at 1,024 tokens
+On the CPU, Core ML's fp16 matmul is accurate at every contraction length,
+but past 1,024 it sums in a different order. Measured on an M1 Max with
+macOS 27.0, on attention's value matmul with the same 754 real keys
+padded to 1,024 and to 2,048: the two results differ by up to 2e-3, while
+each is within about half an fp16 step of the exact (float64) product.
+Up to 1,024 the results are bit-identical. Attention contracts over the
+bucket length, so a model with buckets past 1,024 isn't exactly
+bucket-invariant on the CPU. Lumma-fev-0.1b's probabilities differ by up
+to 0.021 between its 1,024 and 2,048 buckets, agent-jev's by up to 0.018,
+on inputs over 512 tokens. `tools/repro_cpu_matmul_accumulation.py`
+reproduces it.
+
+No conversion fixes it. Fixed 512-key slices summed in order make lengths
+agree, but Core ML runs a sliced matmul about 13× less accurately, and
+that would break the exact agreement short inputs have today. The ANE is
+exactly bucket-invariant once the softmax is written as a matmul (D28
+amendment), and the GPU stays within its fp16 gate.
+
+**Decision.** As with the ANE's weight limit (D32), a known hardware limit
+becomes a default cap with an explicit opt-out, not a grading failure:
+- **The runtime caps a model served `cpu_only` at `MAX_CPU_INVARIANT_SEQ`
+  (1,024).** Buckets above it aren't loaded, and longer inputs follow the
+  model's own over-length rules. That means a 400, or truncation where its
+  format truncates; fev's state limit follows fev's own formula on the
+  capped window. A model with no bucket at or under 1,024 is skipped with
+  the reason and the fixes. `/v1/models` and `/health` report a cap in
+  effect.
+- **Opt-out:** `cpu_seq_limit = "ignore"` in a manifest, or
+  `--ignore-cpu-seq-cap` (`ignore_cpu_seq_cap`) for the daemon. It reads
+  as "I accept small bucket-dependent differences above 1,024". Models
+  served on the ANE or GPU aren't capped. Neither is `all`, which lets
+  Core ML choose, so the cap would hide what it does.
+- **The parity suite** reports the CPU path's bucket check past 1,024 as
+  this limit, with the measured variation, rather than failing it. Up to
+  1,024 the CPU gate stays exact, and the GPU and ANE gates are unchanged.
+  The worker records each bucket pair's delta, so a run can be re-rendered
+  under a changed rule.
+
+With the CPU's past-1,024 check reported rather than failed, Lumma-fev-0.1b
+passes every gate. Served on the ANE (B, against its fp16 ceiling) and
+graded A on the GPU, it is supported under the preview rule (D28
+amendment).
+
+**Also in this change:** the parity suite treats a compute plan as a gate
+only for a model served on the ANE (`cpu_and_ne` or `all`), as the
+converters do. For a GPU- or CPU-served model, an ineligible plan is
+reported, and every path is still graded. Placement isn't correctness: the
+other hard gates (bucket and pad invariance, determinism, finite output)
+still apply on every path, because they catch defects in the artifact
+itself whichever device runs it.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
