@@ -217,6 +217,7 @@ pub fn grade_model(
         id,
         &m.buckets,
         |b| model.artifact_path_for_bucket(b),
+        m.compute_units,
         o,
         scratch,
         &mut report.failures,

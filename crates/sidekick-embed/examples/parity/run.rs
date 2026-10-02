@@ -497,17 +497,27 @@ struct Plans {
     buckets: Vec<BucketInfo>,
 }
 
-/// Read and print every bucket's compute plan, before anything predicts:
-/// an artifact the ANE rejects can abort the process at predict.
+/// Read and print every bucket's compute plan, before anything predicts.
+/// The plan is a gate only for a model served on the ANE (`units`
+/// `cpu_and_ne` or `all`), as the converters gate the served path: there an
+/// ineligible plan means the model doesn't run where it's served. A model
+/// served elsewhere (`cpu_and_gpu`, `cpu_only`) has its plan reported, an
+/// ineligible or unreadable one as a warning, and every path still runs,
+/// the ANE path reporting what Core ML actually did. (A multi-shape
+/// artifact, which could abort a prediction, is refused at load by D27's
+/// guard, whatever the plan.)
+#[allow(clippy::too_many_arguments)]
 fn check_plans(
     id: &str,
     buckets: &[usize],
     artifact_for: impl Fn(usize) -> PathBuf,
+    units: ComputeUnits,
     o: &Options,
     scratch: &Path,
     failures: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> Plans {
+    let gated = matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All);
     let mut plans = Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() };
     for &b in buckets {
         let art = artifact_for(b);
@@ -525,7 +535,11 @@ fn check_plans(
                     format!("ANE ops {ane}/{assigned} eligible (read from a copy)")
                 }
                 (_, Ok(())) => format!("ANE ops {ane}/{assigned} eligible"),
-                (_, Err(e)) => format!("ANE ops {ane}/{assigned} NOT ELIGIBLE: {e}"),
+                (_, Err(e)) if gated => format!("ANE ops {ane}/{assigned} NOT ELIGIBLE: {e}"),
+                (_, Err(e)) => format!(
+                    "ANE ops {ane}/{assigned} not ANE-eligible ({e}); served on {}, so reported, not gated",
+                    units.name()
+                ),
             },
             file_sha(&art.join("model.mil")).unwrap_or("-".into()),
             file_sha(&art.join("weights/weight.bin")).unwrap_or("-".into()),
@@ -545,16 +559,23 @@ fn check_plans(
                  bucket with ane_check, or pass --allow-unverified-plans",
                 bundle_cache()
             );
-            if o.allow_unverified {
+            if o.allow_unverified || !gated {
                 warnings.push(why);
                 plans.unverified.push(b);
             } else {
                 failures.push(why);
             }
         }
-        if let Err(e) = &verdict {
-            plans.ok = false;
-            failures.push(format!("bucket {b}: compute plan: {e}"));
+        match &verdict {
+            Err(e) if gated => {
+                plans.ok = false;
+                failures.push(format!("bucket {b}: compute plan: {e}"));
+            }
+            Err(e) => warnings.push(format!(
+                "bucket {b}: not ANE-eligible ({e}); the model is served on {}, so its plan isn't gated",
+                units.name()
+            )),
+            Ok(()) => {}
         }
         plans.buckets.push(BucketInfo {
             bucket: b,
@@ -724,6 +745,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             id,
             &model.manifest.buckets,
             |b| model.artifact_path_for_bucket(b),
+            model.manifest.compute_units.unwrap_or_default(),
             &o,
             &scratch,
             &mut mr.failures,
