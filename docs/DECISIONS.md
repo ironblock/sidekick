@@ -1732,6 +1732,45 @@ reported, not graded, beside FrontiersMind's own published numbers. The
 larger Lumma-fev models (0.6b and up) exceed the ANE's 1 GiB weight limit
 (D32).
 
+## D35 — Report where Core ML placed each bucket, and which bucket answered
+The `sidekick-compute-units` header reports the configured compute units
+(D28): Core ML doesn't say which device ran a given prediction. For a client
+that records what produced each answer (a regression harness, an
+evaluation), configuration alone isn't enough. A model can be configured for
+the ANE and still run some operations elsewhere: laya-en's embedding lookup
+runs on the CPU, so 1,701 of its 1,719 operations are on the ANE. Before D32,
+a model over the weight limit could run entirely on the CPU.
+
+**Decision.** Two additions, both measured facts reported beside the
+configuration:
+- **Placement per bucket.** `/v1/models` reports, for each bucket, Core ML's
+  compute-plan op counts by device (`ane`, `gpu`, `cpu`), and `/health` adds
+  the unassigned ops, the off-ANE op names and where the counts were
+  measured. Counting matches `ane_check`, the parity suite and
+  docs/MODELS.md.
+- **The bucket each input used.** A `sidekick-buckets` response header lists
+  one bucket per input, in input order, on the classify, embeddings and
+  rerank routes, so a response carries which compiled program answered it.
+  Chat and static embedders omit it.
+
+**Where the counts come from.** A live compute-plan read in the daemon is a
+second full compile: measured on an M1 Max with macOS 27.0, about 50 s for a
+1,024-token bucket and nearly 4 minutes for a 2,048-token one, about the
+weights' size again on disk in Core ML's cache, and up to ~0.4 GB of
+footprint kept afterwards. So by default sidekick reports the plan the
+converter already read on the same machine. Converters record it per bucket
+in the installed manifest's `[placement]` table, stamped with the chip, the
+macOS build and the date. The daemon reports it as `source: "conversion"`,
+and marks it `stale` when the running chip or macOS build differs (a macOS
+update can move operations). A live read (`report_compute_plans = true`,
+off by default) reports `source: "live"`, one bucket at a time, after the
+bucket's first load, cached on disk. It's for an operator who needs the
+current OS's plan and accepts the cost. Artifacts converted before this
+release report no placement until they're reconverted.
+
+It remains the compiled plan, not the device a particular prediction ran
+on, which Core ML doesn't expose; the docs say so.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

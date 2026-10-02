@@ -26,7 +26,7 @@ pub async fn chat_completions(
     // Provenance names the Foundation Models variant, from a cache: asking
     // the backend is a blocking call that must not delay the reply.
     let response = complete(&state, req).await?;
-    Ok(Provenance { model: state.chat_model_id(), compute_units: None }.apply(response))
+    Ok(Provenance { model: state.chat_model_id(), compute_units: None, buckets: None }.apply(response))
 }
 
 async fn complete(state: &AppState, req: ChatCompletionRequest) -> Result<Response, ApiError> {

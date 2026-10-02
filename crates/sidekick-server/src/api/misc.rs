@@ -2,8 +2,11 @@ use super::wire::*;
 use crate::state::AppState;
 use axum::extract::State;
 use axum::Json;
-use serde_json::json;
-use sidekick_core::ClassifyTask;
+use serde_json::{json, Map, Value};
+use sidekick_core::manifest::{RecordedPlacement, ResolvedModel};
+use sidekick_core::{ClassifyTask, ComputeUnits, EmbeddingBackendKind};
+use sidekick_embed::placement::{this_machine, Placement};
+use std::path::Path;
 
 pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
     let created = now_unix();
@@ -22,10 +25,12 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
     }
 
     for id in state.registry.ids() {
-        let m = state.registry.get(id).ok().map(|r| &r.manifest);
+        let r = state.registry.get(id).ok();
+        let m = r.map(|r| &r.manifest);
         data.push(ModelObject {
             compute_units: m.map(|m| m.compute_units_name()),
             seq_cap: m.and_then(|m| m.seq_cap.clone()),
+            placement: r.and_then(|r| embedder_placement(&state, r, false)),
             ..ModelObject::new(id.to_string(), created, "feature-extraction")
         });
     }
@@ -49,12 +54,92 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             required: Some(m.required_fields()),
             compute_units: Some(m.compute_units.name()),
             seq_cap: m.seq_cap.clone(),
+            placement: placement(&state, &c.dir, &m.artifact, &m.buckets, m.compute_units, m.placement.as_ref(), false),
             calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
             ..ModelObject::new(m.id.clone(), created, m.task.name())
         });
     }
 
     Json(ModelList { object: "list", data })
+}
+
+/// A Core ML model's placement on the ANE, GPU and CPU, by bucket; `None`
+/// when there is none to report. Per bucket, the best available:
+/// 1. `live`: this daemon read the plan (`report_compute_plans`), after the
+///    bucket's first load;
+/// 2. `conversion`: the plan the converter recorded in the manifest, for the
+///    compute units the model is served with, marked `stale` when it was
+///    read on another chip or macOS build;
+/// 3. a live read still pending, or failed.
+///
+/// `detail` adds the unassigned count, the operators off the ANE, where a
+/// recorded plan was read, and a failed live read's reason, for /health;
+/// /v1/models keeps the counts.
+fn placement(
+    state: &AppState,
+    dir: &Path,
+    artifact: &str,
+    buckets: &[usize],
+    units: ComputeUnits,
+    recorded: Option<&RecordedPlacement>,
+    detail: bool,
+) -> Option<Map<String, Value>> {
+    let live = state.placements.as_ref().map(|p| p.for_model(dir, artifact, buckets, units)).unwrap_or_default();
+    // A plan recorded for other compute units doesn't describe this model.
+    let recorded = recorded.filter(|r| r.compute_units == units);
+    let machine = this_machine();
+    let reports: Map<String, Value> = buckets
+        .iter()
+        .filter_map(|&bucket| {
+            let live = live.get(&bucket);
+            let value = match (live, recorded.and_then(|r| r.bucket(bucket).map(|plan| (r, plan)))) {
+                (Some(Placement::Ready(c)), _) => {
+                    let mut v = json!({"source": "live", "state": "ready", "ane": c.ane, "gpu": c.gpu, "cpu": c.cpu});
+                    if detail {
+                        v["unassigned"] = json!(c.unassigned);
+                        v["off_ane_ops"] = json!(c.off_ane_ops);
+                    }
+                    v
+                }
+                (live, Some((r, plan))) => {
+                    let mut v = json!({"source": "conversion", "state": "ready", "ane": plan.ane, "gpu": plan.gpu, "cpu": plan.cpu});
+                    if r.chip != machine.chip || r.macos_build != machine.macos_build {
+                        v["stale"] = json!(format!("measured on {}, macOS {}", r.chip, r.macos_build));
+                    }
+                    if detail {
+                        v["unassigned"] = json!(plan.unassigned);
+                        v["off_ane_ops"] = json!(plan.off_ane_ops);
+                        v["measured_on"] = json!({"chip": r.chip, "macos_build": r.macos_build});
+                        if let Some(date) = &r.date {
+                            v["measured_on"]["date"] = json!(date);
+                        }
+                        match live {
+                            Some(Placement::Pending) => v["live"] = json!("pending"),
+                            Some(Placement::Failed(e)) => v["live_error"] = json!(e),
+                            _ => {}
+                        }
+                    }
+                    v
+                }
+                (Some(Placement::Pending), None) => json!({"source": "live", "state": "pending"}),
+                (Some(Placement::Failed(e)), None) if detail => json!({"source": "live", "state": "error", "error": e}),
+                (Some(Placement::Failed(_)), None) => json!({"source": "live", "state": "error"}),
+                (None, None) => return None,
+            };
+            Some((bucket.to_string(), value))
+        })
+        .collect();
+    (!reports.is_empty()).then_some(reports)
+}
+
+/// [`placement`] for an embedder: Core ML ones only.
+fn embedder_placement(state: &AppState, r: &ResolvedModel, detail: bool) -> Option<Map<String, Value>> {
+    let m = &r.manifest;
+    if m.backend != EmbeddingBackendKind::Coreml {
+        return None;
+    }
+    let units = m.compute_units.unwrap_or_default();
+    placement(state, &r.dir, &m.artifact, &m.buckets, units, m.placement.as_ref(), detail)
 }
 
 pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -75,6 +160,17 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
                 .classifiers()
                 .filter_map(|r| r.manifest.seq_cap.as_ref().map(|c| (r.manifest.id.clone(), json!(c)))),
         )
+        .collect();
+    // Where Core ML places each bucket's operations, by model id.
+    let plans: Map<String, Value> = state
+        .registry
+        .iter()
+        .filter_map(|r| embedder_placement(&state, r, true).map(|p| (r.manifest.id.clone(), Value::Object(p))))
+        .chain(state.registry.classifiers().filter_map(|c| {
+            let m = &c.manifest;
+            placement(&state, &c.dir, &m.artifact, &m.buckets, m.compute_units, m.placement.as_ref(), true)
+                .map(|p| (m.id.clone(), Value::Object(p)))
+        }))
         .collect();
     Json(json!({
         "status": "ok",
@@ -105,5 +201,12 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         "skipped_models": state.registry.skipped(),
         // Models served with a shorter maximum than their manifest's (D33).
         "seq_caps": seq_caps,
+        // Where Core ML places each bucket's operations: recorded at
+        // conversion, or read live after a bucket's first load.
+        "compute_plans": {
+            // Whether this daemon reads plans itself (`report_compute_plans`).
+            "live": state.placements.is_some(),
+            "models": plans,
+        },
     }))
 }

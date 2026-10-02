@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::Engine as _;
-use sidekick_core::{truncate_normalized, EmbedPurpose};
+use sidekick_core::{truncate_normalized, EmbedLimits, EmbedPurpose};
 
 /// Hard cap on batch size to keep one request from monopolizing the ANE.
 const MAX_BATCH: usize = 256;
@@ -88,11 +88,11 @@ pub async fn embeddings(
     };
 
     let approx_tokens: usize = texts.iter().map(|t| t.len() / 4).sum();
-    let vectors = {
+    let (vectors, buckets) = {
         let texts = texts.clone();
         let task = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-            embedder.embed(&refs, purpose)
+            embedder.embed_bucketed(&refs, purpose, EmbedLimits::default())
         });
         tokio::time::timeout_at(deadline, task)
             .await
@@ -118,7 +118,7 @@ pub async fn embeddings(
         })
         .collect();
 
-    let provenance = Provenance::embedder(&state, &req.model);
+    let provenance = Provenance::embedder(&state, &req.model).with_buckets(buckets);
     Ok(provenance.apply(
         Json(EmbeddingsResponse {
             object: "list",

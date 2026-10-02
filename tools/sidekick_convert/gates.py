@@ -169,6 +169,7 @@ class ClassifierGates:
     plan_min_ane: float = 0.8
     pad_id_range: tuple = (1000, 30000)
     plan_required: bool = True
+    served: str = None  # the compute units the model is served with; default: the first gated path
 
     @staticmethod
     def paths(served, report=("CPU_AND_NE", "CPU_ONLY")):
@@ -176,7 +177,12 @@ class ClassifierGates:
         that path gated, the rest of `report` reported, and the compute plan a
         gate only for a model served on the ANE."""
         return {"gated_paths": (served,), "report_paths": tuple(p for p in report if p != served),
-                "plan_required": served == "CPU_AND_NE"}
+                "plan_required": served == "CPU_AND_NE", "served": served}
+
+    def units(self):
+        """The compute units the model is served with, which its compute plan
+        is read for."""
+        return self.served or (self.gated_paths[0] if self.gated_paths else "CPU_AND_NE")
 
     def _split(self, out, ref):
         k = len(ref)
@@ -225,7 +231,8 @@ class ClassifierGates:
         return f"fp32 wrapper vs the checkpoint, max |dlogit| {r.get('fp32', float('nan')):.1e}"
 
     def coreml(self, compiled, seq, cases, job, timing):
-        out = {"plan": _plan.gate(compiled, self.plan_min_ane) if self.plan_required else _plan.report(compiled)}
+        out = {"plan": _plan.gate(compiled, self.plan_min_ane) if self.plan_required
+               else _plan.report(compiled, self.units())}
         padded = next((c for c in cases if c.n < seq), None)
         for path in tuple(self.gated_paths) + tuple(self.report_paths):
             m = _model(compiled, path)

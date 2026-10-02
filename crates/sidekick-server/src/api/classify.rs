@@ -79,7 +79,7 @@ pub async fn classify(
                 .collect::<Result<Vec<_>, Error>>()?;
             prepared
                 .iter()
-                .map(|p| Ok((p.ids.len(), classifier.run(p)?)))
+                .map(|p| Ok((p.ids.len(), p.bucket, classifier.run(p)?)))
                 .collect::<Result<Vec<_>, Error>>()
         })
     };
@@ -90,8 +90,10 @@ pub async fn classify(
 
     let mut prompt_tokens = 0;
     let mut data = Vec::with_capacity(results.len());
-    for (index, (tokens, logits)) in results.into_iter().enumerate() {
+    let mut buckets = Vec::with_capacity(results.len());
+    for (index, (tokens, bucket, logits)) in results.into_iter().enumerate() {
         prompt_tokens += tokens;
+        buckets.push(bucket);
         if logits.len() != k || logits.iter().any(|x| !x.is_finite()) {
             return Err(Error::Inference(format!(
                 "model `{}` returned {} values ({}) for {k} labels",
@@ -121,6 +123,7 @@ pub async fn classify(
     let provenance = Provenance {
         model: Provenance::model_id(&req.model, manifest.source.as_ref()),
         compute_units: Some(manifest.compute_units.name()),
+        buckets: Some(buckets),
     };
     Ok(provenance.apply(
         Json(ClassifyResponse {

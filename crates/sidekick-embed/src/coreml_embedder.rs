@@ -348,12 +348,22 @@ impl Embedder for CoremlEmbedder {
         purpose: EmbedPurpose,
         limits: EmbedLimits,
     ) -> Result<Vec<Vec<f32>>> {
+        Ok(self.embed_bucketed(texts, purpose, limits)?.0)
+    }
+
+    fn embed_bucketed(
+        &self,
+        texts: &[&str],
+        purpose: EmbedPurpose,
+        limits: EmbedLimits,
+    ) -> Result<(Vec<Vec<f32>>, Option<Vec<usize>>)> {
         // Prepare every text first, so a rejected one costs no prediction.
         let prepared = texts
             .iter()
             .map(|t| self.prepare_with(t, purpose, limits))
             .collect::<Result<Vec<_>>>()?;
-        prepared.iter().map(|p| self.run(&p.ids, p.bucket)).collect()
+        let vectors = prepared.iter().map(|p| self.run(&p.ids, p.bucket)).collect::<Result<_>>()?;
+        Ok((vectors, Some(prepared.iter().map(|p| p.bucket).collect())))
     }
 }
 

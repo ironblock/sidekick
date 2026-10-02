@@ -141,6 +141,14 @@ Where sidekick deliberately differs from vLLM:
   manifest says otherwise; see "Compute units"), `cpu` for static models.
   Chat omits it. It reports configuration, not the executing device, which
   Core ML doesn't expose.
+- `sidekick-buckets`: the sequence-length bucket each input ran in, in
+  input order and comma-separated (`256,256,512`; one input gives `256`).
+  Each bucket is its own compiled program (D15), so this names the
+  program that answered each input, the one whose placement `/v1/models`
+  reports per bucket (see "Where Core ML places operations"). On
+  `/v1/classify`, `/v1/embeddings`, `/v1/rerank`, `/rerank`, `/v2/rerank`
+  and `/v2/embed`. A rerank pair is one input, in request order rather
+  than the sorted results' order. Chat and static embedders omit it.
 
 ## Manifest: `classifier.toml`
 
@@ -380,6 +388,84 @@ So a model served on the CPU runs no longer than
   tokens the CPU's bucket gate stays exact, and the GPU and ANE paths are
   gated as before. Its worker output records each bucket comparison, so a
   saved run can be graded again under a changed rule.
+
+### Where Core ML places operations
+
+`compute_units` is a preference. Core ML decides per operation which
+device runs it, and an operation the ANE can't run moves to the CPU or the
+GPU without an error. The parity suite gates that before a model ships;
+the daemon also reports it, per bucket, for the models it serves. Each
+bucket is its own compiled program (D15), and `sidekick-buckets` names the
+one that answered each input, so a response can be matched to its
+program's placement.
+
+A model's `/v1/models` entry lists, under `placement`, each bucket's
+operation counts on the ANE, the GPU and the CPU, from one of two
+sources:
+- `conversion`, by default: the plan the converter read when it built the
+  artifact, recorded in the manifest. It costs nothing at runtime. It is
+  marked `stale` (`"measured on Apple M1 Max, macOS 25A354"`) when this
+  machine's chip or macOS build differs, since another compiler can place
+  operations differently. A plan recorded for other compute units than
+  the model is served with isn't reported.
+- `live`, with `report_compute_plans = true`: the daemon reads the plan
+  itself after a bucket's first load. A live plan takes precedence over a
+  recorded one; while the read is pending, or if it fails, the recorded
+  plan is reported.
+
+`/health` adds, under `compute_plans`, each bucket's unassigned operations
+(constants and other bookkeeping), the operators off the ANE, where a
+recorded plan was measured, and why a live read failed.
+
+The manifest records the plan in an optional table, written by the
+conversion library:
+
+```toml
+[placement]
+compute_units = "cpu_and_ne"   # the units the plan was read for
+chip = "Apple M1 Max"          # sysctl machdep.cpu.brand_string
+macos_build = "25A354"         # sw_vers -buildVersion
+date = "2026-10-01"            # when it was read (a string)
+
+[placement.buckets.128]        # one table per bucket, by its length
+ane = 294
+gpu = 0
+cpu = 10
+unassigned = 410
+total = 714                    # ane + gpu + cpu + unassigned
+off_ane_ops = { gather = 2, cast = 8 }   # { } when every operation is on the ANE
+```
+
+A bucket missing from the table is reported without a placement (a
+conversion of some buckets only records those). A record that doesn't fit
+the model, with a key that isn't one of its buckets, counts that don't add
+up to `total`, or on a static embedder, is ignored with a warning in the
+daemon's log: it only describes the model, so it never takes the model
+offline. Daemons up to 0.5 ignore the table.
+
+Live reads are off by default because a plan read is a second compile.
+Measured on an M1 Max under macOS 27.0, Core ML doesn't share a plan's
+compile with the model's load, in either order:
+
+| Bucket | Load (cold) | Plan read (cold) | Plan read (warm) |
+|---|---|---|---|
+| nlptown-sentiment, 128 tokens, ANE | 2.9 s | 3.1 s | 0.07 s |
+| laya-typed-decisions, 256, ANE | 20.6 s | 20.6 s | |
+| laya-typed-decisions, 1,024, ANE | 46.8 s | 49.5 s | 0.7 s |
+| Lumma-fev-0.1b, 2,048, ANE | 218 s | 222 s | 1.2 s |
+| nlptown-sentiment, 512, GPU | 1.0 s | 1.1 s | 0.17 s |
+
+The plan's compile also gets its own entry in Core ML's cache, about the
+bucket's weight size (0.9 GB for laya-typed-decisions' 256-token bucket),
+and the read held up to 0.4 GB of footprint (Lumma-fev's 2,048-token
+bucket) after it returned. With live reads on:
+- a bucket's plan is read after its first load, never for a bucket no
+  request has used;
+- one background thread reads every plan, one at a time;
+- results are cached under `~/Library/Caches/sidekick/compute-plans`,
+  keyed by the artifact (its program's content, its weights' sizes and
+  modification times), the compute units and the macOS build, so a
+  restart doesn't read them again.
 
 Compatibility: sidekick 0.4 and earlier ignore unknown keys in both
 manifest files. A 0.4 daemon given a manifest with `compute_units` loads it

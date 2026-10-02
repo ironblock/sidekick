@@ -14,7 +14,9 @@ A converter builds a `Job` and hands it to `run()`. For every bucket, `run()`:
    (plan.MAX_ANE_PROGRAM_WEIGHT_BYTES; `ignore_ane_weight_cap` makes that a
    warning, recorded in the report and the installed manifest); and runs the
    Core ML gates on the compiled artifact, the bytes that get installed;
-6. installs `model_{seq}.mlmodelc`.
+6. installs `model_{seq}.mlmodelc`, and records in the installed manifest
+   the compute plan each bucket was read with ([placement]), so the daemon
+   can report placement without compiling the model a second time.
 
 Two inputs are kept apart by type, so no recipe can mix them up:
 - `Calibration` decides rewrites (residual K, input rescales). It must never
@@ -270,6 +272,19 @@ def check_ane_weights(job, seq, compiled):
             "per-program limit (MAX_ANE_PROGRAM_WEIGHT_BYTES)")
 
 
+def record_placement(manifest, plans):
+    """Append the [placement] table (plan.placement_toml) for the buckets whose
+    compute plan the gates read, to an installed manifest. A bucket whose
+    plan was unreadable is left out; the daemon reports it as not recorded."""
+    if not plans:
+        return
+    import datetime
+    from . import plan
+    chip, build = plan.machine()
+    with open(manifest, "a") as f:
+        f.write(plan.placement_toml(plans, chip, build, datetime.date.today().isoformat()))
+
+
 def note_bypass(manifest, notes):
     """Append the weight-limit bypass to an installed manifest, as comments,
     so a bypassed artifact stays visible."""
@@ -295,7 +310,7 @@ def run(job, install_dir):
     if job.negative_control:
         print(f"{job.name}: NEGATIVE CONTROL. Gate failures are reported, not fatal; "
               "never install the result where the daemon looks.", flush=True)
-    reports, bypassed = {}, []
+    reports, bypassed, plans = {}, [], {}
     with tempfile.TemporaryDirectory() as work:
         for seq in job.buckets:
             cases = (job.evaluation.landing(seq, job.buckets) if job.gate_cases == "landing"
@@ -324,6 +339,8 @@ def run(job, install_dir):
                 report["ane_weight_cap"] = f"bypassed: {bypass}"
                 bypassed.append(bypass)
             report["coreml"] = _gate(job, job.gates.coreml, compiled, seq, cases, job, job.timing)
+            if (report["coreml"] or {}).get("plan"):
+                plans[seq] = report["coreml"]["plan"]
             for line in job.gates.describe_coreml(report["coreml"]):
                 print(f"bucket {seq}: {line}", flush=True)
             dest = install_dir / f"model_{seq}.mlmodelc"
@@ -333,8 +350,10 @@ def run(job, install_dir):
             reports[seq] = report
     for source, name in job.install_files:
         shutil.copy(source, install_dir / name)
-        if bypassed and name.endswith(".toml"):
-            note_bypass(install_dir / name, bypassed)
+        if name.endswith(".toml"):
+            record_placement(install_dir / name, plans)
+            if bypassed:
+                note_bypass(install_dir / name, bypassed)
     if job.install_files:
         print(f"installed {', '.join(n for _, n in job.install_files)} -> {install_dir}", flush=True)
     if bypassed:

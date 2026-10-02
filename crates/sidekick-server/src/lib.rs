@@ -52,5 +52,9 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         api_key: config.api_key.as_deref().map(Arc::from),
         started_at: Instant::now(),
         request_timeout: config.request_timeout(),
+        placements: config
+            .report_compute_plans
+            .then(|| sidekick_embed::placement::enable(config.compute_plan_cache_dir()))
+            .flatten(),
     })
 }

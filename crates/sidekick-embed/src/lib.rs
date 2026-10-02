@@ -13,6 +13,7 @@ pub mod classify_input;
 pub mod fev;
 pub mod gliner2;
 pub mod laya;
+pub mod placement;
 mod pooling;
 mod static_embedder;
 

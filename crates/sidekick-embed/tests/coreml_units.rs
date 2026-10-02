@@ -10,7 +10,7 @@
 #![cfg(all(target_os = "macos", feature = "coreml"))]
 
 use sidekick_core::manifest::ModelRegistry;
-use sidekick_core::{EmbedPurpose, Embedder};
+use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder};
 use sidekick_coreml::{input_shapes, load_verdict, ComputeUnits, CoremlModel, ShapeVerdict};
 use sidekick_embed::{CoremlClassifier, CoremlEmbedder};
 use std::path::{Path, PathBuf};
@@ -75,9 +75,10 @@ fn an_embedder_loads_with_its_manifest_compute_units() {
         assert_eq!(model.manifest.compute_units_name(), want.name());
         let embedder = CoremlEmbedder::load(model).unwrap();
         assert_eq!(embedder.compute_units().unwrap(), want, "{line:?}");
-        // And it serves there.
-        let v = embedder.embed(&["a b c"], EmbedPurpose::Document).unwrap();
-        assert_eq!(v[0].len(), 16);
+        // And it serves there, reporting the bucket each input ran in.
+        let (v, buckets) =
+            embedder.embed_bucketed(&["a b c", "d"], EmbedPurpose::Document, EmbedLimits::default()).unwrap();
+        assert_eq!((v[0].len(), buckets), (16, Some(vec![16, 16])));
         assert!(v[0].iter().all(|x| x.is_finite()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -116,5 +117,41 @@ fn d27_judges_a_multi_shape_artifact_the_same_under_every_compute_unit() {
         Err(e) => panic!("before macOS 27 the guard only warns, so the load should succeed: {e}"),
         Ok(_) => assert!(!refuse, "loaded a model the verdict refuses"),
     }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_loaded_buckets_compute_plan_is_read_in_the_background_and_cached() {
+    use sidekick_embed::placement::{self, Placement};
+    // Not ANE-dependent: the plan is read for the CPU, so it's the same on
+    // any Mac.
+    let manifest = "id = \"plan-embedder\"\nbackend = \"coreml\"\nartifact = \"model_{seq}.mlmodelc\"\n\
+                    tokenizer = \"tokenizer.json\"\ndims = 16\npooling = \"none\"\nbuckets = [16]\nmax_seq_len = 16\n\
+                    compute_units = \"cpu_only\"\n\
+                    [io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\noutput = \"logits\"\n";
+    let dir = models_dir(
+        "plan",
+        "plan-embedder",
+        "manifest.toml",
+        manifest,
+        &[("model_16.mlmodelc", fixtures("tiny-gliner2").join("model_16.mlmodelc"))],
+    );
+    let cache = dir.join("plans");
+    let service = placement::enable(Some(cache.clone())).expect("a Core ML build");
+    let registry = ModelRegistry::scan(&dir).unwrap();
+    let model = registry.get("plan-embedder").unwrap();
+    let path = model.dir.join("model_16.mlmodelc");
+    CoremlEmbedder::load(model).unwrap();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let counts = loop {
+        match service.get(&path, ComputeUnits::CpuOnly) {
+            Some(Placement::Ready(counts)) => break counts,
+            Some(Placement::Failed(e)) => panic!("{e}"),
+            _ if std::time::Instant::now() < until => std::thread::sleep(std::time::Duration::from_millis(20)),
+            other => panic!("no plan: {other:?}"),
+        }
+    };
+    assert!(counts.cpu > 0 && counts.ane == 0 && counts.gpu == 0, "{counts:?}");
+    assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 1, "one cached plan");
     std::fs::remove_dir_all(&dir).unwrap();
 }

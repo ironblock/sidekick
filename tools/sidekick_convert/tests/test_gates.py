@@ -39,10 +39,10 @@ class ServedPath(unittest.TestCase):
     def test_the_served_path_is_gated(self):
         gpu = gates.ClassifierGates.paths("CPU_AND_GPU")
         self.assertEqual(gpu, {"gated_paths": ("CPU_AND_GPU",), "report_paths": ("CPU_AND_NE", "CPU_ONLY"),
-                               "plan_required": False})
+                               "plan_required": False, "served": "CPU_AND_GPU"})
         ane = gates.ClassifierGates.paths("CPU_AND_NE")
         self.assertEqual(ane, {"gated_paths": ("CPU_AND_NE",), "report_paths": ("CPU_ONLY",),
-                               "plan_required": True})
+                               "plan_required": True, "served": "CPU_AND_NE"})
 
     def test_the_plan_gates_only_an_ane_served_model(self):
         summary = {"ane": 1, "assigned": 10, "share": 0.1, "off": {"linear": 9}}
@@ -50,12 +50,19 @@ class ServedPath(unittest.TestCase):
         def failing_gate(compiled, min_ane):
             raise GateFailure("compute plan: 1/10 ops on the ANE")
 
+        read_for = []
+
+        def report(compiled, units="CPU_AND_NE"):
+            read_for.append(units)
+            return summary
+
         saved = gates._plan.gate, gates._plan.report
-        gates._plan.gate, gates._plan.report = failing_gate, lambda compiled: summary
+        gates._plan.gate, gates._plan.report = failing_gate, report
         try:
             off_ane = gates.ClassifierGates(**{**gates.ClassifierGates.paths("CPU_AND_GPU"),
                                                "gated_paths": (), "report_paths": ()})
             self.assertIs(off_ane.coreml("model.mlmodelc", 128, [], None, False)["plan"], summary)
+            self.assertEqual(read_for, ["CPU_AND_GPU"])  # the plan of the units it is served with
             on_ane = gates.ClassifierGates(**{**gates.ClassifierGates.paths("CPU_AND_NE"),
                                               "gated_paths": (), "report_paths": ()})
             with self.assertRaises(GateFailure):
@@ -114,6 +121,43 @@ class AneWeightCap(unittest.TestCase):
         self.assertIsNone(core.check_ane_weights(self.job(), 128, self.compiled(int(0.964 * 2**30))))
         over = self.compiled(plan.MAX_ANE_PROGRAM_WEIGHT_BYTES + 1)
         self.assertIsNone(core.check_ane_weights(self.job(ane=False), 128, over))
+
+
+class PlacementRecord(unittest.TestCase):
+    """The [placement] table an installed manifest gets: sidekick_coreml's
+    PlanSummary counts per bucket, for the units the model is served with."""
+
+    def summary(self, units, ane, gpu, cpu, unassigned, off):
+        return {"units": units, "ane": ane, "gpu": gpu, "cpu": cpu, "unassigned": unassigned,
+                "total": ane + gpu + cpu + unassigned, "off": off}
+
+    def test_counts_match_the_runtime_summary(self):
+        from sidekick_convert import plan
+        ops = [plan.Op("const", "none", ["w"]), plan.Op("linear", "NeuralEngine", ["a"]),
+               plan.Op("gather", "CPU", ["b"]), plan.Op("matmul", "GPU", ["c"]), plan.Op("const", "none", ["d"])]
+        s = plan.summarize(ops)
+        self.assertEqual((s["ane"], s["gpu"], s["cpu"], s["unassigned"], s["total"]), (1, 1, 1, 2, 5))
+        self.assertEqual(s["off"], {"gather": 1, "matmul": 1})
+
+    def test_the_table_parses_as_the_runtime_reads_it(self):
+        import tomllib
+        from sidekick_convert import plan
+        plans = {512: self.summary("CPU_AND_GPU", 0, 300, 14, 400, {"matmul": 290, "gather": 1}),
+                 128: self.summary("CPU_AND_GPU", 0, 290, 12, 380, {"matmul": 280})}
+        text = 'id = "m"\n' + plan.placement_toml(plans, "Apple M1 Max", "25A354", "2026-10-01")
+        p = tomllib.loads(text)["placement"]
+        self.assertEqual({k: p[k] for k in ("compute_units", "chip", "macos_build", "date")},
+                         {"compute_units": "cpu_and_gpu", "chip": "Apple M1 Max", "macos_build": "25A354",
+                          "date": "2026-10-01"})
+        self.assertEqual(list(p["buckets"]), ["128", "512"])
+        self.assertEqual(p["buckets"]["512"], {"ane": 0, "gpu": 300, "cpu": 14, "unassigned": 400, "total": 714,
+                                               "off_ane_ops": {"gather": 1, "matmul": 290}})
+
+    def test_one_set_of_units_per_table(self):
+        from sidekick_convert import plan
+        plans = {128: self.summary("CPU_AND_NE", 1, 0, 0, 0, {}), 256: self.summary("CPU_AND_GPU", 0, 1, 0, 0, {})}
+        with self.assertRaises(ValueError):
+            plan.placement_toml(plans, "chip", "build", "2026-10-01")
 
 
 if __name__ == "__main__":

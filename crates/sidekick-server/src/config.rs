@@ -36,6 +36,15 @@ pub struct Config {
     /// slightly bucket-dependent CPU results there (D33). A manifest's
     /// `cpu_seq_limit = "ignore"` does the same for one model.
     pub ignore_cpu_seq_cap: bool,
+    /// Read where Core ML places each loaded bucket's operations on this
+    /// machine (`placement` in /v1/models, `compute_plans` in /health). Off
+    /// by default: reading a plan compiles the bucket a second time, as
+    /// long as its first load took (minutes for a large bucket), and Core
+    /// ML caches that compile on disk at about the bucket's weight size.
+    /// Each bucket's plan is read once, in the background, after its first
+    /// load, and the result is cached. Without it, the plan recorded at
+    /// conversion time is reported, when the manifest has one.
+    pub report_compute_plans: bool,
 }
 
 impl Default for Config {
@@ -49,6 +58,7 @@ impl Default for Config {
             request_timeout_secs: 60,
             ignore_ane_weight_cap: false,
             ignore_cpu_seq_cap: false,
+            report_compute_plans: false,
         }
     }
 }
@@ -74,6 +84,11 @@ impl Config {
                 .join("sidekick")
                 .join("models")
         })
+    }
+
+    /// Where compute plans are cached: `~/Library/Caches/sidekick/compute-plans`.
+    pub fn compute_plan_cache_dir(&self) -> Option<PathBuf> {
+        dirs::cache_dir().map(|d| d.join("sidekick").join("compute-plans"))
     }
 
     pub fn session_ttl(&self) -> Duration {
@@ -115,5 +130,8 @@ mod tests {
         assert!(!Config::default().ignore_cpu_seq_cap, "the CPU sequence cap is enforced by default");
         let c: Config = toml::from_str("ignore_cpu_seq_cap = true").unwrap();
         assert!(c.ignore_cpu_seq_cap);
+        assert!(!Config::default().report_compute_plans, "live plan reads are opt-in");
+        let c: Config = toml::from_str("report_compute_plans = true").unwrap();
+        assert!(c.report_compute_plans);
     }
 }
