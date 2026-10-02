@@ -207,6 +207,28 @@ pub fn cpu_capped() -> String {
         .replace("max_seq_len = 64", "max_seq_len = 2048\ncompute_units = \"cpu_only\"")
 }
 
+/// A text classifier whose manifest records its conversion-time compute
+/// plan for buckets 16 and 64 (128 isn't recorded), read on this machine
+/// or, with `build`, on another macOS build. With `served_on`, the model is
+/// served with other compute units than the plan was read for.
+pub fn placed(id: &str, build: Option<&str>, served_on: Option<&str>) -> String {
+    let machine = sidekick_embed::placement::this_machine();
+    let units = served_on.map(|u| format!("\ncompute_units = \"{u}\"")).unwrap_or_default();
+    let plan = |ane: usize| format!("ane = {ane}\ngpu = 0\ncpu = 2\nunassigned = 5\ntotal = {}\noff_ane_ops = {{ gather = 2 }}\n", ane + 7);
+    format!(
+        "{}\n[placement]\ncompute_units = \"cpu_and_ne\"\nchip = \"{}\"\nmacos_build = \"{}\"\ndate = \"2026-10-01\"\n\
+         [placement.buckets.16]\n{}[placement.buckets.64]\n{}",
+        SENTIMENT
+            .replace("id = \"sentiment\"", &format!("id = \"{id}\""))
+            .replace("buckets = [16, 64]", "buckets = [16, 64, 128]")
+            .replace("max_seq_len = 64", &format!("max_seq_len = 128{units}")),
+        machine.chip,
+        build.unwrap_or(&machine.macos_build),
+        plan(30),
+        plan(31),
+    )
+}
+
 /// `classifier.toml` for a zero-shot model in the laya format.
 pub const ZERO_SHOT: &str = r#"
 id = "decider"
@@ -362,6 +384,15 @@ pub struct MockClassifier {
     pub runs: Arc<std::sync::atomic::AtomicUsize>,
 }
 
+impl MockClassifier {
+    /// The manifest's smallest bucket holding `n` tokens, as the real
+    /// backends pick it, or its largest.
+    fn bucket(&self, n: usize) -> usize {
+        let buckets = &self.manifest.buckets;
+        *buckets.iter().find(|&&b| b >= n).unwrap_or_else(|| buckets.last().expect("validated non-empty"))
+    }
+}
+
 impl Classifier for MockClassifier {
     fn id(&self) -> &str {
         &self.manifest.id
@@ -418,11 +449,11 @@ impl Classifier for MockClassifier {
         LABELS.with(|l| *l.borrow_mut() = labels);
         let fev = self.manifest.classify.format == Some(ClassifyFormat::Fev);
         Ok(Prepared {
+            bucket: self.bucket(ids.len()),
             ids,
             type_ids: vec![],
             markers,
             qtype: params.question_type.filter(|_| !fev).map(|q| q.index()),
-            bucket: 64,
             decide_pos: fev.then_some(0),
         })
     }
@@ -434,7 +465,7 @@ impl Classifier for MockClassifier {
             return Err(Error::InvalidRequest("rejected by prepare".into()));
         }
         let ids: Vec<i32> = format!("{query}|{document}").bytes().map(i32::from).collect();
-        Ok(Prepared { type_ids: vec![0; ids.len()], ids, markers: vec![], qtype: None, bucket: 64, decide_pos: None })
+        Ok(Prepared { type_ids: vec![0; ids.len()], bucket: self.bucket(ids.len()), ids, markers: vec![], qtype: None, decide_pos: None })
     }
 
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {
@@ -518,8 +549,13 @@ pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
     write_embedding_fixture(&dir);
     let capped = cpu_capped();
     let julia = julia_zero_shot();
+    let (fresh, stale, gpu) =
+        (placed("placed", None, None), placed("placed-stale", Some("0Z000"), None), placed("placed-gpu", None, Some("cpu_and_gpu")));
     for (name, body) in [
         ("sentiment", SENTIMENT),
+        ("placed", fresh.as_str()),
+        ("placed-stale", stale.as_str()),
+        ("placed-gpu", gpu.as_str()),
         ("decider", ZERO_SHOT),
         ("schema-decider", SCHEMA_ZERO_SHOT),
         ("cpu-capped", capped.as_str()),
@@ -555,6 +591,7 @@ pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
         api_key: api_key.map(Arc::from),
         started_at: Instant::now(),
         request_timeout: Duration::from_secs(60),
+        placements: None,
     };
     Probes { state, seen, pairs, runs }
 }

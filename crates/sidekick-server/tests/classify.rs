@@ -61,6 +61,26 @@ async fn text_classification_round_trip_with_provenance() {
     assert_eq!(headers["sidekick-version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(headers["sidekick-model"], "sentiment@abc123");
     assert_eq!(headers["sidekick-compute-units"], "cpu_and_ne");
+    // The mock's 11 tokens fit sentiment's 16-token bucket.
+    assert_eq!(headers["sidekick-buckets"], "16");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_buckets_header_names_each_inputs_bucket_in_input_order() {
+    let long = "x".repeat(40);
+    let (status, headers, body) = call_with_headers(
+        test_state(true, None),
+        classify(json!({"model": "sentiment", "input": ["short", long, "tiny"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(headers["sidekick-buckets"], "16,64,16");
+    // A failed request carries no provenance, buckets included.
+    let (status, headers, _) =
+        call_with_headers(test_state(true, None), classify(json!({"model": "sentiment", "input": ["ok", "reject"]})))
+            .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(headers.get("sidekick-buckets").is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -546,7 +566,10 @@ async fn listings_are_task_aware() {
     let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;
     assert_eq!(
         health["classifiers"]["models"],
-        json!(["cpu-capped", "decider", "fev-decider", "julia", "reranker", "schema-decider", "sentiment", "sigmoid-reranker"])
+        json!([
+            "cpu-capped", "decider", "fev-decider", "julia", "placed", "placed-gpu", "placed-stale", "reranker",
+            "schema-decider", "sentiment", "sigmoid-reranker"
+        ])
     );
     // A cpu_only model past 1,024 tokens runs capped (D33), and says so.
     let cap = json!({"limit": 1024, "manifest_max_seq_len": 2048});
@@ -583,6 +606,7 @@ async fn embeddings_and_chat_carry_provenance_headers() {
     assert_eq!(headers["sidekick-version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(headers["sidekick-model"], "test-static");
     assert_eq!(headers["sidekick-compute-units"], "cpu");
+    assert!(headers.get("sidekick-buckets").is_none(), "a static embedder has no buckets");
 
     for stream in [false, true] {
         let state = test_state(true, None);
@@ -599,6 +623,7 @@ async fn embeddings_and_chat_carry_provenance_headers() {
         assert_eq!(headers["sidekick-model"], "core3", "the Foundation Models variant id");
         assert_eq!(headers["sidekick-version"], env!("CARGO_PKG_VERSION"));
         assert!(headers.get("sidekick-compute-units").is_none());
+        assert!(headers.get("sidekick-buckets").is_none());
     }
     // An error carries no provenance.
     let (_, headers, _) = call_with_headers(
@@ -643,4 +668,101 @@ async fn builds_without_core_ml_hide_classifiers() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     let (_, health) = call(state, Request::get("/health").body(Body::empty()).unwrap()).await;
     assert_eq!(health["classifiers"]["supported"], false);
+}
+
+#[tokio::test]
+async fn listings_report_the_conversion_time_plan_by_default() {
+    let state = test_state(true, None);
+    let (_, models) = call(state.clone(), Request::get("/v1/models").body(Body::empty()).unwrap()).await;
+    let model = |id: &str| models["data"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+    // Recorded on this machine: the counts, by bucket; 128 wasn't recorded.
+    assert_eq!(
+        model("placed")["placement"],
+        json!({
+            "16": {"source": "conversion", "state": "ready", "ane": 30, "gpu": 0, "cpu": 2},
+            "64": {"source": "conversion", "state": "ready", "ane": 31, "gpu": 0, "cpu": 2},
+        })
+    );
+    // On another macOS build: reported, and marked where it was measured.
+    let machine = sidekick_embed::placement::this_machine();
+    let stale = format!("measured on {}, macOS 0Z000", machine.chip);
+    assert_eq!(model("placed-stale")["placement"]["16"]["stale"], json!(stale));
+    // Read for other compute units than the model is served with: not this model's plan.
+    assert!(model("placed-gpu").get("placement").is_none());
+    assert!(model("sentiment").get("placement").is_none(), "nothing recorded, nothing read");
+
+    let (_, health) = call(state, Request::get("/health").body(Body::empty()).unwrap()).await;
+    let plans = &health["compute_plans"];
+    assert_eq!(plans["live"], false, "live reads are opt-in");
+    assert_eq!(
+        plans["models"]["placed"]["16"],
+        json!({
+            "source": "conversion", "state": "ready", "ane": 30, "gpu": 0, "cpu": 2, "unassigned": 5,
+            "off_ane_ops": {"gather": 2},
+            "measured_on": {"chip": machine.chip, "macos_build": machine.macos_build, "date": "2026-10-01"},
+        })
+    );
+    let ids: Vec<&String> = plans["models"].as_object().unwrap().keys().collect();
+    assert_eq!(ids, vec!["placed", "placed-stale"]);
+}
+
+#[tokio::test]
+async fn listings_report_live_compute_plans_when_enabled() {
+    use sidekick_embed::placement::{OpCounts, Placement, PlanReader, Placements};
+    use std::path::Path;
+    let mut state = test_state(true, None);
+    // A stand-in for Core ML's plan reads: every 64-token bucket fails.
+    let reader: PlanReader = std::sync::Arc::new(|path: &Path, _| match path.ends_with("model_64.mlmodelc") {
+        true => Err(sidekick_core::Error::Inference("no plan for this one".into())),
+        false => Ok(OpCounts {
+            ane: 40,
+            cpu: 1,
+            unassigned: 9,
+            off_ane_ops: [("gather".to_string(), 1)].into(),
+            ..Default::default()
+        }),
+    });
+    let placements = Placements::new(reader, None);
+    let units = sidekick_core::ComputeUnits::CpuAndNeuralEngine;
+    for (id, buckets) in [("sentiment", vec![16, 64]), ("placed", vec![16, 64, 128])] {
+        let dir = state.registry.classifier(id).unwrap().dir.clone();
+        for &bucket in &buckets {
+            placements.loaded(&dir.join(format!("model_{bucket}.mlmodelc")), units);
+        }
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while placements.for_model(&dir, "model_{seq}.mlmodelc", &buckets, units).values().any(|p| *p == Placement::Pending) {
+            assert!(std::time::Instant::now() < until, "plans never read");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+    state.placements = Some(placements);
+
+    let (_, models) = call(state.clone(), Request::get("/v1/models").body(Body::empty()).unwrap()).await;
+    let model = |id: &str| models["data"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+    // Counts only; a failure without its reason.
+    assert_eq!(
+        model("sentiment")["placement"],
+        json!({
+            "16": {"source": "live", "state": "ready", "ane": 40, "gpu": 0, "cpu": 1},
+            "64": {"source": "live", "state": "error"},
+        })
+    );
+    // A live plan wins over the recorded one; a failed live read falls back to it.
+    let placed = model("placed")["placement"].clone();
+    assert_eq!((placed["16"]["source"].clone(), placed["16"]["ane"].clone()), (json!("live"), json!(40)));
+    assert_eq!((placed["64"]["source"].clone(), placed["64"]["ane"].clone()), (json!("conversion"), json!(31)));
+    assert_eq!(placed["128"]["source"], "live");
+    // No bucket loaded and nothing recorded: no placement.
+    assert!(model("julia").get("placement").is_none());
+
+    let (_, health) = call(state, Request::get("/health").body(Body::empty()).unwrap()).await;
+    let plans = &health["compute_plans"];
+    assert_eq!(plans["live"], true);
+    assert_eq!(
+        plans["models"]["sentiment"]["16"],
+        json!({"source": "live", "state": "ready", "ane": 40, "gpu": 0, "cpu": 1, "unassigned": 9, "off_ane_ops": {"gather": 1}})
+    );
+    let error = "inference error: no plan for this one";
+    assert_eq!(plans["models"]["sentiment"]["64"], json!({"source": "live", "state": "error", "error": error}));
+    assert_eq!(plans["models"]["placed"]["64"]["live_error"], error);
 }

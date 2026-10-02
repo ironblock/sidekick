@@ -211,7 +211,11 @@ Inference responses (every route above) carry provenance headers:
 `sidekick-version`, `sidekick-model` (`<id>@<revision>` when the manifest
 records the source revision; for chat, the Foundation Models variant) and
 `sidekick-compute-units` (a Core ML model's configured compute units,
-`cpu_and_ne` by default; `cpu` for static ones).
+`cpu_and_ne` by default; `cpu` for static ones). Core ML responses also
+carry `sidekick-buckets`: the sequence-length bucket, so the compiled
+program, each input ran in, in input order (`256,256,512`; a rerank pair
+is one input). Each bucket's placement on the ANE, GPU and CPU is in the
+model's `/v1/models` entry once the bucket has loaded.
 
 ## Models directory
 
@@ -256,6 +260,7 @@ session_ttl_secs = 300         # Foundation Models session reuse window
 model_idle_ttl_secs = 900      # model residency (embedders, classifiers) after last use
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
+report_compute_plans = false   # read each loaded bucket's Core ML placement live (costs a second compile)
 ```
 
 CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...

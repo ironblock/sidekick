@@ -90,7 +90,7 @@ async fn rerank(
                 .collect::<Result<Vec<_>, Error>>()?;
             prepared
                 .iter()
-                .map(|p| Ok((p.ids.len(), classifier.run(p)?)))
+                .map(|p| Ok((p.ids.len(), p.bucket, classifier.run(p)?)))
                 .collect::<Result<Vec<_>, Error>>()
         })
     };
@@ -101,8 +101,11 @@ async fn rerank(
 
     let mut prompt_tokens = 0usize;
     let mut scored = Vec::with_capacity(outputs.len());
-    for (index, (tokens, logits)) in outputs.into_iter().enumerate() {
+    // In request order, before results are sorted by score.
+    let mut buckets = Vec::with_capacity(outputs.len());
+    for (index, (tokens, bucket, logits)) in outputs.into_iter().enumerate() {
         prompt_tokens += tokens;
+        buckets.push(bucket);
         let [logit] = logits[..] else {
             return Err(Error::Inference(format!(
                 "model `{}` returned {} values for a pair; a reranker returns one",
@@ -136,6 +139,7 @@ async fn rerank(
     let provenance = Provenance {
         model: Provenance::model_id(&req.model, manifest.source.as_ref()),
         compute_units: Some(manifest.compute_units.name()),
+        buckets: Some(buckets),
     };
     Ok(provenance.apply(
         Json(RerankResponse {

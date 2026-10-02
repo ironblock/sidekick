@@ -94,11 +94,14 @@ pub fn wrong_route(id: &str, task: &str, route: &str) -> ApiError {
 
 /// Provenance headers for an inference response (docs/design/classify.md):
 /// the daemon version, the model (`<id>@<revision>` when its manifest
-/// names a source revision), and the compute units the serving instance
-/// was loaded with. Chat has no compute units to report.
+/// names a source revision), the compute units the serving instance was
+/// loaded with, and the sequence-length bucket each input ran in. Chat has
+/// no compute units or buckets to report, and a static embedder no buckets.
 pub struct Provenance {
     pub model: String,
     pub compute_units: Option<&'static str>,
+    /// One per input, in input order (a rerank pair is one input).
+    pub buckets: Option<Vec<usize>>,
 }
 
 impl Provenance {
@@ -116,7 +119,13 @@ impl Provenance {
         Self {
             model: Self::model_id(id, m.and_then(|m| m.source.as_ref())),
             compute_units: m.map(|m| m.compute_units_name()),
+            buckets: None,
         }
+    }
+
+    /// With the bucket each input ran in.
+    pub fn with_buckets(self, buckets: Option<Vec<usize>>) -> Self {
+        Self { buckets, ..self }
     }
 
     pub fn apply(self, mut response: Response) -> Response {
@@ -131,6 +140,10 @@ impl Provenance {
         set("sidekick-model", &self.model);
         if let Some(units) = self.compute_units {
             set("sidekick-compute-units", units);
+        }
+        if let Some(buckets) = self.buckets.filter(|b| !b.is_empty()) {
+            let list: Vec<String> = buckets.iter().map(usize::to_string).collect();
+            set("sidekick-buckets", &list.join(","));
         }
         response
     }

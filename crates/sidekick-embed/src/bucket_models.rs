@@ -57,6 +57,7 @@ impl BucketModels {
         }
         let model = Arc::new(CoremlModel::load(&path, self.units)?);
         *slot = Some(model.clone());
+        crate::placement::loaded(&path, self.units);
         Ok(model)
     }
 }

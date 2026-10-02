@@ -520,6 +520,15 @@ pub struct ModelObject {
     /// reports them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compute_units: Option<&'static str>,
+    /// Extension, Core ML models: where Core ML places each bucket's
+    /// operations, by bucket: `{"source", "state": "ready", "ane", "gpu",
+    /// "cpu"}` (operation counts), with `source` `live` (read by this
+    /// daemon) or `conversion` (recorded in the manifest; `stale` says where
+    /// it was measured when that isn't this chip and macOS build). A live
+    /// read in progress is `{"state": "pending"}`, a failed one
+    /// `{"state": "error"}` (the reason is in /health).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placement: Option<serde_json::Map<String, serde_json::Value>>,
     /// Extension, classifiers: the temperatures `calibration: "model"`
     /// applies, keyed `"<question_type>:<label count bucket>"`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -541,6 +550,7 @@ impl ModelObject {
             required: None,
             seq_cap: None,
             compute_units: None,
+            placement: None,
             calibration: None,
         }
     }

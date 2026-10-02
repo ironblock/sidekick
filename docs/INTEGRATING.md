@@ -164,8 +164,13 @@ or SGLang works unchanged. What a host needs to know beyond that:
   (`<id>@<revision>`) with any stored label or score, so results from
   different model revisions don't mix silently. The daemon also sends
   `sidekick-version` and `sidekick-compute-units` (the compute units the
-  model is configured for, also in its `/v1/models` entry). The embeddings
-  route sends the same headers.
+  model is configured for, also in its `/v1/models` entry) and
+  `sidekick-buckets` (the sequence-length bucket each input ran in, in
+  input order, e.g. `256,256,512`). The embeddings and rerank routes send
+  the same headers; a static embedder sends no `sidekick-buckets`. A
+  model's `/v1/models` entry reports, under `placement`, how many of each
+  bucket's operations Core ML runs on the ANE, the GPU and the CPU
+  (`docs/design/classify.md`, "Where Core ML places operations").
 
 ## Path 3: your fallback
 

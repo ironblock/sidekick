@@ -51,7 +51,7 @@ pub enum Pooling {
 /// preference is sidekick's default because it keeps background work off
 /// the GPU (D14); a model the ANE runs badly can ask for another
 /// (docs/design/classify.md, "Compute units").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum ComputeUnits {
     /// `.all`: Core ML picks among CPU, GPU and ANE.
     #[serde(rename = "all")]
@@ -136,6 +136,74 @@ pub struct SeqCap {
     pub state_max_len: Option<usize>,
 }
 
+/// `[placement]`: where Core ML placed each bucket's operations when the
+/// converter read its compute plan, and on what machine. The daemon reports
+/// it per bucket without reading a plan itself; see docs/design/classify.md,
+/// "Where Core ML places operations".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedPlacement {
+    /// The compute units the plan was read for. A plan for other units
+    /// than the model is served with doesn't describe it, and isn't
+    /// reported.
+    pub compute_units: ComputeUnits,
+    /// The chip it was read on (`sysctl machdep.cpu.brand_string`).
+    pub chip: String,
+    /// The macOS build it was read on (`sw_vers -buildVersion`).
+    pub macos_build: String,
+    /// The day it was read (`2026-10-01`).
+    #[serde(default)]
+    pub date: Option<String>,
+    /// By bucket length (TOML table keys are strings).
+    pub buckets: BTreeMap<String, RecordedPlan>,
+}
+
+/// One bucket's recorded plan: operation counts by device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedPlan {
+    pub ane: usize,
+    pub gpu: usize,
+    pub cpu: usize,
+    /// Operations with no device (constants and other bookkeeping).
+    pub unassigned: usize,
+    /// Every operation: the sum of the four counts.
+    pub total: usize,
+    /// Operator names off the ANE, with counts.
+    #[serde(default)]
+    pub off_ane_ops: BTreeMap<String, usize>,
+}
+
+impl RecordedPlacement {
+    /// The recorded plan for `bucket`.
+    pub fn bucket(&self, bucket: usize) -> Option<&RecordedPlan> {
+        self.buckets.get(&bucket.to_string())
+    }
+}
+
+/// Why a recorded placement can't be used: it must describe the model's own
+/// buckets, with consistent counts. Checked against the manifest's buckets
+/// before any cap drops some. A bad record is dropped with a warning rather
+/// than skipping the model: it only describes the model.
+fn placement_problem(p: &RecordedPlacement, buckets: &[usize]) -> Option<String> {
+    for (key, plan) in &p.buckets {
+        let listed = key.parse::<usize>().is_ok_and(|b| buckets.contains(&b));
+        if !listed {
+            return Some(format!("`[placement.buckets]` has `{key}`, which isn't one of the buckets {buckets:?}"));
+        }
+        if plan.ane + plan.gpu + plan.cpu + plan.unassigned != plan.total {
+            return Some(format!("`[placement.buckets.{key}]` counts don't add up to its `total`"));
+        }
+    }
+    None
+}
+
+/// Drop `placement` when it can't be used, with a warning naming `path`.
+fn check_placement(path: &Path, placement: &mut Option<RecordedPlacement>, problem: Option<String>) {
+    if let Some(problem) = problem {
+        tracing::warn!(manifest = %path.display(), "ignoring the recorded compute plan: {problem}");
+        *placement = None;
+    }
+}
+
 /// `manifest.toml` for an embedding model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelManifest {
@@ -187,6 +255,9 @@ pub struct ModelManifest {
     /// The cap the registry applied, if any (never read from the file).
     #[serde(skip)]
     pub seq_cap: Option<SeqCap>,
+    /// The compute plan the converter read (coreml backend only).
+    #[serde(default)]
+    pub placement: Option<RecordedPlacement>,
 }
 
 impl ModelManifest {
@@ -261,6 +332,9 @@ pub struct ClassifierManifest {
     /// The cap the registry applied, if any (never read from the file).
     #[serde(skip)]
     pub seq_cap: Option<SeqCap>,
+    /// The compute plan the converter read.
+    #[serde(default)]
+    pub placement: Option<RecordedPlacement>,
     pub classify: ClassifySection,
 }
 
@@ -747,6 +821,15 @@ impl ModelRegistry {
             }
             let loaded = read_manifest::<ModelManifest>(&path)
                 .and_then(|m| validate_embedder(&m).map(|()| m))
+                .map(|mut m| {
+                    let problem = match (&m.placement, m.backend) {
+                        (None, _) => None,
+                        (Some(_), EmbeddingBackendKind::Static) => Some("a static model has no compute plan".into()),
+                        (Some(p), EmbeddingBackendKind::Coreml) => placement_problem(p, &m.buckets),
+                    };
+                    check_placement(&path, &mut m.placement, problem);
+                    m
+                })
                 .and_then(|m| {
                     if m.backend != EmbeddingBackendKind::Coreml {
                         return Ok(m);
@@ -784,6 +867,11 @@ impl ModelRegistry {
             }
             let loaded = read_manifest::<ClassifierManifest>(&path)
                 .and_then(|m| validate_classifier(&m).map(|()| m))
+                .map(|mut m| {
+                    let problem = m.placement.as_ref().and_then(|p| placement_problem(p, &m.buckets));
+                    check_placement(&path, &mut m.placement, problem);
+                    m
+                })
                 .and_then(|m| {
                     check_ane_weights(dir, &m.artifact, &m.buckets, m.compute_units, m.ane_weight_limit, options)
                         .map(|()| m)
@@ -1440,6 +1528,60 @@ output = "logits"
         let (m, why) = scan("tiny", &cpu(FEV));
         assert!(m.is_none());
         assert!(why.as_deref().unwrap().contains("with its length capped for the CPU (D33)"), "{why:?}");
+    }
+
+    /// A classifier manifest's `[placement]`, parsed without checks.
+    fn reg_placement(body: &str) -> RecordedPlacement {
+        toml::from_str::<ClassifierManifest>(body).unwrap().placement.unwrap()
+    }
+
+    #[test]
+    fn a_recorded_placement_is_read_and_checked() {
+        let placement = "\n[placement]\ncompute_units = \"cpu_and_ne\"\nchip = \"Apple M1 Max\"\nmacos_build = \"25A354\"\n\
+                         date = \"2026-10-01\"\n\
+                         [placement.buckets.128]\nane = 294\ngpu = 0\ncpu = 10\nunassigned = 410\ntotal = 714\n\
+                         off_ane_ops = { gather = 2, cast = 8 }\n";
+        let tmp = tmp_dir("placement");
+        write_classifier(&tmp, "s", &format!("{SENTIMENT}{placement}"));
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        let p = reg.classifier("sentiment").unwrap().manifest.placement.clone().unwrap();
+        assert_eq!((p.compute_units, p.chip.as_str(), p.macos_build.as_str()), (ComputeUnits::CpuAndNeuralEngine, "Apple M1 Max", "25A354"));
+        assert_eq!(p.date.as_deref(), Some("2026-10-01"));
+        let b = p.bucket(128).unwrap();
+        assert_eq!((b.ane, b.cpu, b.total, b.off_ane_ops["gather"]), (294, 10, 714, 2));
+        assert!(p.bucket(512).is_none(), "a bucket may go unrecorded");
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // A record that doesn't fit the model is dropped; the model still loads.
+        let sentiment = |p: &RecordedPlacement| placement_problem(p, &[128, 512]);
+        let mut p = reg_placement(&format!("{SENTIMENT}{}", placement.replace("buckets.128", "buckets.256")));
+        assert!(sentiment(&p).unwrap().contains("`256`, which isn't one of the buckets"));
+        p = reg_placement(&format!("{SENTIMENT}{}", placement.replace("total = 714", "total = 700")));
+        assert!(sentiment(&p).unwrap().contains("don't add up"));
+        let tmp = tmp_dir("placement-dropped");
+        write_classifier(&tmp, "s", &format!("{SENTIMENT}{}", placement.replace("total = 714", "total = 700")));
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty());
+        assert!(reg.classifier("sentiment").unwrap().manifest.placement.is_none());
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // Embedders: coreml only; a cap that drops a recorded bucket is fine.
+        let tmp = tmp_dir("placement-embedders");
+        let embedder = |id: &str, backend: &str, extra: &str| {
+            format!("id = \"{id}\"\nbackend = \"{backend}\"\nartifact = \"m_{{seq}}\"\ntokenizer = \"t\"\ndims = 4\n\
+                     buckets = [128, 2048]\nmax_seq_len = 2048\n{extra}{}", placement.replace("buckets.128", "buckets.2048"))
+        };
+        write_manifest(&tmp, "e", &embedder("e", "coreml", "compute_units = \"cpu_only\"\n"));
+        let static_model = "id = \"s\"\nbackend = \"static\"\nartifact = \"m\"\ntokenizer = \"t\"\ndims = 4\nmax_seq_len = 8\n";
+        write_manifest(&tmp, "s", &format!("{static_model}{placement}"));
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        let e = &reg.get("e").unwrap().manifest;
+        assert_eq!(e.buckets, vec![128], "capped for the CPU");
+        assert!(e.placement.as_ref().unwrap().bucket(2048).is_some());
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        assert!(reg.get("s").unwrap().manifest.placement.is_none(), "a static model's is dropped");
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]

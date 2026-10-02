@@ -1,5 +1,6 @@
 use crate::pool::{ClassifierPool, EmbedderPool};
 use sidekick_core::{ChatBackend, ModelRegistry};
+use sidekick_embed::placement::Placements;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,10 @@ pub struct AppState {
     /// prediction). Chat enforces the same config value inside the FM
     /// backend.
     pub request_timeout: Duration,
+    /// Where Core ML placed each loaded bucket's operations, read in the
+    /// background after the bucket's first load. `None` when
+    /// `report_compute_plans` is off or the build has no Core ML.
+    pub placements: Option<Arc<Placements>>,
 }
 
 /// How long a known Foundation Models variant id is reused before a

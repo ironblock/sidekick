@@ -57,6 +57,8 @@ async fn v1_rerank_is_vllms_shape_sorted_with_provenance() {
         assert_eq!(v["usage"], json!({"prompt_tokens": tokens, "total_tokens": tokens}));
         assert_eq!(headers["sidekick-model"], "reranker@r1");
         assert_eq!(headers["sidekick-compute-units"], "cpu_and_ne");
+        // One per pair, in request order, not the sorted results' order.
+        assert_eq!(headers["sidekick-buckets"], "64,64,64,64");
     }
 }
 
@@ -255,6 +257,7 @@ async fn v2_embed_is_cohere_shaped_by_type() {
     assert_eq!(floats, vec![0.0, 1.0, 0.0, 0.0]);
     assert_eq!(headers["sidekick-model"], "test-static");
     assert_eq!(headers["sidekick-compute-units"], "cpu");
+    assert!(headers.get("sidekick-buckets").is_none(), "a static embedder has no buckets");
 
     // Bits pack 8 dimensions per byte (packing itself: embed_v2's unit
     // test); this fixture has 4.

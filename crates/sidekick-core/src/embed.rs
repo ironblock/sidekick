@@ -43,6 +43,20 @@ pub trait Embedder: Send + Sync {
     /// Native output dimensionality.
     fn dims(&self) -> usize;
 
+    /// [`embed_with`](Self::embed_with), plus the sequence-length bucket
+    /// each input ran in, in input order: the compiled program that
+    /// answered it (`sidekick-buckets`). `None` for a backend without
+    /// buckets.
+    #[allow(clippy::type_complexity)]
+    fn embed_bucketed(
+        &self,
+        texts: &[&str],
+        purpose: EmbedPurpose,
+        limits: EmbedLimits,
+    ) -> Result<(Vec<Vec<f32>>, Option<Vec<usize>>)> {
+        Ok((self.embed_with(texts, purpose, limits)?, None))
+    }
+
     /// Dimensions this model was trained to truncate to (Matryoshka), largest
     /// first, including the native size. Empty means truncation is lossy and
     /// unsupported.

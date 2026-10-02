@@ -122,11 +122,11 @@ pub async fn embed_v2(
     }
 
     let limits = EmbedLimits { truncate, max_tokens };
-    let vectors = {
+    let (vectors, buckets) = {
         let texts = texts.clone();
         let task = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-            embedder.embed_with(&refs, purpose, limits)
+            embedder.embed_bucketed(&refs, purpose, limits)
         });
         tokio::time::timeout_at(deadline, task)
             .await
@@ -167,7 +167,7 @@ pub async fn embed_v2(
     // Estimated token usage (~4 characters per token), as /v1/embeddings
     // reports it (D7). vLLM reports real counts; embedders don't return them.
     let approx_tokens: usize = texts.iter().map(|t| t.len() / 4).sum();
-    let provenance = Provenance::embedder(&state, &req.model);
+    let provenance = Provenance::embedder(&state, &req.model).with_buckets(buckets);
     Ok(provenance.apply(
         Json(CohereEmbedResponse {
             id: format!("embd-{request_id}"),
