@@ -479,6 +479,8 @@ async fn listings_are_task_aware() {
     assert!(e.get("labels").is_none() && e.get("max_batch").is_none());
     assert_eq!(e["compute_units"], "cpu");
 
+    assert_eq!(model("cpu-capped")["seq_cap"]["limit"], 1024);
+    assert_eq!(model("cpu-capped")["compute_units"], "cpu_only");
     let s = model("sentiment");
     assert_eq!(s["task"], "text-classification");
     assert_eq!(s["labels"], json!(["1 star", "2 stars", "3 stars", "4 stars", "5 stars"]));
@@ -510,8 +512,14 @@ async fn listings_are_task_aware() {
     let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;
     assert_eq!(
         health["classifiers"]["models"],
-        json!(["decider", "julia", "reranker", "schema-decider", "sentiment", "sigmoid-reranker"])
+        json!(["cpu-capped", "decider", "julia", "reranker", "schema-decider", "sentiment", "sigmoid-reranker"])
     );
+    // A cpu_only model past 1,024 tokens runs capped (D33), and says so.
+    let cap = json!({"limit": 1024, "manifest_max_seq_len": 2048});
+    assert_eq!(health["seq_caps"]["cpu-capped"]["limit"], cap["limit"]);
+    assert_eq!(health["seq_caps"]["cpu-capped"]["manifest_max_seq_len"], cap["manifest_max_seq_len"]);
+    assert!(health["seq_caps"]["cpu-capped"]["reason"].as_str().unwrap().contains("D33"));
+    assert!(health["seq_caps"].get("sentiment").is_none());
     assert_eq!(health["classifiers"]["resident"], 0);
     assert_eq!(health["embeddings"]["models"], json!(["test-static"]));
     let skipped = health["skipped_models"].as_array().unwrap();

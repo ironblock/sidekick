@@ -237,6 +237,8 @@ mod tests {
                 source: None,
                 compute_units: None,
                 ane_weight_limit: None,
+                cpu_seq_limit: None,
+                seq_cap: None,
             },
             dir: dir.clone(),
         }

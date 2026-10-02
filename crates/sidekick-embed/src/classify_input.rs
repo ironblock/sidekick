@@ -490,6 +490,8 @@ mod tests {
         ClassifierManifest {
             compute_units: Default::default(),
             ane_weight_limit: Default::default(),
+            cpu_seq_limit: Default::default(),
+            seq_cap: None,
             id: "m".into(),
             task,
             source: None,

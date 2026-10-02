@@ -148,8 +148,22 @@ pub struct ClassifyCaseResult {
     /// separate the input builder from numerics.
     pub model_only: Option<Vec<f32>>,
     pub bucket_invariance: Delta,
+    /// Each larger bucket the case re-ran in, and its Δp there: what the
+    /// grader splits bucket invariance by (absent in older outputs, which
+    /// fall back to `bucket_invariance`).
+    #[serde(default)]
+    pub bucket_pairs: Vec<BucketPair>,
     pub pad_invariance: Delta,
     pub ms: f64,
+}
+
+/// One bucket-invariance comparison: a case run in its own bucket and in a
+/// larger one.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct BucketPair {
+    pub from: usize,
+    pub to: usize,
+    pub dp: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,7 +208,12 @@ pub struct ClassifyGrade {
     /// with gold labels: (correct, total).
     pub gold: Option<(usize, usize)>,
     pub reference_gold: Option<(usize, usize)>,
+    /// The gated bucket comparisons.
     pub bucket_invariance: Delta,
+    /// CPU path only: comparisons into a bucket past
+    /// [`MAX_CPU_INVARIANT_SEQ`], reported as the documented hardware limit
+    /// (D33), not gated.
+    pub bucket_past_cpu_cap: Delta,
     pub pad_invariance: Delta,
     pub by_tag: BTreeMap<String, Option<f64>>,
     /// Worst Δp of each other oracle vs this path (report only).
@@ -330,10 +349,24 @@ pub fn grade(
             ids_differ.join(", ")
         ));
     }
+    // Bucket invariance, gated, except on the CPU path into a bucket past
+    // 1,024 tokens: Core ML's CPU sums in a length-dependent order there, so
+    // the comparison reports a documented hardware limit (D33). Older
+    // outputs without per-pair results keep their combined figure.
     let mut bucket_invariance = Delta::default();
+    let mut bucket_past_cpu_cap = Delta::default();
     let mut pad_invariance = Delta::default();
     for c in &result.cases {
-        merge(&mut bucket_invariance, c.bucket_invariance);
+        if c.bucket_pairs.is_empty() {
+            merge(&mut bucket_invariance, c.bucket_invariance);
+        }
+        for p in &c.bucket_pairs {
+            if path == Path3::Cpu && p.to > sidekick_core::MAX_CPU_INVARIANT_SEQ {
+                bucket_past_cpu_cap.add(p.dp);
+            } else {
+                bucket_invariance.add(p.dp);
+            }
+        }
         merge(&mut pad_invariance, c.pad_invariance);
     }
     let stress = |i: usize| cases[i].tags.iter().any(|t| t == STRESS_TAG);
@@ -510,6 +543,7 @@ pub fn grade(
         gold,
         reference_gold,
         bucket_invariance,
+        bucket_past_cpu_cap,
         pad_invariance,
         by_tag,
         vs_oracles,
@@ -553,6 +587,8 @@ mod tests {
         ClassifierManifest {
             compute_units: Default::default(),
             ane_weight_limit: Default::default(),
+            cpu_seq_limit: Default::default(),
+            seq_cap: None,
             id: "z".into(),
             task: ClassifyTask::ZeroShotClassification,
             source: None,
@@ -581,6 +617,7 @@ mod tests {
             logits,
             model_only: None,
             bucket_invariance: Delta { n: 1, max: Some(0.0) },
+            bucket_pairs: vec![],
             pad_invariance: Delta { n: 1, max: Some(0.0) },
             ms: 1.0,
         }
@@ -646,6 +683,53 @@ mod tests {
             assert!(all.contains(want), "{all}");
         }
         assert_eq!(g.worst_dp, None, "a non-finite case poisons the worst");
+    }
+
+    #[test]
+    fn the_cpu_bucket_check_past_1024_is_reported_not_gated() {
+        // Exact up to 1,024; 0.02 into the 2,048 bucket, as Lumma-fev's CPU
+        // path measured.
+        let pairs = |c: &mut ClassifyCaseResult| {
+            c.bucket_invariance = Delta { n: 2, max: Some(0.02) };
+            c.bucket_pairs = vec![
+                BucketPair { from: 512, to: 1024, dp: Some(0.0) },
+                BucketPair { from: 512, to: 2048, dp: Some(0.02) },
+            ];
+        };
+        let (json, st) = sample();
+        let reference = ClassifyReference::parse(&json, &st).unwrap();
+        let graded = |path: Path3| {
+            let mut a = case("a", vec![1.0, 2.0]);
+            pairs(&mut a);
+            let result = ClassifyWorkerResult {
+                model: "z".into(),
+                path: path.name().into(),
+                cases: vec![a, case("b", vec![0.5, 0.0, -1.0])],
+                repeat_bitwise: true,
+                load_ms: 0.0,
+            };
+            grade(&reference, &result, path, &ClassifyGates::default(), &manifest())
+        };
+        let cpu = graded(Path3::Cpu);
+        assert_eq!(cpu.bucket_invariance.max, Some(0.0), "gated up to 1,024 only");
+        assert_eq!((cpu.bucket_past_cpu_cap.n, cpu.bucket_past_cpu_cap.max), (1, Some(0.02)));
+        assert!(!cpu.failures.iter().any(|f| f.contains("bucket invariance")), "{:?}", cpu.failures);
+        // Off the CPU, the same comparison is gated as before.
+        let gpu = graded(Path3::Gpu);
+        assert_eq!((gpu.bucket_invariance.max, gpu.bucket_past_cpu_cap.n), (Some(0.02), 0));
+        assert!(gpu.failures.iter().any(|f| f.contains("bucket invariance")), "{:?}", gpu.failures);
+        // An older output without per-pair results keeps its combined figure.
+        let mut old = case("a", vec![1.0, 2.0]);
+        old.bucket_invariance = Delta { n: 2, max: Some(0.02) };
+        let result = ClassifyWorkerResult {
+            model: "z".into(),
+            path: "cpu".into(),
+            cases: vec![old, case("b", vec![0.5, 0.0, -1.0])],
+            repeat_bitwise: true,
+            load_ms: 0.0,
+        };
+        let g = grade(&reference, &result, Path3::Cpu, &ClassifyGates::default(), &manifest());
+        assert_eq!(g.bucket_invariance.max, Some(0.02));
     }
 
     #[test]
