@@ -35,6 +35,13 @@ The recipe (tools/sidekick_convert; docs/CONVERTING.md):
   angles near 2,047 radians; explicit attention (sdpa with a scale);
 - heads.agentjev: the candidates' last states selected by a one-hot of
   `cand_end`, then AgentJev's set transformer (written out) and scorer;
+- a bucket-invariant softmax (qwen3.matmul_softmax, as fev's constraint
+  D): every attention computes exp(w - rowmax) and one matmul against
+  [V | 1]. Core ML's own softmax, after the in-graph score matmul, rounds
+  differently on the CPU for different key lengths below 1,024
+  (tools/repro_cpu_softmax_length.py), so the same input differed between
+  the 512 and 1,024 buckets by up to |dp| 0.019; the matmul form is
+  bit-identical across them, at the same accuracy against fp32;
 - no precision or range rewrites: the model is GPU-served, where the
   fp16 graph is already at its ideal-fp16 ceiling, and a 2^-6 RMSNorm
   pre-scale measured worse on every path;
@@ -191,6 +198,8 @@ def main():
     print(f"gate set: {len(cases)} requests, {min(c.n for c in cases)}-{max(c.n for c in cases)} tokens, "
           f"buckets {[core.bucket_of(c.n, buckets) for c in cases]}", flush=True)
 
+    # After the references: the fp32 gate proves the rewrite exact.
+    qwen3.matmul_softmax(backbone)
     ports = head.ports()
     make_wrapper, example = compose(backbone, head, ports)
     gates = ClassifierGates(activation="softmax", pad_value=PAD_LOGIT, pad_id_range=(1000, 30000),

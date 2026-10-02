@@ -115,6 +115,36 @@ class Tree(unittest.TestCase):
         np.testing.assert_allclose(b.numpy(), a[[2, 0, 1]].numpy(), atol=2e-5)
 
 
+class TreeMatmulSoftmax(unittest.TestCase):
+    """qwen3.matmul_softmax, the rewrite that keeps the CPU bucket-invariant:
+    the tree still reproduces per-path scoring computed before the rewrite."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.TemporaryDirectory()
+        tiny_checkpoint(cls.dir.name, seed=1)
+        cls.backbone, cls.head = load(cls.dir.name)
+        cls.prefix, cls.suffixes = [5, 9, 13, 2, 7], [[40, 41], [50], [60, 61, 62]]
+        cls.want = per_path(cls.backbone, cls.head, cls.prefix, cls.suffixes)    # native attention
+        qwen3.matmul_softmax(cls.backbone)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.dir.cleanup()
+
+    def test_the_rewrite_is_exact_in_the_tree_and_per_path(self):
+        rng = np.random.default_rng(0)
+        for seq in (16, 32):
+            w = Wrapper(self.backbone, self.head, self.head.ports(), seq)
+            with torch.no_grad():
+                got = w(**tree_feed(self.prefix, self.suffixes, seq, self.head.kmax,
+                                    rng.integers(1, 120, seq).tolist()))[0]
+            np.testing.assert_allclose(got[:3].numpy(), self.want, atol=2e-5)
+        # run eagerly, it takes each path's own key length
+        np.testing.assert_allclose(per_path(self.backbone, self.head, self.prefix, self.suffixes), self.want, atol=2e-5)
+        self.assertEqual(self.backbone.model.config._attn_implementation, qwen3.MATMUL_SOFTMAX)
+
+
 class TreeMask(unittest.TestCase):
     def test_siblings_never_see_each_other_and_pads_see_themselves(self):
         seq = 7
