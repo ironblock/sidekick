@@ -1771,6 +1771,51 @@ release report no placement until they're reconverted.
 It remains the compiled plan, not the device a particular prediction ran
 on, which Core ML doesn't expose; the docs say so.
 
+## D36 — The agentjev format: candidates scored in one tree-shaped pass
+agent-jev (aimeigaoshou/agent-jev, Apache-2.0) is a 598M-parameter
+done-detector on a Qwen3-0.6B backbone: given a task's state, a question and
+candidate answers, it returns how likely each is. Its own code encodes each
+candidate as a separate causal sequence (state + question + candidate) and
+reads the last token. A permutation-equivariant set head then compares the
+candidates, followed by a per-question-type temperature. sidekick serves it
+as a fourth zero-shot format on `/v1/classify` (D28, D30, D34). The contract
+is in `docs/design/classify.md`.
+
+**One static pass, exact.** A static graph can't reuse a KV-cache prefix per
+candidate, so sidekick lays a question out as a tree: the shared prefix, then
+every candidate's suffix. A segment-id mask, built in the graph, lets each
+candidate see the prefix and its own earlier tokens but never a sibling, and
+position ids restart at the prefix length for each candidate. In fp32 this
+reproduces the authors' per-path scoring to |Δp| 5e-7. The tree is also much
+shorter than the separate paths: 63–76 tokens where they needed 122–291.
+- The Rust port of the authors' `contract.py` (pinned by hash) builds the
+  tree, and a token fixture from their own code checks it. It matches on
+  all 2,627 corpus cases.
+- Requests are refused, never truncated, when the tree exceeds the largest
+  bucket, as the authors' service refuses an over-long path. sidekick's
+  limit counts the prefix plus every suffix, which is stricter. At most 32
+  candidates (`max_labels`).
+- The authors' per-type temperatures are the manifest's calibration table.
+
+**Served on the GPU.** At 1.12 GiB of fp16 weights per bucket, agent-jev is
+over the ANE's weight limit (D32), so Core ML would run it on the CPU. An int8
+token table brings it under the limit, but on the ANE it is then slower than
+the GPU at every length (and slower than the CPU at 2,048 tokens) and less
+accurate. Its manifest sets `compute_units = "cpu_and_gpu"` (D31). Graded
+against its ideal-fp16 ceiling: A on the GPU (p99 at 0.70× the ceiling, no
+flips, 77 ms per case). It stays a **preview**: its CPU path fails the exact
+bucket-invariance gate below 1,024 tokens, where D33's limit doesn't apply
+(Δp up to 7e-3 between its 512 and 1,024 buckets on the same input, with
+similar accuracy against fp32 in each). Its ANE path runs on the CPU and
+fails the same way. Unlike Lumma-fev, whose CPU path is exact up to 1,024,
+agent-jev's CPU arithmetic depends on the bucket below it too. That's
+observed and not yet isolated.
+
+Its authors report modest quality: AUROC 0.589 for coding-task completion,
+where 0.5 is chance. Their service says its calibration isn't guaranteed.
+sidekick grades fidelity only, so those numbers are the consumer's call and
+are in docs/MODELS.md.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
