@@ -1010,6 +1010,23 @@ published, and this chip's floor makes it a regression test.
   suite exercises the ANE linear's 2^15 limit (D25 amendment). Adding it
   means regenerating every reference.
 
+**Amendment (October 2026): bucket invariance is sampled for buckets over
+512 tokens.** Re-running every case in every larger bucket doesn't scale to
+2,048-token buckets. For Lumma-fev (2,630 cases, ~1.24 s per ANE prediction
+at 2,048) it alone took 2–3 hours, past the suite's time limit. With
+`--bucket-invariance auto` (the default), a model whose largest bucket is
+over 512 re-runs every case in its next larger bucket, and the adversarial
+cases plus every 10th case in every larger bucket; `full` restores the old
+behavior. That keeps the gate's two purposes:
+- A bucket-specific defect shows on any input in that bucket, and every
+  bucket still sees every case just below it plus the sample.
+- A mask or position defect shows in any larger bucket, and every case is
+  still checked one bucket up.
+What it gives up is narrow: a defect that appears only two or more buckets
+up, only for inputs outside the sample and the adversarial cases, and never
+in the next bucket. Every model graded before this keeps full coverage and
+an unchanged report, and the report prints the coverage it used.
+
 ## D27 — Refuse multi-shape Core ML models at load on macOS 27
 D24 said that on macOS 27 a flexible-shape artifact aborts the process at
 its first prediction "whatever the compute units". Measured again on an M1 Max
@@ -1670,6 +1687,50 @@ reported, and every path is still graded. Placement isn't correctness: the
 other hard gates (bucket and pad invariance, determinism, finite output)
 still apply on every path, because they catch defects in the artifact
 itself whichever device runs it.
+
+## D34 — The fev format: Lumma-fev decision models
+Lumma-fev (FrontiersMind/Lumma-fev, Apache-2.0) is a family of decision
+models on a causal decoder backbone. Lumma-fev-0.1b (154M parameters) reads
+the request's state and one question in a single row, and scores each option
+by comparing the hidden state at the end of the option with the hidden state
+at a final decide token. That is one static pass per question, so it fits
+`/v1/classify`'s zero-shot contract (D28) as a third format beside laya and
+gliner2 (D30). The contract is in `docs/design/classify.md`.
+
+- **The row** is the state, the question's instructions, each option, then a
+  decide token, separated by the five delimiter tokens the manifest names by
+  role. There are no other special tokens. sidekick ports the checkpoint's
+  own `modeling_fev.py` input builder to Rust and checks it against a token
+  fixture the checkpoint's code generated. `<|name|>` in any text is
+  rewritten to `<¦name¦>`, so no request can forge a delimiter.
+- **Options** render as fev renders them: choice as given, score as given,
+  noul's `false`/`true` labels as `no`/`yes`, each optionally described.
+  `question_type` is required. The model never sees it, but the rendering
+  depends on it. Instructions are optional, because the model has no
+  default question.
+- **Lengths** follow the checkpoint: the state is truncated to 1,408 tokens
+  (`min(8192, window − 640)` for its 2,048-token window), and a row still
+  over 2,048 tokens is a 400. When the model is served on the CPU, D33's cap
+  shrinks the window to 1,024, and the state limit follows the same formula
+  (384). That is sidekick's choice; the checkpoint itself keeps 1,408.
+- **The Core ML interface** adds an int32 `decide_pos` input beside laya's
+  `marker_pos`, and the graph selects the option and decide states with
+  one-hot matmuls. The checkpoint's temperature is folded into the graph.
+- **The converter** (`tools/convert_fev.py`, on the conversion library's new
+  Nandi backbone) folds the factorized embedding's projection into the
+  token table, so that no compute-heavy linear stays on the CPU. It writes
+  the softmax as a matmul, builds SiLU from tanh, and pre-scales the norms
+  where their squares would overflow fp16.
+
+**Measured** (M1 Max, macOS 27.0, 2,630 cases, against the ideal-fp16
+ceiling): B on the ANE, where it's served (1.57× the ceiling, no flips,
+exactly bucket-invariant), A on the GPU (0.95×), and D on accuracy on the
+CPU, with the D33 limit past 1,024 tokens. It's supported under the preview
+rule. Latency is ~33 ms at 256 tokens, but ~1.2 s at 2,048 on the ANE.
+Gold accuracy on fast-decisions is 30.7%, the same as fp32, and is
+reported, not graded, beside FrontiersMind's own published numbers. The
+larger Lumma-fev models (0.6b and up) exceed the ANE's 1 GiB weight limit
+(D32).
 
 ## Hardware verification status
 
