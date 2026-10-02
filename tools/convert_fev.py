@@ -75,11 +75,12 @@ fp32 forward and its ideal-fp16 ceiling (|dp| max 0.0059, p99 0.0028):
   bucket invariance exact; 3,698 of 3,715 operations on the ANE at 2,048;
   13 / 33 / 98 / 269 / 1,243 ms at buckets 128 to 2,048 (a loaded machine).
 - GPU: grade A, p99 0.95x the ceiling's; worst |dp| 0.0066; no flips.
-- CPU_ONLY: fails the exact bucket gate. Inputs over 512 tokens move by up
-  to 0.021 between the 1,024 and 2,048 buckets: Core ML's fp16 CPU matmul
-  sums a contraction over 1,024 in a different order
+- CPU_ONLY: D on accuracy (p99 5.8x), with one flip. Inputs over 512
+  tokens move by up to 0.021 between the 1,024 and 2,048 buckets: Core
+  ML's fp16 CPU matmul sums a contraction over 1,024 in a different order
   (tools/repro_cpu_matmul_accumulation.py), and slicing it costs more
-  accuracy than it saves. On accuracy it is a D (p99 5.8x), with one flip.
+  accuracy than it saves. That is the documented CPU limit over 1,024
+  tokens (docs/DECISIONS.md D33).
 """
 
 import math
