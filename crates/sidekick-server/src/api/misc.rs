@@ -22,9 +22,10 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
     }
 
     for id in state.registry.ids() {
-        let units = state.registry.get(id).ok().map(|r| r.manifest.compute_units_name());
+        let m = state.registry.get(id).ok().map(|r| &r.manifest);
         data.push(ModelObject {
-            compute_units: units,
+            compute_units: m.map(|m| m.compute_units_name()),
+            seq_cap: m.and_then(|m| m.seq_cap.clone()),
             ..ModelObject::new(id.to_string(), created, "feature-extraction")
         });
     }
@@ -47,6 +48,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             extensions: Some(m.extension_fields()),
             required: Some(m.required_fields()),
             compute_units: Some(m.compute_units.name()),
+            seq_cap: m.seq_cap.clone(),
             calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
             ..ModelObject::new(m.id.clone(), created, m.task.name())
         });
@@ -62,6 +64,18 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     state.chat_model.set(info.variant_id.clone());
     let embedding_models: Vec<&str> = state.registry.ids().collect();
     let classifier_models: Vec<&str> = state.registry.classifier_ids().collect();
+    // Models running with a sequence-length cap (D33), by id.
+    let seq_caps: serde_json::Map<String, serde_json::Value> = state
+        .registry
+        .iter()
+        .filter_map(|r| r.manifest.seq_cap.as_ref().map(|c| (r.manifest.id.clone(), json!(c))))
+        .chain(
+            state
+                .registry
+                .classifiers()
+                .filter_map(|r| r.manifest.seq_cap.as_ref().map(|c| (r.manifest.id.clone(), json!(c)))),
+        )
+        .collect();
     Json(json!({
         "status": "ok",
         "uptime_secs": state.started_at.elapsed().as_secs(),
@@ -89,5 +103,7 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         },
         // Manifests the registry couldn't use, and why.
         "skipped_models": state.registry.skipped(),
+        // Models served with a shorter maximum than their manifest's (D33).
+        "seq_caps": seq_caps,
     }))
 }

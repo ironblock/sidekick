@@ -32,6 +32,10 @@ pub struct Config {
     /// For experimentation; a manifest's `ane_weight_limit = "ignore"` does
     /// the same for one model.
     pub ignore_ane_weight_cap: bool,
+    /// Serve models on `cpu_only` past 1,024 tokens, accepting Core ML's
+    /// slightly bucket-dependent CPU results there (D33). A manifest's
+    /// `cpu_seq_limit = "ignore"` does the same for one model.
+    pub ignore_cpu_seq_cap: bool,
 }
 
 impl Default for Config {
@@ -44,6 +48,7 @@ impl Default for Config {
             model_idle_ttl_secs: 900,
             request_timeout_secs: 60,
             ignore_ane_weight_cap: false,
+            ignore_cpu_seq_cap: false,
         }
     }
 }
@@ -107,5 +112,8 @@ mod tests {
         assert!(!c.ignore_ane_weight_cap, "the ANE weight cap is enforced by default");
         let c: Config = toml::from_str("ignore_ane_weight_cap = true").unwrap();
         assert!(c.ignore_ane_weight_cap);
+        assert!(!Config::default().ignore_cpu_seq_cap, "the CPU sequence cap is enforced by default");
+        let c: Config = toml::from_str("ignore_cpu_seq_cap = true").unwrap();
+        assert!(c.ignore_cpu_seq_cap);
     }
 }

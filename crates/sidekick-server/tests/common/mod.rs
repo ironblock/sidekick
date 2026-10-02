@@ -198,6 +198,15 @@ attention_mask = "attention_mask"
 output = "logits"
 "#;
 
+/// The text classifier served on the CPU with buckets past 1,024 tokens,
+/// which the registry caps at 1,024 (D33).
+pub fn cpu_capped() -> String {
+    SENTIMENT
+        .replace("id = \"sentiment\"", "id = \"cpu-capped\"")
+        .replace("buckets = [16, 64]", "buckets = [16, 1024, 2048]")
+        .replace("max_seq_len = 64", "max_seq_len = 2048\ncompute_units = \"cpu_only\"")
+}
+
 /// `classifier.toml` for a zero-shot model in the laya format.
 pub const ZERO_SHOT: &str = r#"
 id = "decider"
@@ -467,11 +476,13 @@ pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
         FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     write_embedding_fixture(&dir);
+    let capped = cpu_capped();
     let julia = julia_zero_shot();
     for (name, body) in [
         ("sentiment", SENTIMENT),
         ("decider", ZERO_SHOT),
         ("schema-decider", SCHEMA_ZERO_SHOT),
+        ("cpu-capped", capped.as_str()),
         ("julia", julia.as_str()),
         ("reranker", RERANKER),
         ("sigmoid-reranker", SIGMOID_RERANKER),

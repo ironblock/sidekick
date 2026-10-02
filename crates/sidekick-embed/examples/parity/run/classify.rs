@@ -7,7 +7,7 @@ use super::{
     bitwise_eq, check_plans, spawn_worker, units, BucketInfo, Options, XorShift, DETERMINISM_CASES,
 };
 use crate::classify_grade::{
-    delta_p, fmt, grade, ClassifyCaseResult, ClassifyGrade, ClassifyWorkerResult, Delta,
+    delta_p, fmt, grade, BucketPair, ClassifyCaseResult, ClassifyGrade, ClassifyWorkerResult, Delta,
 };
 use crate::classify_reference::{corpus_sha256, tokenizer_sha, ClassifyReference};
 use crate::expect::{Expectations, Path3};
@@ -87,11 +87,14 @@ pub fn worker(
         };
 
         let mut bucket_invariance = Delta::default();
+        let mut bucket_pairs = Vec::new();
         let mut pad_invariance = Delta::default();
         if full {
             for &b in buckets.iter().filter(|&&b| b > prepared.bucket) {
                 let other = clf.run_in(&prepared, b, &[]).map_err(e)?;
-                bucket_invariance.add(delta_p(problem, &logits, &other, None));
+                let dp = delta_p(problem, &logits, &other, None);
+                bucket_invariance.add(dp);
+                bucket_pairs.push(BucketPair { from: prepared.bucket, to: b, dp });
             }
             let pads = prepared.bucket - prepared.ids.len();
             if pads > 0 {
@@ -110,6 +113,7 @@ pub fn worker(
             finite,
             model_only,
             bucket_invariance,
+            bucket_pairs,
             pad_invariance,
             ms,
         });
@@ -395,6 +399,16 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
     }
     if let Some(d) = &report.determinism {
         println!("  ANE across two processes: Δp {} over {} cases", fmt(d.max), d.n);
+    }
+    for g in grades.iter().filter(|g| g.bucket_past_cpu_cap.n > 0) {
+        println!(
+            "  {} bucket check past {} tokens: Δp {} over {} comparisons (hardware limit, D33: Core ML's CPU \
+             sums in a length-dependent order past 1,024; reported, not gated)",
+            g.path,
+            sidekick_core::MAX_CPU_INVARIANT_SEQ,
+            fmt(g.bucket_past_cpu_cap.max),
+            g.bucket_past_cpu_cap.n
+        );
     }
     for g in grades {
         for f in &g.flips {
