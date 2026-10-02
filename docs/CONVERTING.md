@@ -297,6 +297,34 @@ run on any mismatch with the checkpoint, where the field exists:
   model no segment ids);
 - `source.revision` equals the snapshot's revision.
 
+The installed copy gains one thing the committed file doesn't have: a
+`[placement]` table recording, per bucket, the compute plan the gates read
+on this machine. A live plan read in the daemon is a second compile, up to
+minutes and hundreds of MB for a large bucket, so the daemon reports this
+record instead.
+
+    [placement]
+    compute_units = "cpu_and_ne"   # the units the model is served with
+    chip = "Apple M1 Max"          # sysctl machdep.cpu.brand_string
+    macos_build = "26A428"         # sw_vers -buildVersion
+    date = "2026-10-01"
+
+    [placement.buckets.128]
+    ane = 229
+    gpu = 0
+    cpu = 16
+    unassigned = 363
+    total = 608
+    off_ane_ops = { add = 3, cast = 4, gather = 1 }   # assigned off the ANE, by operator
+
+The counts are `sidekick_coreml::compute_plan`'s, so the daemon's own reads
+match them. That means the `main` function with nested blocks, constants
+counted as unassigned, and total = ane + gpu + cpu + unassigned (bge-small's
+128 bucket reads 229 / 0 / 16 / 363 either way). The plan is read for the
+manifest's `compute_units`, not always for the ANE. A bucket whose plan was
+unreadable is left out. Daemons up to 0.5 ignore the table: their manifest
+structs don't deny unknown fields.
+
 ## Converters
 
 | converter | backbone | head | notes |
