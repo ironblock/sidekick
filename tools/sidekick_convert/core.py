@@ -21,9 +21,12 @@ A converter builds a `Job` and hands it to `run()`. For every bucket, `run()`:
 A job with `chunks` (chunking.py, D37) converts each bucket as a chain of
 programs split at layer boundaries: the fp32 gate also checks the composed
 chunks against the unchunked wrapper, each chunk is converted, compiled and
-checked against the weight limit on its own, the unchunked program is
-converted too so the chain's GPU output can be required bit-identical to
-it, and the usual Core ML gates run on the chain. It installs
+checked against the weight limit on its own, and the usual Core ML gates
+run on the chain. In the smallest bucket (every bucket with
+`chunk_identity_all`), the unchunked program is converted too, and the
+chain's GPU output must be bit-identical to it: the chain's plumbing is the
+same in every bucket, and the fp32 gate already checks each bucket's
+composition, so one bucket proves it without doubling every conversion. It installs
 `model_{seq}.{chunk}.mlmodelc` and a manifest whose `artifact` and
 [chunking] table say so.
 
@@ -207,6 +210,7 @@ class Job:
                                   # would send to it (for models whose accuracy varies by bucket)
     int8_embedding: bool = False  # store the token-embedding table in int8 (see int8_embedding())
     ignore_ane_weight_cap: bool = False  # convert past MAX_ANE_PROGRAM_WEIGHT_BYTES, with a warning
+    chunk_identity_all: bool = False  # run the chunked GPU bit-identity gate on every bucket, not the smallest
     chunks: object = None         # None, "auto", "default", a chunk count or layer cuts (chunking.plan_cuts); needs
     backbone: object = None       # the backbone and head the wrapper was composed from
     head: object = None
@@ -441,7 +445,6 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypa
     """One bucket as a chain of chunks (D37): see the module docstring."""
     import torch
     from . import chunking, plan
-    from .gates import _model
     from .metrics import largest, max_abs_diff
     chunk_list = chunking.chunks(job.backbone, job.head, job.ports, seq, cuts, job.output)
     diffs = []
@@ -484,8 +487,27 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypa
         inputs.append(c.inputs)
     chain = chunking.Chain(paths, inputs, job.output)
 
-    # The chain's plumbing, exactly: on the GPU it must give the unchunked
-    # program's output bit for bit.
+    report["coreml"] = _gate(job, job.gates.coreml, chain, seq, cases, job, job.timing)
+    if (report["coreml"] or {}).get("plan"):
+        plans[seq] = report["coreml"]["plan"]
+        for units, s in alternative_plans(job, chain).items():
+            alternatives.setdefault(units, {})[seq] = s
+    for line in job.gates.describe_coreml(report["coreml"]):
+        print(f"bucket {seq}: {line}", flush=True)
+    if job.chunk_identity_all or seq == min(job.buckets):
+        _chain_identity(job, seq, cases, wrapper, example, chain, work, report)
+    for c, compiled in zip(chunk_list, paths):
+        dest = install_dir / chunking.artifact_name(seq, c.index)
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.move(str(compiled), dest)
+        print(f"bucket {seq} chunk {c.index} -> {dest}", flush=True)
+    return report
+
+
+def _chain_identity(job, seq, cases, wrapper, example, chain, work, report):
+    """The chain's plumbing, exactly: on the GPU it must give the unchunked
+    program's output bit for bit."""
+    from .gates import _model
     whole = trace_convert(wrapper, job.ports, seq, example, job.output)
     if job.int8_embedding:
         whole, _, _ = int8_embedding(whole)
@@ -508,20 +530,6 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypa
         _gate(job, _raise, GateFailure(f"bucket {seq}: on the GPU the chain differs from the unchunked program "
                                        f"by {worst:.2e}; it must be bit-identical"))
     print(f"bucket {seq}: on the GPU the chain is bit-identical to the unchunked program", flush=True)
-
-    report["coreml"] = _gate(job, job.gates.coreml, chain, seq, cases, job, job.timing)
-    if (report["coreml"] or {}).get("plan"):
-        plans[seq] = report["coreml"]["plan"]
-        for units, s in alternative_plans(job, chain).items():
-            alternatives.setdefault(units, {})[seq] = s
-    for line in job.gates.describe_coreml(report["coreml"]):
-        print(f"bucket {seq}: {line}", flush=True)
-    for c, compiled in zip(chunk_list, paths):
-        dest = install_dir / chunking.artifact_name(seq, c.index)
-        shutil.rmtree(dest, ignore_errors=True)
-        shutil.move(str(compiled), dest)
-        print(f"bucket {seq} chunk {c.index} -> {dest}", flush=True)
-    return report
 
 
 def fail(message):
