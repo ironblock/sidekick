@@ -36,12 +36,21 @@ from pathlib import Path
 def _private_coreml_cache():
     """Re-run this converter with Core ML's cache in a temporary home that
     is deleted afterwards (see the module docstring), unless the caller
-    chose one."""
+    chose one. The child gets the same interpreter options. Ctrl-C reaches
+    it too (one process group); the parent waits for it to finish cleaning
+    up its own temporary files, then removes the home. A child killed by a
+    signal exits the parent with 128 + the signal, as a shell reports it."""
     if sys.platform != "darwin" or "CFFIXED_USER_HOME" in os.environ:
         return
     with tempfile.TemporaryDirectory(prefix="sidekick-convert-cache-") as home:
-        code = subprocess.call([sys.executable, *sys.argv], env={**os.environ, "CFFIXED_USER_HOME": home})
-    raise SystemExit(code)
+        child = subprocess.Popen([sys.executable, *sys.orig_argv[1:]], env={**os.environ, "CFFIXED_USER_HOME": home})
+        while True:
+            try:
+                code = child.wait()
+                break
+            except KeyboardInterrupt:
+                continue
+    raise SystemExit(128 - code if code < 0 else code)
 
 
 def parse(description, *, flags=(), default_buckets=(128, 256, 512), argv=None):

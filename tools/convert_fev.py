@@ -190,6 +190,9 @@ def check_manifest():
 
 def main():
     args = cli.parse(__doc__.split("\n\n")[0], default_buckets=None)
+    if args.chunks not in (None, "1"):
+        raise SystemExit("--chunks: this converter's wrapper isn't a sidekick_convert backbone, so it can't be "
+                         "chunked yet")
     src, install_dir = args.src, args.install_dir
     install_dir.mkdir(parents=True, exist_ok=True)
     man = check_manifest()
@@ -245,7 +248,7 @@ def main():
                               report_paths=("CPU_ONLY",), pad_value=PAD_LOGIT, pad_id_range=(1000, 40000)),
         forbid_ops=frozenset({core.FUSED_ATTENTION, "silu"}),
         install_files=[(MANIFEST, "classifier.toml")], landing_required=True, gate_cases="landing",
-        timing=args.time)
+        timing=args.time, int8_embedding=args.int8_embedding, ignore_ane_weight_cap=args.ignore_ane_weight_cap)
     core.run(job, install_dir)
 
 

@@ -9,6 +9,7 @@ chunked fixture (tools/make_classifier_test_models.py) and the Rust tests.
 
 import tempfile
 import tomllib
+import types
 import unittest
 
 import numpy as np
@@ -85,6 +86,97 @@ class ComposedChunks(unittest.TestCase):
             chunking.plan_cuts(self.backbone, self.head, 16, 5)
         self.assertEqual([chunking.parse_spec(s) for s in (None, "1", "auto", "3", "10,20")],
                          [chunking.DEFAULT, None, "auto", 3, [10, 20]])
+
+
+class Planning(unittest.TestCase):
+    """core._plan_chunks: the default, explicit specs, and the template check."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.TemporaryDirectory()
+        tiny_checkpoint(cls.dir.name, seed=4, layers=6)
+        cls.backbone, cls.head = load(cls.dir.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.dir.cleanup()
+
+    def job(self, chunks, manifest='artifact = "model_{seq}.mlmodelc"\n', backbone=None):
+        from pathlib import Path
+        from sidekick_convert import core
+        path = Path(self.dir.name) / "m.toml"
+        path.write_text(manifest)
+        return core.Job(name="t", buckets=[16, 32], ports=[], output="logits", make_wrapper=None, example=None,
+                        evaluation=None, gates=None, install_files=[(path, "classifier.toml")], chunks=chunks,
+                        backbone=backbone or self.backbone, head=self.head)
+
+    def test_the_default_chunks_only_what_needs_it(self):
+        from sidekick_convert import core
+        # under the real budget: one program, silently
+        self.assertIsNone(core._plan_chunks(self.job(chunking.DEFAULT)))
+        self.assertIsNone(core._plan_chunks(self.job(None)))
+        # a backbone that can't be chunked converts as before by default, and refuses an explicit request
+        plain = types.SimpleNamespace(chunk_ports=None, family="bert")
+        self.assertIsNone(core._plan_chunks(self.job(chunking.DEFAULT, backbone=plain)))
+        with self.assertRaises(ValueError):
+            core._plan_chunks(self.job("auto", backbone=plain))
+        self.assertEqual(core._plan_chunks(self.job(3)), chunking.plan_cuts(self.backbone, self.head, 32, 3))
+        self.assertEqual(core._plan_chunks(self.job([2, 4])), [2, 4])
+
+    def test_a_manifest_that_cant_name_its_chunks_fails_before_converting(self):
+        from sidekick_convert import core
+        with self.assertRaises(ValueError):
+            core._plan_chunks(self.job(2, manifest='artifact = "custom_{seq}.mlmodelc"\n'))
+
+    def test_balancing_finds_the_best_split(self):
+        import itertools
+        first, per_layer, last, every = chunking.weight_plan(self.backbone, self.head, 32)
+        for n in (2, 3, 4):
+            best = min(max(chunking._chunk_bytes(list(c), first, per_layer, last, every))
+                       for c in itertools.combinations(range(1, len(per_layer)), n - 1))
+            got = chunking._balanced(n, first, per_layer, last, every)
+            self.assertEqual(len(got), n - 1)
+            self.assertEqual(max(chunking._chunk_bytes(got, first, per_layer, last, every)), best, n)
+
+
+class Layouts(unittest.TestCase):
+    def test_installing_one_layout_removes_the_other(self):
+        from pathlib import Path
+        from sidekick_convert import core
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            for name in ("model_16.mlmodelc", "model_16.0.mlmodelc", "model_16.1.mlmodelc", "model_16.2.mlmodelc",
+                         "model_32.mlmodelc"):
+                (d / name).mkdir()
+            core._remove_other_layout(d, 16, chunked=True)
+            self.assertEqual(sorted(p.name for p in d.iterdir()), ["model_32.mlmodelc"])
+            for name in ("model_32.0.mlmodelc", "model_32.1.mlmodelc"):
+                (d / name).mkdir()
+            core._remove_other_layout(d, 32, chunked=False)
+            self.assertEqual(sorted(p.name for p in d.iterdir()), ["model_32.mlmodelc"])
+        self.assertEqual(chunking.artifact_name(512, 1), "model_512.1.mlmodelc")
+
+
+class PrivateCoreMLCache(unittest.TestCase):
+    def test_a_converter_runs_with_a_temporary_home_and_keeps_its_exit_code(self):
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+        if sys.platform != "darwin":
+            self.skipTest("macOS only")
+        tools = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as d:
+            probe = Path(d) / "probe.py"
+            probe.write_text("import os, sys\nsys.path.insert(0, %r)\nfrom sidekick_convert import cli\n"
+                             "cli.parse('probe')\nhome = os.environ['CFFIXED_USER_HOME']\n"
+                             "open(sys.argv[2] + '/home', 'w').write(home)\nsys.exit(3)\n" % str(tools))
+            env = {k: v for k, v in os.environ.items() if k != "CFFIXED_USER_HOME"}
+            r = subprocess.run([sys.executable, "-X", "utf8", str(probe), "src", d], env=env)
+            self.assertEqual(r.returncode, 3)
+            home = (Path(d) / "home").read_text()
+            self.assertIn("sidekick-convert-cache-", home)
+            self.assertFalse(Path(home).exists(), "the temporary home is removed")
 
 
 class InstalledRecords(unittest.TestCase):

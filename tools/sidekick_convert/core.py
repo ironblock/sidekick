@@ -384,6 +384,7 @@ def run(job, install_dir):
                 print(f"bucket {seq}: {line}", flush=True)
             dest = install_dir / f"model_{seq}.mlmodelc"
             shutil.rmtree(dest, ignore_errors=True)
+            _remove_other_layout(install_dir, seq, chunked=False)
             shutil.move(str(compiled), dest)
             print(f"bucket {seq} -> {dest}", flush=True)
             reports[seq] = report
@@ -410,6 +411,21 @@ def _raise(e):
     raise e
 
 
+def _remove_other_layout(install_dir, seq, chunked):
+    """Remove the bucket's artifacts in the other layout (D37), left by an
+    earlier conversion: one program when installing chunks, every chunk
+    (stale ones from a different split included) when installing one."""
+    names = [f"model_{seq}.mlmodelc"] if chunked else []
+    for old in [install_dir / n for n in names] + ([] if chunked else
+                                                   sorted(install_dir.glob(f"model_{seq}.[0-9]*.mlmodelc"))):
+        if old.exists():
+            print(f"bucket {seq}: removing {old.name}, from an earlier conversion in the other layout", flush=True)
+            shutil.rmtree(old)
+    if chunked:
+        for old in sorted(install_dir.glob(f"model_{seq}.[0-9]*.mlmodelc")):
+            shutil.rmtree(old)    # chunks of an earlier split; this one's are moved in next
+
+
 CHUNK_FP32_TOL = 1e-5
 """How far the composed chunks may be from the unchunked wrapper in fp32:
 the same operations in the same order, so in practice 0."""
@@ -431,6 +447,11 @@ def _plan_chunks(job):
         raise ValueError(f"{job.name}: a chunked Job needs its backbone and head")
     seq = max(job.buckets)
     cuts = chunking.plan_cuts(job.backbone, job.head, seq, spec)
+    if cuts:
+        # fail now, not after every bucket is converted
+        for source, name in job.install_files:
+            if name.endswith(".toml"):
+                chunking.manifest_text(Path(source).read_text(), len(cuts) + 1, None)
     if not cuts:
         if job.chunks != chunking.DEFAULT:
             print(f"{job.name}: --chunks {spec}: every bucket fits one program; converting unchunked", flush=True)
@@ -496,6 +517,7 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypa
         print(f"bucket {seq}: {line}", flush=True)
     if job.chunk_identity_all or seq == min(job.buckets):
         _chain_identity(job, seq, cases, wrapper, example, chain, work, report)
+    _remove_other_layout(install_dir, seq, chunked=True)
     for c, compiled in zip(chunk_list, paths):
         dest = install_dir / chunking.artifact_name(seq, c.index)
         shutil.rmtree(dest, ignore_errors=True)
@@ -522,7 +544,9 @@ def _chain_identity(job, seq, cases, wrapper, example, chain, work, report):
         feed = c.feed(seq, job.ports)
         x = np.asarray(a.predict(feed)[job.output], dtype=np.float32)
         y = np.asarray(b.predict(feed)[job.output], dtype=np.float32)
-        worst = max(worst, float(np.abs(x - y).max()) if np.array_equal(np.isnan(x), np.isnan(y)) else np.inf)
+        if not np.array_equal(x, y, equal_nan=True):
+            same_nan = np.array_equal(np.isnan(x), np.isnan(y))
+            worst = max(worst, float(np.nanmax(np.abs(x - y))) if same_nan else np.inf)
     del a, b
     shutil.rmtree(whole_compiled.parent, ignore_errors=True)
     report["chain_gpu_vs_unchunked"] = worst

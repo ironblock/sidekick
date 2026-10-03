@@ -75,22 +75,32 @@ def _chunk_bytes(cuts, first, per_layer, last, every):
 
 
 def _balanced(n, first, per_layer, last, every):
-    """The cuts into n chunks that minimize the largest chunk."""
+    """The cuts into n chunks that minimize the largest chunk: a dynamic
+    program over (chunks used, layers covered), O(n * layers^2)."""
     layers = len(per_layer)
-    best = None
+    prefix = [0]
+    for b in per_layer:
+        prefix.append(prefix[-1] + b)
 
-    def search(start, left, cuts):
-        nonlocal best
-        if left == 1:
-            sizes = _chunk_bytes(cuts, first, per_layer, last, every)
-            if best is None or max(sizes) < best[0]:
-                best = (max(sizes), list(cuts))
-            return
-        for c in range(start + 1, layers - left + 2):
-            search(c, left - 1, cuts + [c])
+    def size(lo, hi):
+        return every + prefix[hi] - prefix[lo] + (first if lo == 0 else 0) + (last if hi == layers else 0)
 
-    search(0, n, [])
-    return best[1]
+    inf = float("inf")
+    # best[k][hi]: the smallest possible largest chunk covering layers [0, hi) with k chunks
+    best = [[inf] * (layers + 1) for _ in range(n + 1)]
+    cut = [[0] * (layers + 1) for _ in range(n + 1)]
+    best[0][0] = 0
+    for k in range(1, n + 1):
+        for hi in range(k, layers + 1):
+            for lo in range(k - 1, hi):
+                m = max(best[k - 1][lo], size(lo, hi))
+                if m < best[k][hi]:
+                    best[k][hi], cut[k][hi] = m, lo
+    cuts, hi = [], layers
+    for k in range(n, 1, -1):
+        hi = cut[k][hi]
+        cuts.append(hi)
+    return sorted(cuts)
 
 
 def plan_cuts(backbone, head, seq, spec="auto", budget=CHUNK_WEIGHT_BUDGET_BYTES):
@@ -268,9 +278,8 @@ class ChainModel:
         h = None
         for i, (model, names) in enumerate(zip(self.models, self.chain.inputs)):
             f = {n: (h if n == HIDDEN_IN else feed[n]) for n in names}
-            self.keep.append(f)
+            self.keep.append(f)    # inputs only (gates._INPUTS); a hidden state is kept as the next feed
             out = model.predict(f)
-            self.keep.append(out)
             if i == len(self.models) - 1:
                 return out
             h = out[HIDDEN_OUT]
