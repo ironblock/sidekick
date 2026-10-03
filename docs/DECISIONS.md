@@ -1900,7 +1900,8 @@ weights; M1 Max, macOS 27.0; two chunks):
   keeps the unchunked one's grades on the GPU (A, 0.85× the ideal-fp16
   ceiling) and the CPU (D), and grades D on the ANE (p99 at 4.2× the
   ceiling, worst |Δp| 0.022, no decision flips, buckets exact, the same
-  output in two processes).
+  output in two processes). An ANE precision rewrite later took its ANE
+  path to B (1.44×; D39), the GPU staying A.
 - Beside a 4-bit 27B Qwen3.8 that oMLX served on the GPU of a 32 GB M1
   Max (tools/companion_bench.py, docs/MODELS.md), the same install served
   either way by the daemon config (D38): on the GPU, the companion held
@@ -2031,6 +2032,57 @@ compute_units = "cpu_and_ne"
 
 `libsidekick.dylib` reads no daemon config, so it keeps the manifests'
 choices.
+
+## D39 — The ANE's SiLU, and a cancellation-free form
+Chunked agent-jev (Qwen3-0.6B, D37) graded D on the ANE: p99 |Δp| at 4.23×
+its ideal-fp16 ceiling, worst 0.022, though no decision flipped. Its GPU
+graded A with the same artifact, so the ANE's arithmetic was at fault.
+
+**What was measured** (M1 Max, macOS 27.0; the 12 worst ANE cases at 512
+tokens, the model converted one layer per program and each fed its fp32
+input, so the error a layer adds on its own is measured apart from what
+reaches it):
+- Running each half of the chunked chain on the ANE and the other on the
+  GPU put twice as much error in layers 0–8 as in layers 9–27. Per layer,
+  layer 0 (with the embedding) added 1.0e-2 relative rms error on the ANE
+  against 9.5e-4 on the GPU, layer 1 4.0e-3 against 5.6e-4, and layers 2–27
+  about 1.5–2× the GPU's.
+- agent-jev's residual stream starts tiny (the embedding's rms is 0.03) and
+  every layer's o_proj and down_proj inputs sit under the ANE linear's
+  precision floor (rms 0.06–0.2; D17). Power-of-two rescales of q/k/v,
+  o_proj and down_proj alone changed almost nothing (layer 0: 9.9e-3).
+- Replacing silu did: layer 0 / layer 1 local error was 1.0e-2 / 4.0e-3 with
+  Core ML's native silu, 2.5e-3 / 2.2e-3 with TanhSilu, 3.8e-3 / 5.5e-3 with
+  x·sigmoid(x), and 2.4e-3 / 1.6e-3 with a cancellation-free form,
+  StableSilu: 2x·exp(min(x, 0)) / (1 + exp(−|x|)). TanhSilu's 1 + tanh(x/2)
+  cancels in fp16 as x grows negative; the stable form has no cancellation
+  for either sign and can't overflow. The GPU's per-layer error was the
+  same with every form.
+- A one-op program doesn't show this: Core ML doesn't place a lone `silu`
+  on the ANE, so every form measured alike there. Activations have to be
+  compared inside the model.
+- Through all 28 layers and the head, the ANE's |Δp| on those cases fell
+  from 1.27e-2 to 1.81e-3 with StableSilu, and to 1.52e-3 with the rescales
+  as well. The rest was the head, whose scorer has its own silu and whose
+  set layers use the erf gelu.
+
+**Decision.** `activations.StableSilu` joins the ANE-safe activations, and
+`qwen3.precision_rewrite` takes the silu form and an optional down_proj
+input rescale (`silu=`, `mlp_down=`; the defaults, TanhSilu without it,
+leave F2LLM unchanged). agent-jev's converter applies StableSilu, the
+q/k/v, o_proj and down_proj rescales, and the head's own rewrite (its
+scorer silu as StableSilu, its set layers' gelu as TwiceGelu), after the
+fp32 references and calibrated on its gate states (D26), and it forbids
+the native `silu` and `gelu` ops. Every factor is a power of two, so the
+fp32 graph is exact (max |Δlogit| 8e-6 to 1.2e-5 against the checkpoint),
+and on the GPU the chain stays bit-identical to the unchunked program.
+
+Graded on its 2,627 cases, agent-jev's ANE path moves from D to B (p99 at
+1.44× the ceiling, worst 5.6e-3, no flips, buckets exact, the same output
+in two processes; 152 ms per case against 128), the GPU keeps its A
+(0.84×, worst 3.7e-3), and the CPU its D (5.9×). The claim is general: in a SiLU MLP, the ANE's
+native silu can be the dominant error. Whether StableSilu also lifts the
+other SiLU models (Lumma-fev, LFM2.5) is measured separately.
 
 ## Hardware verification status
 
