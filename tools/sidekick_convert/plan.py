@@ -234,22 +234,37 @@ def _counts(s):
             f"total = {s['total']}", f"off_ane_ops = {{ {off} }}"]
 
 
-def placement_toml(plans, chip, macos_build, date):
+ALTERNATIVE_UNITS = ("CPU_AND_NE", "CPU_AND_GPU")
+"""The compute units a converter also records a plan for, besides the ones
+the manifest serves with, so an operator who moves the model (D38) still
+gets its placement reported."""
+
+
+def placement_toml(plans, chip, macos_build, date, alternatives=None):
     """The installed manifest's [placement] table: the compute plan each
     bucket was converted with, read on this machine, so the daemon can report
     placement without a second compile. `plans`: {bucket: summary}, every
     summary read for the same units. The counts are sidekick_coreml's
     PlanSummary: the main function with nested blocks, constants unassigned,
     total = ane + gpu + cpu + unassigned. A chained bucket's counts are its
-    chunks' sums, with each chunk's own under it (D37)."""
+    chunks' sums, with each chunk's own under it (D37). `alternatives`:
+    {units: {bucket: summary}}, plans read for other compute units, under
+    [placement.alternatives.<units>], which daemons before 0.7.0 ignore."""
     units = {s["units"] for s in plans.values()}
     if len(units) != 1:
         raise ValueError(f"plans read for different compute units: {sorted(units)}")
     lines = ["", "[placement]", f'compute_units = "{units.pop().lower()}"', f'chip = "{chip}"',
              f'macos_build = "{macos_build}"', f'date = "{date}"']
     for seq in sorted(plans):
-        s = plans[seq]
-        lines += ["", f"[placement.buckets.{seq}]", *_counts(s)]
-        for c in s.get("chunks", ()):
-            lines += ["", f"[[placement.buckets.{seq}.chunks]]", *_counts(c)]
+        lines += _bucket_tables("placement", seq, plans[seq])
+    for units, by_bucket in sorted((alternatives or {}).items()):
+        for seq in sorted(by_bucket):
+            lines += _bucket_tables(f"placement.alternatives.{units.lower()}", seq, by_bucket[seq])
     return "\n".join(lines) + "\n"
+
+
+def _bucket_tables(prefix, seq, s):
+    lines = ["", f"[{prefix}.buckets.{seq}]", *_counts(s)]
+    for c in s.get("chunks", ()):
+        lines += ["", f"[[{prefix}.buckets.{seq}.chunks]]", *_counts(c)]
+    return lines

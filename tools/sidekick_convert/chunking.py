@@ -121,9 +121,18 @@ def plan_cuts(backbone, head, seq, spec="auto", budget=CHUNK_WEIGHT_BUDGET_BYTES
     return _balanced(n, first, per_layer, last, every)
 
 
+DEFAULT = "default"
+"""The spec when --chunks isn't given: "auto" for a backbone that can be
+chunked, so a model over the budget is chunked and one under it isn't;
+nothing for one that can't, which converts as one program per bucket."""
+
+
 def parse_spec(text):
-    """--chunks: "auto", a count ("2"), or cuts ("10,20")."""
-    if text in (None, "", "1"):
+    """--chunks: "auto", a count ("2"), or cuts ("10,20"); "1" opts out.
+    Not given: DEFAULT."""
+    if text is None:
+        return DEFAULT
+    if text in ("", "1"):
         return None
     if text == "auto":
         return "auto"

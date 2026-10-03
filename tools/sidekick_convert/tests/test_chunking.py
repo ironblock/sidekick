@@ -84,7 +84,7 @@ class ComposedChunks(unittest.TestCase):
         with self.assertRaises(ValueError):
             chunking.plan_cuts(self.backbone, self.head, 16, 5)
         self.assertEqual([chunking.parse_spec(s) for s in (None, "1", "auto", "3", "10,20")],
-                         [None, None, "auto", 3, [10, 20]])
+                         [chunking.DEFAULT, None, "auto", 3, [10, 20]])
 
 
 class InstalledRecords(unittest.TestCase):
@@ -111,6 +111,13 @@ class InstalledRecords(unittest.TestCase):
         self.assertEqual((b["ane"], b["total"], b["off_ane_ops"]), (290, 312, {"cast": 11, "gather": 1}))
         self.assertEqual([c["ane"] for c in b["chunks"]], [90, 200])
         self.assertEqual(b["chunks"][1]["off_ane_ops"], {"cast": 2})
+        # The plan for the other compute units, beside it
+        gpu = dict(s, units="CPU_AND_GPU")
+        doc = tomllib.loads(plan.placement_toml({512: s}, "Apple M1 Max", "26A1", "2026-10-03",
+                                                alternatives={"CPU_AND_GPU": {512: gpu}}))
+        alt = doc["placement"]["alternatives"]["cpu_and_gpu"]["buckets"]["512"]
+        self.assertEqual((alt["ane"], [c["ane"] for c in alt["chunks"]]), (290, [90, 200]))
+        self.assertEqual(doc["placement"]["compute_units"], "cpu_and_ne")
 
 
 if __name__ == "__main__":

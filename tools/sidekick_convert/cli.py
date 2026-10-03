@@ -7,9 +7,10 @@ off unless the machine is quiet, since latency moves with load and accuracy
 doesn't. `--int8-embedding` stores the token-embedding table in int8, and
 `--ignore-ane-weight-cap` converts a model served on the ANE past the Neural
 Engine's per-program weight limit with a warning instead of an error
-(docs/CONVERTING.md). `--chunks auto|N|cuts` converts each bucket as a chain
-of programs split at layer boundaries, for a backbone that supports it
-(chunking.py, D37). A converter passes these on with job_options(). A
+(docs/CONVERTING.md). A backbone that can be chunked converts each bucket
+over the weight budget as a chain of programs split at layer boundaries
+(chunking.py, D37); `--chunks auto|N|cuts` chooses the split, and
+`--chunks 1` keeps one program per bucket. A converter passes these on with job_options(). A
 converter adds its own flags (negative controls) through `flags`.
 """
 
@@ -36,8 +37,9 @@ def parse(description, *, flags=(), default_buckets=(128, 256, 512), argv=None):
                    help="convert past the Neural Engine's 1 GiB per-program weight limit, with a warning "
                         "recorded in the installed manifest")
     p.add_argument("--chunks", default=None,
-                   help="split each bucket into programs at layer boundaries: auto (each under 0.9 GiB), a "
-                        "count, or the layers at which chunks after the first begin (10,20); D37")
+                   help="split each bucket into programs at layer boundaries: auto (each under 0.9 GiB; the "
+                        "default for a backbone that can be chunked), a count, the layers at which chunks after "
+                        "the first begin (10,20), or 1 for one program per bucket; D37")
     for name, kwargs in flags:
         p.add_argument(name, **kwargs)
     args = p.parse_intermixed_args(argv)

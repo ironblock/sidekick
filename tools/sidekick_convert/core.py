@@ -207,7 +207,7 @@ class Job:
                                   # would send to it (for models whose accuracy varies by bucket)
     int8_embedding: bool = False  # store the token-embedding table in int8 (see int8_embedding())
     ignore_ane_weight_cap: bool = False  # convert past MAX_ANE_PROGRAM_WEIGHT_BYTES, with a warning
-    chunks: object = None         # None, "auto", a chunk count or layer cuts (chunking.plan_cuts); needs
+    chunks: object = None         # None, "auto", "default", a chunk count or layer cuts (chunking.plan_cuts); needs
     backbone: object = None       # the backbone and head the wrapper was composed from
     head: object = None
 
@@ -285,17 +285,32 @@ def check_ane_weights(job, seq, compiled, chunk=None):
             "per-program limit (MAX_ANE_PROGRAM_WEIGHT_BYTES)")
 
 
-def record_placement(manifest, plans):
+def record_placement(manifest, plans, alternatives=None):
     """Append the [placement] table (plan.placement_toml) for the buckets whose
-    compute plan the gates read, to an installed manifest. A bucket whose
-    plan was unreadable is left out; the daemon reports it as not recorded."""
+    compute plan the gates read, and the plans read for the other compute
+    units, to an installed manifest. A bucket whose plan was unreadable is
+    left out; the daemon reports it as not recorded."""
     if not plans:
         return
     import datetime
     from . import plan
     chip, build = plan.machine()
     with open(manifest, "a") as f:
-        f.write(plan.placement_toml(plans, chip, build, datetime.date.today().isoformat()))
+        f.write(plan.placement_toml(plans, chip, build, datetime.date.today().isoformat(), alternatives))
+
+
+def alternative_plans(job, compiled):
+    """The bucket's compute plan for each of plan.ALTERNATIVE_UNITS it isn't
+    served with (D38): {units: summary}, unreadable ones left out."""
+    from . import plan
+    served = job.gates.units() if hasattr(job.gates, "units") else "CPU_AND_NE"
+    out = {}
+    for units in plan.ALTERNATIVE_UNITS:
+        if units != served:
+            s = plan.report(compiled, units)
+            if s is not None:
+                out[units] = s
+    return out
 
 
 def note_bypass(manifest, notes):
@@ -323,7 +338,7 @@ def run(job, install_dir):
     if job.negative_control:
         print(f"{job.name}: NEGATIVE CONTROL. Gate failures are reported, not fatal; "
               "never install the result where the daemon looks.", flush=True)
-    reports, bypassed, plans = {}, [], {}
+    reports, bypassed, plans, alternatives = {}, [], {}, {}
     cuts = _plan_chunks(job)
     with tempfile.TemporaryDirectory() as work:
         for seq in job.buckets:
@@ -338,7 +353,7 @@ def run(job, install_dir):
             print(f"bucket {seq}: {job.gates.describe_torch(report['torch'])}; converting...", flush=True)
             if cuts:
                 reports[seq] = _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypassed,
-                                            plans)
+                                            plans, alternatives)
                 continue
             mlmodel = trace_convert(wrapper, job.ports, seq, job.example(seq), job.output)
             found = mil_op_types(mlmodel) & set(job.forbid_ops)
@@ -359,6 +374,8 @@ def run(job, install_dir):
             report["coreml"] = _gate(job, job.gates.coreml, compiled, seq, cases, job, job.timing)
             if (report["coreml"] or {}).get("plan"):
                 plans[seq] = report["coreml"]["plan"]
+                for units, s in alternative_plans(job, compiled).items():
+                    alternatives.setdefault(units, {})[seq] = s
             for line in job.gates.describe_coreml(report["coreml"]):
                 print(f"bucket {seq}: {line}", flush=True)
             dest = install_dir / f"model_{seq}.mlmodelc"
@@ -371,10 +388,10 @@ def run(job, install_dir):
         if name.endswith(".toml") and cuts:
             from . import chunking
             dest = install_dir / name
-            budget = chunking.CHUNK_WEIGHT_BUDGET_BYTES if job.chunks == "auto" else None
+            budget = chunking.CHUNK_WEIGHT_BUDGET_BYTES if job.chunks in ("auto", chunking.DEFAULT) else None
             dest.write_text(chunking.manifest_text(dest.read_text(), len(cuts) + 1, budget))
         if name.endswith(".toml"):
-            record_placement(install_dir / name, plans)
+            record_placement(install_dir / name, plans, alternatives)
             if bypassed:
                 note_bypass(install_dir / name, bypassed)
     if job.install_files:
@@ -400,12 +417,19 @@ def _plan_chunks(job):
     if not job.chunks:
         return None
     from . import chunking
+    spec = job.chunks
+    if spec == chunking.DEFAULT:
+        # Chunk by default where the backbone can be chunked (D37).
+        if job.backbone is None or job.head is None or job.backbone.chunk_ports is None:
+            return None
+        spec = "auto"
     if job.backbone is None or job.head is None:
         raise ValueError(f"{job.name}: a chunked Job needs its backbone and head")
     seq = max(job.buckets)
-    cuts = chunking.plan_cuts(job.backbone, job.head, seq, job.chunks)
+    cuts = chunking.plan_cuts(job.backbone, job.head, seq, spec)
     if not cuts:
-        print(f"{job.name}: --chunks {job.chunks}: every bucket fits one program; converting unchunked", flush=True)
+        if job.chunks != chunking.DEFAULT:
+            print(f"{job.name}: --chunks {spec}: every bucket fits one program; converting unchunked", flush=True)
         return None
     sizes = chunking.chunk_sizes(job.backbone, job.head, seq, cuts)
     print(f"{job.name}: {len(cuts) + 1} chunks, starting at layers {[0] + cuts}; planned fp16 weights "
@@ -413,7 +437,7 @@ def _plan_chunks(job):
     return cuts
 
 
-def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypassed, plans):
+def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypassed, plans, alternatives):
     """One bucket as a chain of chunks (D37): see the module docstring."""
     import torch
     from . import chunking, plan
@@ -488,6 +512,8 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypa
     report["coreml"] = _gate(job, job.gates.coreml, chain, seq, cases, job, job.timing)
     if (report["coreml"] or {}).get("plan"):
         plans[seq] = report["coreml"]["plan"]
+        for units, s in alternative_plans(job, chain).items():
+            alternatives.setdefault(units, {})[seq] = s
     for line in job.gates.describe_coreml(report["coreml"]):
         print(f"bucket {seq}: {line}", flush=True)
     for c, compiled in zip(chunk_list, paths):
