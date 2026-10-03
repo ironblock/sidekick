@@ -104,7 +104,7 @@ def primary_run(args):
             "stream_options": {"include_usage": True}}
     t0 = time.perf_counter()
     first = last = None
-    pieces, usage, extra = 0, None, {}
+    pieces, usage, extra, finish = 0, None, {}, None
     key = os.environ.get(args.api_key_env) if args.api_key_env else None
     with post(f"{args.primary_url}/v1/chat/completions", body, key=key) as r:
         for raw in r:
@@ -116,6 +116,7 @@ def primary_run(args):
                 break
             chunk = json.loads(data)
             for choice in chunk.get("choices") or []:
+                finish = choice.get("finish_reason") or finish
                 delta = choice.get("delta") or {}
                 if delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
                     t = time.perf_counter()
@@ -132,6 +133,10 @@ def primary_run(args):
     tokens = (usage or {}).get("completion_tokens") or pieces
     extra.update({k: v for k, v in (usage or {}).items() if k not in STANDARD_USAGE})
     decode = (tokens - 1) / (last - first) if last > first and tokens > 1 else float("nan")
+    extra["finish_reason"] = finish
+    extra["wall_s"] = time.perf_counter() - t0
+    print(f"  run: {tokens} tokens ({finish}), TTFT {first - t0:.2f} s, decode {decode:.2f} tok/s, "
+          f"wall {extra['wall_s']:.1f} s", flush=True)
     return first - t0, decode, tokens, extra
 
 
@@ -140,7 +145,18 @@ def memory():
     free = re.search(r"free percentage: (\d+)%", pressure)
     swap = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True).stdout
     used = re.search(r"used = ([0-9.]+)M", swap)
-    return {"free_percent": int(free.group(1)) if free else None, "swap_used_mb": float(used.group(1)) if used else None}
+    vm = subprocess.run(["vm_stat"], capture_output=True, text=True).stdout
+    page = int(re.search(r"page size of (\d+) bytes", vm).group(1))
+    pages = lambda label: int(re.search(rf"{label}:\s+(\d+)", vm).group(1))  # noqa: E731
+    return {"free_percent": int(free.group(1)) if free else None,
+            "swap_used_mb": float(used.group(1)) if used else None,
+            "wired_gb": pages("Pages wired down") * page / 2**30,
+            "compressed_gb": pages("Pages occupied by compressor") * page / 2**30}
+
+
+def rss_mb(pid):
+    out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return int(out) / 1024 if out else None
 
 
 class Companion:
@@ -299,13 +315,17 @@ def phase(args, name, units=None, rate=None, primary=True):
             runs = []
             time.sleep(args.companion_seconds)
         end = now()
+        during = memory()
+        if companion:
+            during["companion_rss_mb"] = rss_mb(companion.proc.pid)
         c = companion.finish() if companion else None
     finally:
         if companion:
             companion.close()
     after = memory()
     result = {"phase": name, "units": units, "rate": rate, "start": start.isoformat(), "end": end.isoformat(),
-              "thermal_before": therm, "memory_before": before, "memory_after": after,
+              "thermal_before": therm, "memory_before": before, "memory_end_of_phase": during,
+              "memory_after": after,
               "valid": None not in (before["swap_used_mb"], after["swap_used_mb"])
               and after["swap_used_mb"] - before["swap_used_mb"] < 64}
     if runs:
@@ -325,6 +345,9 @@ def phase(args, name, units=None, rate=None, primary=True):
         line.append(f"companion {c['ok']}/{c['requests']} ok, {fmt(c['rate'], '.2f')}/s on {c['served_on']}, "
                     f"bucket {c['bucket']}, p50 {fmt(c['p50_ms'], '.0f')} ms, p99 {fmt(c['p99_ms'], '.0f')} ms, "
                     f"statuses {c['statuses']}, probs spread in phase {c['probs_spread_in_phase']}")
+    line.append(f"memory: wired {during['wired_gb']:.1f} GB, compressed {during['compressed_gb']:.1f} GB, swap "
+                f"{before['swap_used_mb']:.0f} -> {after['swap_used_mb']:.0f} MB"
+                + (f", sidekickd RSS {during['companion_rss_mb']:.0f} MB" if during.get("companion_rss_mb") else ""))
     print(f"phase {name}: " + "; ".join(line) + ("" if result["valid"] else "; INVALID: swap grew"), flush=True)
     return result
 
@@ -372,6 +395,7 @@ def main():
     ap.add_argument("--tokens", type=int, default=1024, help="the companion's request length (a bucket)")
     ap.add_argument("--port", type=int, default=8791)
     ap.add_argument("--cooldown", type=float, default=30.0, help="seconds idle before each phase")
+    ap.add_argument("--skip-companion-alone", action="store_true", help="skip the companion-alone phases")
     ap.add_argument("--companion-seconds", type=float, default=60.0,
                     help="length of the companion-alone phases")
     ap.add_argument("--out", type=Path, default=Path("companion_report.json"))
@@ -388,14 +412,23 @@ def main():
         if args.api_key_env and not os.environ.get(args.api_key_env):
             ap.error(f"--api-key-env {args.api_key_env}: that variable is empty or unset")
         rates = [float(r) for r in args.rates.split(",")]
-        phases = [phase(args, f"companion-gpu@{rates[0]:g}", "cpu_and_gpu", rates[0], primary=False),
-                  phase(args, f"companion-ane@{rates[0]:g}", "cpu_and_ne", rates[0], primary=False)]
+        phases = []
+        if not args.skip_companion_alone:
+            phases += [phase(args, f"companion-gpu@{rates[0]:g}", "cpu_and_gpu", rates[0], primary=False),
+                       phase(args, f"companion-ane@{rates[0]:g}", "cpu_and_ne", rates[0], primary=False)]
         print("warming the primary up", flush=True)
         primary_run(args)
+        def save():
+            args.out.write_text(json.dumps({"partial": True, "phases": phases}, indent=1) + "\n")
+
+        save()
         phases.append(phase(args, "alone"))
+        save()
         for rate in rates:
             phases.append(phase(args, f"gpu@{rate:g}", "cpu_and_gpu", rate))
+            save()
             phases.append(phase(args, f"ane@{rate:g}", "cpu_and_ne", rate))
+            save()
         phases.append(phase(args, "alone-again"))
         report = {"primary": {"url": args.primary_url, "model": args.primary_model, "max_tokens": args.max_tokens,
                               "prompt": PROMPT, "runs": args.runs},
