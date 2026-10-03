@@ -8,6 +8,7 @@ scoring in fp32, with random pad ids, plus the mask and the head's symmetry.
 """
 
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -143,6 +144,47 @@ class TreeMatmulSoftmax(unittest.TestCase):
         # run eagerly, it takes each path's own key length
         np.testing.assert_allclose(per_path(self.backbone, self.head, self.prefix, self.suffixes), self.want, atol=2e-5)
         self.assertEqual(self.backbone.model.config._attn_implementation, qwen3.MATMUL_SOFTMAX)
+
+
+class AnePrecision(unittest.TestCase):
+    """The ANE precision rewrites (D39): StableSilu, the down_proj rescale and
+    the head's activations are exact in fp32."""
+
+    def test_stable_silu_is_twice_silu_without_cancellation(self):
+        from sidekick_convert.techniques import activations
+        x = torch.cat([torch.linspace(-90, 90, 20001), torch.tensor([-1e4, 1e4, 0.0])])
+        got = activations.StableSilu()(x)
+        want = 2.0 * torch.nn.functional.silu(x.double())
+        self.assertTrue(torch.isfinite(got).all())
+        np.testing.assert_allclose(got.double().numpy(), want.numpy(), rtol=1e-6, atol=1e-30)
+        # where TanhSilu's 1 + tanh(x/2) cancels in fp16, the stable form doesn't
+        y = torch.tensor([-12.0], dtype=torch.float16)
+        self.assertGreater(float(activations.StableSilu()(y)), -1e-3)
+        self.assertLess(float(activations.StableSilu()(y)), 0.0)
+
+    def test_the_backbone_and_head_rewrites_are_exact(self):
+        from sidekick_convert.core import Calibration
+        from sidekick_convert.techniques import activations
+        d = tempfile.TemporaryDirectory()
+        tiny_checkpoint(d.name, seed=5, layers=3)
+        backbone, head = load(d.name)
+        f = tree_feed([5, 9, 13, 2], [[40, 41], [50], [60]], 32, head.kmax, list(range(60, 92)))
+        with torch.no_grad():
+            want = Wrapper(backbone, head, head.ports(), 32)(**f)[0]
+
+        class Tok:
+            def encode(self, text, add_special_tokens=True):
+                return types.SimpleNamespace(ids=[(ord(ch) % 100) + 3 for ch in text])
+
+        texts = ["a calibration text of some length " * 3, "another, shorter one"]
+        qwen3.precision_rewrite(Calibration(texts), Tok(), silu=activations.StableSilu, mlp_down=True,
+                                report=lambda *_: None)(backbone)
+        head.precision_rewrite()
+        self.assertIsInstance(backbone.model.layers[0].mlp.act_fn, activations.StableSilu)
+        with torch.no_grad():
+            got = Wrapper(backbone, head, head.ports(), 32)(**f)[0]
+        np.testing.assert_allclose(got.numpy(), want.numpy(), atol=2e-5)
+        d.cleanup()
 
 
 class TreeMask(unittest.TestCase):

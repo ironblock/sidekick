@@ -42,9 +42,14 @@ The recipe (tools/sidekick_convert; docs/CONVERTING.md):
   (tools/repro_cpu_softmax_length.py), so the same input differed between
   the 512 and 1,024 buckets by up to |dp| 0.019; the matmul form is
   bit-identical across them, at the same accuracy against fp32;
-- no precision or range rewrites: the model is GPU-served, where the
-  fp16 graph is already at its ideal-fp16 ceiling, and a 2^-6 RMSNorm
-  pre-scale measured worse on every path;
+- a precision rewrite for the ANE (qwen3.precision_rewrite, calibrated on
+  the gate states): silu as StableSilu, since the ANE's native silu is
+  coarse and agent-jev's first layers run on a residual of rms 0.03, so its
+  error dominates there; and power-of-two rescales of the inputs of q/k/v,
+  o_proj and down_proj, which sit under the ANE linear's precision floor
+  (rms 0.06-0.2). The head's scorer silu becomes StableSilu and its set
+  layers' gelu the erf TwiceGelu (head.precision_rewrite). Exact in fp32.
+  No RMSNorm pre-scale: a 2^-6 one measured worse on every path;
 - tokenizer.json copied from the checkpoint (Qwen3-0.6B-Base's) without
   padding or truncation;
 - the manifest checked against the checkpoint (format, io, revision,
@@ -78,6 +83,7 @@ from sidekick_convert import cli, core, manifest, tokenizer
 from sidekick_convert.backbones import qwen3
 from sidekick_convert.gates import ClassifierGates
 from sidekick_convert.heads.agentjev import AgentJevHead
+from sidekick_convert.techniques import activations
 from sidekick_convert.wrapper import compose
 
 PREFIX = "path_encoder.backbone."   # the backbone's tensors in model.safetensors
@@ -202,7 +208,12 @@ def main():
     print(f"gate set: {len(cases)} requests, {min(c.n for c in cases)}-{max(c.n for c in cases)} tokens, "
           f"buckets {[core.bucket_of(c.n, buckets) for c in cases]}", flush=True)
 
-    # After the references: the fp32 gate proves the rewrite exact.
+    # After the references: the fp32 gate proves the rewrites exact. The
+    # precision rewrite calibrates on the converter's own gate states, never
+    # the graded corpus (D26).
+    calibration = core.Calibration.without_graded([state for _, state, *_ in GATES])
+    qwen3.precision_rewrite(calibration, tok, silu=activations.StableSilu, mlp_down=True)(backbone)
+    head.precision_rewrite()
     qwen3.matmul_softmax(backbone)
     ports = head.ports()
     make_wrapper, example = compose(backbone, head, ports)
@@ -210,7 +221,7 @@ def main():
                             **ClassifierGates.paths(manifest.served_path(m)))
     job = core.Job(name=model_id, buckets=buckets, ports=ports, output=head.output, make_wrapper=make_wrapper,
                    example=example, evaluation=core.Evaluation(cases), gates=gates,
-                   forbid_ops=frozenset({core.FUSED_ATTENTION}) | backbone.forbid_ops,
+                   forbid_ops=frozenset({core.FUSED_ATTENTION, "silu", "gelu"}) | backbone.forbid_ops,
                    install_files=[(path, "classifier.toml")], landing_required=True, gate_cases="landing",
                    timing=args.time, backbone=backbone, head=head, **cli.job_options(args))
     core.run(job, args.install_dir)

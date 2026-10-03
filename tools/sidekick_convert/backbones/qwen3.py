@@ -88,11 +88,16 @@ def load(src, tok):
                          forbid_ops={"silu", "gelu"})
 
 
-def precision_rewrite(calibration, tok, texts_for=lambda cal: cal.texts, report=print):
+def precision_rewrite(calibration, tok, texts_for=lambda cal: cal.texts, report=print, silu=None, mlp_down=False):
     """A rewrite: calibrate attention's input statistics on `calibration`
     (texts_for(calibration) yields the full texts, prompts included), then
-    swap in TanhSilu and rescale attention's inputs. Every factor is a power
-    of two, so the fp32 graph is unchanged (the fp32 gate proves it)."""
+    swap in a silu built from accurate ANE ops (`silu`, an activations
+    class: TanhSilu by default) and rescale attention's inputs. With
+    `mlp_down`, also rescale down_proj's input (up_proj's rows by s, its
+    output by 1/s), capped by down_proj's measured peaks so a layer that
+    builds an attention sink keeps s = 1. Every factor is a power of two, so
+    the fp32 graph is unchanged (the fp32 gate proves it)."""
+    silu = silu or activations.TanhSilu
     from ..core import Calibration
     from ..tokenizer import encode
     if not isinstance(calibration, Calibration):
@@ -104,7 +109,8 @@ def precision_rewrite(calibration, tok, texts_for=lambda cal: cal.texts, report=
         for i, layer in enumerate(model.layers):
             a = layer.self_attn
             sites.update({f"{i}.qkv_in": (a.q_proj, "in"), f"{i}.q": (a.q_proj, "out"), f"{i}.k": (a.k_proj, "out"),
-                          f"{i}.o_in": (a.o_proj, "in"), f"{i}.o_out": (a.o_proj, "out")})
+                          f"{i}.o_in": (a.o_proj, "in"), f"{i}.o_out": (a.o_proj, "out"),
+                          f"{i}.down_in": (layer.mlp.down_proj, "in"), f"{i}.down_out": (layer.mlp.down_proj, "out")})
         def run():
             for text in texts_for(calibration):
                 backbone.reference(encode(tok, text))
@@ -112,9 +118,12 @@ def precision_rewrite(calibration, tok, texts_for=lambda cal: cal.texts, report=
         stats = collect(run, sites)
         scales = []
         for i, layer in enumerate(model.layers):
+            s_d = precision.input_scale(stats[f"{i}.down_in"], stats[f"{i}.down_out"]) if mlp_down else 1.0
             with torch.no_grad():
-                layer.mlp.up_proj.weight.mul_(1.0 / activations.TanhSilu.GAIN)
-            layer.mlp.act_fn = activations.TanhSilu()
+                layer.mlp.up_proj.weight.mul_(s_d / silu.GAIN)
+            layer.mlp.act_fn = silu()
+            if s_d != 1.0:
+                layer.mlp.down_proj = precision.Descale(layer.mlp.down_proj, 1.0 / s_d)
             a = layer.self_attn
             s_in = precision.input_scale(stats[f"{i}.qkv_in"])
             qk = max(stats[f"{i}.q"].max, stats[f"{i}.k"].max)
@@ -127,8 +136,8 @@ def precision_rewrite(calibration, tok, texts_for=lambda cal: cal.texts, report=
             a.q_norm.variance_epsilon *= s_in * s_in
             a.k_norm.variance_epsilon *= s_in * s_in
             a.o_proj = precision.Descale(a.o_proj, 1.0 / s_o)
-            scales.append(f"L{i} {s_in:g}/{s_o:g}")
-        report("attention input scales (q/k/v in, o_proj in): " + ", ".join(scales))
+            scales.append(f"L{i} {s_in:g}/{s_o:g}" + (f"/{s_d:g}" if mlp_down else ""))
+        report("input scales (q/k/v in, o_proj in" + (", down_proj in" if mlp_down else "") + "): " + ", ".join(scales))
     return rewrite
 
 
