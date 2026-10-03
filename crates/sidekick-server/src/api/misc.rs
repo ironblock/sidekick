@@ -95,14 +95,15 @@ fn placement(
 ) -> Option<Map<String, Value>> {
     let live =
         state.placements.as_ref().map(|p| p.for_model(dir, artifact, buckets, chunks, units)).unwrap_or_default();
-    // A plan recorded for other compute units doesn't describe this model.
-    let recorded = recorded.filter(|r| r.compute_units == units);
+    // Only a plan recorded for the units the model runs on describes it:
+    // the main record, or an alternative read for those units (D38).
+    let recorded = recorded.filter(|r| r.covers(units));
     let machine = this_machine();
     let reports: Map<String, Value> = buckets
         .iter()
         .filter_map(|&bucket| {
             let live = live.get(&bucket);
-            let value = match (live, recorded.and_then(|r| r.bucket(bucket).map(|plan| (r, plan)))) {
+            let value = match (live, recorded.and_then(|r| r.bucket_for(units, bucket).map(|plan| (r, plan)))) {
                 (Some(Placement::Ready(c)), _) => {
                     let mut v = json!({"source": "live", "state": "ready", "ane": c.ane, "gpu": c.gpu, "cpu": c.cpu});
                     if detail {

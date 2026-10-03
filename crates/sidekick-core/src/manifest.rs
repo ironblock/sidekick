@@ -155,6 +155,16 @@ pub struct RecordedPlacement {
     pub date: Option<String>,
     /// By bucket length (TOML table keys are strings).
     pub buckets: BTreeMap<String, RecordedPlan>,
+    /// Plans read on the same machine for other compute units, by their
+    /// manifest name (`cpu_and_gpu`), for a model an operator moves (D38).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub alternatives: BTreeMap<String, AlternativePlacement>,
+}
+
+/// One alternative's plans, by bucket length.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlternativePlacement {
+    pub buckets: BTreeMap<String, RecordedPlan>,
 }
 
 /// One bucket's recorded plan: operation counts by device.
@@ -187,6 +197,20 @@ impl RecordedPlacement {
     pub fn bucket(&self, bucket: usize) -> Option<&RecordedPlan> {
         self.buckets.get(&bucket.to_string())
     }
+
+    /// The recorded plan for `bucket` under `units`: the main record's, or
+    /// an alternative's; `None` when none was read for those units.
+    pub fn bucket_for(&self, units: ComputeUnits, bucket: usize) -> Option<&RecordedPlan> {
+        if self.compute_units == units {
+            return self.bucket(bucket);
+        }
+        self.alternatives.get(units.name())?.buckets.get(&bucket.to_string())
+    }
+
+    /// Whether a plan was recorded for `units`.
+    pub fn covers(&self, units: ComputeUnits) -> bool {
+        self.compute_units == units || self.alternatives.contains_key(units.name())
+    }
 }
 
 /// Why a recorded placement can't be used: it must describe the model's own
@@ -194,7 +218,8 @@ impl RecordedPlacement {
 /// before any cap drops some. A bad record is dropped with a warning rather
 /// than skipping the model: it only describes the model.
 fn placement_problem(p: &RecordedPlacement, buckets: &[usize], chunks: usize) -> Option<String> {
-    for (key, plan) in &p.buckets {
+    let tables = std::iter::once(&p.buckets).chain(p.alternatives.values().map(|a| &a.buckets));
+    for (key, plan) in tables.flatten() {
         let listed = key.parse::<usize>().is_ok_and(|b| buckets.contains(&b));
         if !listed {
             return Some(format!("`[placement.buckets]` has `{key}`, which isn't one of the buckets {buckets:?}"));
@@ -2267,6 +2292,7 @@ max_seq_len = 512
             macos_build: "b".into(),
             date: None,
             buckets: [("128".to_string(), plan(10, chunks))].into(),
+            alternatives: BTreeMap::new(),
         };
         // Chunks that add up, and as many as the model has: kept.
         assert_eq!(placement_problem(&placement(vec![plan(4, vec![]), plan(6, vec![])]), &[128], 2), None);
@@ -2332,6 +2358,26 @@ max_seq_len = 512
         // An override naming no model is reported, not an error; one naming a skipped model is not unmatched.
         assert_eq!(reg.unmatched_overrides(), ["ghost"]);
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn a_recorded_placement_may_carry_other_units_plans() {
+        let toml = "[placement]\ncompute_units = \"cpu_and_gpu\"\nchip = \"c\"\nmacos_build = \"b\"\n\n\
+                    [placement.buckets.128]\nane = 0\ngpu = 9\ncpu = 1\nunassigned = 2\ntotal = 12\n\n\
+                    [placement.alternatives.cpu_and_ne.buckets.128]\nane = 8\ngpu = 0\ncpu = 2\nunassigned = 2\ntotal = 12\n";
+        #[derive(Deserialize)]
+        struct Doc {
+            placement: RecordedPlacement,
+        }
+        let p = toml::from_str::<Doc>(toml).unwrap().placement;
+        assert_eq!(p.bucket_for(ComputeUnits::CpuAndGpu, 128).map(|b| b.gpu), Some(9));
+        assert_eq!(p.bucket_for(ComputeUnits::CpuAndNeuralEngine, 128).map(|b| b.ane), Some(8));
+        assert!(p.bucket_for(ComputeUnits::CpuOnly, 128).is_none() && !p.covers(ComputeUnits::CpuOnly));
+        assert_eq!(placement_problem(&p, &[128], 1), None);
+        // An alternative for a bucket the model doesn't have is a bad record.
+        let mut bad = p.clone();
+        bad.alternatives.get_mut("cpu_and_ne").unwrap().buckets.insert("64".into(), p.buckets["128"].clone());
+        assert!(placement_problem(&bad, &[128], 1).unwrap().contains("`64`"));
     }
 
     #[test]

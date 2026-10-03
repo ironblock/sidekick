@@ -11,7 +11,7 @@
 
 use serde::Deserialize;
 use sidekick_core::manifest::ModelRegistry;
-use sidekick_core::{Classifier, Prepared};
+use sidekick_core::Prepared;
 use sidekick_coreml::{ComputeUnits, CoremlChain, Int32Input};
 use sidekick_embed::CoremlClassifier;
 use std::path::{Path, PathBuf};
@@ -181,7 +181,9 @@ fn a_chain_whose_chunks_dont_fit_together_is_refused() {
         pairs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
     };
     let ok32 = [("model_32.0.mlmodelc", "model_32.0.mlmodelc"), ("model_32.1.mlmodelc", "model_32.1.mlmodelc")];
-    let cases: Vec<(&str, Vec<(String, String)>, &str)> = vec![
+    // (tag, programs installed, the error's substring)
+    type Case<'a> = (&'a str, Vec<(String, String)>, &'a str);
+    let cases: Vec<Case> = vec![
         // The chunks in the wrong order.
         ("swapped", link(&[("model_16.0.mlmodelc", "model_16.1.mlmodelc"), ("model_16.1.mlmodelc", "model_16.0.mlmodelc")]),
          "the first chunk takes `hidden_in`"),
