@@ -780,6 +780,7 @@ fn check_ane_weights(
     artifact: &str,
     buckets: &[usize],
     units: ComputeUnits,
+    source: ComputeUnitsSource,
     limit: AneWeightLimit,
     options: &ScanOptions,
 ) -> std::result::Result<(), String> {
@@ -789,6 +790,12 @@ fn check_ane_weights(
     }
     match over_ane_weight_limit(dir, artifact, buckets) {
         None => Ok(()),
+        Some(reason) if source == ComputeUnitsSource::Operator => Err(format!(
+            "{reason}; served with `{}`, which the daemon config's `[models.\"<id>\"]` chose (D38), Core ML \
+             would run it off the ANE without an error. Remove that override, convert a quantized or chunked \
+             variant, or start sidekickd with --ignore-ane-weight-cap to load it anyway",
+            units.name()
+        )),
         Some(reason) => Err(format!(
             "{reason}; served with `{}`, Core ML would run it off the ANE without an error. Serve it on the \
              GPU (`compute_units = \"cpu_and_gpu\"`), convert a quantized or chunked variant, or set \
@@ -922,7 +929,7 @@ impl ModelRegistry {
                     }
                     let units = m.compute_units.unwrap_or_default();
                     let limit = m.ane_weight_limit.unwrap_or_default();
-                    check_ane_weights(dir, &m.artifact, &m.buckets, units, limit, options).map(|()| m)
+                    check_ane_weights(dir, &m.artifact, &m.buckets, units, m.compute_units_source, limit, options).map(|()| m)
                 })
                 .and_then(|mut m| {
                     if m.backend != EmbeddingBackendKind::Coreml {
@@ -967,7 +974,7 @@ impl ModelRegistry {
                     m
                 })
                 .and_then(|m| {
-                    check_ane_weights(dir, &m.artifact, &m.buckets, m.compute_units, m.ane_weight_limit, options)
+                    check_ane_weights(dir, &m.artifact, &m.buckets, m.compute_units, m.compute_units_source, m.ane_weight_limit, options)
                         .map(|()| m)
                 })
                 .and_then(|mut m| {
@@ -2115,7 +2122,8 @@ max_seq_len = 512
         // Moved onto the ANE past its weight limit: refused as the manifest's own choice would be (D32).
         let reg = scan(&[("big", ComputeUnits::CpuAndNeuralEngine), ("ghost", ComputeUnits::CpuOnly)]);
         assert!(reg.classifier("big").is_err());
-        assert!(reg.skipped()[0].reason.contains("past Core ML's 1 GiB limit"), "{}", reg.skipped()[0].reason);
+        let why = &reg.skipped()[0].reason;
+        assert!(why.contains("past Core ML's 1 GiB limit") && why.contains("Remove that override"), "{why}");
         // An override naming no model is reported, not an error; one naming a skipped model is not unmatched.
         assert_eq!(reg.unmatched_overrides(), ["ghost"]);
         std::fs::remove_dir_all(&tmp).unwrap();
