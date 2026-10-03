@@ -608,6 +608,7 @@ mod tests {
             ane_weight_limit: Default::default(),
             cpu_seq_limit: Default::default(),
             seq_cap: None,
+            compute_units_source: Default::default(),
             placement: None,
             id: "z".into(),
             task: ClassifyTask::ZeroShotClassification,

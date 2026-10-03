@@ -4,7 +4,7 @@ use axum::extract::State;
 use axum::Json;
 use serde_json::{json, Map, Value};
 use sidekick_core::manifest::{RecordedPlacement, ResolvedModel};
-use sidekick_core::{ClassifyTask, ComputeUnits, EmbeddingBackendKind};
+use sidekick_core::{ClassifyTask, ComputeUnits, ComputeUnitsSource, EmbeddingBackendKind};
 use sidekick_embed::placement::{this_machine, Placement};
 use std::path::Path;
 
@@ -29,6 +29,9 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
         let m = r.map(|r| &r.manifest);
         data.push(ModelObject {
             compute_units: m.map(|m| m.compute_units_name()),
+            compute_units_source: m
+                .filter(|m| m.backend == EmbeddingBackendKind::Coreml)
+                .map(|m| m.compute_units_source.name()),
             seq_cap: m.and_then(|m| m.seq_cap.clone()),
             placement: r.and_then(|r| embedder_placement(&state, r, false)),
             ..ModelObject::new(id.to_string(), created, "feature-extraction")
@@ -53,6 +56,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             extensions: Some(m.extension_fields()),
             required: Some(m.required_fields()),
             compute_units: Some(m.compute_units.name()),
+            compute_units_source: Some(m.compute_units_source.name()),
             seq_cap: m.seq_cap.clone(),
             placement: placement(&state, &c.dir, &m.artifact, &m.buckets, m.compute_units, m.placement.as_ref(), false),
             calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
@@ -161,6 +165,20 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
                 .filter_map(|r| r.manifest.seq_cap.as_ref().map(|c| (r.manifest.id.clone(), json!(c)))),
         )
         .collect();
+    // Models whose compute units the operator chose (D38), by id.
+    let overrides: Map<String, Value> = state
+        .registry
+        .iter()
+        .filter(|r| r.manifest.compute_units_source == ComputeUnitsSource::Operator)
+        .map(|r| (r.manifest.id.clone(), json!(r.manifest.compute_units_name())))
+        .chain(
+            state
+                .registry
+                .classifiers()
+                .filter(|c| c.manifest.compute_units_source == ComputeUnitsSource::Operator)
+                .map(|c| (c.manifest.id.clone(), json!(c.manifest.compute_units.name()))),
+        )
+        .collect();
     // Where Core ML places each bucket's operations, by model id.
     let plans: Map<String, Value> = state
         .registry
@@ -196,6 +214,12 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "supported": state.classifiers_supported,
             "models": classifier_models,
             "resident": state.classifiers.resident().await,
+        },
+        // Compute units the operator chose in the daemon config (D38), and
+        // overrides that named no Core ML model.
+        "compute_unit_overrides": {
+            "applied": overrides,
+            "unmatched": state.registry.unmatched_overrides(),
         },
         // Manifests the registry couldn't use, and why.
         "skipped_models": state.registry.skipped(),

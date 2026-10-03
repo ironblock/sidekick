@@ -261,6 +261,12 @@ model_idle_ttl_secs = 900      # model residency (embedders, classifiers) after 
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
 report_compute_plans = false   # read each loaded bucket's Core ML placement live (costs a second compile)
+
+# Per model, by id: serve it on other compute units than its manifest names,
+# e.g. keep a companion model off the GPU a larger model uses. Core ML models
+# only; the ANE weight limit and the CPU length cap apply as to the manifest's.
+# [models."agent-jev"]
+# compute_units = "cpu_and_ne"   # cpu_and_ne, cpu_and_gpu, cpu_only or all
 ```
 
 CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...

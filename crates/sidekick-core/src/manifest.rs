@@ -255,6 +255,10 @@ pub struct ModelManifest {
     /// The cap the registry applied, if any (never read from the file).
     #[serde(skip)]
     pub seq_cap: Option<SeqCap>,
+    /// Who chose `compute_units`: the manifest, or the operator's daemon
+    /// config (D38). Never read from the file.
+    #[serde(skip)]
+    pub compute_units_source: ComputeUnitsSource,
     /// The compute plan the converter read (coreml backend only).
     #[serde(default)]
     pub placement: Option<RecordedPlacement>,
@@ -332,6 +336,10 @@ pub struct ClassifierManifest {
     /// The cap the registry applied, if any (never read from the file).
     #[serde(skip)]
     pub seq_cap: Option<SeqCap>,
+    /// Who chose `compute_units`: the manifest, or the operator's daemon
+    /// config (D38). Never read from the file.
+    #[serde(skip)]
+    pub compute_units_source: ComputeUnitsSource,
     /// The compute plan the converter read.
     #[serde(default)]
     pub placement: Option<RecordedPlacement>,
@@ -653,9 +661,33 @@ impl ResolvedClassifier {
     }
 }
 
+/// Who chose a model's compute units (D38).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComputeUnitsSource {
+    /// Its manifest's `compute_units`, or the default.
+    #[default]
+    Manifest,
+    /// The daemon's config (`[models."<id>"] compute_units`).
+    Operator,
+}
+
+impl ComputeUnitsSource {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Manifest => "manifest",
+            Self::Operator => "operator",
+        }
+    }
+}
+
 /// How [`ModelRegistry::scan_with`] scans.
 #[derive(Debug, Clone, Default)]
 pub struct ScanOptions {
+    /// Compute units the operator chose for some Core ML models, by model
+    /// id (D38). They replace the manifest's before the weight limit (D32)
+    /// and the CPU cap (D33) judge the model.
+    pub compute_units: BTreeMap<String, ComputeUnits>,
     /// Load models served on the ANE even past
     /// [`MAX_ANE_PROGRAM_WEIGHT_BYTES`] (`sidekickd
     /// --ignore-ane-weight-cap`, or the parity suite, which measures every
@@ -748,6 +780,7 @@ fn check_ane_weights(
     artifact: &str,
     buckets: &[usize],
     units: ComputeUnits,
+    source: ComputeUnitsSource,
     limit: AneWeightLimit,
     options: &ScanOptions,
 ) -> std::result::Result<(), String> {
@@ -757,6 +790,12 @@ fn check_ane_weights(
     }
     match over_ane_weight_limit(dir, artifact, buckets) {
         None => Ok(()),
+        Some(reason) if source == ComputeUnitsSource::Operator => Err(format!(
+            "{reason}; served with `{}`, which the daemon config's `[models.\"<id>\"]` chose (D38), Core ML \
+             would run it off the ANE without an error. Remove that override, convert a quantized or chunked \
+             variant, or start sidekickd with --ignore-ane-weight-cap to load it anyway",
+            units.name()
+        )),
         Some(reason) => Err(format!(
             "{reason}; served with `{}`, Core ML would run it off the ANE without an error. Serve it on the \
              GPU (`compute_units = \"cpu_and_gpu\"`), convert a quantized or chunked variant, or set \
@@ -829,6 +868,8 @@ pub struct ModelRegistry {
     models: BTreeMap<String, ResolvedModel>,
     classifiers: BTreeMap<String, ResolvedClassifier>,
     skipped: Vec<SkippedManifest>,
+    /// Operator compute-unit overrides that named no Core ML model (D38).
+    unmatched_overrides: Vec<String>,
     /// The scanned directory.
     root: PathBuf,
 }
@@ -854,6 +895,8 @@ impl ModelRegistry {
             .filter(|p| p.is_dir())
             .collect();
         dirs.sort();
+        // Ids whose operator override was applied (D38).
+        let mut applied: Vec<String> = Vec::new();
 
         // Embedders first, so they win an id collision whatever the order.
         for dir in &dirs {
@@ -863,6 +906,14 @@ impl ModelRegistry {
             }
             let loaded = read_manifest::<ModelManifest>(&path)
                 .and_then(|m| validate_embedder(&m).map(|()| m))
+                .map(|mut m| {
+                    if let (Some(&units), EmbeddingBackendKind::Coreml) = (options.compute_units.get(&m.id), m.backend) {
+                        m.compute_units = Some(units);
+                        m.compute_units_source = ComputeUnitsSource::Operator;
+                        applied.push(m.id.clone());
+                    }
+                    m
+                })
                 .map(|mut m| {
                     let problem = match (&m.placement, m.backend) {
                         (None, _) => None,
@@ -878,7 +929,7 @@ impl ModelRegistry {
                     }
                     let units = m.compute_units.unwrap_or_default();
                     let limit = m.ane_weight_limit.unwrap_or_default();
-                    check_ane_weights(dir, &m.artifact, &m.buckets, units, limit, options).map(|()| m)
+                    check_ane_weights(dir, &m.artifact, &m.buckets, units, m.compute_units_source, limit, options).map(|()| m)
                 })
                 .and_then(|mut m| {
                     if m.backend != EmbeddingBackendKind::Coreml {
@@ -910,12 +961,20 @@ impl ModelRegistry {
             let loaded = read_manifest::<ClassifierManifest>(&path)
                 .and_then(|m| validate_classifier(&m).map(|()| m))
                 .map(|mut m| {
+                    if let Some(&units) = options.compute_units.get(&m.id) {
+                        m.compute_units = units;
+                        m.compute_units_source = ComputeUnitsSource::Operator;
+                        applied.push(m.id.clone());
+                    }
+                    m
+                })
+                .map(|mut m| {
                     let problem = m.placement.as_ref().and_then(|p| placement_problem(p, &m.buckets));
                     check_placement(&path, &mut m.placement, problem);
                     m
                 })
                 .and_then(|m| {
-                    check_ane_weights(dir, &m.artifact, &m.buckets, m.compute_units, m.ane_weight_limit, options)
+                    check_ane_weights(dir, &m.artifact, &m.buckets, m.compute_units, m.compute_units_source, m.ane_weight_limit, options)
                         .map(|()| m)
                 })
                 .and_then(|mut m| {
@@ -942,7 +1001,17 @@ impl ModelRegistry {
                 Err(reason) => reg.skip(&path, reason),
             }
         }
+        reg.unmatched_overrides = options.compute_units.keys().filter(|id| !applied.contains(id)).cloned().collect();
+        for id in &reg.unmatched_overrides {
+            tracing::warn!("the config sets compute units for `{id}`, and no Core ML model has that id");
+        }
         Ok(reg)
+    }
+
+    /// Operator compute-unit overrides (D38) that named no Core ML model in
+    /// the models directory.
+    pub fn unmatched_overrides(&self) -> &[String] {
+        &self.unmatched_overrides
     }
 
     /// The manifest path already registered under `id`.
@@ -2015,6 +2084,48 @@ max_seq_len = 512
         // The opt-out is honored, and a model that fits isn't refused.
         assert_eq!(ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &buckets, AneWeightLimit::Ignore), None);
         assert_eq!(ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &[128], AneWeightLimit::Enforce), None);
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn the_operators_compute_units_replace_the_manifests_and_meet_the_same_limits() {
+        const CAP: u64 = MAX_ANE_PROGRAM_WEIGHT_BYTES;
+        let tmp = tmp_dir("operator-units");
+        // Over the ANE's weight limit, and served on the GPU by its manifest.
+        let gpu = SENTIMENT.replace("\n[classify]", "compute_units = \"cpu_and_gpu\"\n\n[classify]");
+        write_classifier(&tmp, "big", &gpu.replace("\"sentiment\"", "\"big\""));
+        weights(&tmp.join("big"), "model_128.mlmodelc", "weights", 1 << 20);
+        weights(&tmp.join("big"), "model_512.mlmodelc", "weights", CAP + 1);
+        // Within it, on the ANE by default.
+        write_classifier(&tmp, "small", &SENTIMENT.replace("\"sentiment\"", "\"small\""));
+        // Long, for the CPU cap.
+        let long = SENTIMENT.replace("[128, 512]", "[128, 1024, 2048]").replace("max_seq_len = 512", "max_seq_len = 2048");
+        write_classifier(&tmp, "long", &long.replace("\"sentiment\"", "\"long\""));
+        let scan = |overrides: &[(&str, ComputeUnits)]| {
+            let options = ScanOptions {
+                compute_units: overrides.iter().map(|(id, u)| (id.to_string(), *u)).collect(),
+                ..Default::default()
+            };
+            ModelRegistry::scan_with(&tmp, &options).unwrap()
+        };
+        // No overrides: the manifests decide.
+        let reg = scan(&[]);
+        assert!(reg.skipped().is_empty() && reg.unmatched_overrides().is_empty());
+        assert_eq!(reg.classifier("big").unwrap().manifest.compute_units_source, ComputeUnitsSource::Manifest);
+        // Moved to the GPU, and to the CPU: applied and reported as the operator's.
+        let reg = scan(&[("small", ComputeUnits::CpuAndGpu), ("long", ComputeUnits::CpuOnly)]);
+        let small = &reg.classifier("small").unwrap().manifest;
+        assert_eq!((small.compute_units, small.compute_units_source), (ComputeUnits::CpuAndGpu, ComputeUnitsSource::Operator));
+        // The CPU cap (D33) applies to the operator's choice.
+        let long = &reg.classifier("long").unwrap().manifest;
+        assert_eq!(long.seq_cap.as_ref().map(|c| c.limit), Some(1024));
+        // Moved onto the ANE past its weight limit: refused as the manifest's own choice would be (D32).
+        let reg = scan(&[("big", ComputeUnits::CpuAndNeuralEngine), ("ghost", ComputeUnits::CpuOnly)]);
+        assert!(reg.classifier("big").is_err());
+        let why = &reg.skipped()[0].reason;
+        assert!(why.contains("past Core ML's 1 GiB limit") && why.contains("Remove that override"), "{why}");
+        // An override naming no model is reported, not an error; one naming a skipped model is not unmatched.
+        assert_eq!(reg.unmatched_overrides(), ["ghost"]);
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

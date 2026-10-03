@@ -816,3 +816,38 @@ async fn listings_report_live_compute_plans_when_enabled() {
     assert_eq!(plans["models"]["sentiment"]["64"], json!({"source": "live", "state": "error", "error": error}));
     assert_eq!(plans["models"]["placed"]["64"]["live_error"], error);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_operator_can_choose_a_models_compute_units() {
+    use sidekick_core::{ComputeUnits, ScanOptions};
+    let options = ScanOptions {
+        compute_units: [
+            ("sentiment".to_string(), ComputeUnits::CpuAndGpu),
+            ("no-such-model".to_string(), ComputeUnits::CpuAndNeuralEngine),
+        ]
+        .into(),
+        ..Default::default()
+    };
+    let state = || test_state_scanned(true, None, &options).state;
+    let (_, body) = call(state(), Request::get("/v1/models").body(Body::empty()).unwrap()).await;
+    let model = |id: &str| -> Value {
+        body["data"].as_array().unwrap().iter().find(|m| m["id"] == id).cloned().unwrap_or_else(|| panic!("{id} not listed"))
+    };
+    assert_eq!(model("sentiment")["compute_units"], "cpu_and_gpu");
+    assert_eq!(model("sentiment")["compute_units_source"], "operator");
+    assert_eq!(model("decider")["compute_units_source"], "manifest");
+    // A static embedder has no compute units to choose.
+    assert!(model("test-static").get("compute_units_source").is_none());
+
+    // Responses report the units it runs on.
+    let (status, headers, _) =
+        call_with_headers(state(), classify(json!({"model": "sentiment", "input": "great"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["sidekick-compute-units"], "cpu_and_gpu");
+
+    let (_, health) = call(state(), Request::get("/health").body(Body::empty()).unwrap()).await;
+    assert_eq!(
+        health["compute_unit_overrides"],
+        json!({"applied": {"sentiment": "cpu_and_gpu"}, "unmatched": ["no-such-model"]})
+    );
+}
