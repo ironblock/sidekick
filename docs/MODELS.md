@@ -729,7 +729,10 @@ exactly 2,048 tokens.
   wired. agent-jev answered 1,024-token requests at one per second, from
   one install, its compute units switched by the daemon config (D38):
   - On the GPU, Core ML maps the companion's weights into sidekickd: 1,195
-    MB resident for its one 1,024-token bucket. Within seconds of it
+    MB resident for its one 1,024-token bucket. (Measured with an install of
+    that bucket only: sidekick then also kept a model's smallest bucket
+    resident, which doubled it. Since 0.7.0 a full install holds only the
+    buckets its requests use.) Within seconds of it
     loading, oMLX's own memory-pressure policy unloaded the 27B and
     refused its requests ("process memory pressure requested this model
     to unload"): none of five generations completed, in two runs. That is

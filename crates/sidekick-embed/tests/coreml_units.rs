@@ -75,11 +75,40 @@ fn an_embedder_loads_with_its_manifest_compute_units() {
         assert_eq!(model.manifest.compute_units_name(), want.name());
         let embedder = CoremlEmbedder::load(model).unwrap();
         assert_eq!(embedder.compute_units().unwrap(), want, "{line:?}");
-        // And it serves there, reporting the bucket each input ran in.
+        assert_eq!(embedder.resident_buckets(), Vec::<usize>::new(), "loading keeps no bucket resident");
+        // And it serves there, reporting the bucket each input ran in, with
+        // the units sidekick configured held by Core ML.
         let (v, buckets) =
             embedder.embed_bucketed(&["a b c", "d"], EmbedPurpose::Document, EmbedLimits::default()).unwrap();
         assert_eq!((v[0].len(), buckets), (16, Some(vec![16, 16])));
         assert!(v[0].iter().all(|x| x.is_finite()));
+        assert_eq!(embedder.loaded_compute_units().unwrap(), want, "{line:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[test]
+fn a_broken_embedder_bucket_fails_the_load() {
+    // Every bucket's artifact is checked at load, though none is kept
+    // resident: a missing larger bucket, or one without the manifest's
+    // input, fails the load rather than the first long request.
+    let manifest = |input: &str| {
+        format!(
+            "id = \"tiny-embedder\"\nbackend = \"coreml\"\nartifact = \"model_{{seq}}.mlmodelc\"\n\
+             tokenizer = \"tokenizer.json\"\ndims = 16\npooling = \"none\"\nbuckets = [16, 32]\nmax_seq_len = 32\n\
+             [io]\ninput_ids = \"{input}\"\nattention_mask = \"attention_mask\"\noutput = \"logits\"\n"
+        )
+    };
+    let bucket16 = ("model_16.mlmodelc", fixtures("tiny-gliner2").join("model_16.mlmodelc"));
+    for (tag, input, files, want) in [
+        ("missing", "input_ids", vec![bucket16.clone()], "model_32.mlmodelc: can't read the artifact"),
+        ("input", "token_ids", vec![bucket16.clone(), ("model_32.mlmodelc", bucket16.1.clone())],
+         "model_16.mlmodelc: no int32 multi-array input `token_ids`"),
+    ] {
+        let dir = models_dir(&format!("broken-{tag}"), "tiny-embedder", "manifest.toml", &manifest(input), &files);
+        let registry = ModelRegistry::scan(&dir).unwrap();
+        let e = CoremlEmbedder::load(registry.get("tiny-embedder").unwrap()).err().expect("the load fails");
+        assert!(e.to_string().contains(want), "{tag}: {e}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

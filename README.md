@@ -280,8 +280,13 @@ everything else the machine runs):
 
 - **Models load lazily.** A model loads on its first request, and each of
   its sequence-length buckets, its own compiled program, loads the first
-  time an input needs it. A short-input workload never loads the large
-  buckets.
+  time an input needs it. Loading the model checks every bucket's artifact
+  from its description, and keeps none of them resident. A short-input
+  workload never loads the large buckets, and a long-input one never loads
+  the small ones. (Before 0.7.0 the smallest bucket also loaded with the
+  model and stayed: on the GPU that cost chunked agent-jev, serving
+  1,024-token requests, 2.4 GB of resident memory where it now uses
+  1.3 GB.)
 - **On the ANE (the default), little of it is counted against
   sidekickd.** Its own footprint stays at tens to a couple of hundred MB:
   57 MB with bge-small's three buckets, 55 MB with nlptown-sentiment's
