@@ -15,7 +15,7 @@ use crate::bucket_models::BucketModels;
 use crate::pooling::{mean_pool, normalize_in_place};
 use sidekick_core::manifest::ResolvedModel;
 use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder, Error, Pooling, Result, Truncate};
-use sidekick_coreml::{ComputeUnits, Int32Input};
+use sidekick_coreml::{ComputeUnits, Int32Input, ShapeVerdict};
 use tokenizers::{Tokenizer, TruncationDirection};
 
 pub struct CoremlEmbedder {
@@ -164,12 +164,50 @@ impl CoremlEmbedder {
             prefix_document: m.prefixes.document.clone(),
             added_tokens,
         };
-        // Load the smallest bucket eagerly so a broken artifact fails at
-        // load time (matching the pool's load-error surface), not on the
-        // first request.
-        let smallest = *embedder.buckets.first().expect("validated non-empty");
-        embedder.models.get(smallest)?;
+        // Check every bucket's artifact now, from its description (a CPU-only
+        // open that never predicts, then released), so a broken one fails the
+        // load (the pool's load-error surface), not the first request long
+        // enough to need it. No bucket stays resident until a request needs it.
+        std::thread::scope(|scope| {
+            let checks: Vec<_> = embedder
+                .buckets
+                .iter()
+                .map(|&b| {
+                    let embedder = &embedder;
+                    scope.spawn(move || embedder.check_bucket(b))
+                })
+                .collect();
+            checks.into_iter().try_for_each(|c| {
+                c.join().unwrap_or_else(|_| Err(Error::Inference("bucket check panicked".into())))
+            })
+        })?;
         Ok(embedder)
+    }
+
+    /// One bucket's artifact: readable, past D27's shape guard, with the
+    /// manifest's input and output names. Errors name the artifact relative
+    /// to the model directory.
+    fn check_bucket(&self, bucket: usize) -> Result<()> {
+        let name = self.models.artifact_name(bucket);
+        let fail = |message: String| Err(Error::Inference(format!("model `{}`, {name}: {message}", self.id)));
+        let iface = match sidekick_coreml::interface(&self.models.path(bucket)) {
+            Ok(iface) => iface,
+            Err(e) => return fail(format!("can't read the artifact: {e}")),
+        };
+        if let ShapeVerdict::Refuse(reason) = sidekick_coreml::load_verdict(&iface.constraints) {
+            return fail(reason);
+        }
+        let names = std::iter::once(&self.input_ids_name).chain(self.attention_mask_name.as_ref());
+        for input in names {
+            if !iface.inputs.contains_key(input) {
+                return fail(format!("no int32 multi-array input `{input}`"));
+            }
+        }
+        // an artifact may not declare its outputs' shapes; check the name when it does
+        if !iface.outputs.is_empty() && !iface.outputs.contains_key(&self.output_name) {
+            return fail(format!("no multi-array output `{}`", self.output_name));
+        }
+        Ok(())
     }
 
     /// Sequence-length buckets, smallest first.
@@ -177,13 +215,27 @@ impl CoremlEmbedder {
         &self.buckets
     }
 
-    /// The compute units Core ML loaded the model with, read back from the
-    /// smallest bucket's configuration (every bucket shares them).
+    /// The compute units every bucket loads with: the ones sidekick
+    /// configures Core ML with. Reading them loads nothing.
     pub fn compute_units(&self) -> Result<ComputeUnits> {
+        Ok(self.models.units())
+    }
+
+    /// The compute units Core ML holds in a loaded bucket's configuration,
+    /// loading the smallest if none is: for tests that Core ML honors
+    /// [`compute_units`](Self::compute_units).
+    #[doc(hidden)]
+    pub fn loaded_compute_units(&self) -> Result<ComputeUnits> {
         let bucket = *self.buckets.first().expect("validated non-empty");
         self.models.get(bucket)?.compute_units().ok_or_else(|| {
             Error::Inference("Core ML reports compute units sidekick doesn't set".into())
         })
+    }
+
+    /// The buckets loaded and resident, smallest first.
+    #[doc(hidden)]
+    pub fn resident_buckets(&self) -> Vec<usize> {
+        self.models.resident(&self.buckets)
     }
 
     /// Apply the purpose's prefix, tokenize, truncate, and pick a bucket.

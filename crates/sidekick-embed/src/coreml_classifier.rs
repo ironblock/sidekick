@@ -265,11 +265,11 @@ impl CoremlClassifier {
             })
         })?;
 
-        let classifier = Self { manifest: m.clone(), inputs: InputBuilder::load(model)?, models, io };
-        // Load the smallest bucket eagerly so a broken artifact fails at
-        // load time, not on the first request.
-        classifier.models.get(*m.buckets.first().expect("validated non-empty"))?;
-        Ok(classifier)
+        // The checks above opened every program, from its description, on the
+        // CPU, and released it: a broken artifact has already failed the load.
+        // No bucket stays resident until a request needs it, so a model
+        // costs the memory of the buckets it serves, not also its smallest.
+        Ok(Self { manifest: m.clone(), inputs: InputBuilder::load(model)?, models, io })
     }
 
     /// Sequence-length buckets, smallest first.
@@ -277,13 +277,27 @@ impl CoremlClassifier {
         &self.manifest.buckets
     }
 
-    /// The compute units Core ML loaded the model with, read back from the
-    /// smallest bucket's configuration (every bucket shares them).
+    /// The compute units every bucket loads with: the ones sidekick
+    /// configures Core ML with. Reading them loads nothing.
     pub fn compute_units(&self) -> Result<ComputeUnits> {
+        Ok(self.models.units())
+    }
+
+    /// The compute units Core ML holds in a loaded bucket's configuration,
+    /// loading the smallest if none is: for tests that Core ML honors
+    /// [`compute_units`](Self::compute_units).
+    #[doc(hidden)]
+    pub fn loaded_compute_units(&self) -> Result<ComputeUnits> {
         let bucket = *self.manifest.buckets.first().expect("validated non-empty");
         self.models.get(bucket)?.compute_units().ok_or_else(|| {
             Error::Inference("Core ML reports compute units sidekick doesn't set".into())
         })
+    }
+
+    /// The buckets loaded and resident, smallest first.
+    #[doc(hidden)]
+    pub fn resident_buckets(&self) -> Vec<usize> {
+        self.models.resident(&self.manifest.buckets)
     }
 
     /// The input builder, for tests and the parity suite.

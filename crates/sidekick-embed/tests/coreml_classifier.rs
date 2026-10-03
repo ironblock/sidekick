@@ -187,13 +187,18 @@ fn the_manifest_compute_units_reach_core_ml() {
         assert_eq!(model.manifest.compute_units, want);
         let clf = CoremlClassifier::load(model).unwrap();
         assert_eq!(clf.compute_units().unwrap(), want, "{line:?}");
-        // And it serves there.
+        // Loading checks every bucket and keeps none resident.
+        assert_eq!(clf.resident_buckets(), Vec::<usize>::new());
+        // And it serves there: a request loads only its bucket, and Core ML
+        // holds the units sidekick configured.
         let params = ClassifyParams {
             candidate_labels: vec!["a".into(), "b".into()],
             question_type: Some(QuestionType::Choice),
             ..Default::default()
         };
         assert!(clf.classify("c d", &params).unwrap().iter().all(|x| x.is_finite()));
+        assert_eq!(clf.resident_buckets(), vec![16]);
+        assert_eq!(clf.loaded_compute_units().unwrap(), want, "{line:?}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
     // An explicit preference overrides the manifest's.

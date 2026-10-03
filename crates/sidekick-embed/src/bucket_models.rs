@@ -53,6 +53,22 @@ impl BucketModels {
         self.artifact_names(bucket).iter().map(|n| self.dir.join(n)).collect()
     }
 
+    /// The compute units every bucket loads with.
+    pub fn units(&self) -> ComputeUnits {
+        self.units
+    }
+
+    /// The buckets loaded and resident, smallest first (one being loaded
+    /// right now isn't yet).
+    pub fn resident(&self, buckets: &[usize]) -> Vec<usize> {
+        let slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+        buckets
+            .iter()
+            .copied()
+            .filter(|&b| slots.get(&self.paths(b)[0]).is_some_and(|s| s.try_lock().is_ok_and(|m| m.is_some())))
+            .collect()
+    }
+
     /// The programs for `bucket`, loading them on first use. Concurrent
     /// first uses of one bucket load it once. Only that bucket's slot is
     /// locked during the load, so the other buckets keep serving, and a load

@@ -10,6 +10,7 @@
 #![cfg(all(target_os = "macos", feature = "coreml"))]
 
 use sidekick_core::manifest::ModelRegistry;
+use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder};
 use sidekick_coreml::ComputeUnits;
 use sidekick_embed::CoremlEmbedder;
 use std::path::{Path, PathBuf};
@@ -69,7 +70,12 @@ fn a_loaded_buckets_compute_plan_is_read_in_the_background_and_cached() {
     let registry = ModelRegistry::scan(&dir).unwrap();
     let model = registry.get("plan-embedder").unwrap();
     let path = model.dir.join("model_16.mlmodelc");
-    CoremlEmbedder::load(model).unwrap();
+    let embedder = CoremlEmbedder::load(model).unwrap();
+    // Loading the model keeps no bucket resident, so it reads no plan: a
+    // bucket's plan is read after the bucket's first load, here by a request.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert_eq!(service.get(&path, ComputeUnits::CpuOnly), None, "no plan before the bucket loads");
+    embedder.embed_bucketed(&["a b"], EmbedPurpose::Document, EmbedLimits::default()).unwrap();
     let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
     let counts = loop {
         match service.get(&path, ComputeUnits::CpuOnly) {
