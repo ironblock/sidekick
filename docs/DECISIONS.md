@@ -1851,6 +1851,133 @@ first step to differ.
   and keep their GPU grade, but their buckets agree exactly only once
   reconverted.
 
+## D37 — Chunked buckets: a chain of programs under the ANE's weight limit
+D32 refuses to serve a bucket on the ANE when its program carries more
+than 1 GiB of weights, because Core ML would silently run it on the CPU.
+Until now a model over the limit had two ways onto sidekick: the GPU, or
+`--int8-embedding`. The limit is per program, so a bucket split into
+several programs, each under it, can run on the ANE with no change to its
+arithmetic.
+
+The reason to want that is choice, more than speed. sidekick is meant to
+run a small companion model beside a larger primary one, a local LLM say,
+that the GPU serves. A companion on the GPU competes with the primary for
+it; on the ANE it leaves the primary's GPU time alone, even where it
+answers more slowly. Which matters more is the operator's call (D38), so
+an artifact should be able to serve either way.
+
+**What was measured** (agent-jev, Qwen3-0.6B with 1.115 GiB of fp16
+weights; M1 Max, macOS 27.0; two chunks):
+- coremltools' `bisect_model` splits the converted program in two at its
+  weight midpoint. On agent-jev that point falls inside an MLP, so six
+  fp32 tensors cross the boundary: the attention mask, RoPE's cos and sin,
+  two hidden states and an MLP intermediate. It makes two chunks only, and
+  it sets the second chunk's opset to iOS 16.
+- Splitting in torch, before tracing, at layer boundaries (the embedding
+  and layers 0–9, then layers 10–27, the final norm and the head; 0.587
+  and 0.536 GiB) passes only the residual stream: one fp16 tensor
+  [1, S, 1024]. Each chunk rebuilds the tree mask and RoPE from the int32
+  inputs it takes, keeps every sidekick rewrite and the macOS 15 opset,
+  and puts 96–99% of its operations on the ANE (98.6% and 99.3% at 2,048
+  tokens).
+- The boundary loses nothing. On the GPU the chain's logits are
+  bit-identical to the unchunked model's. On the ANE, the layer-boundary
+  chain and `bisect_model`'s chain, cut in different places, give
+  bit-identical logits. What separates the ANE from the GPU is the ANE's
+  own arithmetic, not the chunking.
+- The boundary costs under 2% on the GPU. Through sidekick's own Core ML
+  path (`chain_timing`), median per prediction, unchunked → chunked
+  (cut after layer 8, 0.570 and 0.578 GiB at 2,048 tokens): 85.4 →
+  87.0 ms at 256 tokens (the 512 bucket), 204.4 → 207.2 ms at 1,024,
+  550.8 → 559.6 ms at 2,048.
+- On the ANE, chunked agent-jev answers more slowly than on the GPU when
+  nothing else runs: 128.2, 331.3 and 1,234.5 ms at the same lengths. Its
+  first load compiles each chunk, about 40 s for the first bucket and
+  244 s for the 2,048-token one, after which Core ML's cache serves it.
+  What it costs or saves the GPU's other work is measured separately
+  (tools/companion_bench.py).
+
+**Decision.** A bucket may be an ordered chain of programs.
+
+- **One artifact serves either placement.** On the GPU a chain gives the
+  unchunked program's output bit for bit at under 2% more latency, so a
+  converter whose backbone can be chunked chunks a model over the budget
+  by default (`--chunks auto`), whatever its manifest serves it on.
+  `--chunks N` or `--chunks 10,20` (the layers at which each chunk after
+  the first begins) choose the split, and `--chunks 1` keeps one program
+  per bucket. A model under the budget stays one program. A backbone that
+  can't be chunked converts as before, and an ANE-served bucket of one
+  over the limit fails as D32 says, naming chunking as the first fix.
+- **Where it runs is a choice, not a default.** The manifest's
+  `compute_units` (D31), or the operator's (D38), decides; neither follows
+  from chunking. agent-jev stays GPU-served, and its chunked ANE path is
+  an option the docs grade.
+- **Cuts fall at layer boundaries.** `auto` packs whole layers into as few
+  chunks as keep each chunk's fp16 weights under
+  `CHUNK_WEIGHT_BUDGET_BYTES`, 0.9 GiB, then balances them. The limit was
+  measured on one chip and one OS (D32), between 0.964 and 1.022 GiB, so
+  the budget leaves a margin below the largest program measured on the
+  ANE. The compiled chunks are measured against D32's limit like any
+  program.
+- **Only the residual stream crosses.** Every chunk but the last outputs
+  `hidden_out`, an fp16 [1, S, H] multi-array, and every chunk but the
+  first takes it as `hidden_in`. Each chunk takes the model's int32 inputs
+  that it reads, by their usual names (the first chunk `input_ids`; every
+  chunk the mask, segment and position inputs; the last chunk any input
+  its head reads), and the last chunk produces the manifest's output. The
+  runtime passes the output feature value of one chunk to the next as it
+  is, with no copy.
+- **The manifest.** `artifact` gains a `{chunk}` placeholder, numbered
+  from 0, beside `{seq}`: `model_{seq}.{chunk}.mlmodelc`. A `[chunking]`
+  table says how many chunks each bucket has, and records the budget the
+  converter split under:
+
+  ```toml
+  artifact = "model_{seq}.{chunk}.mlmodelc"
+
+  [chunking]
+  chunks = 2
+  weight_budget_bytes = 966367641
+  ```
+
+  `chunks` defaults to 1. `{chunk}` without a `[chunking]` table, or a
+  `[chunking]` table without `{chunk}`, skips the manifest with a reason
+  (D28). At load the daemon checks every chunk's declared inputs and
+  outputs against these rules. Buckets, `sidekick-buckets` and every other
+  per-bucket behavior are unchanged: a bucket is still one entry, whatever
+  the number of programs that answer it.
+- **A chain is served one way.** Every chunk of every bucket loads with
+  the manifest's `compute_units`. Placing chunks on different devices
+  (chunk 0 on the ANE, chunk 1 on the GPU) is possible later, not now.
+- **The limits apply as to one program.** D32's weight limit is checked
+  per chunk, and `/health` and `sk_pool_skipped` name the chunk that is
+  over (`model_1024.1.mlmodelc`). D33's CPU cap applies to the chain's
+  buckets as to any model's. `/health` reports each chunk's weights, the
+  limit and the conversion's budget.
+- **Placement** (D35) keeps one count per bucket, the sum over its chunks,
+  with each chunk's counts under it in `[placement.buckets.<seq>]`'s
+  `chunks` list. The converter also records the plan for the other of
+  `cpu_and_ne` and `cpu_and_gpu`, under
+  `[placement.alternatives.<units>]`, for every model, and the daemon
+  reports the record for the units the model runs on, so a model the
+  operator moves keeps its placement report.
+- **Gates.** The torch gate checks the composed chunk wrappers against
+  the unchunked wrapper in fp32 in every bucket, as well as the unchunked
+  wrapper against the checkpoint. The usual Core ML gates run on the
+  chain. In the smallest bucket, a Core ML gate also converts the bucket
+  unchunked and requires the chain's output on the GPU to be bit-identical
+  to it: an exact check of the chain's plumbing, which is the same in
+  every bucket (`--chunk-identity-all` runs it in all of them, at the cost
+  of converting every bucket twice). The parity suite grades a chained
+  model like any other, reading each bucket's compute plan from all of
+  its chunks.
+
+A daemon older than this release ignores `[chunking]`, and its `{chunk}`
+path names no file. It lists the model, finds no weights at that path to
+check, and fails every request to it with an error naming the missing
+artifact, so it never serves part of a chain. Chunked models need
+sidekick 0.7.0.
+
 ## D38 — The operator may choose a model's compute units
 D31 lets a manifest name its compute units, and the converter that wrote
 the manifest chose them from measurements of the model alone. Where a model
