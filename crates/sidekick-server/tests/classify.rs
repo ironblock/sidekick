@@ -617,7 +617,7 @@ async fn listings_are_task_aware() {
     assert_eq!(
         health["classifiers"]["models"],
         json!([
-            "cpu-capped", "decider", "fev-decider", "jev-decider", "julia", "placed", "placed-gpu", "placed-stale",
+            "chunked", "cpu-capped", "decider", "fev-decider", "jev-decider", "julia", "placed", "placed-gpu", "placed-stale",
             "reranker", "schema-decider", "sentiment", "sigmoid-reranker"
         ])
     );
@@ -753,7 +753,7 @@ async fn listings_report_the_conversion_time_plan_by_default() {
         })
     );
     let ids: Vec<&String> = plans["models"].as_object().unwrap().keys().collect();
-    assert_eq!(ids, vec!["placed", "placed-stale"]);
+    assert_eq!(ids, vec!["chunked", "placed", "placed-stale"]);
 }
 
 #[tokio::test]
@@ -850,4 +850,42 @@ async fn the_operator_can_choose_a_models_compute_units() {
         health["compute_unit_overrides"],
         json!({"applied": {"sentiment": "cpu_and_gpu"}, "unmatched": ["no-such-model"]})
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chunked_model_reports_its_programs_and_each_chunks_placement() {
+    let (_, health) = call(test_state(true, None), Request::get("/health").body(Body::empty()).unwrap()).await;
+    let c = &health["chunked_models"]["chunked"];
+    assert_eq!(c["chunks"], 2);
+    assert_eq!(c["weight_budget_bytes"], 966367641);
+    assert_eq!(c["ane_limit_bytes"], 1u64 << 30);
+    // No files in the fixture: each program's weights read as 0 bytes.
+    assert_eq!(
+        c["buckets"]["16"],
+        json!([{"artifact": "model_16.0.mlmodelc", "weight_bytes": 0}, {"artifact": "model_16.1.mlmodelc", "weight_bytes": 0}])
+    );
+    assert!(health["chunked_models"].get("sentiment").is_none(), "an unchunked model isn't listed");
+    // The bucket's counts are the chunks' sums, and /health lists each chunk's.
+    let plan = &health["compute_plans"]["models"]["chunked"]["16"];
+    assert_eq!((&plan["ane"], &plan["gpu"]), (&json!(0), &json!(30)));
+    assert_eq!(plan["chunks"].as_array().unwrap().iter().map(|c| c["gpu"].clone()).collect::<Vec<_>>(), [10, 20]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_operator_override_reports_the_alternative_plan() {
+    use sidekick_core::{ComputeUnits, ScanOptions};
+    // Served on the GPU by its manifest: the main record.
+    let (_, body) = call(test_state(true, None), Request::get("/v1/models").body(Body::empty()).unwrap()).await;
+    let chunked = |body: &Value| body["data"].as_array().unwrap().iter().find(|m| m["id"] == "chunked").cloned().unwrap();
+    assert_eq!(chunked(&body)["placement"]["16"]["gpu"], 30);
+    // Moved to the ANE by the operator (D38): the alternative recorded for it.
+    let options = ScanOptions {
+        compute_units: [("chunked".to_string(), ComputeUnits::CpuAndNeuralEngine)].into(),
+        ..Default::default()
+    };
+    let state = test_state_scanned(true, None, &options).state;
+    let (_, body) = call(state, Request::get("/v1/models").body(Body::empty()).unwrap()).await;
+    let m = chunked(&body);
+    assert_eq!(m["compute_units"], "cpu_and_ne");
+    assert_eq!(m["placement"]["16"], json!({"source": "conversion", "state": "ready", "ane": 28, "gpu": 0, "cpu": 2}));
 }

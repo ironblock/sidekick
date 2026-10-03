@@ -233,7 +233,8 @@ pub const HIDDEN_OUT: &str = sidekick_core::manifest::CHUNK_HIDDEN_OUT;
 /// A bucket's programs, run in order (D37): one program, or a chain of
 /// chunks. Each chunk is given the int32 inputs it declares and, after the
 /// first, the previous chunk's `hidden_out` as its `hidden_in`: the output
-/// feature value itself, so the handoff copies nothing.
+/// feature value itself, so sidekick copies nothing (Core ML may copy
+/// internally).
 pub struct CoremlChain {
     chunks: Vec<CoremlModel>,
 }
@@ -273,8 +274,8 @@ impl CoremlChain {
 
     /// [`predict_int32`](Self::predict_int32), also returning, per
     /// boundary, the address of the `hidden_out` data a chunk produced and
-    /// of the `hidden_in` data the next chunk was given: equal when the
-    /// handoff copies nothing.
+    /// of the `hidden_in` data the next chunk was given: equal when sidekick
+    /// passes the produced buffer on without copying it.
     #[doc(hidden)]
     pub fn predict_int32_tracing_handoffs(
         &self,

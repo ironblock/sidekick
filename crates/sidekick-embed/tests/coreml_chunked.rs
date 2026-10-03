@@ -3,7 +3,7 @@
 //! by sidekick_convert's own chunking (tools/make_classifier_test_models.py),
 //! with the same model unchunked beside it. The chain matches the fp32 torch
 //! model in every bucket and the unchunked program bit for bit, hands
-//! `hidden_out` to the next chunk without a copy, and a chain whose chunks
+//! `hidden_out` to the next chunk without copying it itself, and a chain whose chunks
 //! don't fit together is refused at load.
 //!
 //! macOS with `--features coreml` only; runs on the CPU, so it needs no ANE.
@@ -147,8 +147,12 @@ fn a_chain_matches_torch_and_the_unchunked_program_bit_for_bit() {
     std::fs::remove_dir_all(&whole_dir).unwrap();
 }
 
+/// sidekick hands chunk 0's `hidden_out` feature value to chunk 1 as its
+/// `hidden_in` without copying it: the buffer chunk 0 produced is the one
+/// chunk 1 is given. Whether Core ML copies it internally isn't observable
+/// here; the boundary's measured cost (D37) includes that if it does.
 #[test]
-fn the_handoff_passes_the_output_buffer_itself() {
+fn sidekick_hands_the_next_chunk_the_produced_buffer() {
     let case = &expected()[0];
     let paths: Vec<PathBuf> = (0..2).map(|c| fixtures().join(format!("model_16.{c}.mlmodelc"))).collect();
     for units in [ComputeUnits::CpuOnly, ComputeUnits::CpuAndGpu] {

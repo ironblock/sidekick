@@ -418,6 +418,46 @@ mod tests {
     }
 
     #[test]
+    fn a_chunked_bucket_is_its_chunks_together() {
+        let dir = tmp("chunks");
+        let units = ComputeUnits::CpuAndNeuralEngine;
+        let c0 = artifact(&dir, "model_16.0.mlmodelc", b"w0");
+        let c1 = artifact(&dir, "model_16.1.mlmodelc", b"w1");
+        // chunk 0 reads 30 ANE operations, chunk 1 40
+        let reader: PlanReader = Arc::new(|path: &Path, _| {
+            let ane = if path.ends_with("model_16.0.mlmodelc") { 30 } else { 40 };
+            Ok(OpCounts { ane, cpu: 1, off_ane_ops: BTreeMap::from([("gather".into(), 1)]), ..Default::default() })
+        });
+        let service = Placements::new(reader, None);
+        let listed = |s: &Placements| s.for_model(&dir, "model_{seq}.{chunk}.mlmodelc", &[16], 2, units).remove(&16);
+        assert_eq!(listed(&service), None, "nothing before a load");
+        // One chunk read, the other not loaded yet: pending.
+        service.loaded(&c0, units);
+        wait(&service, &c0, units);
+        assert_eq!(listed(&service), Some(Placement::Pending));
+        // Both read: summed.
+        service.loaded(&c1, units);
+        wait(&service, &c1, units);
+        let Some(Placement::Ready(sum)) = listed(&service) else { panic!("{:?}", listed(&service)) };
+        assert_eq!((sum.ane, sum.cpu, sum.off_ane_ops["gather"]), (70, 2, 2));
+        // A chunk whose read failed fails the bucket, naming the chunk.
+        let failing = Placements::new(
+            Arc::new(|path: &Path, _| match path.ends_with("model_16.1.mlmodelc") {
+                true => Err(sidekick_core::Error::Inference("no plan".into())),
+                false => Ok(OpCounts::default()),
+            }),
+            None,
+        );
+        failing.loaded(&c0, units);
+        failing.loaded(&c1, units);
+        wait(&failing, &c0, units);
+        wait(&failing, &c1, units);
+        let Some(Placement::Failed(why)) = listed(&failing) else { panic!() };
+        assert!(why.starts_with("chunk 1:"), "{why}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn plans_are_read_one_at_a_time() {
         let dir = tmp("serial");
         let active = Arc::new(AtomicUsize::new(0));

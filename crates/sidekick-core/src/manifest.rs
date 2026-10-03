@@ -213,25 +213,48 @@ impl RecordedPlacement {
     }
 }
 
-/// Why a recorded placement can't be used: it must describe the model's own
-/// buckets, with consistent counts. Checked against the manifest's buckets
-/// before any cap drops some. A bad record is dropped with a warning rather
-/// than skipping the model: it only describes the model.
+/// Why a recorded placement's main plan can't be used: it must describe
+/// the model's own buckets, with consistent counts. Checked against the
+/// manifest's buckets before any cap drops some. A bad record is dropped
+/// with a warning rather than skipping the model: it only describes the
+/// model.
 fn placement_problem(p: &RecordedPlacement, buckets: &[usize], chunks: usize) -> Option<String> {
-    let tables = std::iter::once(&p.buckets).chain(p.alternatives.values().map(|a| &a.buckets));
-    for (key, plan) in tables.flatten() {
+    table_problem("placement", &p.buckets, buckets, chunks)
+}
+
+/// The problem with one table of per-bucket plans (`[placement]`'s, or an
+/// alternative's), naming it by `prefix`: a bucket the model doesn't have,
+/// counts that don't add up to their total, or a chunked bucket's chunks
+/// (D37) that aren't as many as the model's or don't sum to the bucket's
+/// counts.
+fn table_problem(
+    prefix: &str,
+    plans: &BTreeMap<String, RecordedPlan>,
+    buckets: &[usize],
+    chunks: usize,
+) -> Option<String> {
+    for (key, plan) in plans {
         let listed = key.parse::<usize>().is_ok_and(|b| buckets.contains(&b));
         if !listed {
-            return Some(format!("`[placement.buckets]` has `{key}`, which isn't one of the buckets {buckets:?}"));
+            return Some(format!("`[{prefix}.buckets]` has `{key}`, which isn't one of the buckets {buckets:?}"));
         }
         if !plan.counts_add_up() || !plan.chunks.iter().all(RecordedPlan::counts_add_up) {
-            return Some(format!("`[placement.buckets.{key}]` counts don't add up to its `total`"));
+            return Some(format!("`[{prefix}.buckets.{key}]` counts don't add up to its `total`"));
         }
-        if !plan.chunks.is_empty() && plan.chunks.len() != chunks {
+        if plan.chunks.is_empty() {
+            continue;
+        }
+        if plan.chunks.len() != chunks {
             return Some(format!(
-                "`[placement.buckets.{key}]` lists {} chunks, and the model has {chunks}",
+                "`[{prefix}.buckets.{key}]` lists {} chunks, and the model has {chunks}",
                 plan.chunks.len()
             ));
+        }
+        let sum = |f: fn(&RecordedPlan) -> usize| plan.chunks.iter().map(f).sum::<usize>();
+        if (sum(|c| c.ane), sum(|c| c.gpu), sum(|c| c.cpu), sum(|c| c.unassigned))
+            != (plan.ane, plan.gpu, plan.cpu, plan.unassigned)
+        {
+            return Some(format!("`[{prefix}.buckets.{key}]`'s chunks don't sum to its counts"));
         }
     }
     None
@@ -280,6 +303,26 @@ fn check_placement(path: &Path, placement: &mut Option<RecordedPlacement>, probl
     if let Some(problem) = problem {
         tracing::warn!(manifest = %path.display(), "ignoring the recorded compute plan: {problem}");
         *placement = None;
+    }
+}
+
+/// Check a Core ML model's recorded placement: drop the whole record when
+/// its main plan can't be used, and only the alternative that can't when
+/// one of those is bad (D38), each with a warning naming `path`.
+fn check_recorded_placement(path: &Path, placement: &mut Option<RecordedPlacement>, buckets: &[usize], chunks: usize) {
+    let problem = placement.as_ref().and_then(|p| placement_problem(p, buckets, chunks));
+    check_placement(path, placement, problem);
+    if let Some(p) = placement {
+        p.alternatives.retain(|units, alt| {
+            let prefix = format!("placement.alternatives.{units}");
+            match table_problem(&prefix, &alt.buckets, buckets, chunks) {
+                None => true,
+                Some(problem) => {
+                    tracing::warn!(manifest = %path.display(), "ignoring a recorded compute plan: {problem}");
+                    false
+                }
+            }
+        });
     }
 }
 
@@ -719,22 +762,13 @@ pub struct ResolvedModel {
     pub dir: PathBuf,
 }
 
-/// `dir` joined with `artifact`, its `{seq}` placeholder (if any) resolved
-/// to `bucket`.
-fn bucket_path(dir: &Path, artifact: &str, bucket: usize) -> PathBuf {
-    dir.join(artifact.replace("{seq}", &bucket.to_string()))
-}
 
 impl ResolvedModel {
     pub fn artifact_path(&self) -> PathBuf {
         self.dir.join(&self.manifest.artifact)
     }
-    /// Artifact path for one sequence-length bucket: resolves a `{seq}`
-    /// placeholder if present, otherwise the shared artifact path.
-    pub fn artifact_path_for_bucket(&self, bucket: usize) -> PathBuf {
-        bucket_path(&self.dir, &self.manifest.artifact, bucket)
-    }
-    /// Every program of one bucket, in chain order (D37).
+    /// Every program of one bucket, in chain order: a `{seq}` placeholder
+    /// resolved if present, otherwise the shared artifact path.
     pub fn artifact_paths_for_bucket(&self, bucket: usize) -> Vec<PathBuf> {
         artifact_files(&self.manifest.artifact, bucket, self.manifest.chunks()).iter().map(|f| self.dir.join(f)).collect()
     }
@@ -751,11 +785,8 @@ pub struct ResolvedClassifier {
 }
 
 impl ResolvedClassifier {
-    /// Artifact path for one sequence-length bucket.
-    pub fn artifact_path_for_bucket(&self, bucket: usize) -> PathBuf {
-        bucket_path(&self.dir, &self.manifest.artifact, bucket)
-    }
-    /// Every program of one bucket, in chain order (D37).
+    /// Every program of one bucket, in chain order (one, or each chunk's;
+    /// D37), its `{seq}` placeholder resolved.
     pub fn artifact_paths_for_bucket(&self, bucket: usize) -> Vec<PathBuf> {
         artifact_files(&self.manifest.artifact, bucket, self.manifest.chunks()).iter().map(|f| self.dir.join(f)).collect()
     }
@@ -1025,12 +1056,13 @@ impl ModelRegistry {
                     m
                 })
                 .map(|mut m| {
-                    let problem = match (&m.placement, m.backend) {
-                        (None, _) => None,
-                        (Some(_), EmbeddingBackendKind::Static) => Some("a static model has no compute plan".into()),
-                        (Some(p), EmbeddingBackendKind::Coreml) => placement_problem(p, &m.buckets, m.chunks()),
-                    };
-                    check_placement(&path, &mut m.placement, problem);
+                    if m.backend == EmbeddingBackendKind::Static {
+                        let problem = m.placement.as_ref().map(|_| "a static model has no compute plan".to_string());
+                        check_placement(&path, &mut m.placement, problem);
+                    } else {
+                        let (buckets, chunks) = (m.buckets.clone(), m.chunks());
+                        check_recorded_placement(&path, &mut m.placement, &buckets, chunks);
+                    }
                     m
                 })
                 .and_then(|m| {
@@ -1080,8 +1112,8 @@ impl ModelRegistry {
                     m
                 })
                 .map(|mut m| {
-                    let problem = m.placement.as_ref().and_then(|p| placement_problem(p, &m.buckets, m.chunks()));
-                    check_placement(&path, &mut m.placement, problem);
+                    let (buckets, chunks) = (m.buckets.clone(), m.chunks());
+                    check_recorded_placement(&path, &mut m.placement, &buckets, chunks);
                     m
                 })
                 .and_then(|m| {
@@ -1239,7 +1271,12 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
     if m.backend != EmbeddingBackendKind::Coreml && (m.chunking.is_some() || m.artifact.contains("{chunk}")) {
         return Err("`[chunking]` is only valid for the coreml backend".into());
     }
-    validate_chunking(&m.artifact, m.chunking.as_ref())
+    if m.chunking.is_some() || m.artifact.contains("{chunk}") {
+        // No converter makes one, and the daemon checks chunks' interfaces at
+        // classifier load only (D37).
+        return Err("`[chunking]` is for classifiers; chunked embedders aren't supported yet".into());
+    }
+    Ok(())
 }
 
 /// Validation per docs/design/classify.md. The artifact-dependent check
@@ -1573,7 +1610,7 @@ source = { repo = "BAAI/bge-small-en-v1.5", revision = "abc" }
         assert_eq!(s.max_batch, 32, "default");
         assert_eq!(s.problem_type, ProblemType::SingleLabel);
         assert!(s.extension_fields().is_empty());
-        assert!(reg.classifier("sentiment").unwrap().artifact_path_for_bucket(128).ends_with("sentiment/model_128.mlmodelc"));
+        assert!(reg.classifier("sentiment").unwrap().artifact_paths_for_bucket(128)[0].ends_with("sentiment/model_128.mlmodelc"));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
@@ -2071,7 +2108,7 @@ max_seq_len = 512
         );
         let reg = ModelRegistry::scan(&tmp).unwrap();
         let m = reg.get("bge-small-en-v1.5").unwrap();
-        assert!(m.artifact_path_for_bucket(256).ends_with("bge/model_256.mlmodelc"));
+        assert_eq!(m.artifact_paths_for_bucket(256), [tmp.join("bge/model_256.mlmodelc")]);
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
@@ -2274,6 +2311,19 @@ max_seq_len = 512
         let reg = ModelRegistry::scan(&tmp).unwrap();
         assert!(reg.skipped()[0].reason.contains("only valid for the coreml backend"), "{:?}", reg.skipped());
         std::fs::remove_dir_all(&tmp).unwrap();
+        // Nor, for now, does a Core ML embedder (D37).
+        let tmp = tmp_dir("chunking-embedder");
+        let dir = tmp.join("e");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(EMBEDDER_MANIFEST),
+            "id = \"e\"\nbackend = \"coreml\"\nartifact = \"m_{seq}.{chunk}.mlmodelc\"\ntokenizer = \"t\"\n\
+             dims = 4\nbuckets = [8]\nmax_seq_len = 8\n\n[chunking]\nchunks = 2\n",
+        )
+        .unwrap();
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped()[0].reason.contains("chunked embedders aren't supported yet"), "{:?}", reg.skipped());
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
@@ -2287,12 +2337,17 @@ max_seq_len = 512
             off_ane_ops: BTreeMap::new(),
             chunks,
         };
+        // the bucket's counts: 10 on the ANE, and its chunks' CPU and unassigned summed
+        let bucket = |chunks: Vec<RecordedPlan>| {
+            let n = chunks.len().max(1);
+            RecordedPlan { cpu: n, unassigned: 2 * n, total: 10 + 3 * n, ..plan(10, chunks) }
+        };
         let placement = |chunks| RecordedPlacement {
             compute_units: ComputeUnits::CpuAndNeuralEngine,
             chip: "c".into(),
             macos_build: "b".into(),
             date: None,
-            buckets: [("128".to_string(), plan(10, chunks))].into(),
+            buckets: [("128".to_string(), bucket(chunks))].into(),
             alternatives: BTreeMap::new(),
         };
         // Chunks that add up, and as many as the model has: kept.
@@ -2303,6 +2358,9 @@ max_seq_len = 512
         assert!(placement_problem(&placement(vec![bad, plan(6, vec![])]), &[128], 2).is_some());
         let why = placement_problem(&placement(vec![plan(4, vec![]), plan(6, vec![])]), &[128], 3).unwrap();
         assert!(why.contains("lists 2 chunks, and the model has 3"), "{why}");
+        // Chunks whose counts don't sum to the bucket's.
+        let why = placement_problem(&placement(vec![plan(4, vec![]), plan(5, vec![])]), &[128], 2).unwrap();
+        assert!(why.contains("chunks don't sum to its counts"), "{why}");
         // Parsed from the converter's TOML.
         let toml = "[placement]\ncompute_units = \"cpu_and_ne\"\nchip = \"c\"\nmacos_build = \"b\"\n\n\
                     [placement.buckets.128]\nane = 10\ngpu = 0\ncpu = 1\nunassigned = 2\ntotal = 13\noff_ane_ops = {}\n\n\
@@ -2375,10 +2433,16 @@ max_seq_len = 512
         assert_eq!(p.bucket_for(ComputeUnits::CpuAndNeuralEngine, 128).map(|b| b.ane), Some(8));
         assert!(p.bucket_for(ComputeUnits::CpuOnly, 128).is_none() && !p.covers(ComputeUnits::CpuOnly));
         assert_eq!(placement_problem(&p, &[128], 1), None);
-        // An alternative for a bucket the model doesn't have is a bad record.
+        // An alternative for a bucket the model doesn't have is dropped, named by its own table;
+        // the main plan stays.
         let mut bad = p.clone();
         bad.alternatives.get_mut("cpu_and_ne").unwrap().buckets.insert("64".into(), p.buckets["128"].clone());
-        assert!(placement_problem(&bad, &[128], 1).unwrap().contains("`64`"));
+        let why = table_problem("placement.alternatives.cpu_and_ne", &bad.alternatives["cpu_and_ne"].buckets, &[128], 1);
+        assert!(why.unwrap().starts_with("`[placement.alternatives.cpu_and_ne.buckets]` has `64`"));
+        let mut record = Some(bad);
+        check_recorded_placement(Path::new("m"), &mut record, &[128], 1);
+        let kept = record.expect("the main plan is kept");
+        assert!(kept.alternatives.is_empty() && kept.bucket(128).is_some());
     }
 
     #[test]
