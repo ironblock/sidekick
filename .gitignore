@@ -2,3 +2,8 @@
 **/*.rs.bk
 .DS_Store
 __pycache__/
+
+# Local development data: converted test models, parity references and
+# fixture manifests that checks read via SIDEKICK_MODELS_DIR, --models-dir
+# and --refs. Kept out of the system temp directory, which macOS prunes.
+/.dev-data/
