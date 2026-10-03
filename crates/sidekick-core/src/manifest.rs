@@ -879,6 +879,7 @@ pub fn artifact_weight_bytes(artifact: &Path) -> u64 {
 /// run it off the ANE with no error, so the model would look ANE-served and
 /// not be. Each `{seq}` bucket, and each `{chunk}` of a chained one (D37),
 /// is its own program and is checked on its own.
+#[allow(clippy::too_many_arguments)]
 fn check_ane_weights(
     dir: &Path,
     artifact: &str,
