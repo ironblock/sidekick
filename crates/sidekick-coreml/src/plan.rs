@@ -37,6 +37,14 @@ pub fn compute_plan(path: &Path, units: ComputeUnits) -> Result<PlanSummary> {
     if !available!(macos = 14.4) {
         return Err(Error::Inference("Core ML compute plans need macOS 14.4 or later".into()));
     }
+    // Core ML aborts the process, with an uncaught C++ exception, when a
+    // compiled model it's asked to plan isn't there: a model uninstalled or
+    // reinstalled after its load. Checking first narrows that window to the
+    // read itself.
+    let compiled = path.extension().is_some_and(|e| e == "mlmodelc");
+    if !path.exists() || (compiled && !path.join("coremldata.bin").is_file()) {
+        return Err(Error::Inference(format!("{} is gone; its compute plan can't be read", path.display())));
+    }
     let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
     let config = unsafe { MLModelConfiguration::new() };
     unsafe { config.setComputeUnits(crate::model::to_ml(units)) };
