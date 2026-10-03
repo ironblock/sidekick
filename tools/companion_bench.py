@@ -66,6 +66,7 @@ import atexit
 import datetime
 import json
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -151,6 +152,20 @@ class Companion:
         self.proc = subprocess.Popen([str(args.sidekickd), "--config", str(config)], stdout=self.log,
                                      stderr=subprocess.STDOUT)
         atexit.register(self.close)
+        try:
+            self._ready()
+        except BaseException:
+            self.close()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def _ready(self):
+        args, units = self.args, self.units
         self.url = f"http://127.0.0.1:{args.port}"
         for _ in range(120):
             try:
@@ -188,10 +203,11 @@ class Companion:
                     "candidate_labels": ["done: the task is finished", "test: run the test suite"],
                     "question_type": "choice", "instructions": "Which candidate action is useful?"}
             _, status, bucket, units, _ = self.request(body)
-            if status != 200:
-                raise SystemExit(f"the companion answered HTTP {status}; see {self.log.name}")
-            if int(bucket) >= self.args.tokens:
-                self.bucket, self.served = int(bucket), units
+            if status != 200 or bucket is None:
+                raise SystemExit(f"the companion answered HTTP {status}, bucket header {bucket!r}; see "
+                                 f"{self.log.name}")
+            if int(bucket.split(",")[0]) >= self.args.tokens:
+                self.bucket, self.served = int(bucket.split(",")[0]), units
                 for _ in range(3):
                     self.request(body)
                 return body
@@ -238,14 +254,20 @@ class Companion:
                 "probs": self.probs[0] if self.probs else None, "probs_spread_in_phase": spread}
 
     def close(self):
-        if self.proc.poll() is not None:
-            return
-        self.proc.terminate()
-        try:
-            self.proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
-        self.log.close()
+        """Stop sidekickd and remove its config and log (once the log's last
+        lines are printed if it failed). Safe to call more than once."""
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait()
+        if not self.log.closed:
+            self.log.close()
+            if self.proc.returncode not in (0, -15):
+                print(Path(self.log.name).read_text(errors="replace")[-2000:], file=sys.stderr)
+        shutil.rmtree(self.home, ignore_errors=True)
 
 
 def thermal():
@@ -259,20 +281,22 @@ def phase(args, name, units=None, rate=None, primary=True):
     time.sleep(args.cooldown)
     therm = thermal()
     companion = Companion(args, units) if units else None
-    before = memory()
-    if companion:
-        companion.start(rate)
-    start = now()
-    print(f"phase {name}: start {start.isoformat(timespec='seconds')}", flush=True)
-    if primary:
-        runs = [primary_run(args) for _ in range(args.runs)]
-    else:
-        runs = []
-        time.sleep(args.companion_seconds)
-    end = now()
-    if companion:
-        c = companion.finish()
-        companion.close()
+    try:
+        before = memory()
+        if companion:
+            companion.start(rate)
+        start = now()
+        print(f"phase {name}: start {start.isoformat(timespec='seconds')}", flush=True)
+        if primary:
+            runs = [primary_run(args) for _ in range(args.runs)]
+        else:
+            runs = []
+            time.sleep(args.companion_seconds)
+        end = now()
+        c = companion.finish() if companion else None
+    finally:
+        if companion:
+            companion.close()
     after = memory()
     result = {"phase": name, "units": units, "rate": rate, "start": start.isoformat(), "end": end.isoformat(),
               "thermal_before": therm, "memory_before": before, "memory_after": after,
@@ -291,9 +315,10 @@ def phase(args, name, units=None, rate=None, primary=True):
         line.append(f"decode {result['decode_tok_s_median']:.2f} tok/s (min {min(d):.2f}, max {max(d):.2f}), "
                     f"TTFT {result['ttft_s_median']:.2f} s")
     if companion:
-        line.append(f"companion {c['ok']}/{c['requests']} ok, {c['rate']:.2f}/s on {c['served_on']}, bucket "
-                    f"{c['bucket']}, p50 {c['p50_ms']:.0f} ms, p99 {c['p99_ms']:.0f} ms, statuses {c['statuses']}, "
-                    f"probs spread in phase {c['probs_spread_in_phase']}")
+        fmt = lambda v, spec: "-" if v is None else format(v, spec)  # noqa: E731
+        line.append(f"companion {c['ok']}/{c['requests']} ok, {fmt(c['rate'], '.2f')}/s on {c['served_on']}, "
+                    f"bucket {c['bucket']}, p50 {fmt(c['p50_ms'], '.0f')} ms, p99 {fmt(c['p99_ms'], '.0f')} ms, "
+                    f"statuses {c['statuses']}, probs spread in phase {c['probs_spread_in_phase']}")
     print(f"phase {name}: " + "; ".join(line) + ("" if result["valid"] else "; INVALID: swap grew"), flush=True)
     return result
 
