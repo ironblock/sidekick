@@ -307,7 +307,7 @@ pub fn grade_model(
     let plans = check_plans(
         id,
         &m.buckets,
-        |b| model.artifact_path_for_bucket(b),
+        |b| model.artifact_paths_for_bucket(b),
         m.compute_units,
         o,
         scratch,
