@@ -23,12 +23,27 @@ each phase with a config whose `[models."<id>"]` sets its compute units
 length at a fixed rate (each on schedule, or as soon as the one before ends
 when it runs late) and records their latency and the bucket that answered.
 
-Phases, in order: the primary alone; then, for each `--rates` value, the
-companion on `cpu_and_gpu` and on `cpu_and_ne`; then the primary alone
-again, to show drift. Before and after each phase it records memory
-pressure and swap: a phase during which swap grew is marked invalid. Every
-phase's start and end are logged with their time zone, so a power trace
-taken across the whole run can be split by phase (`--power`).
+The companion's load runs for the whole of each phase it is in. Every
+response's HTTP status is recorded (anything but 200 counts as an error),
+and so are its probabilities: the request never changes, so within a phase
+they should never change either, and between the GPU and ANE phases they
+differ only by the two paths' arithmetic, which the report states.
+
+Phases, in order, each after `--cooldown` seconds idle, with the thermal
+state (`pmset -g therm`) recorded before it:
+1. the companion alone at the first rate on `cpu_and_gpu`, then on
+   `cpu_and_ne`, with the primary loaded but idle (`--companion-seconds`):
+   its own latency with the GPU free;
+2. the primary alone;
+3. for each `--rates` value, the primary with the companion on
+   `cpu_and_gpu`, then on `cpu_and_ne`: what the companion costs the
+   primary, and whether a companion off the GPU stays fast while the
+   primary keeps the GPU busy;
+4. the primary alone again, to show drift.
+Before and after each phase it records memory pressure and swap: a phase
+during which swap grew is marked invalid. Every phase's start and end are
+logged with their time zone, so a power trace taken across the whole run
+can be split by phase (`--power`).
 
 Usage:
     python tools/companion_bench.py --primary-model <id> --sidekickd target/release/sidekickd \\
@@ -149,10 +164,15 @@ class Companion:
         self.body = self.calibrate()
 
     def request(self, body):
+        """(latency s, HTTP status, bucket, compute units, probabilities)."""
         t = time.perf_counter()
-        with post(f"{self.url}/v1/classify", body) as r:
-            r.read()
-            return time.perf_counter() - t, r.headers.get("sidekick-buckets"), r.headers.get("sidekick-compute-units")
+        try:
+            with post(f"{self.url}/v1/classify", body) as r:
+                data = json.load(r)
+                return (time.perf_counter() - t, r.status, r.headers.get("sidekick-buckets"),
+                        r.headers.get("sidekick-compute-units"), data["data"][0]["probs"])
+        except urllib.error.HTTPError as e:
+            return time.perf_counter() - t, e.code, None, None, None
 
     def calibrate(self):
         """A request whose tree fills the bucket of `--tokens`, found by
@@ -163,7 +183,9 @@ class Companion:
             body = {"model": self.args.model, "input": "[STATE] " + " ".join(["status"] * words),
                     "candidate_labels": ["done: the task is finished", "test: run the test suite"],
                     "question_type": "choice", "instructions": "Which candidate action is useful?"}
-            _, bucket, units = self.request(body)
+            _, status, bucket, units, _ = self.request(body)
+            if status != 200:
+                raise SystemExit(f"the companion answered HTTP {status}; see {self.log.name}")
             if int(bucket) >= self.args.tokens:
                 self.bucket, self.served = int(bucket), units
                 for _ in range(3):
@@ -173,18 +195,26 @@ class Companion:
         raise SystemExit(f"couldn't fill the {self.args.tokens} bucket")
 
     def start(self, rate):
-        self.latencies, self.errors, self.stop = [], 0, threading.Event()
+        self.latencies, self.errors, self.statuses, self.probs = [], 0, {}, []
+        self.sent, self.stop = 0, threading.Event()
 
         def load():
             start = time.perf_counter()
             while not self.stop.is_set():
-                due = start + len(self.latencies) / rate
+                due = start + self.sent / rate
                 wait = due - time.perf_counter()
                 if wait > 0 and self.stop.wait(wait):
                     break
+                self.sent += 1
                 try:
-                    self.latencies.append(self.request(self.body)[0])
+                    latency, status, _, _, probs = self.request(self.body)
                 except (urllib.error.URLError, ConnectionError):
+                    status, probs = "connection", None
+                self.statuses[str(status)] = self.statuses.get(str(status), 0) + 1
+                if status == 200:
+                    self.latencies.append(latency)
+                    self.probs.append(probs)
+                else:
                     self.errors += 1
             self.wall = time.perf_counter() - start
 
@@ -196,9 +226,12 @@ class Companion:
         self.thread.join()
         ms = sorted(x * 1e3 for x in self.latencies)
         at = lambda q: ms[min(int(len(ms) * q), len(ms) - 1)] if ms else None  # noqa: E731
-        return {"units": self.units, "served_on": self.served, "bucket": self.bucket, "requests": len(ms),
-                "rate": len(ms) / self.wall if self.wall else None, "errors": self.errors,
-                "p50_ms": at(0.5), "p90_ms": at(0.9), "p99_ms": at(0.99)}
+        spread = (max(max(abs(a - b) for a, b in zip(p, self.probs[0])) for p in self.probs)
+                  if self.probs else None)
+        return {"units": self.units, "served_on": self.served, "bucket": self.bucket, "requests": self.sent,
+                "ok": len(ms), "rate": len(ms) / self.wall if self.wall else None, "errors": self.errors,
+                "statuses": self.statuses, "p50_ms": at(0.5), "p90_ms": at(0.9), "p99_ms": at(0.99),
+                "probs": self.probs[0] if self.probs else None, "probs_spread_in_phase": spread}
 
     def close(self):
         self.proc.terminate()
@@ -209,35 +242,62 @@ class Companion:
         self.log.close()
 
 
-def phase(args, name, units=None, rate=None):
+def thermal():
+    return subprocess.run(["pmset", "-g", "therm"], capture_output=True, text=True).stdout.strip()
+
+
+def phase(args, name, units=None, rate=None, primary=True):
+    """One phase: the primary's runs (unless `primary` is False, when the
+    companion runs alone for --companion-seconds), with the companion's
+    load, when there is one, from before the first run to after the last."""
+    time.sleep(args.cooldown)
+    therm = thermal()
     companion = Companion(args, units) if units else None
+    before = memory()
     if companion:
         companion.start(rate)
-        time.sleep(2)
-    before = memory()
     start = now()
     print(f"phase {name}: start {start.isoformat(timespec='seconds')}", flush=True)
-    runs = [primary_run(args) for _ in range(args.runs)]
+    if primary:
+        runs = [primary_run(args) for _ in range(args.runs)]
+    else:
+        runs = []
+        time.sleep(args.companion_seconds)
     end = now()
+    if companion:
+        c = companion.finish()
+        companion.close()
     after = memory()
     result = {"phase": name, "units": units, "rate": rate, "start": start.isoformat(), "end": end.isoformat(),
-              "memory_before": before, "memory_after": after,
+              "thermal_before": therm, "memory_before": before, "memory_after": after,
               "valid": None not in (before["swap_used_mb"], after["swap_used_mb"])
-              and after["swap_used_mb"] - before["swap_used_mb"] < 64,
-              "ttft_s": [r[0] for r in runs], "decode_tok_s": [r[1] for r in runs],
-              "completion_tokens": [r[2] for r in runs], "server_extra": [r[3] for r in runs]}
-    result["ttft_s_median"] = statistics.median(result["ttft_s"])
-    result["decode_tok_s_median"] = statistics.median(result["decode_tok_s"])
+              and after["swap_used_mb"] - before["swap_used_mb"] < 64}
+    if runs:
+        result.update({"ttft_s": [r[0] for r in runs], "decode_tok_s": [r[1] for r in runs],
+                       "completion_tokens": [r[2] for r in runs], "server_extra": [r[3] for r in runs],
+                       "ttft_s_median": statistics.median(r[0] for r in runs),
+                       "decode_tok_s_median": statistics.median(r[1] for r in runs)})
     if companion:
-        result["companion"] = companion.finish()
-        companion.close()
-    c = result.get("companion")
-    print(f"phase {name}: decode {result['decode_tok_s_median']:.2f} tok/s (min {min(result['decode_tok_s']):.2f}, "
-          f"max {max(result['decode_tok_s']):.2f}), TTFT {result['ttft_s_median']:.2f} s"
-          + (f"; companion {c['rate']:.2f}/s on {c['served_on']}, bucket {c['bucket']}, p50 {c['p50_ms']:.0f} ms, "
-             f"p99 {c['p99_ms']:.0f} ms, {c['errors']} errors" if c else "")
-          + ("" if result["valid"] else "; INVALID: swap grew"), flush=True)
+        result["companion"] = c
+    line = []
+    if runs:
+        d = result["decode_tok_s"]
+        line.append(f"decode {result['decode_tok_s_median']:.2f} tok/s (min {min(d):.2f}, max {max(d):.2f}), "
+                    f"TTFT {result['ttft_s_median']:.2f} s")
+    if companion:
+        line.append(f"companion {c['ok']}/{c['requests']} ok, {c['rate']:.2f}/s on {c['served_on']}, bucket "
+                    f"{c['bucket']}, p50 {c['p50_ms']:.0f} ms, p99 {c['p99_ms']:.0f} ms, statuses {c['statuses']}, "
+                    f"probs spread in phase {c['probs_spread_in_phase']}")
+    print(f"phase {name}: " + "; ".join(line) + ("" if result["valid"] else "; INVALID: swap grew"), flush=True)
     return result
+
+
+def compare_scores(phases):
+    """Max |dp| of the companion's answer between each pair of phases that
+    ran it: the GPU and ANE paths' arithmetic, measured under load."""
+    ran = [(p["phase"], p["companion"]["probs"]) for p in phases if p.get("companion", {}).get("probs")]
+    return {f"{a} vs {b}": max(abs(x - y) for x, y in zip(pa, pb))
+            for i, (a, pa) in enumerate(ran) for b, pb in ran[i + 1:]}
 
 
 _POWER = re.compile(r"^(CPU|GPU|ANE) Power: (\d+) mW", re.M)
@@ -272,6 +332,9 @@ def main():
     ap.add_argument("--rates", default="1,2", help="companion requests per second, comma-separated")
     ap.add_argument("--tokens", type=int, default=1024, help="the companion's request length (a bucket)")
     ap.add_argument("--port", type=int, default=8791)
+    ap.add_argument("--cooldown", type=float, default=30.0, help="seconds idle before each phase")
+    ap.add_argument("--companion-seconds", type=float, default=60.0,
+                    help="length of the companion-alone phases")
     ap.add_argument("--out", type=Path, default=Path("companion_report.json"))
     ap.add_argument("--report", type=Path, help="add --power to an existing report instead of measuring")
     ap.add_argument("--power", type=Path)
@@ -283,16 +346,22 @@ def main():
             if getattr(args, need) is None:
                 ap.error(f"--{need.replace('_', '-')} is required")
         args.models_dir = args.models_dir.resolve()
+        rates = [float(r) for r in args.rates.split(",")]
+        phases = [phase(args, f"companion-gpu@{rates[0]:g}", "cpu_and_gpu", rates[0], primary=False),
+                  phase(args, f"companion-ane@{rates[0]:g}", "cpu_and_ne", rates[0], primary=False)]
         print("warming the primary up", flush=True)
         primary_run(args)
-        phases = [phase(args, "alone")]
-        for rate in (float(r) for r in args.rates.split(",")):
+        phases.append(phase(args, "alone"))
+        for rate in rates:
             phases.append(phase(args, f"gpu@{rate:g}", "cpu_and_gpu", rate))
             phases.append(phase(args, f"ane@{rate:g}", "cpu_and_ne", rate))
         phases.append(phase(args, "alone-again"))
         report = {"primary": {"url": args.primary_url, "model": args.primary_model, "max_tokens": args.max_tokens,
                               "prompt": PROMPT, "runs": args.runs},
-                  "companion": {"model": args.model, "tokens": args.tokens}, "phases": phases}
+                  "companion": {"model": args.model, "tokens": args.tokens}, "phases": phases,
+                  "companion_probs_max_dp": compare_scores(phases)}
+        for pair, dp in report["companion_probs_max_dp"].items():
+            print(f"companion probabilities, {pair}: max |dp| {dp:.2e}")
     if args.power:
         power_by_phase(args.power, report["phases"])
         for p in report["phases"]:
