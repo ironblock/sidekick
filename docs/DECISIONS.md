@@ -1896,6 +1896,11 @@ weights; M1 Max, macOS 27.0; two chunks):
   244 s for the 2,048-token one, after which Core ML's cache serves it.
   What it costs or saves the GPU's other work is measured separately
   (tools/companion_bench.py).
+- Graded by the parity suite on its 2,627 cases, the chunked artifact
+  keeps the unchunked one's grades on the GPU (A, 0.85× the ideal-fp16
+  ceiling) and the CPU (D), and grades D on the ANE (p99 at 4.2× the
+  ceiling, worst |Δp| 0.022, no decision flips, buckets exact, the same
+  output in two processes).
 
 **Decision.** A bucket may be an ordered chain of programs.
 
