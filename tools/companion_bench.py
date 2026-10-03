@@ -49,6 +49,7 @@ Usage:
     python tools/companion_bench.py --primary-model <id> --sidekickd target/release/sidekickd \\
         --models-dir <dir> --model agent-jev [--primary-url http://127.0.0.1:2345] [--max-tokens 256]
         [--runs 5] [--rates 1,2] [--tokens 1024] [--port 8791] [--out companion_report.json]
+        [--api-key-env OMLX_API_KEY]
 
     python tools/companion_bench.py --report companion_report.json --power power.txt
 
@@ -65,6 +66,7 @@ import argparse
 import atexit
 import datetime
 import json
+import os
 import re
 import shutil
 import statistics
@@ -87,8 +89,11 @@ def now():
     return datetime.datetime.now().astimezone()
 
 
-def post(url, body, timeout=1800):
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"content-type": "application/json"})
+def post(url, body, timeout=1800, key=None):
+    headers = {"content-type": "application/json"}
+    if key:
+        headers["authorization"] = f"Bearer {key}"
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
     return urllib.request.urlopen(req, timeout=timeout)
 
 
@@ -100,7 +105,8 @@ def primary_run(args):
     t0 = time.perf_counter()
     first = last = None
     pieces, usage, extra = 0, None, {}
-    with post(f"{args.primary_url}/v1/chat/completions", body) as r:
+    key = os.environ.get(args.api_key_env) if args.api_key_env else None
+    with post(f"{args.primary_url}/v1/chat/completions", body, key=key) as r:
         for raw in r:
             line = raw.decode(errors="replace").strip()
             if not line.startswith("data:"):
@@ -355,6 +361,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--primary-url", default="http://127.0.0.1:2345")
     ap.add_argument("--primary-model")
+    ap.add_argument("--api-key-env", help="the environment variable holding the primary's API key, if it needs "
+                                          "one (sent as a bearer token; never printed or recorded)")
     ap.add_argument("--max-tokens", type=int, default=256)
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--sidekickd", type=Path)
@@ -377,6 +385,8 @@ def main():
             if getattr(args, need) is None:
                 ap.error(f"--{need.replace('_', '-')} is required")
         args.models_dir = args.models_dir.resolve()
+        if args.api_key_env and not os.environ.get(args.api_key_env):
+            ap.error(f"--api-key-env {args.api_key_env}: that variable is empty or unset")
         rates = [float(r) for r in args.rates.split(",")]
         phases = [phase(args, f"companion-gpu@{rates[0]:g}", "cpu_and_gpu", rates[0], primary=False),
                   phase(args, f"companion-ane@{rates[0]:g}", "cpu_and_ne", rates[0], primary=False)]
