@@ -19,6 +19,11 @@ for its own definition.
   and made the CPU path worse (D25 amendment), while laya measured fewer
   argmax flips with it.
 - TanhSilu for silu (LFM2, Qwen3).
+- StableSilu for silu where TanhSilu's 1 + tanh(x/2) cancels: for x < 0
+  it approaches 1 - 1, losing fp16's precision where silu is small. On
+  agent-jev (Qwen3-0.6B, D37), whose first layers run on a tiny residual,
+  it cut the ANE's error after layers 0 and 1 to 2.4e-3 and 1.6e-3 (rms,
+  relative; native silu 1.0e-2 and 4.0e-3, TanhSilu 2.5e-3 and 2.2e-3).
 """
 
 import math
@@ -50,6 +55,16 @@ class TwiceGelu(torch.nn.Module):
 
     def forward(self, x):
         return x * (1.0 + torch.erf(x * INV_SQRT2))
+
+
+class StableSilu(torch.nn.Module):
+    """2 * silu(x) = 2x * sigmoid(x), with sigmoid(x) = exp(min(x, 0)) /
+    (1 + exp(-|x|)): exp, abs, clip and a divide, no cancellation for
+    either sign, and no overflow."""
+    GAIN = 2.0
+
+    def forward(self, x):
+        return 2.0 * x * torch.exp(torch.clamp(x, max=0.0)) / (1.0 + torch.exp(-torch.abs(x)))
 
 
 class TanhSilu(torch.nn.Module):

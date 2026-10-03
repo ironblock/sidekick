@@ -439,7 +439,7 @@ path.
 | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
 | [fastino/GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) as `gliner2.5-decide` (served on the GPU) | zero-shot, gliner2's format | [convert_gliner2.py](../tools/convert_gliner2.py) | D 0.024 | **A** 3.7e-3 | C 0.019 (512 bucket only) | 947/956 | 1,280 at 512 |
 | [FrontiersMind/Lumma-fev-0.1b](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b) as `lumma-fev-0.1b` | zero-shot, fev format, 2,048 tokens | [convert_fev.py](../tools/convert_fev.py) | D 0.033 (5.8× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.021) | **A** 6.6e-3 (0.95× ceiling) | **B** 0.010 (1.57× ceiling) | 3698/3715 | 33 |
-| [aimeigaoshou/agent-jev](https://huggingface.co/aimeigaoshou/agent-jev) as `agent-jev` (served on the GPU) | zero-shot, agentjev's format, 2,048 tokens | [convert_agentjev.py](../tools/convert_agentjev.py) | D 0.025 (5.9× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.005) | **A** 3.2e-3 (0.85× ceiling) | D 2.2e-2 (4.2× ceiling; no flips), chunked (D37), an operator's option (D38) | 2,440–3,472 (of 2,497–3,505) | 128 |
+| [aimeigaoshou/agent-jev](https://huggingface.co/aimeigaoshou/agent-jev) as `agent-jev` (served on the GPU) | zero-shot, agentjev's format, 2,048 tokens | [convert_agentjev.py](../tools/convert_agentjev.py) | D 0.021 (5.9× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.009) | **A** 3.7e-3 (0.84× ceiling) | B 5.6e-3 (1.44× ceiling; no flips), chunked (D37), an operator's option (D38) | 2,710–3,742 (of 2,767–3,775) | 152 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -660,7 +660,9 @@ state, no instructions, 32 long options) and 15 long cases up to the
 
 The suite samples bucket invariance for buckets over 512 tokens; even so,
 Lumma-fev's CPU path took about four hours on a heavily loaded M1 Max, so run
-it with `--timeout 14400`.
+it with `--timeout 14400`. agent-jev's CPU path takes a little over an hour, past
+the default timeout: run it with `--timeout 14400` too, or a worker reported
+as timed out isn't a regression.
 
 **agent-jev is served on the GPU** (`compute_units = "cpu_and_gpu"`). It is
 AgentJev-0.6B (Apache-2.0): Qwen3-0.6B without its language-model head, and
@@ -691,11 +693,11 @@ exactly 2,048 tokens.
   from sidekick 0.6 are one program per bucket and serve the GPU only.
 - **Supported.** It passes every hard gate on every path, its conversion
   is exact in fp32, and its served GPU path grades A.
-- **GPU: A.** p99 |Δp| at 0.85× the ideal-fp16 ceiling's p99 (the ceiling:
-  4.3e-3 at most, 2.1e-3 at p99), worst 3.2e-3 (0.76× the ceiling's
-  worst), mean 5.2e-4, no decision flips, 2 near ties. Bucket invariance
-  is exact, and so is pad invariance. 85 ms median. Its agreement with
-  the gold labels equals fp32's.
+- **GPU: A.** p99 |Δp| at 0.84× the ideal-fp16 ceiling's p99 (the ceiling:
+  4.3e-3 at most, 2.1e-3 at p99), worst 3.7e-3 (0.86× the ceiling's
+  worst), mean 5.1e-4, no decision flips, 8 near ties. Bucket invariance
+  is exact, and so is pad invariance. 88 ms median. Its agreement with
+  the gold labels is within one case of fp32's (1432/2600 against 1433).
 - **A bucket-invariant softmax.** Every attention computes its softmax
   as exp(w − rowmax) and one matmul against [V | 1], as lumma-fev's does.
   Converted through transformers' sdpa path, the attention used Core ML's
@@ -709,18 +711,19 @@ exactly 2,048 tokens.
   too (they were 2.5e-3 apart). An artifact converted before this fix (as
   in sidekick 0.6.0) keeps working at its GPU grade; reconvert it for
   exact buckets.
-- **CPU: D, on accuracy.** p99 |Δp| at 5.9× the ceiling, worst 0.025,
-  one flip at a 0.053 fp32 margin, 31 near ties, 257 ms median. Bucket
+- **CPU: D, on accuracy.** p99 |Δp| at 5.9× the ceiling, worst 0.021,
+  one flip at a 0.078 fp32 margin, 32 near ties, 273 ms median. Bucket
   invariance is exact up to 1,024 tokens. Past 1,024 the difference
-  (5.0e-3 over 282 comparisons) is D33's documented limit, reported, not
+  (8.9e-3 over 282 comparisons) is D33's documented limit, reported, not
   gated. agent-jev isn't CPU-served.
-- **ANE (chunked): D, an option.** 97.7–99.1% of operations on the ANE.
-  p99 |Δp| at 4.2× the ceiling, worst 0.022, no decision flips, 20 near
-  ties; agreement with the gold labels equals fp32's (1433/2600). Bucket
-  invariance is exact, and two processes give bit-identical results.
-  128 ms per case against the GPU's 88; through sidekickd, a 1,024-token
-  request takes about 370 ms against 227 on the GPU with nothing else
-  running. The first load compiles each chunk: about 40 s for the
+- **ANE (chunked): B, an option.** 97.9–99.1% of operations on the ANE.
+  p99 |Δp| at 1.44× the ceiling, worst 5.6e-3, no decision flips, 6 near
+  ties; agreement with the gold labels 1429/2600 against fp32's 1433. Bucket
+  invariance is exact, and two processes give bit-identical results. It was
+  D (4.2×, worst 0.022) until the ANE precision rewrite below (D39).
+  152 ms per case against the GPU's 88; through sidekickd, a 1,024-token
+  request took about 370 ms against 227 on the GPU with nothing else
+  running (measured before the rewrite, which added about 20%). The first load compiles each chunk: about 40 s for the
   smallest bucket, 244 s for the 2,048-token one. What it saves a model
   sharing the GPU is measured with tools/companion_bench.py, below.
 - **As a companion beside a larger model** (tools/companion_bench.py; M1
@@ -751,12 +754,22 @@ exactly 2,048 tokens.
     against 0.77 W of GPU and 1.10 W of ANE power on the ANE.
   - Its answers on the two paths differed by at most |Δp| 7.1e-3, and never
     within a phase.
-- **No precision rewrites.** Its residual stream reaches about 6,800 on
+- **An ANE precision rewrite (D39).** The ANE's native silu is coarse, and
+  agent-jev's first layers run on a residual of rms 0.03, so that error
+  dominated its ANE grade: layer 0 alone added 10× the GPU's error. The
+  converter replaces silu with StableSilu, 2x·exp(min(x, 0)) / (1 +
+  exp(−|x|)), which doesn't cancel in fp16 for either sign as TanhSilu's
+  1 + tanh(x/2) does; rescales the inputs of q/k/v, o_proj and down_proj by
+  powers of two, since they sit under the ANE linear's precision floor
+  (rms 0.06–0.2); and replaces the head's own silu (StableSilu) and erf gelu
+  (TwiceGelu). It is exact in fp32 and calibrated on the converter's gate
+  states. The ANE went from D to B; the GPU kept its A.
+- **No RMSNorm rewrite.** Its residual stream reaches about 6,800 on
   one dimension of the first token (the attention sink, which every
   candidate's path shares). Squared in fp16, as RMSNorm squares its input,
-  that would overflow, but the converted model shows no sign of it: without
-  any rewrite the GPU is within its ceiling, and a 2^-6 pre-scale on the
-  norms measured worse on every path.
+  that would overflow, but the converted model shows no sign of it: the GPU
+  is within its ceiling, and a 2^-6 pre-scale on the norms measured worse
+  on every path.
 - **Quality, as its authors report it.** On its own coding-completion
   benchmark, accuracy is 57.8% and AUROC 0.589, up from 0.516 before its
   final training stage (0.5 is chance). Its service calls its probabilities "model distribution;

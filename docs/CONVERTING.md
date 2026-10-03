@@ -113,7 +113,7 @@ around and where it was measured.
 |---|---|---|---|
 | `masks` | finite additive masks (`MASK_ADD = -30000`; `finfo.min` is -inf in fp16 and NaNs softmax), bands, causal masks, `self_attending()` so no query row is fully masked | every model; `self_attending` wherever a row can be fully masked (sliding windows, pairwise masks) with a softmax variant or op that NaNs on it | D15, D25 |
 | `attention` | `explicit()` matmul → softmax → matmul, never the fused op; `matmul_softmax()` opt-in: the denominator comes from the value matmul, because the ANE's `reduce_sum` is the one op not bit-identical across compiled buckets | `explicit` always (or pass `scale=` to `F.scaled_dot_product_attention`, which makes coremltools emit explicit ops); `matmul_softmax` only as a measured per-model change | D25 |
-| `activations` | `TanhGelu`, `TwiceGelu` (erf), `TanhSilu`: 2·f(x) from tanh or erf, since the native `gelu` (≤ 6e-3 on [-1, 1]) and `silu` (≤ 1.5e-2) are coarse on the ANE; the factor 2 is folded downstream | follow the model's own `hidden_act`: TanhGelu for `gelu_pytorch_tanh`, TwiceGelu for erf `gelu`, TanhSilu for `silu`. Opt-in and measured per model: an erf GELU didn't help gte-modernbert and made its CPU path worse, and Core ML's CPU erf is coarser than its gelu | D17, D19, D20, D25 |
+| `activations` | `TanhGelu`, `TwiceGelu` (erf), `TanhSilu`, `StableSilu`: 2·f(x) from tanh, erf or exp, since the native `gelu` (≤ 6e-3 on [-1, 1]) and `silu` (≤ 1.5e-2) are coarse on the ANE; the factor 2 is folded downstream | follow the model's own `hidden_act`: TanhGelu for `gelu_pytorch_tanh`, TwiceGelu for erf `gelu`, TanhSilu or StableSilu for `silu` (StableSilu where TanhSilu's 1 + tanh(x/2) cancels in fp16 for negative x: agent-jev, D39). Opt-in and measured per model: an erf GELU didn't help gte-modernbert and made its CPU path worse, and Core ML's CPU erf is coarser than its gelu | D17, D19, D20, D25, D39 |
 | `precision` | the ANE linear's small-input floor (relative error ~3e-4 / rms(input)): power-of-two input scales folded upstream, `Descale` after | a linear whose calibrated input rms is small (≲ 0.02–0.03) | D17, D19, D20 |
 | `saturation` | the ANE linear saturates above 2^15: `check()` the rule (calibrated outputs ≤ 0.85 × 2^15), `choose_k()` / `headroom_at()` for a residual stream run at 1/K | check on every model; residual K where a massive activation crosses it (ModernBERT) | D25 amendment |
 | `pooling` | CLS, masked mean (by the attention_mask input, never by token id; summed at 1/32 for fp16 range), last token without a gather, L2 squared at 1/32; outputs end in a literal `(1, dims)` reshape | every pooled head | D15, D17, D20 |
@@ -435,6 +435,12 @@ pre-library builds at every bucket.
 - **The ANE `linear` saturates above 2^15** (32,768 exact, 33,000 inf), and
   loses precision on small inputs (~3e-4 / rms). Its add, mul and layer_norm
   cover fp16's full range; fp16's own 65,504 isn't the limit that matters.
+- **The ANE's native `silu` and `gelu` are coarse** (D17, D20, D39), and in a
+  SiLU MLP whose residual is small the silu can dominate a model's whole ANE
+  error: agent-jev's went from D to B by replacing it (D39). Replace them
+  with `activations` forms and forbid the native ops. Measure in the model,
+  layer by layer, not with a one-op program: Core ML doesn't place a lone
+  `silu` on the ANE, so a micro-benchmark shows every form alike.
 - **Multi-shape artifacts abort under `.cpuOnly`** on macOS 27 (D27). One
   static artifact per bucket, always.
 - **A program whose weights pass about 1 GiB runs entirely off the ANE**,

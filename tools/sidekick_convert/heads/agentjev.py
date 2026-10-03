@@ -40,10 +40,11 @@ class _Scorer(torch.nn.Module):
         self.eps = eps
         self.fc1 = torch.nn.Linear(hidden, inner)
         self.fc2 = torch.nn.Linear(inner, 1)
+        self.act = torch.nn.SiLU()
 
     def forward(self, x):
         x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.norm_weight
-        return self.fc2(torch.nn.functional.silu(self.fc1(x))).squeeze(-1)
+        return self.fc2(self.act(self.fc1(x))).squeeze(-1)
 
 
 @dataclasses.dataclass
@@ -77,6 +78,22 @@ class AgentJevHead:
         for m in (proj_in, proj_out, set_layers, scorer):
             m.eval().requires_grad_(False)
         return cls(proj_in, set_layers, proj_out, scorer, kmax=kmax)
+
+    def precision_rewrite(self):
+        """The head's activations as forms the ANE computes accurately
+        (techniques.activations): the scorer's silu as StableSilu and the set
+        layers' erf gelu as TwiceGelu, each returning twice the activation,
+        with 1/2 folded into the next linear's weights. Exact in fp32. Pair
+        with forbidding the native silu and gelu ops."""
+        from ..techniques import activations
+        with torch.no_grad():
+            self.scorer.fc2.weight.mul_(1.0 / activations.StableSilu.GAIN)
+            for layer in self.set_layers:
+                layer.linear2.weight.mul_(1.0 / activations.TwiceGelu.GAIN)
+        self.scorer.act = activations.StableSilu()
+        for layer in self.set_layers:
+            layer.activation = activations.TwiceGelu()
+        return self
 
     def ports(self):
         return [sequence_port("input_ids"), sequence_port("attention_mask"), sequence_port("seg"),
