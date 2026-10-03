@@ -54,7 +54,12 @@ class _Model:
 
 
 def _model(compiled, path):
+    """A compiled model, or a chain of chunks (chunking.Chain), for one
+    compute path."""
     import coremltools as ct
+    if _plan.is_chain(compiled):
+        from .chunking import ChainModel
+        return ChainModel(compiled, path, _INPUTS)
     return _Model(ct.models.CompiledMLModel(str(compiled), compute_units=getattr(ct.ComputeUnit, path)))
 
 

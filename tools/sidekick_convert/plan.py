@@ -123,28 +123,61 @@ operations on the ANE, and with 1.022 GiB none of them. The true limit lies
 in that bracket, and other chips or OS versions may set it elsewhere: the
 compute-plan gate still judges where Core ML actually places a program."""
 
-_CAP_OPTIONS = ('serve it on the GPU (compute_units = "cpu_and_gpu"), convert with --int8-embedding '
-                "(or a chunked variant, planned), or pass --ignore-ane-weight-cap to try anyway")
+_CAP_OPTIONS = ("convert it in chunks under the limit (--chunks auto, D37), serve it on the GPU "
+                '(compute_units = "cpu_and_gpu"), convert with --int8-embedding, or pass '
+                "--ignore-ane-weight-cap to try anyway")
 
 
 def weights_bytes(compiled):
-    """The compiled model's weight files, in bytes."""
+    """The compiled model's weight files, in bytes; for a chain, its largest
+    chunk's."""
+    if is_chain(compiled):
+        return max(weights_bytes(p) for p in compiled.paths)
     return sum(f.stat().st_size for f in (Path(compiled) / "weights").rglob("*") if f.is_file())
 
 
-def over_cap(model, seq, size):
+def over_cap(model, seq, size, chunk=None):
     """Why a program of `size` bytes of weights won't run on the ANE."""
-    return (f"{model}'s {seq} bucket has {size / 2**30:.3f} GiB of weights, over the Neural Engine's 1 GiB "
+    what = f"{seq} bucket" if chunk is None else f"{seq} bucket's chunk {chunk}"
+    return (f"{model}'s {what} has {size / 2**30:.3f} GiB of weights, over the Neural Engine's 1 GiB "
             f"per-program limit (MAX_ANE_PROGRAM_WEIGHT_BYTES), so Core ML would run it on the CPU. "
             f"Options: {_CAP_OPTIONS}.")
+
+
+def combine(summaries):
+    """One bucket's summary from its chunks' (chunking.py, D37): the counts
+    summed, the off-ANE ops merged, and each chunk's own summary under
+    "chunks"."""
+    s = {k: sum(c[k] for c in summaries) for k in ("ane", "gpu", "cpu", "unassigned", "total", "assigned")}
+    off = {}
+    for c in summaries:
+        for name, n in c["off"].items():
+            off[name] = off.get(name, 0) + n
+    s.update(off=off, heavy_off=sorted({n for c in summaries for n in c["heavy_off"]}),
+             unassigned_heavy=sorted({n for c in summaries for n in c["unassigned_heavy"]}),
+             masked_fused_attention=[(i, *m) for i, c in enumerate(summaries) for m in c["masked_fused_attention"]],
+             chunks=summaries)
+    return s
+
+
+def is_chain(compiled):
+    """A bucket compiled as a chain of chunks (chunking.Chain)."""
+    return hasattr(compiled, "paths")
+
+
+def _summary(compiled, units="CPU_AND_NE"):
+    if is_chain(compiled):
+        return combine([summarize(read(p, units)) for p in compiled.paths])
+    return summarize(read(compiled, units))
 
 
 def gate(compiled, min_ane=0.8):
     """The ane_check verdict: every compute-heavy op on the ANE, at least
     `min_ane` of assigned ops on the ANE, and no fused attention that would
     drop its mask. Returns the summary; raises GateFailure. (core.run checks
-    the weights against MAX_ANE_PROGRAM_WEIGHT_BYTES before this.)"""
-    s = summarize(read(compiled))
+    the weights against MAX_ANE_PROGRAM_WEIGHT_BYTES before this.) A chain
+    is judged on its chunks' summed counts."""
+    s = _summary(compiled)
     share = s["ane"] / s["assigned"] if s["assigned"] else 0.0
     s["share"], s["units"] = share, "CPU_AND_NE"
     if s["heavy_off"] or share < min_ane:
@@ -166,7 +199,7 @@ def report(compiled, units="CPU_AND_NE"):
     the ANE, read for the units it is served with: a low ANE share passes,
     and an unreadable plan returns None."""
     try:
-        s = summarize(read(compiled, units))
+        s = _summary(compiled, units)
     except GateFailure:
         return None
     s["share"] = s["ane"] / s["assigned"] if s["assigned"] else 0.0
@@ -195,13 +228,20 @@ def _toml_key(key):
     return key if key.replace("_", "").replace("-", "").isalnum() else '"' + key.replace('"', '\\"') + '"'
 
 
+def _counts(s):
+    off = ", ".join(f"{_toml_key(k)} = {v}" for k, v in sorted(s["off"].items()))
+    return [f"ane = {s['ane']}", f"gpu = {s['gpu']}", f"cpu = {s['cpu']}", f"unassigned = {s['unassigned']}",
+            f"total = {s['total']}", f"off_ane_ops = {{ {off} }}"]
+
+
 def placement_toml(plans, chip, macos_build, date):
     """The installed manifest's [placement] table: the compute plan each
     bucket was converted with, read on this machine, so the daemon can report
     placement without a second compile. `plans`: {bucket: summary}, every
     summary read for the same units. The counts are sidekick_coreml's
     PlanSummary: the main function with nested blocks, constants unassigned,
-    total = ane + gpu + cpu + unassigned."""
+    total = ane + gpu + cpu + unassigned. A chained bucket's counts are its
+    chunks' sums, with each chunk's own under it (D37)."""
     units = {s["units"] for s in plans.values()}
     if len(units) != 1:
         raise ValueError(f"plans read for different compute units: {sorted(units)}")
@@ -209,7 +249,7 @@ def placement_toml(plans, chip, macos_build, date):
              f'macos_build = "{macos_build}"', f'date = "{date}"']
     for seq in sorted(plans):
         s = plans[seq]
-        off = ", ".join(f"{_toml_key(k)} = {v}" for k, v in sorted(s["off"].items()))
-        lines += ["", f"[placement.buckets.{seq}]", f"ane = {s['ane']}", f"gpu = {s['gpu']}", f"cpu = {s['cpu']}",
-                  f"unassigned = {s['unassigned']}", f"total = {s['total']}", f"off_ane_ops = {{ {off} }}"]
+        lines += ["", f"[placement.buckets.{seq}]", *_counts(s)]
+        for c in s.get("chunks", ()):
+            lines += ["", f"[[placement.buckets.{seq}.chunks]]", *_counts(c)]
     return "\n".join(lines) + "\n"

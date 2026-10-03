@@ -212,7 +212,7 @@ def main():
                    example=example, evaluation=core.Evaluation(cases), gates=gates,
                    forbid_ops=frozenset({core.FUSED_ATTENTION}) | backbone.forbid_ops,
                    install_files=[(path, "classifier.toml")], landing_required=True, gate_cases="landing",
-                   timing=args.time)
+                   timing=args.time, backbone=backbone, head=head, **cli.job_options(args))
     core.run(job, args.install_dir)
 
 

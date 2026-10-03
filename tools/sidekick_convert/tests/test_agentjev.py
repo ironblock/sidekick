@@ -23,13 +23,13 @@ PREFIX = "path_encoder.backbone."
 SET_DIM, HEADS = 16, 2
 
 
-def tiny_checkpoint(dirname, seed=0):
+def tiny_checkpoint(dirname, seed=0, layers=2):
     """A random Qwen3 backbone and AgentJev-shaped head, saved as AgentJev
     stores them: one model.safetensors with the backbone under PREFIX."""
     from safetensors.torch import save_file
     from transformers import Qwen3Config, Qwen3Model
     torch.manual_seed(seed)
-    config = Qwen3Config(vocab_size=120, hidden_size=32, intermediate_size=64, num_hidden_layers=2,
+    config = Qwen3Config(vocab_size=120, hidden_size=32, intermediate_size=64, num_hidden_layers=layers,
                          num_attention_heads=4, num_key_value_heads=2, head_dim=8, max_position_embeddings=128,
                          rope_theta=1e6, rms_norm_eps=1e-6, tie_word_embeddings=True)
     config.save_pretrained(dirname)

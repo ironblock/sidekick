@@ -7,7 +7,9 @@ off unless the machine is quiet, since latency moves with load and accuracy
 doesn't. `--int8-embedding` stores the token-embedding table in int8, and
 `--ignore-ane-weight-cap` converts a model served on the ANE past the Neural
 Engine's per-program weight limit with a warning instead of an error
-(docs/CONVERTING.md); a converter passes both on with job_options(). A
+(docs/CONVERTING.md). `--chunks auto|N|cuts` converts each bucket as a chain
+of programs split at layer boundaries, for a backbone that supports it
+(chunking.py, D37). A converter passes these on with job_options(). A
 converter adds its own flags (negative controls) through `flags`.
 """
 
@@ -33,6 +35,9 @@ def parse(description, *, flags=(), default_buckets=(128, 256, 512), argv=None):
     p.add_argument("--ignore-ane-weight-cap", action="store_true",
                    help="convert past the Neural Engine's 1 GiB per-program weight limit, with a warning "
                         "recorded in the installed manifest")
+    p.add_argument("--chunks", default=None,
+                   help="split each bucket into programs at layer boundaries: auto (each under 0.9 GiB), a "
+                        "count, or the layers at which chunks after the first begin (10,20); D37")
     for name, kwargs in flags:
         p.add_argument(name, **kwargs)
     args = p.parse_intermixed_args(argv)
@@ -42,4 +47,6 @@ def parse(description, *, flags=(), default_buckets=(128, 256, 512), argv=None):
 
 def job_options(args):
     """The shared flags that shape a Job, for recipes.* or core.Job."""
-    return {"int8_embedding": args.int8_embedding, "ignore_ane_weight_cap": args.ignore_ane_weight_cap}
+    from .chunking import parse_spec
+    return {"int8_embedding": args.int8_embedding, "ignore_ane_weight_cap": args.ignore_ane_weight_cap,
+            "chunks": parse_spec(args.chunks)}
