@@ -62,6 +62,7 @@ cache fill most of the machine's memory.
 """
 
 import argparse
+import atexit
 import datetime
 import json
 import re
@@ -85,7 +86,7 @@ def now():
     return datetime.datetime.now().astimezone()
 
 
-def post(url, body, timeout=600):
+def post(url, body, timeout=1800):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"content-type": "application/json"})
     return urllib.request.urlopen(req, timeout=timeout)
 
@@ -143,10 +144,13 @@ class Companion:
         self.home = tempfile.mkdtemp(prefix="companion-bench-")
         config = Path(self.home) / "config.toml"
         config.write_text(f'addr = "127.0.0.1:{args.port}"\nmodels_dir = "{args.models_dir}"\n'
-                          f"model_idle_ttl_secs = 86400\n\n[models.\"{args.model}\"]\ncompute_units = \"{units}\"\n")
+                          # the first ANE load compiles each chunk, minutes for a large bucket
+                          f"model_idle_ttl_secs = 86400\nrequest_timeout_secs = 1800\n\n"
+                          f"[models.\"{args.model}\"]\ncompute_units = \"{units}\"\n")
         self.log = open(Path(self.home) / "sidekickd.log", "w")
         self.proc = subprocess.Popen([str(args.sidekickd), "--config", str(config)], stdout=self.log,
                                      stderr=subprocess.STDOUT)
+        atexit.register(self.close)
         self.url = f"http://127.0.0.1:{args.port}"
         for _ in range(120):
             try:
@@ -234,6 +238,8 @@ class Companion:
                 "probs": self.probs[0] if self.probs else None, "probs_spread_in_phase": spread}
 
     def close(self):
+        if self.proc.poll() is not None:
+            return
         self.proc.terminate()
         try:
             self.proc.wait(timeout=30)
