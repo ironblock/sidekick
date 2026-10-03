@@ -1,0 +1,128 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Mixed (Float16, Int32)",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 4)",
+        "shortDescription" : "",
+        "shape" : "[1, 4]",
+        "name" : "logits",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 9,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios18.expandDims" : 11,
+      "Ios18.mul" : 38,
+      "Ios18.softmax" : 2,
+      "Ios18.matmul" : 9,
+      "Ios18.rsqrt" : 10,
+      "Ios18.exp" : 2,
+      "Ios16.reduceMean" : 10,
+      "Ios18.realDiv" : 2,
+      "Ios18.equal" : 5,
+      "Split" : 6,
+      "Ios18.greaterEqual" : 3,
+      "Ios16.reduceMax" : 2,
+      "Tile" : 4,
+      "Ios18.add" : 30,
+      "Ios18.layerNorm" : 4,
+      "Ios16.fillLike" : 2,
+      "Ios18.reshape" : 23,
+      "Ios18.linear" : 28,
+      "Ios18.clip" : 2,
+      "Ios18.concat" : 6,
+      "Ios18.sub" : 5,
+      "Ios18.pow" : 10,
+      "Ios18.cast" : 8,
+      "Ios18.transpose" : 16,
+      "Ios18.silu" : 3,
+      "Ios18.gelu" : 2,
+      "Ios18.sliceByIndex" : 6,
+      "Ios18.squeeze" : 1
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "15.0",
+      "tvOS" : "18.0",
+      "visionOS" : "2.0",
+      "watchOS" : "11.0",
+      "iOS" : "18.0",
+      "macCatalyst" : "18.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-10-02",
+      "com.github.apple.coremltools.source" : "torch==2.13.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 32 × 32)",
+        "shortDescription" : "",
+        "shape" : "[1, 32, 32]",
+        "name" : "hidden_in",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1 × 32)",
+        "shortDescription" : "",
+        "shape" : "[1, 32]",
+        "name" : "attention_mask",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1 × 32)",
+        "shortDescription" : "",
+        "shape" : "[1, 32]",
+        "name" : "seg",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1 × 32)",
+        "shortDescription" : "",
+        "shape" : "[1, 32]",
+        "name" : "position_ids",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1 × 4)",
+        "shortDescription" : "",
+        "shape" : "[1, 4]",
+        "name" : "cand_end",
+        "type" : "MultiArray"
+      }
+    ],
+    "generatedClassName" : "model_32_1",
+    "method" : "predict"
+  }
+]

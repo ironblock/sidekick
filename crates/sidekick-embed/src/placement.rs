@@ -116,19 +116,58 @@ impl Placements {
         self.lock().get(&(path.to_path_buf(), units)).cloned()
     }
 
-    /// Each of a model's buckets that has a plan state, by bucket.
+    /// Each of a model's buckets that has a plan state, by bucket. A
+    /// chunked bucket's (D37) is its chunks' together: their counts summed
+    /// once every chunk is read, failed if any read failed, pending until
+    /// then.
     pub fn for_model(
         &self,
         dir: &Path,
         artifact: &str,
         buckets: &[usize],
+        chunks: usize,
         units: ComputeUnits,
     ) -> BTreeMap<usize, Placement> {
         buckets
             .iter()
-            .filter_map(|&b| self.get(&dir.join(artifact.replace("{seq}", &b.to_string())), units).map(|p| (b, p)))
+            .filter_map(|&b| {
+                let states: Vec<Option<Placement>> = sidekick_core::artifact_files(artifact, b, chunks)
+                    .iter()
+                    .map(|f| self.get(&dir.join(f), units))
+                    .collect();
+                combine(states).map(|p| (b, p))
+            })
             .collect()
     }
+}
+
+/// One bucket's state from its programs' states, in chain order; `None`
+/// when none of them has been loaded.
+fn combine(states: Vec<Option<Placement>>) -> Option<Placement> {
+    if states.len() == 1 {
+        return states.into_iter().next().flatten();
+    }
+    if states.iter().all(Option::is_none) {
+        return None;
+    }
+    let mut sum = OpCounts::default();
+    let mut pending = false;
+    for (i, state) in states.into_iter().enumerate() {
+        match state {
+            Some(Placement::Ready(c)) => {
+                sum.ane += c.ane;
+                sum.gpu += c.gpu;
+                sum.cpu += c.cpu;
+                sum.unassigned += c.unassigned;
+                for (op, n) in &c.off_ane_ops {
+                    *sum.off_ane_ops.entry(op.clone()).or_default() += n;
+                }
+            }
+            Some(Placement::Failed(e)) => return Some(Placement::Failed(format!("chunk {i}: {e}"))),
+            Some(Placement::Pending) | None => pending = true,
+        }
+    }
+    Some(if pending { Placement::Pending } else { Placement::Ready(Arc::new(sum)) })
 }
 
 static SERVICE: OnceLock<Arc<Placements>> = OnceLock::new();
@@ -373,8 +412,48 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         // Other compute units are another plan.
         assert_eq!(service.get(&path, ComputeUnits::CpuAndGpu), None);
-        let listed = service.for_model(&dir, "model_{seq}.mlmodelc", &[16, 32], ComputeUnits::CpuAndNeuralEngine);
+        let listed = service.for_model(&dir, "model_{seq}.mlmodelc", &[16, 32], 1, ComputeUnits::CpuAndNeuralEngine);
         assert_eq!(listed.keys().copied().collect::<Vec<_>>(), vec![16], "only the loaded bucket");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_chunked_bucket_is_its_chunks_together() {
+        let dir = tmp("chunks");
+        let units = ComputeUnits::CpuAndNeuralEngine;
+        let c0 = artifact(&dir, "model_16.0.mlmodelc", b"w0");
+        let c1 = artifact(&dir, "model_16.1.mlmodelc", b"w1");
+        // chunk 0 reads 30 ANE operations, chunk 1 40
+        let reader: PlanReader = Arc::new(|path: &Path, _| {
+            let ane = if path.ends_with("model_16.0.mlmodelc") { 30 } else { 40 };
+            Ok(OpCounts { ane, cpu: 1, off_ane_ops: BTreeMap::from([("gather".into(), 1)]), ..Default::default() })
+        });
+        let service = Placements::new(reader, None);
+        let listed = |s: &Placements| s.for_model(&dir, "model_{seq}.{chunk}.mlmodelc", &[16], 2, units).remove(&16);
+        assert_eq!(listed(&service), None, "nothing before a load");
+        // One chunk read, the other not loaded yet: pending.
+        service.loaded(&c0, units);
+        wait(&service, &c0, units);
+        assert_eq!(listed(&service), Some(Placement::Pending));
+        // Both read: summed.
+        service.loaded(&c1, units);
+        wait(&service, &c1, units);
+        let Some(Placement::Ready(sum)) = listed(&service) else { panic!("{:?}", listed(&service)) };
+        assert_eq!((sum.ane, sum.cpu, sum.off_ane_ops["gather"]), (70, 2, 2));
+        // A chunk whose read failed fails the bucket, naming the chunk.
+        let failing = Placements::new(
+            Arc::new(|path: &Path, _| match path.ends_with("model_16.1.mlmodelc") {
+                true => Err(sidekick_core::Error::Inference("no plan".into())),
+                false => Ok(OpCounts::default()),
+            }),
+            None,
+        );
+        failing.loaded(&c0, units);
+        failing.loaded(&c1, units);
+        wait(&failing, &c0, units);
+        wait(&failing, &c1, units);
+        let Some(Placement::Failed(why)) = listed(&failing) else { panic!() };
+        assert!(why.starts_with("chunk 1:"), "{why}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

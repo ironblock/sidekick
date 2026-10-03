@@ -3,8 +3,10 @@ use crate::state::AppState;
 use axum::extract::State;
 use axum::Json;
 use serde_json::{json, Map, Value};
-use sidekick_core::manifest::{RecordedPlacement, ResolvedModel};
-use sidekick_core::{ClassifyTask, ComputeUnits, ComputeUnitsSource, EmbeddingBackendKind};
+use sidekick_core::manifest::{artifact_weight_bytes, RecordedPlacement, ResolvedModel};
+use sidekick_core::{
+    Chunking, ClassifyTask, ComputeUnits, ComputeUnitsSource, EmbeddingBackendKind, MAX_ANE_PROGRAM_WEIGHT_BYTES,
+};
 use sidekick_embed::placement::{this_machine, Placement};
 use std::path::Path;
 
@@ -58,7 +60,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             compute_units: Some(m.compute_units.name()),
             compute_units_source: Some(m.compute_units_source.name()),
             seq_cap: m.seq_cap.clone(),
-            placement: placement(&state, &c.dir, &m.artifact, &m.buckets, m.compute_units, m.placement.as_ref(), false),
+            placement: placement(&state, &c.dir, &m.artifact, &m.buckets, m.chunks(), m.compute_units, m.placement.as_ref(), false),
             calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
             ..ModelObject::new(m.id.clone(), created, m.task.name())
         });
@@ -77,26 +79,31 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
 /// 3. a live read still pending, or failed.
 ///
 /// `detail` adds the unassigned count, the operators off the ANE, where a
-/// recorded plan was read, and a failed live read's reason, for /health;
-/// /v1/models keeps the counts.
+/// recorded plan was read, a failed live read's reason, and a chunked
+/// bucket's per-chunk counts (D37), for /health; /v1/models keeps the
+/// counts. A chunked bucket's counts are its chunks' sums.
+#[allow(clippy::too_many_arguments)]
 fn placement(
     state: &AppState,
     dir: &Path,
     artifact: &str,
     buckets: &[usize],
+    chunks: usize,
     units: ComputeUnits,
     recorded: Option<&RecordedPlacement>,
     detail: bool,
 ) -> Option<Map<String, Value>> {
-    let live = state.placements.as_ref().map(|p| p.for_model(dir, artifact, buckets, units)).unwrap_or_default();
-    // A plan recorded for other compute units doesn't describe this model.
-    let recorded = recorded.filter(|r| r.compute_units == units);
+    let live =
+        state.placements.as_ref().map(|p| p.for_model(dir, artifact, buckets, chunks, units)).unwrap_or_default();
+    // Only a plan recorded for the units the model runs on describes it:
+    // the main record, or an alternative read for those units (D38).
+    let recorded = recorded.filter(|r| r.covers(units));
     let machine = this_machine();
     let reports: Map<String, Value> = buckets
         .iter()
         .filter_map(|&bucket| {
             let live = live.get(&bucket);
-            let value = match (live, recorded.and_then(|r| r.bucket(bucket).map(|plan| (r, plan)))) {
+            let value = match (live, recorded.and_then(|r| r.bucket_for(units, bucket).map(|plan| (r, plan)))) {
                 (Some(Placement::Ready(c)), _) => {
                     let mut v = json!({"source": "live", "state": "ready", "ane": c.ane, "gpu": c.gpu, "cpu": c.cpu});
                     if detail {
@@ -114,6 +121,14 @@ fn placement(
                         v["unassigned"] = json!(plan.unassigned);
                         v["off_ane_ops"] = json!(plan.off_ane_ops);
                         v["measured_on"] = json!({"chip": r.chip, "macos_build": r.macos_build});
+                        if !plan.chunks.is_empty() {
+                            v["chunks"] = plan
+                                .chunks
+                                .iter()
+                                .map(|c| json!({"ane": c.ane, "gpu": c.gpu, "cpu": c.cpu, "unassigned": c.unassigned,
+                                                "off_ane_ops": c.off_ane_ops}))
+                                .collect();
+                        }
                         if let Some(date) = &r.date {
                             v["measured_on"]["date"] = json!(date);
                         }
@@ -143,7 +158,7 @@ fn embedder_placement(state: &AppState, r: &ResolvedModel, detail: bool) -> Opti
         return None;
     }
     let units = m.compute_units.unwrap_or_default();
-    placement(state, &r.dir, &m.artifact, &m.buckets, units, m.placement.as_ref(), detail)
+    placement(state, &r.dir, &m.artifact, &m.buckets, m.chunks(), units, m.placement.as_ref(), detail)
 }
 
 pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -186,8 +201,22 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         .filter_map(|r| embedder_placement(&state, r, true).map(|p| (r.manifest.id.clone(), Value::Object(p))))
         .chain(state.registry.classifiers().filter_map(|c| {
             let m = &c.manifest;
-            placement(&state, &c.dir, &m.artifact, &m.buckets, m.compute_units, m.placement.as_ref(), true)
+            placement(&state, &c.dir, &m.artifact, &m.buckets, m.chunks(), m.compute_units, m.placement.as_ref(), true)
                 .map(|p| (m.id.clone(), Value::Object(p)))
+        }))
+        .collect();
+    // Chunked models (D37): each bucket's programs and their weights, against
+    // the ANE's per-program limit and the budget the converter split under.
+    let chunked: Map<String, Value> = state
+        .registry
+        .iter()
+        .filter_map(|r| {
+            let m = &r.manifest;
+            chunking(&r.dir, &m.artifact, &m.buckets, m.chunking.as_ref()).map(|v| (m.id.clone(), v))
+        })
+        .chain(state.registry.classifiers().filter_map(|c| {
+            let m = &c.manifest;
+            chunking(&c.dir, &m.artifact, &m.buckets, m.chunking.as_ref()).map(|v| (m.id.clone(), v))
         }))
         .collect();
     Json(json!({
@@ -232,5 +261,31 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "live": state.placements.is_some(),
             "models": plans,
         },
+        "chunked_models": chunked,
+    }))
+}
+
+/// A chunked model's programs (D37), for /health: per bucket, each chunk's
+/// artifact and weight bytes; the ANE's per-program limit; and the budget
+/// the converter split under, when it recorded one. `None` for a model
+/// that isn't chunked.
+fn chunking(dir: &Path, artifact: &str, buckets: &[usize], chunking: Option<&Chunking>) -> Option<Value> {
+    let c = chunking?;
+    let programs: Map<String, Value> = buckets
+        .iter()
+        .map(|&b| {
+            let files = sidekick_core::artifact_files(artifact, b, c.chunks);
+            let list: Vec<Value> = files
+                .iter()
+                .map(|f| json!({"artifact": f, "weight_bytes": artifact_weight_bytes(&dir.join(f))}))
+                .collect();
+            (b.to_string(), Value::Array(list))
+        })
+        .collect();
+    Some(json!({
+        "chunks": c.chunks,
+        "ane_limit_bytes": MAX_ANE_PROGRAM_WEIGHT_BYTES,
+        "weight_budget_bytes": c.weight_budget_bytes,
+        "buckets": programs,
     }))
 }

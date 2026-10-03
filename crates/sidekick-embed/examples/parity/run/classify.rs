@@ -284,7 +284,7 @@ pub fn grade_model(
     // D32: a model whose buckets are over the ANE weight limit, without the
     // opt-out, isn't served on the ANE (the runtime refuses it there), so its
     // ANE path is measured and reported, not graded.
-    let ane_refused = sidekick_core::ane_weight_refusal(&model.dir, &m.artifact, &m.buckets, m.ane_weight_limit);
+    let ane_refused = sidekick_core::ane_weight_refusal(&model.dir, &m.artifact, &m.buckets, m.chunks(), m.ane_weight_limit);
     let stale = match corpus_sha256(m) {
         Ok(corpus) => reference.stale(m, &corpus, &tokenizer_sha(&model.tokenizer_path())),
         Err(e) => Some(format!("no corpus to check the reference against: {e}")),
@@ -307,7 +307,7 @@ pub fn grade_model(
     let plans = check_plans(
         id,
         &m.buckets,
-        |b| model.artifact_path_for_bucket(b),
+        |b| model.artifact_paths_for_bucket(b),
         m.compute_units,
         o,
         scratch,

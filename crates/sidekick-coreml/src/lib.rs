@@ -14,7 +14,7 @@ mod model;
 #[cfg(target_os = "macos")]
 mod plan;
 #[cfg(target_os = "macos")]
-pub use model::{input_shapes, interface, load_verdict, CoremlModel, OutputTensor};
+pub use model::{input_shapes, interface, load_verdict, CoremlChain, CoremlModel, OutputTensor, HIDDEN_IN, HIDDEN_OUT};
 #[cfg(target_os = "macos")]
 pub use plan::compute_plan;
 

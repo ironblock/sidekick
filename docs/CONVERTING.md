@@ -444,6 +444,11 @@ pre-library builds at every bucket.
   line elsewhere. A model served on the ANE whose compiled weights pass
   `plan.MAX_ANE_PROGRAM_WEIGHT_BYTES` (1 GiB) is refused after compiling,
   with its options:
+  - chunk it (D37): a backbone that can be chunked (one with `chunk_ports`,
+    `chunk_layers`, `chunk_parts` and `chunk_call`; Qwen3TreeBackbone does)
+    is chunked by default whenever a bucket's fp16 weights pass
+    `chunking.CHUNK_WEIGHT_BUDGET_BYTES` (0.9 GiB, a margin under the
+    measured limit). See "Chunked buckets" below;
   - serve it on the GPU (`compute_units = "cpu_and_gpu"`);
   - convert with `--int8-embedding` (`Job(int8_embedding=True)`), which
     stores the token-embedding table, the largest constant a gather reads,
@@ -458,6 +463,39 @@ pre-library builds at every bucket.
     places the program. A bypass is recorded in the run's output, in its
     report (`ane_weight_cap`), and as a comment in the installed manifest,
     so a bypassed artifact stays visible.
+- **Chunked buckets** (D37, `chunking.py`). Each bucket is split in torch,
+  before tracing, at layer boundaries, and each chunk is its own program:
+  - `--chunks auto` (the default for a backbone that can be chunked) uses
+    the fewest chunks whose fp16 weights fit the budget, balanced; `--chunks
+    N` makes N; `--chunks 10,20` starts chunks at those layers; `--chunks 1`
+    keeps one program per bucket. The cuts are planned at the largest bucket
+    and used for all.
+  - Only the residual stream crosses a boundary: every chunk but the last
+    outputs `hidden_out`, fp16 [1, S, H], and every chunk but the first
+    takes it as `hidden_in`. Each chunk takes the int32 ports its backbone
+    reads and rebuilds the mask and positions from them; the first takes
+    `input_ids`, the last the head's own ports, and the last produces the
+    output.
+  - Gates: the composed chunks against the unchunked wrapper in fp32, in
+    every bucket; in the smallest bucket, the chain's GPU output against
+    the unchunked program's, bit for bit (`--chunk-identity-all`: every
+    bucket, converting each twice); each chunk against the weight limit;
+    then the usual gates on the chain.
+  - It installs `model_{seq}.{chunk}.mlmodelc`, rewrites the installed
+    manifest's `artifact` to `"model_{seq}.{chunk}.mlmodelc"`, and adds
+    `[chunking]` (`chunks`, and `weight_budget_bytes` for `auto`). A
+    manifest whose artifact isn't `model_{seq}.mlmodelc` fails before
+    converting. Installing either layout removes the other's artifacts.
+  - `[placement]` records each bucket's counts as its chunks' sums, with
+    each chunk's under `chunks`, and every conversion also records the plan
+    for the other of `cpu_and_ne` and `cpu_and_gpu` under
+    `[placement.alternatives.<units>]`.
+  - Chunked models need sidekick 0.7.0.
+- **Conversions keep no Core ML cache.** `cli.parse` re-runs the converter
+  with `CFFIXED_USER_HOME` set to a temporary home, deleted when it exits:
+  the conversion loads each bucket from a temporary directory and then
+  moves it, so every cache entry it would leave behind is orphaned (about
+  11 GB for agent-jev). Set `CFFIXED_USER_HOME` yourself to keep a cache.
 - **An empty compute plan can come from a stale cache.** Core ML's cache of
   compiled bundles (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`)
   can hold a broken entry for an artifact's path; plans for that path then

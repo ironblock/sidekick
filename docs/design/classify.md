@@ -343,9 +343,12 @@ so the registry skips it, as D28 skips any bad manifest:
   converters measure them (`tools/sidekick_convert/plan.py`), from file
   metadata, without reading them.
 - The reason, in `/health`'s `skipped_models` and in `sk_pool_skipped`,
-  names the bucket, its weights and the fixes: serve it on the GPU
-  (`compute_units = "cpu_and_gpu"`), convert a quantized or chunked
-  variant, or load it anyway.
+  names the program (a bucket, or one chunk of a chunked bucket, D37), its
+  weights and the fixes: convert it in chunks under the limit (`--chunks
+  auto`), serve it on the GPU (`compute_units = "cpu_and_gpu"`), convert a
+  quantized variant (`--int8-embedding`), or load it anyway. When the
+  daemon config's `[models."<id>"]` chose the ANE (D38), the reason says
+  so and names removing that override first.
 - Loading it anyway, for experimentation: `ane_weight_limit = "ignore"`
   in the manifest (top level, either manifest file), or `sidekickd
   --ignore-ane-weight-cap` (`ignore_ane_weight_cap = true` in the config)
@@ -415,8 +418,11 @@ sources:
   artifact, recorded in the manifest. It costs nothing at runtime. It is
   marked `stale` (`"measured on Apple M1 Max, macOS 25A354"`) when this
   machine's chip or macOS build differs, since another compiler can place
-  operations differently. A plan recorded for other compute units than
-  the model is served with isn't reported.
+  operations differently. The converter records a plan for the units the
+  manifest serves with and, as an alternative, for the other of
+  `cpu_and_ne` and `cpu_and_gpu`; the one for the units the model runs on
+  is reported, so a model the operator moves (D38) keeps its report. A
+  plan recorded only for other units isn't reported.
 - `live`, with `report_compute_plans = true`: the daemon reads the plan
   itself after a bucket's first load. A live plan takes precedence over a
   recorded one; while the read is pending, or if it fails, the recorded
@@ -424,7 +430,18 @@ sources:
 
 `/health` adds, under `compute_plans`, each bucket's unassigned operations
 (constants and other bookkeeping), the operators off the ANE, where a
-recorded plan was measured, and why a live read failed.
+recorded plan was measured, why a live read failed, and, for a chunked
+bucket (D37), each chunk's recorded counts under `chunks` (the bucket's
+are their sums).
+
+`/health`'s `chunked_models` lists each chunked model by id: its
+`chunks` per bucket, `ane_limit_bytes` (the ANE's per-program weight
+limit), the `weight_budget_bytes` the converter split under (null when it
+was given explicit cuts), and per bucket each program's `artifact` and
+`weight_bytes`. `compute_unit_overrides` lists the compute units the
+daemon config chose (`applied`, by model id) and overrides naming no Core
+ML model (`unmatched`); `/v1/models` gives every Core ML model's
+`compute_units_source`, `manifest` or `operator` (D38).
 
 The manifest records the plan in an optional table, written by the
 conversion library:
@@ -443,14 +460,35 @@ cpu = 10
 unassigned = 410
 total = 714                    # ane + gpu + cpu + unassigned
 off_ane_ops = { gather = 2, cast = 8 }   # { } when every operation is on the ANE
+
+[[placement.buckets.128.chunks]]   # a chunked bucket (D37): one per chunk, in order,
+ane = 150                          # whose counts sum to the bucket's
+gpu = 0
+cpu = 6
+unassigned = 200
+total = 356
+off_ane_ops = { gather = 2, cast = 4 }
+
+# ... the next chunk ...
+
+[placement.alternatives.cpu_and_gpu.buckets.128]   # the plan for other units (D38)
+ane = 0
+gpu = 704
+cpu = 0
+unassigned = 410
+total = 1114
+off_ane_ops = { ... }
 ```
 
 A bucket missing from the table is reported without a placement (a
 conversion of some buckets only records those). A record that doesn't fit
 the model, with a key that isn't one of its buckets, counts that don't add
-up to `total`, or on a static embedder, is ignored with a warning in the
-daemon's log: it only describes the model, so it never takes the model
-offline. Daemons up to 0.5 ignore the table.
+up to `total`, chunks that aren't the model's number or don't sum to their
+bucket's counts, or on a static embedder, is ignored with a warning in
+the daemon's log: it only describes the model, so it never takes the
+model offline. A bad alternative is dropped on its own, keeping the main
+plan. Daemons up to 0.5 ignore the table, and daemons before 0.7 ignore
+`chunks` and `alternatives`.
 
 Live reads are off by default because a plan read is a second compile.
 Measured on an M1 Max under macOS 27.0, Core ML doesn't share a plan's

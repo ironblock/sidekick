@@ -24,6 +24,17 @@ The contract, for a new family:
 - `forbid_ops`: MIL ops the conversion must not contain, beyond the fused
   attention op (a rewrite that replaces gelu adds "gelu").
 
+A backbone that can be split into chunks at layer boundaries (chunking.py,
+docs/DECISIONS.md D37) adds:
+- `chunk_ports`: the names of the ports the backbone itself reads;
+- `chunk_layers()`: its layers, in order;
+- `chunk_parts(lo, hi)`: {attribute: module} a chunk running layers
+  [lo, hi) holds (plus the embedding when lo is 0, and the final norm
+  when hi is the last layer);
+- `chunk_call(chunk, x)`: the chunk's traced forward: the residual stream
+  from the embedding (the first chunk) or from `x["hidden_in"]`, through
+  the chunk's layers, normed by the last chunk.
+
 Rewrites that change weights or modules (activation swaps, range and
 precision rewrites) are functions of a backbone, applied by the recipe AFTER
 the evaluation references are computed from the unmodified checkpoint, so
@@ -55,6 +66,8 @@ class Backbone:
 
     def buffers(self, seq):
         return {"position_ids": torch.arange(seq, dtype=torch.long).unsqueeze(0)}
+
+    chunk_ports = None   # set by a backbone that can be chunked
 
     def call(self, w, x):
         raise NotImplementedError

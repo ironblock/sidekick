@@ -153,7 +153,7 @@ impl CoremlEmbedder {
             id: m.id.clone(),
             dims: m.dims,
             matryoshka: m.matryoshka.clone(),
-            models: BucketModels::new(&model.dir, &m.artifact, units),
+            models: BucketModels::new(&model.dir, &m.artifact, m.chunks(), units),
             tokenizer,
             buckets: m.buckets.clone(),
             pooling: m.pooling,

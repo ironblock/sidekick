@@ -18,6 +18,18 @@ A converter builds a `Job` and hands it to `run()`. For every bucket, `run()`:
    the compute plan each bucket was read with ([placement]), so the daemon
    can report placement without compiling the model a second time.
 
+A job with `chunks` (chunking.py, D37) converts each bucket as a chain of
+programs split at layer boundaries: the fp32 gate also checks the composed
+chunks against the unchunked wrapper, each chunk is converted, compiled and
+checked against the weight limit on its own, and the usual Core ML gates
+run on the chain. In the smallest bucket (every bucket with
+`chunk_identity_all`), the unchunked program is converted too, and the
+chain's GPU output must be bit-identical to it: the chain's plumbing is the
+same in every bucket, and the fp32 gate already checks each bucket's
+composition, so one bucket proves it without doubling every conversion. It installs
+`model_{seq}.{chunk}.mlmodelc` and a manifest whose `artifact` and
+[chunking] table say so.
+
 Two inputs are kept apart by type, so no recipe can mix them up:
 - `Calibration` decides rewrites (residual K, input rescales). It must never
   come from the graded parity corpus (fixtures/parity/corpus.toml), or the
@@ -198,6 +210,10 @@ class Job:
                                   # would send to it (for models whose accuracy varies by bucket)
     int8_embedding: bool = False  # store the token-embedding table in int8 (see int8_embedding())
     ignore_ane_weight_cap: bool = False  # convert past MAX_ANE_PROGRAM_WEIGHT_BYTES, with a warning
+    chunk_identity_all: bool = False  # run the chunked GPU bit-identity gate on every bucket, not the smallest
+    chunks: object = None         # None, "auto", "default", a chunk count or layer cuts (chunking.plan_cuts); needs
+    backbone: object = None       # the backbone and head the wrapper was composed from
+    head: object = None
 
 
 def trace_convert(wrapper, ports, seq, example, output):
@@ -252,37 +268,53 @@ def compile_mlmodelc(pkg, out_dir):
     return next(out_dir.glob("*.mlmodelc"))
 
 
-def check_ane_weights(job, seq, compiled):
+def check_ane_weights(job, seq, compiled, chunk=None):
     """The weight-size check for a model served on the ANE (the gates make
-    its compute plan a gate). Returns None when the weights fit, or the
-    bypass note when the job ignores the limit; raises GateFailure
-    otherwise."""
+    its compute plan a gate), for one program: a bucket, or one chunk of
+    it. Returns None when the weights fit, or the bypass note when the job
+    ignores the limit; raises GateFailure otherwise."""
     from . import plan
     if not getattr(job.gates, "plan_required", True):
         return None
     size = plan.weights_bytes(compiled)
     if size <= plan.MAX_ANE_PROGRAM_WEIGHT_BYTES:
         return None
-    message = plan.over_cap(job.name, seq, size)
+    message = plan.over_cap(job.name, seq, size, chunk)
     if not job.ignore_ane_weight_cap:
         raise GateFailure(message)
     print(f"WARNING, --ignore-ane-weight-cap: {message} Converting anyway; the compute-plan gate still "
           "checks where Core ML places it.", flush=True)
-    return (f"bucket {seq} has {size / 2**30:.3f} GiB of weights, over the Neural Engine's 1 GiB "
+    what = f"bucket {seq}" if chunk is None else f"bucket {seq}'s chunk {chunk}"
+    return (f"{what} has {size / 2**30:.3f} GiB of weights, over the Neural Engine's 1 GiB "
             "per-program limit (MAX_ANE_PROGRAM_WEIGHT_BYTES)")
 
 
-def record_placement(manifest, plans):
+def record_placement(manifest, plans, alternatives=None):
     """Append the [placement] table (plan.placement_toml) for the buckets whose
-    compute plan the gates read, to an installed manifest. A bucket whose
-    plan was unreadable is left out; the daemon reports it as not recorded."""
+    compute plan the gates read, and the plans read for the other compute
+    units, to an installed manifest. A bucket whose plan was unreadable is
+    left out; the daemon reports it as not recorded."""
     if not plans:
         return
     import datetime
     from . import plan
     chip, build = plan.machine()
     with open(manifest, "a") as f:
-        f.write(plan.placement_toml(plans, chip, build, datetime.date.today().isoformat()))
+        f.write(plan.placement_toml(plans, chip, build, datetime.date.today().isoformat(), alternatives))
+
+
+def alternative_plans(job, compiled):
+    """The bucket's compute plan for each of plan.ALTERNATIVE_UNITS it isn't
+    served with (D38): {units: summary}, unreadable ones left out."""
+    from . import plan
+    served = job.gates.units() if hasattr(job.gates, "units") else "CPU_AND_NE"
+    out = {}
+    for units in plan.ALTERNATIVE_UNITS:
+        if units != served:
+            s = plan.report(compiled, units)
+            if s is not None:
+                out[units] = s
+    return out
 
 
 def note_bypass(manifest, notes):
@@ -310,7 +342,8 @@ def run(job, install_dir):
     if job.negative_control:
         print(f"{job.name}: NEGATIVE CONTROL. Gate failures are reported, not fatal; "
               "never install the result where the daemon looks.", flush=True)
-    reports, bypassed, plans = {}, [], {}
+    reports, bypassed, plans, alternatives = {}, [], {}, {}
+    cuts = _plan_chunks(job)
     with tempfile.TemporaryDirectory() as work:
         for seq in job.buckets:
             cases = (job.evaluation.landing(seq, job.buckets) if job.gate_cases == "landing"
@@ -322,6 +355,10 @@ def run(job, install_dir):
             wrapper = job.make_wrapper(seq).eval()
             report = {"torch": _gate(job, job.gates.torch, wrapper, seq, cases, job.ports)}
             print(f"bucket {seq}: {job.gates.describe_torch(report['torch'])}; converting...", flush=True)
+            if cuts:
+                reports[seq] = _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypassed,
+                                            plans, alternatives)
+                continue
             mlmodel = trace_convert(wrapper, job.ports, seq, job.example(seq), job.output)
             found = mil_op_types(mlmodel) & set(job.forbid_ops)
             if found:
@@ -341,17 +378,25 @@ def run(job, install_dir):
             report["coreml"] = _gate(job, job.gates.coreml, compiled, seq, cases, job, job.timing)
             if (report["coreml"] or {}).get("plan"):
                 plans[seq] = report["coreml"]["plan"]
+                for units, s in alternative_plans(job, compiled).items():
+                    alternatives.setdefault(units, {})[seq] = s
             for line in job.gates.describe_coreml(report["coreml"]):
                 print(f"bucket {seq}: {line}", flush=True)
             dest = install_dir / f"model_{seq}.mlmodelc"
             shutil.rmtree(dest, ignore_errors=True)
+            _remove_other_layout(install_dir, seq, chunked=False)
             shutil.move(str(compiled), dest)
             print(f"bucket {seq} -> {dest}", flush=True)
             reports[seq] = report
     for source, name in job.install_files:
         shutil.copy(source, install_dir / name)
+        if name.endswith(".toml") and cuts:
+            from . import chunking
+            dest = install_dir / name
+            budget = chunking.CHUNK_WEIGHT_BUDGET_BYTES if job.chunks in ("auto", chunking.DEFAULT) else None
+            dest.write_text(chunking.manifest_text(dest.read_text(), len(cuts) + 1, budget))
         if name.endswith(".toml"):
-            record_placement(install_dir / name, plans)
+            record_placement(install_dir / name, plans, alternatives)
             if bypassed:
                 note_bypass(install_dir / name, bypassed)
     if job.install_files:
@@ -364,6 +409,151 @@ def run(job, install_dir):
 
 def _raise(e):
     raise e
+
+
+def _remove_other_layout(install_dir, seq, chunked):
+    """Remove the bucket's artifacts in the other layout (D37), left by an
+    earlier conversion: one program when installing chunks, every chunk
+    (stale ones from a different split included) when installing one."""
+    names = [f"model_{seq}.mlmodelc"] if chunked else []
+    for old in [install_dir / n for n in names] + ([] if chunked else
+                                                   sorted(install_dir.glob(f"model_{seq}.[0-9]*.mlmodelc"))):
+        if old.exists():
+            print(f"bucket {seq}: removing {old.name}, from an earlier conversion in the other layout", flush=True)
+            shutil.rmtree(old)
+    if chunked:
+        for old in sorted(install_dir.glob(f"model_{seq}.[0-9]*.mlmodelc")):
+            shutil.rmtree(old)    # chunks of an earlier split; this one's are moved in next
+
+
+CHUNK_FP32_TOL = 1e-5
+"""How far the composed chunks may be from the unchunked wrapper in fp32:
+the same operations in the same order, so in practice 0."""
+
+
+def _plan_chunks(job):
+    """The layer cuts every bucket is split at (planned for the largest
+    bucket, whose buffers every chunk repeats), or None."""
+    if not job.chunks:
+        return None
+    from . import chunking
+    spec = job.chunks
+    if spec == chunking.DEFAULT:
+        # Chunk by default where the backbone can be chunked (D37).
+        if job.backbone is None or job.head is None or job.backbone.chunk_ports is None:
+            return None
+        spec = "auto"
+    if job.backbone is None or job.head is None:
+        raise ValueError(f"{job.name}: a chunked Job needs its backbone and head")
+    seq = max(job.buckets)
+    cuts = chunking.plan_cuts(job.backbone, job.head, seq, spec)
+    if cuts:
+        # fail now, not after every bucket is converted
+        for source, name in job.install_files:
+            if name.endswith(".toml"):
+                chunking.manifest_text(Path(source).read_text(), len(cuts) + 1, None)
+    if not cuts:
+        if job.chunks != chunking.DEFAULT:
+            print(f"{job.name}: --chunks {spec}: every bucket fits one program; converting unchunked", flush=True)
+        return None
+    sizes = chunking.chunk_sizes(job.backbone, job.head, seq, cuts)
+    print(f"{job.name}: {len(cuts) + 1} chunks, starting at layers {[0] + cuts}; planned fp16 weights "
+          f"{', '.join(f'{b / 2**30:.3f}' for b in sizes)} GiB at {seq} tokens", flush=True)
+    return cuts
+
+
+def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypassed, plans, alternatives):
+    """One bucket as a chain of chunks (D37): see the module docstring."""
+    import torch
+    from . import chunking, plan
+    from .metrics import largest, max_abs_diff
+    chunk_list = chunking.chunks(job.backbone, job.head, job.ports, seq, cuts, job.output)
+    diffs = []
+    for c in cases:
+        feed = c.feed(seq, job.ports)
+        with torch.no_grad():
+            whole = wrapper(*(torch.from_numpy(feed[p.name]) for p in job.ports))
+        diffs.append(max_abs_diff(chunking.run_torch(chunk_list, feed).numpy(), whole.numpy()))
+    d = largest(diffs)
+    report["torch"]["chunks_fp32"] = d
+    if not d <= CHUNK_FP32_TOL:
+        _gate(job, _raise, GateFailure(f"bucket {seq}: the composed chunks differ from the unchunked wrapper "
+                                       f"in fp32 by {d:.2e} (gate {CHUNK_FP32_TOL})"))
+    print(f"bucket {seq}: fp32 chunks vs the unchunked wrapper, max |diff| {d:.1e}", flush=True)
+
+    paths, inputs = [], []
+    example = job.example(seq)
+    for c in chunk_list:
+        mlmodel = chunking.trace_convert(c, seq, example, job.backbone.hidden_size)
+        found = mil_op_types(mlmodel) & set(job.forbid_ops)
+        if found:
+            _gate(job, _raise, GateFailure(
+                f"bucket {seq} chunk {c.index}: the converted graph contains {sorted(found)}; "
+                "see docs/CONVERTING.md for why each is forbidden"))
+        if job.int8_embedding and c.index == 0:
+            mlmodel, table, shape = int8_embedding(mlmodel)
+            print(f"bucket {seq} chunk 0: embedding table {table} {shape} stored in int8", flush=True)
+        pkg = Path(work) / f"model_{seq}.{c.index}.mlpackage"
+        mlmodel.save(str(pkg))
+        del mlmodel
+        compiled = compile_mlmodelc(pkg, Path(work) / f"compiled_{seq}_{c.index}")
+        shutil.rmtree(pkg)
+        bypass = _gate(job, check_ane_weights, job, seq, compiled, c.index)
+        if bypass:
+            report.setdefault("ane_weight_cap", []).append(f"bypassed: {bypass}")
+            bypassed.append(bypass)
+        print(f"bucket {seq} chunk {c.index}: layers [{c.lo}, {c.hi}), {plan.weights_bytes(compiled) / 2**30:.3f} "
+              f"GiB, inputs {list(c.inputs)} -> {c.output}", flush=True)
+        paths.append(compiled)
+        inputs.append(c.inputs)
+    chain = chunking.Chain(paths, inputs, job.output)
+
+    report["coreml"] = _gate(job, job.gates.coreml, chain, seq, cases, job, job.timing)
+    if (report["coreml"] or {}).get("plan"):
+        plans[seq] = report["coreml"]["plan"]
+        for units, s in alternative_plans(job, chain).items():
+            alternatives.setdefault(units, {})[seq] = s
+    for line in job.gates.describe_coreml(report["coreml"]):
+        print(f"bucket {seq}: {line}", flush=True)
+    if job.chunk_identity_all or seq == min(job.buckets):
+        _chain_identity(job, seq, cases, wrapper, example, chain, work, report)
+    _remove_other_layout(install_dir, seq, chunked=True)
+    for c, compiled in zip(chunk_list, paths):
+        dest = install_dir / chunking.artifact_name(seq, c.index)
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.move(str(compiled), dest)
+        print(f"bucket {seq} chunk {c.index} -> {dest}", flush=True)
+    return report
+
+
+def _chain_identity(job, seq, cases, wrapper, example, chain, work, report):
+    """The chain's plumbing, exactly: on the GPU it must give the unchunked
+    program's output bit for bit."""
+    from .gates import _model
+    whole = trace_convert(wrapper, job.ports, seq, example, job.output)
+    if job.int8_embedding:
+        whole, _, _ = int8_embedding(whole)
+    pkg = Path(work) / f"whole_{seq}.mlpackage"
+    whole.save(str(pkg))
+    del whole
+    whole_compiled = compile_mlmodelc(pkg, Path(work) / f"whole_compiled_{seq}")
+    shutil.rmtree(pkg)
+    a, b = _model(whole_compiled, "CPU_AND_GPU"), _model(chain, "CPU_AND_GPU")
+    worst = 0.0
+    for c in cases:
+        feed = c.feed(seq, job.ports)
+        x = np.asarray(a.predict(feed)[job.output], dtype=np.float32)
+        y = np.asarray(b.predict(feed)[job.output], dtype=np.float32)
+        if not np.array_equal(x, y, equal_nan=True):
+            same_nan = np.array_equal(np.isnan(x), np.isnan(y))
+            worst = max(worst, float(np.nanmax(np.abs(x - y))) if same_nan else np.inf)
+    del a, b
+    shutil.rmtree(whole_compiled.parent, ignore_errors=True)
+    report["chain_gpu_vs_unchunked"] = worst
+    if worst != 0.0:
+        _gate(job, _raise, GateFailure(f"bucket {seq}: on the GPU the chain differs from the unchunked program "
+                                       f"by {worst:.2e}; it must be bit-identical"))
+    print(f"bucket {seq}: on the GPU the chain is bit-identical to the unchunked program", flush=True)
 
 
 def fail(message):

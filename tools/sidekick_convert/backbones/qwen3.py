@@ -163,18 +163,44 @@ class Qwen3TreeBackbone(Qwen3Backbone):
 
     def call(self, w, x):
         m = getattr(w, self.attr)
+        h = self._layers(m.layers, m.embed_tokens(x["input_ids"].long()), w, x)
+        return types.SimpleNamespace(last_hidden_state=m.norm(h))
+
+    def _layers(self, layers, h, w, x):
+        """`layers` over the residual stream `h`, with the tree mask and RoPE
+        built from `x` and the wrapper's buffers."""
         seq = w.seq
         bias = masks.tree(x["seg"], x["attention_mask"], w.tree_causal, w.tree_eye, seq)
         onehot = positions_onehot(x["position_ids"], w.rope_positions, torch.float32)   # [1, S, S]
         rope = (onehot @ w.rope_cos, onehot @ w.rope_sin)                              # [1, S, head_dim]
-        h = m.embed_tokens(x["input_ids"].long())
-        for layer in m.layers:
+        for layer in layers:
             layer.self_attn.sidekick_seq = seq      # the key length, a Python int, for _matmul_softmax_attention
             h = layer(h, attention_mask=bias, position_embeddings=rope)
             h = h[0] if isinstance(h, tuple) else h
-        for layer in m.layers:
+        for layer in layers:
             layer.self_attn.sidekick_seq = None     # eager runs (references) use the keys' own length
-        return types.SimpleNamespace(last_hidden_state=m.norm(h))
+        return h
+
+    # Chunking (chunking.py, D37): each chunk rebuilds the mask and RoPE
+    # from the int32 ports, so only the residual stream crosses a boundary.
+    chunk_ports = ("input_ids", "attention_mask", "seg", "position_ids")
+
+    def chunk_layers(self):
+        return list(self.model.layers)
+
+    def chunk_parts(self, lo, hi):
+        layers = self.chunk_layers()
+        parts = {"layers": torch.nn.ModuleList(layers[lo:hi])}
+        if lo == 0:
+            parts["embed_tokens"] = self.model.embed_tokens
+        if hi == len(layers):
+            parts["norm"] = self.model.norm
+        return parts
+
+    def chunk_call(self, w, x):
+        h = w.embed_tokens(x["input_ids"].long()) if w.first else x["hidden_in"]
+        h = self._layers(w.layers, h, w, x)
+        return w.norm(h) if w.last else h
 
 
 MATMUL_SOFTMAX = "sidekick_matmul_softmax"

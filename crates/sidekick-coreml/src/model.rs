@@ -50,6 +50,8 @@ pub struct OutputTensor {
 /// layer, since the ANE serializes requests anyway.
 pub struct CoremlModel {
     model: Retained<MLModel>,
+    /// The model's input names, from its description.
+    inputs: Vec<String>,
 }
 
 // SAFETY: MLModel is documented thread-safe for predictions, and we do not
@@ -81,7 +83,14 @@ impl CoremlModel {
                 )));
             }
         }
-        Ok(Self { model })
+        let (names, _) = unsafe { model.modelDescription().inputDescriptionsByName() }.to_vecs();
+        let inputs = names.iter().map(|n| n.to_string()).collect();
+        Ok(Self { model, inputs })
+    }
+
+    /// The model's input names.
+    pub fn input_names(&self) -> &[String] {
+        &self.inputs
     }
 
     /// The compute units Core ML holds in this model's configuration: what
@@ -93,46 +102,14 @@ impl CoremlModel {
     /// Run a prediction with named int32 inputs, returning the named float
     /// output. Fails if the output is missing or not a multiarray.
     pub fn predict_int32(&self, inputs: &[Int32Input<'_>], output: &str) -> Result<OutputTensor> {
-        let mut keys: Vec<Retained<NSString>> = Vec::with_capacity(inputs.len());
-        let mut values: Vec<Retained<MLFeatureValue>> = Vec::with_capacity(inputs.len());
+        let features =
+            inputs.iter().map(|i| Ok((NSString::from_str(i.name), int32_value(i)?))).collect::<Result<Vec<_>>>()?;
+        read_output(&*self.run(features)?, output)
+    }
 
-        for input in inputs {
-            let expected: usize = input.shape.iter().product();
-            if expected != input.data.len() {
-                return Err(Error::Inference(format!(
-                    "input `{}`: shape {:?} does not match data length {}",
-                    input.name,
-                    input.shape,
-                    input.data.len()
-                )));
-            }
-            let shape: Vec<Retained<NSNumber>> = input
-                .shape
-                .iter()
-                .map(|&d| NSNumber::new_usize(d))
-                .collect();
-            let shape = objc2_foundation::NSArray::from_retained_slice(&shape);
-            let array = unsafe {
-                MLMultiArray::initWithShape_dataType_error(
-                    MLMultiArray::alloc(),
-                    &shape,
-                    MLMultiArrayDataType::Int32,
-                )
-            }
-            .map_err(|e| Error::Inference(format!("MLMultiArray alloc: {e}")))?;
-
-            // SAFETY: the array was just created with Int32 dtype and
-            // `expected` elements; dataPointer is valid for its lifetime and
-            // no other reference exists yet.
-            unsafe {
-                let ptr = array.dataPointer().as_ptr() as *mut i32;
-                std::ptr::copy_nonoverlapping(input.data.as_ptr(), ptr, expected);
-            }
-
-            keys.push(NSString::from_str(input.name));
-            values.push(unsafe { MLFeatureValue::featureValueWithMultiArray(&array) });
-        }
-
+    /// One prediction from named feature values.
+    fn run(&self, features: Vec<(Retained<NSString>, Retained<MLFeatureValue>)>) -> Result<Prediction> {
+        let (keys, values): (Vec<_>, Vec<_>) = features.into_iter().unzip();
         let key_refs: Vec<&NSString> = keys.iter().map(|k| &**k).collect();
         let value_objs: Vec<Retained<objc2::runtime::AnyObject>> = values
             .into_iter()
@@ -150,50 +127,204 @@ impl CoremlModel {
         .map_err(|e| Error::Inference(format!("feature provider: {e}")))?;
 
         let provider = ProtocolObject::from_retained::<MLDictionaryFeatureProvider>(provider);
-        let result = unsafe { self.model.predictionFromFeatures_error(&provider) }
-            .map_err(|e| Error::Inference(format!("prediction: {e}")))?;
+        unsafe { self.model.predictionFromFeatures_error(&provider) }
+            .map_err(|e| Error::Inference(format!("prediction: {e}")))
+    }
+}
 
-        let name = NSString::from_str(output);
-        let value = unsafe { result.featureValueForName(&name) }
-            .ok_or_else(|| Error::Inference(format!("missing output feature `{output}`")))?;
-        let array = unsafe { value.multiArrayValue() }
-            .ok_or_else(|| Error::Inference(format!("output `{output}` is not a multiarray")))?;
+type Prediction = Retained<ProtocolObject<dyn MLFeatureProvider>>;
 
-        let shape: Vec<usize> = unsafe { array.shape() }
-            .iter()
-            .map(|n| n.as_usize())
-            .collect();
-        let count: usize = shape.iter().product();
-        let dtype = unsafe { array.dataType() };
+/// An int32 multi-array feature value holding `input`'s data.
+fn int32_value(input: &Int32Input<'_>) -> Result<Retained<MLFeatureValue>> {
+    let expected: usize = input.shape.iter().product();
+    if expected != input.data.len() {
+        return Err(Error::Inference(format!(
+            "input `{}`: shape {:?} does not match data length {}",
+            input.name,
+            input.shape,
+            input.data.len()
+        )));
+    }
+    let shape: Vec<Retained<NSNumber>> = input
+        .shape
+        .iter()
+        .map(|&d| NSNumber::new_usize(d))
+        .collect();
+    let shape = objc2_foundation::NSArray::from_retained_slice(&shape);
+    let array = unsafe {
+        MLMultiArray::initWithShape_dataType_error(
+            MLMultiArray::alloc(),
+            &shape,
+            MLMultiArrayDataType::Int32,
+        )
+    }
+    .map_err(|e| Error::Inference(format!("MLMultiArray alloc: {e}")))?;
 
-        // SAFETY: pointer valid for the array's lifetime; we bounds-read
-        // exactly `count` elements of the reported dtype.
-        let data: Vec<f32> = unsafe {
-            let ptr = array.dataPointer().as_ptr();
-            match dtype {
-                MLMultiArrayDataType::Float32 => {
-                    std::slice::from_raw_parts(ptr as *const f32, count).to_vec()
-                }
-                MLMultiArrayDataType::Float16 => {
-                    let halves = std::slice::from_raw_parts(ptr as *const u16, count);
-                    halves
-                        .iter()
-                        .map(|&h| half_to_f32(h))
-                        .collect()
-                }
-                MLMultiArrayDataType::Double => {
-                    let doubles = std::slice::from_raw_parts(ptr as *const f64, count);
-                    doubles.iter().map(|&d| d as f32).collect()
-                }
-                other => {
-                    return Err(Error::Inference(format!(
-                        "output `{output}`: unsupported dtype {other:?}"
-                    )))
-                }
+    // SAFETY: the array was just created with Int32 dtype and
+    // `expected` elements; dataPointer is valid for its lifetime and
+    // no other reference exists yet.
+    unsafe {
+        let ptr = array.dataPointer().as_ptr() as *mut i32;
+        std::ptr::copy_nonoverlapping(input.data.as_ptr(), ptr, expected);
+    }
+    Ok(unsafe { MLFeatureValue::featureValueWithMultiArray(&array) })
+}
+
+/// The named feature value of a prediction.
+fn feature(result: &ProtocolObject<dyn MLFeatureProvider>, name: &str) -> Result<Retained<MLFeatureValue>> {
+    unsafe { result.featureValueForName(&NSString::from_str(name)) }
+        .ok_or_else(|| Error::Inference(format!("missing output feature `{name}`")))
+}
+
+/// The address of a feature value's multi-array data, to show a handoff
+/// passes the same buffer.
+fn data_address(value: &MLFeatureValue) -> Option<usize> {
+    let array = unsafe { value.multiArrayValue() }?;
+    Some(unsafe { array.dataPointer() }.as_ptr() as usize)
+}
+
+/// A prediction's named output, read back as f32.
+fn read_output(result: &ProtocolObject<dyn MLFeatureProvider>, output: &str) -> Result<OutputTensor> {
+    let value = feature(result, output)?;
+    let array = unsafe { value.multiArrayValue() }
+        .ok_or_else(|| Error::Inference(format!("output `{output}` is not a multiarray")))?;
+
+    let shape: Vec<usize> = unsafe { array.shape() }
+        .iter()
+        .map(|n| n.as_usize())
+        .collect();
+    let count: usize = shape.iter().product();
+    let dtype = unsafe { array.dataType() };
+
+    // SAFETY: pointer valid for the array's lifetime; we bounds-read
+    // exactly `count` elements of the reported dtype.
+    let data: Vec<f32> = unsafe {
+        let ptr = array.dataPointer().as_ptr();
+        match dtype {
+            MLMultiArrayDataType::Float32 => {
+                std::slice::from_raw_parts(ptr as *const f32, count).to_vec()
             }
-        };
+            MLMultiArrayDataType::Float16 => {
+                let halves = std::slice::from_raw_parts(ptr as *const u16, count);
+                halves
+                    .iter()
+                    .map(|&h| half_to_f32(h))
+                    .collect()
+            }
+            MLMultiArrayDataType::Double => {
+                let doubles = std::slice::from_raw_parts(ptr as *const f64, count);
+                doubles.iter().map(|&d| d as f32).collect()
+            }
+            other => {
+                return Err(Error::Inference(format!(
+                    "output `{output}`: unsupported dtype {other:?}"
+                )))
+            }
+        }
+    };
 
-        Ok(OutputTensor { shape, data })
+    Ok(OutputTensor { shape, data })
+}
+
+/// The input and output that carry the residual stream between chunks (D37).
+pub const HIDDEN_IN: &str = sidekick_core::manifest::CHUNK_HIDDEN_IN;
+pub const HIDDEN_OUT: &str = sidekick_core::manifest::CHUNK_HIDDEN_OUT;
+
+/// A bucket's programs, run in order (D37): one program, or a chain of
+/// chunks. Each chunk is given the int32 inputs it declares and, after the
+/// first, the previous chunk's `hidden_out` as its `hidden_in`: the output
+/// feature value itself, so sidekick copies nothing (Core ML may copy
+/// internally).
+pub struct CoremlChain {
+    chunks: Vec<CoremlModel>,
+}
+
+impl CoremlChain {
+    /// Load every program, in chain order, with the same compute units.
+    pub fn load(paths: &[std::path::PathBuf], units: ComputeUnits) -> Result<Self> {
+        if paths.is_empty() {
+            return Err(Error::Inference("a chain needs at least one program".into()));
+        }
+        let chunks = paths.iter().map(|p| CoremlModel::load(p, units)).collect::<Result<Vec<_>>>()?;
+        Ok(Self { chunks })
+    }
+
+    /// How many programs answer each prediction.
+    pub fn len(&self) -> usize {
+        self.chunks.len()
+    }
+
+    /// Always false: a chain has at least one program.
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
+    /// The compute units every program was loaded with, read back from
+    /// Core ML; `None` when they don't agree or aren't known.
+    pub fn compute_units(&self) -> Option<ComputeUnits> {
+        let first = self.chunks[0].compute_units()?;
+        self.chunks.iter().all(|c| c.compute_units() == Some(first)).then_some(first)
+    }
+
+    /// [`CoremlModel::predict_int32`] through the chain. A single program
+    /// is given every input, as before chunking.
+    pub fn predict_int32(&self, inputs: &[Int32Input<'_>], output: &str) -> Result<OutputTensor> {
+        self.predict(inputs, output, None)
+    }
+
+    /// [`predict_int32`](Self::predict_int32), also returning, per
+    /// boundary, the address of the `hidden_out` data a chunk produced and
+    /// of the `hidden_in` data the next chunk was given: equal when sidekick
+    /// passes the produced buffer on without copying it.
+    #[doc(hidden)]
+    pub fn predict_int32_tracing_handoffs(
+        &self,
+        inputs: &[Int32Input<'_>],
+        output: &str,
+    ) -> Result<(OutputTensor, Vec<(usize, usize)>)> {
+        let mut trace = Vec::new();
+        let out = self.predict(inputs, output, Some(&mut trace))?;
+        Ok((out, trace))
+    }
+
+    fn predict(
+        &self,
+        inputs: &[Int32Input<'_>],
+        output: &str,
+        mut trace: Option<&mut Vec<(usize, usize)>>,
+    ) -> Result<OutputTensor> {
+        if self.chunks.len() == 1 {
+            return self.chunks[0].predict_int32(inputs, output);
+        }
+        // The previous chunk's `hidden_out`, and where its data was when produced.
+        let mut carried: Option<(Retained<MLFeatureValue>, Option<usize>)> = None;
+        for (i, chunk) in self.chunks.iter().enumerate() {
+            let mut features = Vec::with_capacity(chunk.inputs.len());
+            for input in inputs.iter().filter(|i| chunk.inputs.iter().any(|n| n == i.name)) {
+                features.push((NSString::from_str(input.name), int32_value(input)?));
+            }
+            if let Some((hidden, produced)) = carried.take() {
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.push((produced.unwrap_or(0), data_address(&hidden).unwrap_or(1)));
+                }
+                features.push((NSString::from_str(HIDDEN_IN), hidden));
+            }
+            if features.len() != chunk.inputs.len() {
+                return Err(Error::Inference(format!(
+                    "chunk {i} of the chain takes {:?}, and the request supplies {} of them",
+                    chunk.inputs,
+                    features.len()
+                )));
+            }
+            let result = chunk.run(features)?;
+            if i + 1 == self.chunks.len() {
+                return read_output(&result, output);
+            }
+            let hidden = feature(&result, HIDDEN_OUT)?;
+            let produced = data_address(&hidden);
+            carried = Some((hidden, produced));
+        }
+        unreachable!("the last chunk returns")
     }
 }
 

@@ -439,7 +439,7 @@ path.
 | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
 | [fastino/GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) as `gliner2.5-decide` (served on the GPU) | zero-shot, gliner2's format | [convert_gliner2.py](../tools/convert_gliner2.py) | D 0.024 | **A** 3.7e-3 | C 0.019 (512 bucket only) | 947/956 | 1,280 at 512 |
 | [FrontiersMind/Lumma-fev-0.1b](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b) as `lumma-fev-0.1b` | zero-shot, fev format, 2,048 tokens | [convert_fev.py](../tools/convert_fev.py) | D 0.033 (5.8× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.021) | **A** 6.6e-3 (0.95× ceiling) | **B** 0.010 (1.57× ceiling) | 3698/3715 | 33 |
-| [aimeigaoshou/agent-jev](https://huggingface.co/aimeigaoshou/agent-jev) as `agent-jev` (served on the GPU) | zero-shot, agentjev's format, 2,048 tokens | [convert_agentjev.py](../tools/convert_agentjev.py) | D 0.025 (5.9× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.005) | **A** 3.2e-3 (0.85× ceiling) | reported, not graded: not served on the ANE (over the D32 weight limit, it runs on the CPU) | 0 (of 2,467–3,475) | 253 (CPU) |
+| [aimeigaoshou/agent-jev](https://huggingface.co/aimeigaoshou/agent-jev) as `agent-jev` (served on the GPU) | zero-shot, agentjev's format, 2,048 tokens | [convert_agentjev.py](../tools/convert_agentjev.py) | D 0.025 (5.9× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.005) | **A** 3.2e-3 (0.85× ceiling) | D 2.2e-2 (4.2× ceiling; no flips), chunked (D37), an operator's option (D38) | 2,440–3,472 (of 2,497–3,505) | 128 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -679,14 +679,16 @@ AgentJev's own `encode_paths` on all 2,627 corpus cases.
 Measured on 2,627 cases: laya's translation of fastino/fast-decisions,
 plus adversarial and long cases in AgentJev's terms, up to a tree of
 exactly 2,048 tokens.
-- **Why the GPU.** Its fp16 weights (1.2 GB, 1.12 GiB) exceed Core ML's
+- **Why the GPU.** It is fastest and most accurate there, with nothing
+  else running. Its fp16 weights (1.2 GB, 1.12 GiB) exceed Core ML's
   ~1 GiB limit for placing a program on the ANE (see the size note under
-  "Quick triage"). With `cpu_and_ne`, Core ML runs the whole model on the
-  CPU, so its compute plan has 0 of 1,963 operations on the ANE. Storing
-  the embedding table in int8 would bring it under the limit (98% on the
-  ANE in a probe), but the ANE was then slower than the GPU at every
-  length (124 vs 76 ms at 512 tokens, 1,317 vs 381 ms at 2,048), and
-  slower than the CPU at 2,048, and less accurate.
+  "Quick triage"), so the converter splits each bucket into two programs
+  at a layer boundary (D37): the embedding and layers 0–8 (0.57 GiB),
+  then layers 9–27 and the head (0.58 GiB). On the GPU the chain gives
+  the unchunked program's output bit for bit, at under 2% more latency,
+  so the same artifact serves both placements, and an operator who wants
+  the GPU left to another model can serve it on the ANE (D38). Artifacts
+  from sidekick 0.6 are one program per bucket and serve the GPU only.
 - **Supported.** It passes every hard gate on every path, its conversion
   is exact in fp32, and its served GPU path grades A.
 - **GPU: A.** p99 |Δp| at 0.85× the ideal-fp16 ceiling's p99 (the ceiling:
@@ -712,10 +714,40 @@ exactly 2,048 tokens.
   invariance is exact up to 1,024 tokens. Past 1,024 the difference
   (5.0e-3 over 282 comparisons) is D33's documented limit, reported, not
   gated. agent-jev isn't CPU-served.
-- **ANE: reported, not graded.** Over the weight limit (D32), the
-  runtime doesn't serve it on the ANE, and Core ML runs it entirely on
-  the CPU (its output is bit-identical to `CPU_ONLY`), so the suite
-  measures that path and reports it.
+- **ANE (chunked): D, an option.** 97.7–99.1% of operations on the ANE.
+  p99 |Δp| at 4.2× the ceiling, worst 0.022, no decision flips, 20 near
+  ties; agreement with the gold labels equals fp32's (1433/2600). Bucket
+  invariance is exact, and two processes give bit-identical results.
+  128 ms per case against the GPU's 88; through sidekickd, a 1,024-token
+  request takes about 370 ms against 227 on the GPU with nothing else
+  running. The first load compiles each chunk: about 40 s for the
+  smallest bucket, 244 s for the 2,048-token one. What it saves a model
+  sharing the GPU is measured with tools/companion_bench.py, below.
+- **As a companion beside a larger model** (tools/companion_bench.py; M1
+  Max with 32 GB, macOS 27.0). The primary was a 4-bit 27B Qwen3.8 with
+  speculative decoding, served by oMLX on the GPU, which kept about 25 GB
+  wired. agent-jev answered 1,024-token requests at one per second, from
+  one install, its compute units switched by the daemon config (D38):
+  - On the GPU, Core ML maps the companion's weights into sidekickd: 1,195
+    MB resident for its one 1,024-token bucket. Within seconds of it
+    loading, oMLX's own memory-pressure policy unloaded the 27B and
+    refused its requests ("process memory pressure requested this model
+    to unload"): none of five generations completed, in two runs. That is
+    how oMLX handles memory pressure, not a general fact about the GPU.
+  - On the ANE, sidekickd holds 58 MB: the weights are read through the
+    file cache, which macOS can reclaim. All five generations completed,
+    at 19.50 tokens/s against 19.96 with the primary alone (about 2%
+    slower; first token 0.37 s against 0.34). The companion answered all
+    85 requests, 367 ms at the median and 873 ms at p99. The phase's swap
+    grew by 462 MB while oMLX reloaded the 27B after the GPU phase had
+    evicted it, which is why the baseline is the primary-alone phase
+    measured after that reload (oMLX decoded at about 17.1 tokens/s
+    before the reload and about 20 after).
+  - With the primary idle, the companion took 226 ms at the median on the
+    GPU and 377 ms on the ANE, and drew 7.36 W of GPU power on the GPU
+    against 0.77 W of GPU and 1.10 W of ANE power on the ANE.
+  - Its answers on the two paths differed by at most |Δp| 7.1e-3, and never
+    within a phase.
 - **No precision rewrites.** Its residual stream reaches about 6,800 on
   one dimension of the first token (the attention sink, which every
   candidate's path shares). Squared in fp16, as RMSNorm squares its input,

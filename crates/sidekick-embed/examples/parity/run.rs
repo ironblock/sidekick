@@ -544,6 +544,39 @@ struct Plans {
     buckets: Vec<BucketInfo>,
 }
 
+/// A chained bucket's plan (D37): its chunks' counts summed, read from a
+/// copy if any chunk's was; `None` if any chunk has none.
+fn read_chain_plan(
+    artifacts: &[PathBuf],
+    label: &str,
+    timeout: Duration,
+    scratch: &Path,
+) -> Result<Option<(PlanSummary, bool)>, String> {
+    if let [one] = artifacts {
+        return read_plan(one, label, timeout, scratch);
+    }
+    let mut sum = PlanSummary { ane: 0, cpu: 0, gpu: 0, unassigned: 0, off_ane_ops: Default::default() };
+    let mut copied = false;
+    for (i, art) in artifacts.iter().enumerate() {
+        let Some((p, c)) = read_plan(art, &format!("{label}.{i}"), timeout, scratch)? else { return Ok(None) };
+        sum.ane += p.ane;
+        sum.cpu += p.cpu;
+        sum.gpu += p.gpu;
+        sum.unassigned += p.unassigned;
+        for (op, n) in p.off_ane_ops {
+            *sum.off_ane_ops.entry(op).or_default() += n;
+        }
+        copied |= c;
+    }
+    Ok(Some((sum, copied)))
+}
+
+/// The files' hashes, one per chunk, joined with `+`.
+fn chain_sha(artifacts: &[PathBuf], file: &str) -> Option<String> {
+    let shas: Option<Vec<String>> = artifacts.iter().map(|a| file_sha(&a.join(file))).collect();
+    shas.map(|s| s.join("+"))
+}
+
 /// Read and print every bucket's compute plan, before anything predicts.
 /// The plan is a gate only for a model served on the ANE (`units`
 /// `cpu_and_ne` or `all`), as the converters gate the served path: there an
@@ -557,7 +590,7 @@ struct Plans {
 fn check_plans(
     id: &str,
     buckets: &[usize],
-    artifact_for: impl Fn(usize) -> PathBuf,
+    artifacts_for: impl Fn(usize) -> Vec<PathBuf>,
     units: ComputeUnits,
     o: &Options,
     scratch: &Path,
@@ -567,8 +600,8 @@ fn check_plans(
     let gated = matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All);
     let mut plans = Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() };
     for &b in buckets {
-        let art = artifact_for(b);
-        let plan = read_plan(&art, &format!("{id}-{b}"), o.timeout, scratch);
+        let arts = artifacts_for(b);
+        let plan = read_chain_plan(&arts, &format!("{id}-{b}"), o.timeout, scratch);
         let (ane, assigned, verdict) = match &plan {
             Ok(Some((p, _))) => (p.ane, p.assigned(), p.verdict()),
             Ok(None) => (0, 0, Ok(())),
@@ -588,8 +621,8 @@ fn check_plans(
                     units.name()
                 ),
             },
-            file_sha(&art.join("model.mil")).unwrap_or("-".into()),
-            file_sha(&art.join("weights/weight.bin")).unwrap_or("-".into()),
+            chain_sha(&arts, "model.mil").unwrap_or("-".into()),
+            chain_sha(&arts, "weights/weight.bin").unwrap_or("-".into()),
         );
         if matches!(plan, Ok(Some((_, true)))) {
             warnings.push(format!(
@@ -626,8 +659,8 @@ fn check_plans(
         }
         plans.buckets.push(BucketInfo {
             bucket: b,
-            model_mil: file_sha(&art.join("model.mil")),
-            weights: file_sha(&art.join("weights/weight.bin")),
+            model_mil: chain_sha(&arts, "model.mil"),
+            weights: chain_sha(&arts, "weights/weight.bin"),
             ane_ops: ane,
             assigned_ops: assigned,
             plan: verdict,
@@ -792,7 +825,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
         let plans = check_plans(
             id,
             &model.manifest.buckets,
-            |b| model.artifact_path_for_bucket(b),
+            |b| model.artifact_paths_for_bucket(b),
             model.manifest.compute_units.unwrap_or_default(),
             &o,
             &scratch,

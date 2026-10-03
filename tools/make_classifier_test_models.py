@@ -45,6 +45,16 @@ fixture is built with the production mask, not a copy.
 - `model_16.mlmodelc`, `model_32.mlmodelc`: K = 4;
 - `expected.json`: fp32 torch logits for fixed (ids, seg, positions, ends).
 
+tiny-agentjev-chunked/: agentjev's tree in chunks (D37), built with
+sidekick_convert's own chunking: a random 4-layer Qwen3 tree backbone and
+AgentJev head (the library tests' tiny checkpoint), split after layer 2.
+`model_{16,32}.0.mlmodelc` take `input_ids`, `attention_mask`, `seg`,
+`position_ids` and output `hidden_out`, fp16 [1, S, 32];
+`model_{16,32}.1.mlmodelc` take `hidden_in` and the same int32 inputs plus
+`cand_end` [1, 4], and output `logits` [1, 4].
+- `model_{16,32}.mlmodelc`: the same model unchunked, for comparison;
+- `expected.json`: fp32 torch logits for fixed trees.
+
 tiny-multishape/: one artifact, `model.mlmodelc`, whose `input_ids` and
 `attention_mask` each accept two enumerated shapes, [1, 16] and [1, 32],
 and whose `logits` are [1, 1]. Its layout is the one macOS 27 can abort
@@ -54,8 +64,8 @@ Usage:
     python tools/make_classifier_test_models.py crates/sidekick-embed/tests/fixtures [name ...]
 
     name    tiny-laya, tiny-reranker, tiny-gliner2, tiny-fev, tiny-multishape,
-            tiny-agentjev (default: all but tiny-agentjev, which is built
-            only when named). Building
+            tiny-agentjev, tiny-agentjev-chunked (default: all but the
+            agentjev ones, which are built only when named). Building
             only the one you changed keeps the others' committed bytes.
 
 Requires torch, coremltools and numpy (arm64-native Python 3.12 or
@@ -248,6 +258,8 @@ def main():
         multishape(root)
     if "tiny-agentjev" in names:
         agentjev(root)
+    if "tiny-agentjev-chunked" in names:
+        agentjev_chunked(root)
 
 
 def agentjev(root):
@@ -284,6 +296,64 @@ def agentjev(root):
                            torch.tensor([ends + [-1] * (4 - len(ends))], dtype=torch.int32))[0][: len(ends)]
         expected.append({"ids": ids, "seg": seg, "position_ids": pos, "markers": ends,
                          "logits": [float(x) for x in logits]})
+    with open(os.path.join(out, "expected.json"), "w") as f:
+        json.dump({"cases": expected}, f, indent=1)
+        f.write("\n")
+
+
+def _compile(ml, out_dir, name):
+    with tempfile.TemporaryDirectory() as tmp:
+        pkg = os.path.join(tmp, name + ".mlpackage")
+        ml.save(pkg)
+        subprocess.run(["xcrun", "coremlcompiler", "compile", pkg, tmp], check=True, capture_output=True)
+        target = os.path.join(out_dir, name + ".mlmodelc")
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(os.path.join(tmp, name + ".mlmodelc"), target)
+    shutil.rmtree(os.path.join(target, "analytics"), ignore_errors=True)
+
+
+def agentjev_chunked(root):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from sidekick_convert import chunking, core
+    from sidekick_convert.backbones import qwen3
+    from sidekick_convert.tests.test_agentjev import load, tiny_checkpoint
+    from sidekick_convert.wrapper import compose
+    out = os.path.join(root, "tiny-agentjev-chunked")
+    os.makedirs(out, exist_ok=True)
+    with tempfile.TemporaryDirectory() as ckpt:
+        tiny_checkpoint(ckpt, seed=7, layers=4)
+        backbone, head = load(ckpt)
+    with torch.no_grad():   # spread the logits well past fp16 rounding
+        head.scorer.fc2.weight.mul_(16.0)
+    qwen3.matmul_softmax(backbone)
+    ports = head.ports()
+    make_wrapper, example = compose(backbone, head, ports)
+    for seq in (16, 32):
+        ex = {k: v for k, v in example(seq).items()}
+        ex["seg"][:] = 0
+        ex["cand_end"] = np.full((1, 4), -1, dtype=np.int32)
+        _compile(core.trace_convert(make_wrapper(seq).eval(), ports, seq, ex, head.output), out, f"model_{seq}")
+        for c in chunking.chunks(backbone, head, ports, seq, [2], head.output):
+            _compile(chunking.trace_convert(c, seq, ex, backbone.hidden_size), out, f"model_{seq}.{c.index}")
+
+    def tree(prefix, branches):
+        ids, seg, pos, ends = list(prefix), [0] * len(prefix), list(range(len(prefix))), []
+        for c, b in enumerate(branches, 1):
+            ids += b; seg += [c] * len(b); pos += range(len(prefix), len(prefix) + len(b)); ends.append(len(ids) - 1)
+        return ids, seg, pos, ends
+    cases = [tree([5, 6, 7, 8], [[9, 10], [11]]),
+             tree([5, 12, 13, 14, 15, 16], [[17, 18], [19], [20, 21, 22]]),
+             tree([5] + [23] * 14, [[24, 25], [26, 27], [28], [29, 30]])]
+    expected = []
+    for ids, seg, pos, ends in cases:
+        seq = 16 if len(ids) <= 16 else 32
+        pad = seq - len(ids)
+        t = lambda v, fill: torch.tensor([v + [fill] * pad], dtype=torch.int32)  # noqa: E731
+        with torch.no_grad():
+            logits = make_wrapper(seq).eval()(t(ids, 0), t([1] * len(ids), 0), t(seg, -1), t(pos, 0),
+                                              torch.tensor([ends + [-1] * (4 - len(ends))], dtype=torch.int32))
+        expected.append({"ids": ids, "seg": seg, "position_ids": pos, "markers": ends,
+                         "logits": [float(x) for x in logits[0][: len(ends)]]})
     with open(os.path.join(out, "expected.json"), "w") as f:
         json.dump({"cases": expected}, f, indent=1)
         f.write("\n")

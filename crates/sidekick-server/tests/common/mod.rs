@@ -229,6 +229,40 @@ pub fn placed(id: &str, build: Option<&str>, served_on: Option<&str>) -> String 
     )
 }
 
+/// `classifier.toml` for SENTIMENT chunked in two programs per bucket (D37),
+/// served on the GPU, with its recorded placement for the GPU and, as an
+/// alternative, for the ANE.
+pub fn chunked() -> String {
+    let machine = sidekick_embed::placement::this_machine();
+    let counts = |ane: usize, gpu: usize| {
+        format!("ane = {ane}\ngpu = {gpu}\ncpu = 1\nunassigned = 2\ntotal = {}\noff_ane_ops = {{}}\n", ane + gpu + 3)
+    };
+    let tables = |prefix: &str, ane: [usize; 2], gpu: [usize; 2]| {
+        format!(
+            "\n[{prefix}.buckets.16]\nane = {}\ngpu = {}\ncpu = 2\nunassigned = 4\ntotal = {}\noff_ane_ops = {{}}\n\
+             \n[[{prefix}.buckets.16.chunks]]\n{}\n[[{prefix}.buckets.16.chunks]]\n{}",
+            ane[0] + ane[1],
+            gpu[0] + gpu[1],
+            ane[0] + ane[1] + gpu[0] + gpu[1] + 6,
+            counts(ane[0], gpu[0]),
+            counts(ane[1], gpu[1]),
+        )
+    };
+    format!(
+        "{}\n[chunking]\nchunks = 2\nweight_budget_bytes = 966367641\n\n[placement]\ncompute_units = \"cpu_and_gpu\"\n\
+         chip = \"{}\"\nmacos_build = \"{}\"\n{}{}",
+        SENTIMENT
+            .replace("id = \"sentiment\"", "id = \"chunked\"")
+            .replace("model_{seq}.mlmodelc", "model_{seq}.{chunk}.mlmodelc")
+            .replace("buckets = [16, 64]", "buckets = [16]")
+            .replace("max_seq_len = 64", "max_seq_len = 16\ncompute_units = \"cpu_and_gpu\""),
+        machine.chip,
+        machine.macos_build,
+        tables("placement", [0, 0], [10, 20]),
+        tables("placement.alternatives.cpu_and_ne", [9, 19], [0, 0]),
+    )
+}
+
 /// `classifier.toml` for a zero-shot model in the laya format.
 pub const ZERO_SHOT: &str = r#"
 id = "decider"
@@ -608,11 +642,13 @@ pub fn test_state_scanned(chat_available: bool, api_key: Option<&str>, options: 
     ));
     write_embedding_fixture(&dir);
     let capped = cpu_capped();
+    let chunked = chunked();
     let julia = julia_zero_shot();
     let (fresh, stale, gpu) =
         (placed("placed", None, None), placed("placed-stale", Some("0Z000"), None), placed("placed-gpu", None, Some("cpu_and_gpu")));
     for (name, body) in [
         ("sentiment", SENTIMENT),
+        ("chunked", chunked.as_str()),
         ("placed", fresh.as_str()),
         ("placed-stale", stale.as_str()),
         ("placed-gpu", gpu.as_str()),
