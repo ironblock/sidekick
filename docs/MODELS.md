@@ -722,7 +722,32 @@ exactly 2,048 tokens.
   request takes about 370 ms against 227 on the GPU with nothing else
   running. The first load compiles each chunk: about 40 s for the
   smallest bucket, 244 s for the 2,048-token one. What it saves a model
-  sharing the GPU is measured with tools/companion_bench.py.
+  sharing the GPU is measured with tools/companion_bench.py, below.
+- **As a companion beside a larger model** (tools/companion_bench.py; M1
+  Max with 32 GB, macOS 27.0). The primary was a 4-bit 27B Qwen3.8 with
+  speculative decoding, served by oMLX on the GPU, which kept about 25 GB
+  wired. agent-jev answered 1,024-token requests at one per second, from
+  one install, its compute units switched by the daemon config (D38):
+  - On the GPU, Core ML maps the companion's weights into sidekickd: 1,195
+    MB resident for its one 1,024-token bucket. Within seconds of it
+    loading, oMLX's own memory-pressure policy unloaded the 27B and
+    refused its requests ("process memory pressure requested this model
+    to unload"): none of five generations completed, in two runs. That is
+    how oMLX handles memory pressure, not a general fact about the GPU.
+  - On the ANE, sidekickd holds 58 MB: the weights are read through the
+    file cache, which macOS can reclaim. All five generations completed,
+    at 19.50 tokens/s against 19.96 with the primary alone (about 2%
+    slower; first token 0.37 s against 0.34). The companion answered all
+    85 requests, 367 ms at the median and 873 ms at p99. The phase's swap
+    grew by 462 MB while oMLX reloaded the 27B after the GPU phase had
+    evicted it, which is why the baseline is the primary-alone phase
+    measured after that reload (oMLX decoded at about 17.1 tokens/s
+    before the reload and about 20 after).
+  - With the primary idle, the companion took 226 ms at the median on the
+    GPU and 377 ms on the ANE, and drew 7.36 W of GPU power on the GPU
+    against 0.77 W of GPU and 1.10 W of ANE power on the ANE.
+  - Its answers on the two paths differed by at most |Δp| 7.1e-3, and never
+    within a phase.
 - **No precision rewrites.** Its residual stream reaches about 6,800 on
   one dimension of the first token (the attention sink, which every
   candidate's path shares). Squared in fp16, as RMSNorm squares its input,

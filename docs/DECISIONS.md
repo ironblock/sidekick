@@ -1901,6 +1901,14 @@ weights; M1 Max, macOS 27.0; two chunks):
   ceiling) and the CPU (D), and grades D on the ANE (p99 at 4.2× the
   ceiling, worst |Δp| 0.022, no decision flips, buckets exact, the same
   output in two processes).
+- Beside a 4-bit 27B Qwen3.8 that oMLX served on the GPU of a 32 GB M1
+  Max (tools/companion_bench.py, docs/MODELS.md), the same install served
+  either way by the daemon config (D38): on the GPU, the companion held
+  1,195 MB in sidekickd, and oMLX's memory-pressure policy unloaded the
+  27B within seconds, so none of its generations completed; on the ANE it
+  held 58 MB, every generation completed at about 2% below the primary
+  alone, and the companion drew about 1.9 W against 7.4 W on the GPU.
+  That is the case D38 exists for.
 
 **Decision.** A bucket may be an ordered chain of programs.
 
@@ -1915,8 +1923,8 @@ weights; M1 Max, macOS 27.0; two chunks):
   over the limit fails as D32 says, naming chunking as the first fix.
 - **Where it runs is a choice, not a default.** The manifest's
   `compute_units` (D31), or the operator's (D38), decides; neither follows
-  from chunking. agent-jev stays GPU-served, and its chunked ANE path is
-  an option the docs grade.
+  from chunking. agent-jev stays GPU-served, and its chunked ANE path is an
+  option, graded in docs/MODELS.md.
 - **Cuts fall at layer boundaries.** `auto` packs whole layers into as few
   chunks as keep each chunk's fp16 weights under
   `CHUNK_WEIGHT_BUDGET_BYTES`, 0.9 GiB, then balances them. The limit was
@@ -1931,7 +1939,8 @@ weights; M1 Max, macOS 27.0; two chunks):
   chunk the mask, segment and position inputs; the last chunk any input
   its head reads), and the last chunk produces the manifest's output. The
   runtime passes the output feature value of one chunk to the next as it
-  is, with no copy.
+  is: sidekick makes no copy, though Core ML may copy internally (the
+  boundary's measured cost includes that).
 - **The manifest.** `artifact` gains a `{chunk}` placeholder, numbered
   from 0, beside `{seq}`: `model_{seq}.{chunk}.mlmodelc`. A `[chunking]`
   table says how many chunks each bucket has, and records the budget the
@@ -1945,10 +1954,13 @@ weights; M1 Max, macOS 27.0; two chunks):
   weight_budget_bytes = 966367641
   ```
 
-  `chunks` defaults to 1. `{chunk}` without a `[chunking]` table, or a
-  `[chunking]` table without `{chunk}`, skips the manifest with a reason
-  (D28). At load the daemon checks every chunk's declared inputs and
-  outputs against these rules. Buckets, `sidekick-buckets` and every other
+  A model without `[chunking]` has one program per bucket; inside the
+  table, `chunks` is required. `{chunk}` without a `[chunking]` table, or
+  a `[chunking]` table without `{chunk}`, skips the manifest with a reason
+  (D28). At load a classifier checks every chunk's declared inputs and
+  outputs against these rules. Chunking is for classifiers for now: no
+  converter makes a chunked embedder, and an embedder's manifest with
+  `[chunking]` is skipped with that reason. Buckets, `sidekick-buckets` and every other
   per-bucket behavior are unchanged: a bucket is still one entry, whatever
   the number of programs that answer it.
 - **A chain is served one way.** Every chunk of every bucket loads with
