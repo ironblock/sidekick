@@ -726,6 +726,26 @@ exactly 2,048 tokens.
   running (measured before the rewrite, which added about 20%). The first load compiles each chunk: about 40 s for the
   smallest bucket, 244 s for the 2,048-token one. What it saves a model
   sharing the GPU is measured with tools/companion_bench.py, below.
+- **On the ANE, chunk it; don't quantize its embedding.** The other way
+  under the ANE's weight limit, one program per bucket with the token
+  embedding stored in int8 (`--int8-embedding --chunks 1`), was graded with
+  the same precision rewrite on the same 2,627 cases:
+
+  | | chunked (the default) | int8 embedding, one program |
+  |---|---|---|
+  | GPU | **A** (0.84×, worst 3.7e-3) | B (1.26×, worst 8.1e-3) |
+  | ANE | B (1.44×, worst 5.6e-3) | B (1.74×, worst 8.5e-3) |
+  | CPU | D (5.9×, 1 flip) | D (6.1×, 2 flips) |
+  | weights per program | about 0.57 GiB | 0.971–0.987 GiB |
+  | ANE latency, 256 / 1,024 / 2,048 tokens | 151 / 387 / 1,409 ms | 152 / 375 / 1,308 ms |
+  | GPU latency, same lengths | 88 / 206 / 565 ms | 86 / 203 / 552 ms |
+
+  The int8 build is a few percent faster at the long buckets, but it costs
+  the GPU its A, and its programs sit 1–3% under a limit measured on one
+  chip: the 2,048-token bucket, at 0.987 GiB, is above the largest program
+  measured on the ANE (0.964 GiB), and Core ML produced no compute plan for
+  it. Latencies are medians through sidekick's own Core ML path
+  (chain_timing), one input at a time.
 - **As a companion beside a larger model** (tools/companion_bench.py; M1
   Max with 32 GB, macOS 27.0). The primary was a 4-bit 27B Qwen3.8 with
   speculative decoding, served by oMLX on the GPU, which kept about 25 GB
@@ -868,9 +888,12 @@ Most rejections are visible long before a conversion. Cheapest first:
        agent-jev's Qwen3-0.6B at different depths: 0.964 GiB of weights put
        99.4% of operations on the ANE, and 1.022 GiB put 0%. Over the cap,
        `cpu_and_ne` silently runs the whole model on the CPU, with no error,
-       so a compute plan of 0 ANE operations is the symptom. Storing only the
-       embedding table in int8 brought agent-jev (1.12 GiB) to 0.97 GiB and
-       98% on the ANE, at no measurable cost in accuracy. This is Core ML's
+       so a compute plan of 0 ANE operations is the symptom. Splitting each
+       bucket into programs at layer boundaries (`--chunks`, D37) keeps every
+       program well under the cap at no cost in accuracy. Storing only the
+       embedding table in int8 also brought agent-jev (1.12 GiB) to 0.97 GiB
+       and 98% on the ANE, but with almost no headroom and a measurable cost
+       in accuracy (agent-jev's notes compare the two). This is Core ML's
        documented limit: Apple's coremltools guide ("MLModel Utilities",
        Bisect Model) states it as 1 GB for the Neural Engine on iPhone, and
        its `ct.models.utils.bisect_model` splits a model into two chunks
