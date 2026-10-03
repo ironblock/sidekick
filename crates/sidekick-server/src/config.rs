@@ -1,4 +1,6 @@
 use serde::Deserialize;
+use sidekick_core::ComputeUnits;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -45,6 +47,19 @@ pub struct Config {
     /// load, and the result is cached. Without it, the plan recorded at
     /// conversion time is reported, when the manifest has one.
     pub report_compute_plans: bool,
+    /// Per-model settings, by model id (`[models."agent-jev"]`).
+    pub models: BTreeMap<String, ModelConfig>,
+}
+
+/// One model's settings in the daemon config (D38).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ModelConfig {
+    /// Serve the model on these compute units instead of its manifest's: a
+    /// Core ML model only. The weight limit (D32) and the CPU cap (D33)
+    /// judge it as they would the manifest's choice, and /v1/models and
+    /// /health report that the operator chose.
+    pub compute_units: Option<ComputeUnits>,
 }
 
 impl Default for Config {
@@ -59,6 +74,7 @@ impl Default for Config {
             ignore_ane_weight_cap: false,
             ignore_cpu_seq_cap: false,
             report_compute_plans: false,
+            models: BTreeMap::new(),
         }
     }
 }
@@ -75,6 +91,11 @@ impl Config {
         let raw = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
         toml::from_str(&raw).map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))
+    }
+
+    /// The operator's compute units, by model id (D38).
+    pub fn compute_units(&self) -> BTreeMap<String, ComputeUnits> {
+        self.models.iter().filter_map(|(id, m)| Some((id.clone(), m.compute_units?))).collect()
     }
 
     pub fn models_dir(&self) -> PathBuf {
@@ -111,6 +132,16 @@ pub fn default_config_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_model_section_sets_its_compute_units() {
+        let c: Config = toml::from_str("[models.\"agent-jev\"]\ncompute_units = \"cpu_and_ne\"\n\n[models.other]\n").unwrap();
+        assert_eq!(c.compute_units(), [("agent-jev".to_string(), ComputeUnits::CpuAndNeuralEngine)].into());
+        assert!(Config::default().compute_units().is_empty());
+        // A typo is an error, not a silently ignored setting.
+        assert!(toml::from_str::<Config>("[models.x]\ncompute_unit = \"cpu_only\"\n").is_err());
+        assert!(toml::from_str::<Config>("[models.x]\ncompute_units = \"gpu\"\n").is_err());
+    }
 
     #[test]
     fn defaults_are_loopback_and_sane() {

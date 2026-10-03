@@ -239,6 +239,7 @@ mod tests {
                 ane_weight_limit: None,
                 cpu_seq_limit: None,
                 seq_cap: None,
+                compute_units_source: Default::default(),
                 placement: None,
             },
             dir: dir.clone(),

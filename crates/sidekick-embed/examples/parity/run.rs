@@ -48,8 +48,11 @@ usage: parity [options]
 /// a model Core ML won't place on the ANE, and its CPU path reports the
 /// CPU's variation past 1,024 tokens, D33), so it loads models past the ANE
 /// weight cap and the CPU sequence cap too.
-const MEASURE_ALL: sidekick_core::ScanOptions =
-    sidekick_core::ScanOptions { ignore_ane_weight_cap: true, ignore_cpu_seq_cap: true };
+const MEASURE_ALL: sidekick_core::ScanOptions = sidekick_core::ScanOptions {
+    compute_units: std::collections::BTreeMap::new(),
+    ignore_ane_weight_cap: true,
+    ignore_cpu_seq_cap: true,
+};
 
 /// Cases re-run in a second ANE process to check determinism across loads.
 const DETERMINISM_CASES: usize = 8;

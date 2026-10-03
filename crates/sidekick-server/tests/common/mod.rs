@@ -592,6 +592,11 @@ pub struct Probes {
 }
 
 pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
+    test_state_scanned(chat_available, api_key, &sidekick_core::ScanOptions::default())
+}
+
+/// [`test_state_full`], its models directory scanned with `options`.
+pub fn test_state_scanned(chat_available: bool, api_key: Option<&str>, options: &sidekick_core::ScanOptions) -> Probes {
     // A process-wide counter, not a timestamp: `Instant::now().elapsed()` is
     // ~0ns and collided across concurrently-running tests, letting one test
     // scan another's half-written fixture (observed as a ~1-in-5 flake).
@@ -624,7 +629,7 @@ pub fn test_state_full(chat_available: bool, api_key: Option<&str>) -> Probes {
         std::fs::create_dir_all(dir.join(name)).unwrap();
         std::fs::write(dir.join(name).join("classifier.toml"), body).unwrap();
     }
-    let registry = Arc::new(ModelRegistry::scan(&dir).unwrap());
+    let registry = Arc::new(ModelRegistry::scan_with(&dir, options).unwrap());
     let seen = Arc::new(Mutex::new(Vec::new()));
     let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let pairs = Arc::new(Mutex::new(Vec::new()));

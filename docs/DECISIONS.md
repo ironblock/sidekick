@@ -1851,6 +1851,43 @@ first step to differ.
   and keep their GPU grade, but their buckets agree exactly only once
   reconverted.
 
+## D38 — The operator may choose a model's compute units
+D31 lets a manifest name its compute units, and the converter that wrote
+the manifest chose them from measurements of the model alone. Where a model
+should run also depends on what else the machine runs. A small model served
+beside a larger one that the GPU serves (a companion to a local LLM, say)
+competes with it for the GPU. On the ANE it may answer more slowly, but it
+leaves the larger model's GPU time alone. That is the operator's trade-off
+to make, not the converter's, and until now making it meant editing an
+installed manifest.
+
+**Decision.** The daemon config may set a Core ML model's compute units,
+by model id:
+
+```toml
+[models."agent-jev"]
+compute_units = "cpu_and_ne"
+```
+
+- The registry applies it when it scans, before D32's weight limit and
+  D33's CPU cap, which judge it exactly as they would the manifest's own
+  choice. An operator who moves an over-limit model onto the ANE has it
+  skipped, with D32's reason, and one who moves a long model onto the CPU
+  has it capped at 1,024 tokens.
+- `/v1/models` reports each Core ML model's `compute_units_source`,
+  `manifest` or `operator`, beside its `compute_units`. `/health` lists
+  the overrides applied, and any that named no Core ML model (a static
+  embedder has no compute units, and a typo shouldn't pass silently). The
+  `sidekick-compute-units` header keeps its meaning: the units the model
+  runs on, whoever chose them.
+- An unknown key under `[models."<id>"]`, or an unknown value, is a
+  config error, as for the rest of the config.
+- The recorded placement (D35) is reported for the units the model runs
+  on, when the converter recorded one for them.
+
+`libsidekick.dylib` reads no daemon config, so it keeps the manifests'
+choices.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

@@ -30,6 +30,7 @@ use std::time::Instant;
 /// backend. Tests inject their own backend via `AppState` directly.
 pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
     let options = ScanOptions {
+        compute_units: config.compute_units(),
         ignore_ane_weight_cap: config.ignore_ane_weight_cap,
         ignore_cpu_seq_cap: config.ignore_cpu_seq_cap,
     };

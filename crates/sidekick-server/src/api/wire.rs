@@ -520,6 +520,10 @@ pub struct ModelObject {
     /// reports them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compute_units: Option<&'static str>,
+    /// Extension, Core ML models: who chose `compute_units`, `manifest` or
+    /// `operator` (the daemon config's `[models."<id>"]`, D38).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compute_units_source: Option<&'static str>,
     /// Extension, Core ML models: where Core ML places each bucket's
     /// operations, by bucket: `{"source", "state": "ready", "ane", "gpu",
     /// "cpu"}` (operation counts), with `source` `live` (read by this
@@ -550,6 +554,7 @@ impl ModelObject {
             required: None,
             seq_cap: None,
             compute_units: None,
+            compute_units_source: None,
             placement: None,
             calibration: None,
         }
