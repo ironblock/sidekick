@@ -170,6 +170,16 @@ pub struct RecordedPlan {
     /// Operator names off the ANE, with counts.
     #[serde(default)]
     pub off_ane_ops: BTreeMap<String, usize>,
+    /// A chunked bucket's chunks (D37), in order, each with its own counts;
+    /// the bucket's counts are their sums. Empty for one program.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chunks: Vec<RecordedPlan>,
+}
+
+impl RecordedPlan {
+    fn counts_add_up(&self) -> bool {
+        self.ane + self.gpu + self.cpu + self.unassigned == self.total
+    }
 }
 
 impl RecordedPlacement {
@@ -183,17 +193,61 @@ impl RecordedPlacement {
 /// buckets, with consistent counts. Checked against the manifest's buckets
 /// before any cap drops some. A bad record is dropped with a warning rather
 /// than skipping the model: it only describes the model.
-fn placement_problem(p: &RecordedPlacement, buckets: &[usize]) -> Option<String> {
+fn placement_problem(p: &RecordedPlacement, buckets: &[usize], chunks: usize) -> Option<String> {
     for (key, plan) in &p.buckets {
         let listed = key.parse::<usize>().is_ok_and(|b| buckets.contains(&b));
         if !listed {
             return Some(format!("`[placement.buckets]` has `{key}`, which isn't one of the buckets {buckets:?}"));
         }
-        if plan.ane + plan.gpu + plan.cpu + plan.unassigned != plan.total {
+        if !plan.counts_add_up() || !plan.chunks.iter().all(RecordedPlan::counts_add_up) {
             return Some(format!("`[placement.buckets.{key}]` counts don't add up to its `total`"));
+        }
+        if !plan.chunks.is_empty() && plan.chunks.len() != chunks {
+            return Some(format!(
+                "`[placement.buckets.{key}]` lists {} chunks, and the model has {chunks}",
+                plan.chunks.len()
+            ));
         }
     }
     None
+}
+
+/// `[chunking]`: a bucket compiled as an ordered chain of programs, each
+/// under the ANE's per-program weight limit (D37). The artifact's
+/// `{chunk}` placeholder numbers them from 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Chunking {
+    /// Programs per bucket.
+    pub chunks: usize,
+    /// The fp16 weight budget the converter split under (`--chunks auto`),
+    /// for reports; the limit itself is [`MAX_ANE_PROGRAM_WEIGHT_BYTES`].
+    #[serde(default)]
+    pub weight_budget_bytes: Option<u64>,
+}
+
+/// The chunk inputs and outputs that carry the residual stream from one
+/// chunk to the next (D37).
+pub const CHUNK_HIDDEN_IN: &str = "hidden_in";
+pub const CHUNK_HIDDEN_OUT: &str = "hidden_out";
+
+/// The artifact files of one bucket, in chain order: one per chunk when
+/// `artifact` has a `{chunk}` placeholder, else the one program.
+pub fn artifact_files(artifact: &str, bucket: usize, chunks: usize) -> Vec<String> {
+    let name = artifact.replace("{seq}", &bucket.to_string());
+    if !name.contains("{chunk}") {
+        return vec![name];
+    }
+    (0..chunks).map(|i| name.replace("{chunk}", &i.to_string())).collect()
+}
+
+/// `{chunk}` and `[chunking]` come together (D37).
+fn validate_chunking(artifact: &str, chunking: Option<&Chunking>) -> std::result::Result<(), String> {
+    match (artifact.contains("{chunk}"), chunking) {
+        (true, None) => Err("`artifact` has a `{chunk}` placeholder, and there's no `[chunking]` table".into()),
+        (false, Some(_)) => Err("`[chunking]` needs a `{chunk}` placeholder in `artifact`".into()),
+        (_, Some(c)) if c.chunks == 0 => Err("`[chunking] chunks` must be at least 1".into()),
+        _ => Ok(()),
+    }
 }
 
 /// Drop `placement` when it can't be used, with a warning naming `path`.
@@ -262,9 +316,17 @@ pub struct ModelManifest {
     /// The compute plan the converter read (coreml backend only).
     #[serde(default)]
     pub placement: Option<RecordedPlacement>,
+    /// Each bucket as a chain of programs (coreml backend only; D37).
+    #[serde(default)]
+    pub chunking: Option<Chunking>,
 }
 
 impl ModelManifest {
+    /// Programs per bucket: 1 unless the model is chunked (D37).
+    pub fn chunks(&self) -> usize {
+        self.chunking.map_or(1, |c| c.chunks)
+    }
+
     /// What the model runs on, as `sidekick-compute-units` reports it:
     /// `cpu` for a static model, else its Core ML compute units.
     pub fn compute_units_name(&self) -> &'static str {
@@ -343,6 +405,9 @@ pub struct ClassifierManifest {
     /// The compute plan the converter read.
     #[serde(default)]
     pub placement: Option<RecordedPlacement>,
+    /// Each bucket as a chain of programs (D37).
+    #[serde(default)]
+    pub chunking: Option<Chunking>,
     pub classify: ClassifySection,
 }
 
@@ -549,6 +614,11 @@ pub fn calibration_key(question_type: QuestionType, k: usize) -> String {
 }
 
 impl ClassifierManifest {
+    /// Programs per bucket: 1 unless the model is chunked (D37).
+    pub fn chunks(&self) -> usize {
+        self.chunking.map_or(1, |c| c.chunks)
+    }
+
     /// Most labels one request may carry: the fixed label count for
     /// text-classification, `[classify] max_labels` for zero-shot.
     pub fn max_labels(&self) -> usize {
@@ -639,6 +709,10 @@ impl ResolvedModel {
     pub fn artifact_path_for_bucket(&self, bucket: usize) -> PathBuf {
         bucket_path(&self.dir, &self.manifest.artifact, bucket)
     }
+    /// Every program of one bucket, in chain order (D37).
+    pub fn artifact_paths_for_bucket(&self, bucket: usize) -> Vec<PathBuf> {
+        artifact_files(&self.manifest.artifact, bucket, self.manifest.chunks()).iter().map(|f| self.dir.join(f)).collect()
+    }
     pub fn tokenizer_path(&self) -> PathBuf {
         self.dir.join(&self.manifest.tokenizer)
     }
@@ -655,6 +729,10 @@ impl ResolvedClassifier {
     /// Artifact path for one sequence-length bucket.
     pub fn artifact_path_for_bucket(&self, bucket: usize) -> PathBuf {
         bucket_path(&self.dir, &self.manifest.artifact, bucket)
+    }
+    /// Every program of one bucket, in chain order (D37).
+    pub fn artifact_paths_for_bucket(&self, bucket: usize) -> Vec<PathBuf> {
+        artifact_files(&self.manifest.artifact, bucket, self.manifest.chunks()).iter().map(|f| self.dir.join(f)).collect()
     }
     pub fn tokenizer_path(&self) -> PathBuf {
         self.dir.join(&self.manifest.tokenizer)
@@ -774,11 +852,13 @@ pub fn artifact_weight_bytes(artifact: &Path) -> u64 {
 /// Skip a model served on the ANE (`cpu_and_ne` or `all`) when a bucket's
 /// compiled weights exceed [`MAX_ANE_PROGRAM_WEIGHT_BYTES`]: Core ML would
 /// run it off the ANE with no error, so the model would look ANE-served and
-/// not be. Each `{seq}` bucket is its own program and is checked on its own.
+/// not be. Each `{seq}` bucket, and each `{chunk}` of a chained one (D37),
+/// is its own program and is checked on its own.
 fn check_ane_weights(
     dir: &Path,
     artifact: &str,
     buckets: &[usize],
+    chunks: usize,
     units: ComputeUnits,
     source: ComputeUnitsSource,
     limit: AneWeightLimit,
@@ -788,17 +868,19 @@ fn check_ane_weights(
     if !on_ane || limit == AneWeightLimit::Ignore || options.ignore_ane_weight_cap {
         return Ok(());
     }
-    match over_ane_weight_limit(dir, artifact, buckets) {
+    match over_ane_weight_limit(dir, artifact, buckets, chunks) {
         None => Ok(()),
         Some(reason) if source == ComputeUnitsSource::Operator => Err(format!(
             "{reason}; served with `{}`, which the daemon config's `[models.\"<id>\"]` chose (D38), Core ML \
-             would run it off the ANE without an error. Remove that override, convert a quantized or chunked \
-             variant, or start sidekickd with --ignore-ane-weight-cap to load it anyway",
+             would run it off the ANE without an error. Remove that override, convert it in chunks under the \
+             limit (`--chunks auto`, D37) or as a quantized variant, or start sidekickd with \
+             --ignore-ane-weight-cap to load it anyway",
             units.name()
         )),
         Some(reason) => Err(format!(
-            "{reason}; served with `{}`, Core ML would run it off the ANE without an error. Serve it on the \
-             GPU (`compute_units = \"cpu_and_gpu\"`), convert a quantized or chunked variant, or set \
+            "{reason}; served with `{}`, Core ML would run it off the ANE without an error. Convert it in \
+             chunks under the limit (`--chunks auto`, D37), serve it on the GPU (`compute_units = \
+             \"cpu_and_gpu\"`), convert a quantized variant (`--int8-embedding`), or set \
              `ane_weight_limit = \"ignore\"` (or start sidekickd with --ignore-ane-weight-cap) to load it anyway",
             units.name()
         )),
@@ -808,14 +890,10 @@ fn check_ane_weights(
 /// The first bucket whose compiled weights exceed
 /// [`MAX_ANE_PROGRAM_WEIGHT_BYTES`], as a sentence: "`model_512.mlmodelc` has
 /// 1.115 GiB of weights, past Core ML's 1 GiB limit for running a program on
-/// the ANE (MAX_ANE_PROGRAM_WEIGHT_BYTES)". Each `{seq}` bucket is its own
-/// program and is checked on its own.
-fn over_ane_weight_limit(dir: &Path, artifact: &str, buckets: &[usize]) -> Option<String> {
-    let mut names: Vec<String> = if artifact.contains("{seq}") {
-        buckets.iter().map(|b| artifact.replace("{seq}", &b.to_string())).collect()
-    } else {
-        vec![artifact.to_string()]
-    };
+/// the ANE (MAX_ANE_PROGRAM_WEIGHT_BYTES)". Each `{seq}` bucket, and each
+/// `{chunk}` of a chained one, is its own program and is checked on its own.
+fn over_ane_weight_limit(dir: &Path, artifact: &str, buckets: &[usize], chunks: usize) -> Option<String> {
+    let mut names: Vec<String> = buckets.iter().flat_map(|&b| artifact_files(artifact, b, chunks)).collect();
     names.dedup();
     names.into_iter().find_map(|name| {
         let bytes = artifact_weight_bytes(&dir.join(&name));
@@ -835,11 +913,17 @@ fn over_ane_weight_limit(dir: &Path, artifact: &str, buckets: &[usize]) -> Optio
 /// when every bucket fits, or when the manifest opts out with
 /// `ane_weight_limit = "ignore"`. The parity suite reports, rather than
 /// grades, the ANE path of a model the runtime would refuse there.
-pub fn ane_weight_refusal(dir: &Path, artifact: &str, buckets: &[usize], limit: AneWeightLimit) -> Option<String> {
+pub fn ane_weight_refusal(
+    dir: &Path,
+    artifact: &str,
+    buckets: &[usize],
+    chunks: usize,
+    limit: AneWeightLimit,
+) -> Option<String> {
     if limit == AneWeightLimit::Ignore {
         return None;
     }
-    over_ane_weight_limit(dir, artifact, buckets)
+    over_ane_weight_limit(dir, artifact, buckets, chunks)
 }
 
 /// A manifest the registry skipped, and why.
@@ -918,7 +1002,7 @@ impl ModelRegistry {
                     let problem = match (&m.placement, m.backend) {
                         (None, _) => None,
                         (Some(_), EmbeddingBackendKind::Static) => Some("a static model has no compute plan".into()),
-                        (Some(p), EmbeddingBackendKind::Coreml) => placement_problem(p, &m.buckets),
+                        (Some(p), EmbeddingBackendKind::Coreml) => placement_problem(p, &m.buckets, m.chunks()),
                     };
                     check_placement(&path, &mut m.placement, problem);
                     m
@@ -929,7 +1013,8 @@ impl ModelRegistry {
                     }
                     let units = m.compute_units.unwrap_or_default();
                     let limit = m.ane_weight_limit.unwrap_or_default();
-                    check_ane_weights(dir, &m.artifact, &m.buckets, units, m.compute_units_source, limit, options).map(|()| m)
+                    check_ane_weights(dir, &m.artifact, &m.buckets, m.chunks(), units, m.compute_units_source, limit, options)
+                        .map(|()| m)
                 })
                 .and_then(|mut m| {
                     if m.backend != EmbeddingBackendKind::Coreml {
@@ -969,12 +1054,12 @@ impl ModelRegistry {
                     m
                 })
                 .map(|mut m| {
-                    let problem = m.placement.as_ref().and_then(|p| placement_problem(p, &m.buckets));
+                    let problem = m.placement.as_ref().and_then(|p| placement_problem(p, &m.buckets, m.chunks()));
                     check_placement(&path, &mut m.placement, problem);
                     m
                 })
                 .and_then(|m| {
-                    check_ane_weights(dir, &m.artifact, &m.buckets, m.compute_units, m.compute_units_source, m.ane_weight_limit, options)
+                    check_ane_weights(dir, &m.artifact, &m.buckets, m.chunks(), m.compute_units, m.compute_units_source, m.ane_weight_limit, options)
                         .map(|()| m)
                 })
                 .and_then(|mut m| {
@@ -1125,7 +1210,10 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
     if m.backend != EmbeddingBackendKind::Coreml && m.cpu_seq_limit.is_some() {
         return Err("`cpu_seq_limit` is only valid for the coreml backend".into());
     }
-    Ok(())
+    if m.backend != EmbeddingBackendKind::Coreml && (m.chunking.is_some() || m.artifact.contains("{chunk}")) {
+        return Err("`[chunking]` is only valid for the coreml backend".into());
+    }
+    validate_chunking(&m.artifact, m.chunking.as_ref())
 }
 
 /// Validation per docs/design/classify.md. The artifact-dependent check
@@ -1135,6 +1223,7 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
         return Err("empty model id".into());
     }
     validate_buckets(&m.buckets, m.max_seq_len)?;
+    validate_chunking(&m.artifact, m.chunking.as_ref())?;
     if m.max_batch == 0 {
         return Err("max_batch must be > 0".into());
     }
@@ -1751,7 +1840,7 @@ output = "logits"
         std::fs::remove_dir_all(&tmp).unwrap();
 
         // A record that doesn't fit the model is dropped; the model still loads.
-        let sentiment = |p: &RecordedPlacement| placement_problem(p, &[128, 512]);
+        let sentiment = |p: &RecordedPlacement| placement_problem(p, &[128, 512], 1);
         let mut p = reg_placement(&format!("{SENTIMENT}{}", placement.replace("buckets.128", "buckets.256")));
         assert!(sentiment(&p).unwrap().contains("`256`, which isn't one of the buckets"));
         p = reg_placement(&format!("{SENTIMENT}{}", placement.replace("total = 714", "total = 700")));
@@ -2074,7 +2163,7 @@ max_seq_len = 512
         let buckets = [128, 512];
         // Over the cap: refused, though the call names no compute units (a
         // GPU-served manifest gets the same answer).
-        let why = ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &buckets, AneWeightLimit::Enforce).unwrap();
+        let why = ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &buckets, 1, AneWeightLimit::Enforce).unwrap();
         // The reason alone: the registry's fixes aren't part of it.
         assert_eq!(
             why,
@@ -2082,9 +2171,125 @@ max_seq_len = 512
              on the ANE (MAX_ANE_PROGRAM_WEIGHT_BYTES)"
         );
         // The opt-out is honored, and a model that fits isn't refused.
-        assert_eq!(ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &buckets, AneWeightLimit::Ignore), None);
-        assert_eq!(ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &[128], AneWeightLimit::Enforce), None);
+        assert_eq!(ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &buckets, 1, AneWeightLimit::Ignore), None);
+        assert_eq!(ane_weight_refusal(&dir, "model_{seq}.mlmodelc", &[128], 1, AneWeightLimit::Enforce), None);
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// SENTIMENT in two chunks per bucket (D37).
+    fn chunked_sentiment() -> String {
+        SENTIMENT.replace("model_{seq}.mlmodelc", "model_{seq}.{chunk}.mlmodelc")
+            + "\n[chunking]\nchunks = 2\nweight_budget_bytes = 966367641\n"
+    }
+
+    #[test]
+    fn a_chunked_bucket_is_checked_against_the_weight_cap_chunk_by_chunk() {
+        const CAP: u64 = MAX_ANE_PROGRAM_WEIGHT_BYTES;
+        assert_eq!(artifact_files("model_{seq}.{chunk}.mlmodelc", 512, 2), ["model_512.0.mlmodelc", "model_512.1.mlmodelc"]);
+        assert_eq!(artifact_files("model_{seq}.mlmodelc", 512, 1), ["model_512.mlmodelc"]);
+        // Each chunk under the cap, the bucket over it in all: served.
+        let tmp = tmp_dir("chunked-fits");
+        write_classifier(&tmp, "s", &chunked_sentiment());
+        for b in [128, 512] {
+            for c in 0..2 {
+                weights(&tmp.join("s"), &format!("model_{b}.{c}.mlmodelc"), "weights", CAP / 2 + (1 << 20));
+            }
+        }
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        let m = &reg.classifier("sentiment").unwrap().manifest;
+        assert_eq!(m.chunks(), 2);
+        assert_eq!(m.chunking.unwrap().weight_budget_bytes, Some(966367641));
+        assert_eq!(
+            reg.classifier("sentiment").unwrap().artifact_paths_for_bucket(128),
+            [tmp.join("s/model_128.0.mlmodelc"), tmp.join("s/model_128.1.mlmodelc")]
+        );
+        // One chunk over it: skipped, naming that chunk, with chunking first among the fixes.
+        weights(&tmp.join("s"), "model_512.1.mlmodelc", "weights", CAP + 1);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        let reason = &reg.skipped()[0].reason;
+        assert!(reason.starts_with("`model_512.1.mlmodelc` has 1.000 GiB of weights"), "{reason}");
+        assert!(reason.contains("Convert it in chunks under the limit (`--chunks auto`, D37)"), "{reason}");
+        assert_eq!(
+            ane_weight_refusal(&tmp.join("s"), &m.artifact, &m.buckets, 2, AneWeightLimit::Enforce).as_deref(),
+            Some(
+                "`model_512.1.mlmodelc` has 1.000 GiB of weights, past Core ML's 1 GiB limit for running a program \
+                 on the ANE (MAX_ANE_PROGRAM_WEIGHT_BYTES)"
+            )
+        );
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn chunking_and_its_placeholder_come_together() {
+        let cases = [
+            ("no-table", SENTIMENT.replace("model_{seq}.mlmodelc", "model_{seq}.{chunk}.mlmodelc"), "no `[chunking]` table"),
+            ("no-placeholder", SENTIMENT.to_string() + "\n[chunking]\nchunks = 2\n", "needs a `{chunk}` placeholder"),
+            ("zero", chunked_sentiment().replace("chunks = 2", "chunks = 0"), "must be at least 1"),
+        ];
+        for (name, body, want) in cases {
+            let tmp = tmp_dir(&format!("chunking-{name}"));
+            write_classifier(&tmp, "s", &body);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            let reason = &reg.skipped().first().unwrap_or_else(|| panic!("{name}: not skipped")).reason;
+            assert!(reason.contains(want), "{name}: {reason}");
+            std::fs::remove_dir_all(&tmp).unwrap();
+        }
+        // A static embedder has no chunks.
+        let tmp = tmp_dir("chunking-static");
+        let dir = tmp.join("e");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(EMBEDDER_MANIFEST),
+            "id = \"e\"\nbackend = \"static\"\nartifact = \"m.{chunk}.bin\"\ntokenizer = \"t\"\ndims = 4\n\
+             max_seq_len = 8\n\n[chunking]\nchunks = 2\n",
+        )
+        .unwrap();
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped()[0].reason.contains("only valid for the coreml backend"), "{:?}", reg.skipped());
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn a_recorded_placement_lists_each_chunk() {
+        let plan = |ane, chunks: Vec<RecordedPlan>| RecordedPlan {
+            ane,
+            gpu: 0,
+            cpu: 1,
+            unassigned: 2,
+            total: ane + 3,
+            off_ane_ops: BTreeMap::new(),
+            chunks,
+        };
+        let placement = |chunks| RecordedPlacement {
+            compute_units: ComputeUnits::CpuAndNeuralEngine,
+            chip: "c".into(),
+            macos_build: "b".into(),
+            date: None,
+            buckets: [("128".to_string(), plan(10, chunks))].into(),
+        };
+        // Chunks that add up, and as many as the model has: kept.
+        assert_eq!(placement_problem(&placement(vec![plan(4, vec![]), plan(6, vec![])]), &[128], 2), None);
+        // A chunk whose counts don't add up, or the wrong number of chunks: dropped.
+        let mut bad = plan(4, vec![]);
+        bad.total += 1;
+        assert!(placement_problem(&placement(vec![bad, plan(6, vec![])]), &[128], 2).is_some());
+        let why = placement_problem(&placement(vec![plan(4, vec![]), plan(6, vec![])]), &[128], 3).unwrap();
+        assert!(why.contains("lists 2 chunks, and the model has 3"), "{why}");
+        // Parsed from the converter's TOML.
+        let toml = "[placement]\ncompute_units = \"cpu_and_ne\"\nchip = \"c\"\nmacos_build = \"b\"\n\n\
+                    [placement.buckets.128]\nane = 10\ngpu = 0\ncpu = 1\nunassigned = 2\ntotal = 13\noff_ane_ops = {}\n\n\
+                    [[placement.buckets.128.chunks]]\nane = 4\ngpu = 0\ncpu = 1\nunassigned = 2\ntotal = 7\n\
+                    off_ane_ops = { cast = 1 }\n\n\
+                    [[placement.buckets.128.chunks]]\nane = 6\ngpu = 0\ncpu = 0\nunassigned = 0\ntotal = 6\n";
+        #[derive(Deserialize)]
+        struct Doc {
+            placement: RecordedPlacement,
+        }
+        let doc: Doc = toml::from_str(toml).unwrap();
+        let b = doc.placement.bucket(128).unwrap();
+        assert_eq!(b.chunks.iter().map(|c| c.ane).collect::<Vec<_>>(), [4, 6]);
+        assert_eq!(b.chunks[0].off_ane_ops["cast"], 1);
     }
 
     #[test]

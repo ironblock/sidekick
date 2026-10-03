@@ -241,6 +241,7 @@ mod tests {
                 seq_cap: None,
                 compute_units_source: Default::default(),
                 placement: None,
+                chunking: None,
             },
             dir: dir.clone(),
         }

@@ -26,7 +26,8 @@ pub use classify::{
 pub use embed::{truncate_normalized, EmbedLimits, EmbedPurpose, Embedder, Truncate};
 pub use error::{Error, Result};
 pub use manifest::{
-    ane_weight_refusal, calibration_key, AneWeightLimit, ClassifierManifest, ClassifyFormat, ComputeUnits, ComputeUnitsSource, EmbeddingBackendKind,
+    ane_weight_refusal, artifact_files, calibration_key, Chunking, AneWeightLimit, ClassifierManifest, ClassifyFormat, ComputeUnits,
+    ComputeUnitsSource, EmbeddingBackendKind,
     ModelManifest, OptionRendering, ScanOptions, MAX_ANE_PROGRAM_WEIGHT_BYTES, MAX_CPU_INVARIANT_SEQ,
     ModelRegistry, Pooling, ResolvedClassifier,
 };

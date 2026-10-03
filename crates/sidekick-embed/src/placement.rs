@@ -116,19 +116,58 @@ impl Placements {
         self.lock().get(&(path.to_path_buf(), units)).cloned()
     }
 
-    /// Each of a model's buckets that has a plan state, by bucket.
+    /// Each of a model's buckets that has a plan state, by bucket. A
+    /// chunked bucket's (D37) is its chunks' together: their counts summed
+    /// once every chunk is read, failed if any read failed, pending until
+    /// then.
     pub fn for_model(
         &self,
         dir: &Path,
         artifact: &str,
         buckets: &[usize],
+        chunks: usize,
         units: ComputeUnits,
     ) -> BTreeMap<usize, Placement> {
         buckets
             .iter()
-            .filter_map(|&b| self.get(&dir.join(artifact.replace("{seq}", &b.to_string())), units).map(|p| (b, p)))
+            .filter_map(|&b| {
+                let states: Vec<Option<Placement>> = sidekick_core::artifact_files(artifact, b, chunks)
+                    .iter()
+                    .map(|f| self.get(&dir.join(f), units))
+                    .collect();
+                combine(states).map(|p| (b, p))
+            })
             .collect()
     }
+}
+
+/// One bucket's state from its programs' states, in chain order; `None`
+/// when none of them has been loaded.
+fn combine(states: Vec<Option<Placement>>) -> Option<Placement> {
+    if states.len() == 1 {
+        return states.into_iter().next().flatten();
+    }
+    if states.iter().all(Option::is_none) {
+        return None;
+    }
+    let mut sum = OpCounts::default();
+    let mut pending = false;
+    for (i, state) in states.into_iter().enumerate() {
+        match state {
+            Some(Placement::Ready(c)) => {
+                sum.ane += c.ane;
+                sum.gpu += c.gpu;
+                sum.cpu += c.cpu;
+                sum.unassigned += c.unassigned;
+                for (op, n) in &c.off_ane_ops {
+                    *sum.off_ane_ops.entry(op.clone()).or_default() += n;
+                }
+            }
+            Some(Placement::Failed(e)) => return Some(Placement::Failed(format!("chunk {i}: {e}"))),
+            Some(Placement::Pending) | None => pending = true,
+        }
+    }
+    Some(if pending { Placement::Pending } else { Placement::Ready(Arc::new(sum)) })
 }
 
 static SERVICE: OnceLock<Arc<Placements>> = OnceLock::new();
@@ -373,7 +412,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         // Other compute units are another plan.
         assert_eq!(service.get(&path, ComputeUnits::CpuAndGpu), None);
-        let listed = service.for_model(&dir, "model_{seq}.mlmodelc", &[16, 32], ComputeUnits::CpuAndNeuralEngine);
+        let listed = service.for_model(&dir, "model_{seq}.mlmodelc", &[16, 32], 1, ComputeUnits::CpuAndNeuralEngine);
         assert_eq!(listed.keys().copied().collect::<Vec<_>>(), vec![16], "only the loaded bucket");
         std::fs::remove_dir_all(&dir).unwrap();
     }

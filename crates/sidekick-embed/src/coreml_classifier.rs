@@ -70,18 +70,7 @@ fn check_interface(
     if let ShapeVerdict::Refuse(reason) = sidekick_coreml::load_verdict(&iface.constraints) {
         return fail(reason);
     }
-    let per_bucket = m.artifact.contains("{seq}");
-    let seq = per_bucket.then(|| vec![1, bucket]);
-    let mut expect = vec![(&io.input_ids, seq.clone()), (&io.attention_mask, seq.clone())];
-    for per_token in [&io.token_type_ids, &io.seg, &io.position_ids].into_iter().flatten() {
-        expect.push((per_token, seq.clone()));
-    }
-    if let Some(marker) = &io.marker_pos {
-        expect.push((marker, Some(vec![1, m.max_labels()])));
-    }
-    for one in [&io.qtype, &io.decide_pos].into_iter().flatten() {
-        expect.push((one, Some(vec![1])));
-    }
+    let expect = expected_inputs(m, io, bucket);
     for (input, shape) in &expect {
         match (iface.inputs.get(*input), shape) {
             (None, _) => return fail(format!("no int32 multi-array input `{input}`")),
@@ -102,6 +91,35 @@ fn check_interface(
             "takes input `{extra}`, which the manifest's [classify.io] doesn't name"
         ));
     }
+    check_output(m, io, bucket, &iface, fail)
+}
+
+/// The inputs a bucket's artifact must declare, with their shapes where
+/// they are fixed.
+fn expected_inputs<'a>(m: &ClassifierManifest, io: &'a Io, bucket: usize) -> Vec<(&'a String, Option<Vec<usize>>)> {
+    let per_bucket = m.artifact.contains("{seq}");
+    let seq = per_bucket.then(|| vec![1, bucket]);
+    let mut expect = vec![(&io.input_ids, seq.clone()), (&io.attention_mask, seq.clone())];
+    for per_token in [&io.token_type_ids, &io.seg, &io.position_ids].into_iter().flatten() {
+        expect.push((per_token, seq.clone()));
+    }
+    if let Some(marker) = &io.marker_pos {
+        expect.push((marker, Some(vec![1, m.max_labels()])));
+    }
+    for one in [&io.qtype, &io.decide_pos].into_iter().flatten() {
+        expect.push((one, Some(vec![1])));
+    }
+    expect
+}
+
+/// The output the artifact (a chain's last chunk) must produce.
+fn check_output(
+    m: &ClassifierManifest,
+    io: &Io,
+    bucket: usize,
+    iface: &sidekick_coreml::ModelInterface,
+    fail: impl Fn(String) -> Result<()>,
+) -> Result<()> {
     let labels = m.max_labels();
     match iface.outputs.get(&io.output) {
         None => fail(format!("no multi-array output `{}`", io.output)),
@@ -118,6 +136,72 @@ fn check_interface(
         )),
         Some(_) => Ok(()),
     }
+}
+
+/// Check a chunked bucket's programs (D37), named relative to the model
+/// directory: together they take every input the manifest names (each at
+/// its shape), the first takes `input_ids` and no `hidden_in`, every later
+/// one takes `hidden_in`, which the one before outputs as `hidden_out` at
+/// the same [1, bucket, H] shape, no chunk takes an input the manifest
+/// doesn't name, and the last produces the manifest's output.
+fn check_chunks(m: &ClassifierManifest, io: &Io, bucket: usize, names: &[String], paths: &[std::path::PathBuf]) -> Result<()> {
+    use sidekick_coreml::{HIDDEN_IN, HIDDEN_OUT};
+    let fail_in = |name: &str, message: String| Err(Error::Inference(format!("model `{}`, {name}: {message}", m.id)));
+    let mut ifaces = Vec::with_capacity(paths.len());
+    for (name, path) in names.iter().zip(paths) {
+        let iface = match sidekick_coreml::interface(path) {
+            Ok(iface) => iface,
+            Err(e) => return fail_in(name, format!("can't read the artifact: {e}")),
+        };
+        if let ShapeVerdict::Refuse(reason) = sidekick_coreml::load_verdict(&iface.constraints) {
+            return fail_in(name, reason);
+        }
+        ifaces.push(iface);
+    }
+    let expect = expected_inputs(m, io, bucket);
+    let named: Vec<&String> = expect.iter().map(|(n, _)| *n).collect();
+    for (i, (name, iface)) in names.iter().zip(&ifaces).enumerate() {
+        if let Some(extra) = iface.inputs.keys().find(|k| *k != HIDDEN_IN && !named.contains(k)) {
+            return fail_in(name, format!("takes input `{extra}`, which the manifest's [classify.io] doesn't name"));
+        }
+        for (input, shape) in &expect {
+            match (iface.inputs.get(*input), shape) {
+                (Some(got), Some(shape)) if got != shape => {
+                    return fail_in(name, format!("input `{input}` is {got:?}, expected {shape:?}"))
+                }
+                _ => {}
+            }
+        }
+        let takes_hidden = iface.inputs.get(HIDDEN_IN);
+        if i == 0 {
+            if takes_hidden.is_some() {
+                return fail_in(name, format!("the first chunk takes `{HIDDEN_IN}`; nothing comes before it"));
+            }
+            if !iface.inputs.contains_key(&io.input_ids) {
+                return fail_in(name, format!("the first chunk doesn't take `{}`", io.input_ids));
+            }
+        } else {
+            let produced = ifaces[i - 1].outputs.get(HIDDEN_OUT);
+            match (produced, takes_hidden) {
+                (_, None) => return fail_in(name, format!("a chunk after the first must take `{HIDDEN_IN}`")),
+                (None, _) => return fail_in(&names[i - 1], format!("a chunk before the last must output `{HIDDEN_OUT}`")),
+                (Some(out), Some(inp)) if out != inp || out.len() != 3 || out[..2] != [1, bucket] => {
+                    return fail_in(name, format!(
+                        "takes `{HIDDEN_IN}` {inp:?}, and the chunk before outputs `{HIDDEN_OUT}` {out:?}; both must \
+                         be the same [1, {bucket}, hidden]"
+                    ))
+                }
+                _ => {}
+            }
+        }
+    }
+    for (input, _) in &expect {
+        if !ifaces.iter().any(|f| f.inputs.contains_key(*input)) {
+            return fail_in(&names[0], format!("no chunk takes the int32 multi-array input `{input}`"));
+        }
+    }
+    let last = names.last().expect("a chain has a program");
+    check_output(m, io, bucket, ifaces.last().expect("a chain has a program"), |message| fail_in(last, message))
 }
 
 fn io_name(name: &Option<String>, what: &str) -> Result<String> {
@@ -143,7 +227,7 @@ impl CoremlClassifier {
         let marker_pos = if laya || fev || agentjev { Some(io_name(&io.marker_pos, "marker_pos")?) } else { None };
         let output = io_name(&io.output, "output")?;
 
-        let models = BucketModels::new(&model.dir, &m.artifact, units);
+        let models = BucketModels::new(&model.dir, &m.artifact, m.chunks(), units);
         let io = Io {
             input_ids: io_name(&io.input_ids, "input_ids")?,
             attention_mask: io_name(&io.attention_mask, "attention_mask")?,
@@ -168,7 +252,11 @@ impl CoremlClassifier {
                 .map(|&bucket| {
                     let (io, models) = (&io, &models);
                     scope.spawn(move || {
-                        check_interface(m, io, bucket, &models.artifact_name(bucket), &models.path(bucket))
+                        if m.chunks() > 1 || m.chunking.is_some() {
+                            check_chunks(m, io, bucket, &models.artifact_names(bucket), &models.paths(bucket))
+                        } else {
+                            check_interface(m, io, bucket, &models.artifact_name(bucket), &models.path(bucket))
+                        }
                     })
                 })
                 .collect();

@@ -780,7 +780,7 @@ async fn listings_report_live_compute_plans_when_enabled() {
             placements.loaded(&dir.join(format!("model_{bucket}.mlmodelc")), units);
         }
         let until = std::time::Instant::now() + Duration::from_secs(10);
-        while placements.for_model(&dir, "model_{seq}.mlmodelc", &buckets, units).values().any(|p| *p == Placement::Pending) {
+        while placements.for_model(&dir, "model_{seq}.mlmodelc", &buckets, 1, units).values().any(|p| *p == Placement::Pending) {
             assert!(std::time::Instant::now() < until, "plans never read");
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
