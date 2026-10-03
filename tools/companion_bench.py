@@ -98,7 +98,17 @@ def post(url, body, timeout=1800, key=None):
 
 
 def primary_run(args):
-    """One streamed completion: (ttft s, decode tok/s, completion tokens, extra usage)."""
+    """One streamed completion: (ttft s, decode tok/s, completion tokens, extra usage). A
+    refused request (an HTTP error) returns NaNs, with its status and message in extra."""
+    try:
+        return _primary_run(args)
+    except urllib.error.HTTPError as e:
+        message = e.read().decode(errors="replace")[:500]
+        print(f"  run: HTTP {e.code} {message}", flush=True)
+        return float("nan"), float("nan"), 0, {"http_status": e.code, "error": message}
+
+
+def _primary_run(args):
     body = {"model": args.primary_model, "messages": [{"role": "user", "content": PROMPT}],
             "temperature": 0, "max_tokens": args.max_tokens, "stream": True,
             "stream_options": {"include_usage": True}}
@@ -329,17 +339,23 @@ def phase(args, name, units=None, rate=None, primary=True):
               "valid": None not in (before["swap_used_mb"], after["swap_used_mb"])
               and after["swap_used_mb"] - before["swap_used_mb"] < 64}
     if runs:
+        # a run that ended early (no finish reason) or was refused (HTTP error) didn't complete
+        done = [r for r in runs if r[3].get("finish_reason") in ("length", "stop")]
         result.update({"ttft_s": [r[0] for r in runs], "decode_tok_s": [r[1] for r in runs],
                        "completion_tokens": [r[2] for r in runs], "server_extra": [r[3] for r in runs],
-                       "ttft_s_median": statistics.median(r[0] for r in runs),
-                       "decode_tok_s_median": statistics.median(r[1] for r in runs)})
+                       "completed_runs": len(done),
+                       "ttft_s_median": statistics.median(r[0] for r in done) if done else None,
+                       "decode_tok_s_median": statistics.median(r[1] for r in done) if done else None})
     if companion:
         result["companion"] = c
     line = []
-    if runs:
-        d = result["decode_tok_s"]
-        line.append(f"decode {result['decode_tok_s_median']:.2f} tok/s (min {min(d):.2f}, max {max(d):.2f}), "
+    if runs and result["completed_runs"]:
+        d = [r[1] for r in runs if r[3].get("finish_reason") in ("length", "stop")]
+        line.append(f"{result['completed_runs']}/{len(runs)} runs completed; decode "
+                    f"{result['decode_tok_s_median']:.2f} tok/s (min {min(d):.2f}, max {max(d):.2f}), "
                     f"TTFT {result['ttft_s_median']:.2f} s")
+    elif runs:
+        line.append(f"0/{len(runs)} runs completed")
     if companion:
         fmt = lambda v, spec: "-" if v is None else format(v, spec)  # noqa: E731
         line.append(f"companion {c['ok']}/{c['requests']} ok, {fmt(c['rate'], '.2f')}/s on {c['served_on']}, "
@@ -396,6 +412,7 @@ def main():
     ap.add_argument("--port", type=int, default=8791)
     ap.add_argument("--cooldown", type=float, default=30.0, help="seconds idle before each phase")
     ap.add_argument("--skip-companion-alone", action="store_true", help="skip the companion-alone phases")
+    ap.add_argument("--skip-alone", action="store_true", help="skip the first primary-alone phase")
     ap.add_argument("--companion-seconds", type=float, default=60.0,
                     help="length of the companion-alone phases")
     ap.add_argument("--out", type=Path, default=Path("companion_report.json"))
@@ -422,8 +439,9 @@ def main():
             args.out.write_text(json.dumps({"partial": True, "phases": phases}, indent=1) + "\n")
 
         save()
-        phases.append(phase(args, "alone"))
-        save()
+        if not args.skip_alone:
+            phases.append(phase(args, "alone"))
+            save()
         for rate in rates:
             phases.append(phase(args, f"gpu@{rate:g}", "cpu_and_gpu", rate))
             save()
