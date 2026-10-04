@@ -29,9 +29,11 @@ B. LAST-TOKEN POOLING in-graph, without a data-dependent index:
    server's truncation keeps it (D20).
 C. RoPE and grouped-query attention without shape arithmetic (traceable
    rotate_half and repeat_kv, also where transformers' sdpa path calls them).
-D. PRECISION REWRITE (D20 amendment): the coarse native silu becomes
-   TanhSilu, and attention's small inputs are rescaled by powers of two,
-   undone before the residual add. Calibrated on the texts below, minus any
+D. PRECISION REWRITE (D20 amendment, D39): the coarse native silu becomes
+   StableSilu, and the small inputs of attention's linears and of
+   down_proj are rescaled by powers of two, undone before the residual
+   add. On F2LLM-v2-160M this cuts the ANE's worst 1 - cosine from 2.8e-5
+   (TanhSilu, attention rescales only) to 0.7e-5. Calibrated on the texts below, minus any
    the graded parity corpus holds (the scales are the same either way).
 
 No fp16 range rewrite: QK-norm keeps activations small (max ~420).
@@ -46,6 +48,7 @@ import json
 
 from sidekick_convert import cli, core, recipes, tokenizer
 from sidekick_convert.backbones import qwen3
+from sidekick_convert.techniques import activations
 from sidekick_convert.heads.pool import Pool
 
 PARITY_SENTENCES = [
@@ -92,7 +95,7 @@ def main():
     job = recipes.embedder(
         model_id=model_id, src=args.src, buckets=args.buckets, backbone=backbone, head=Pool("last_token"),
         tok=tok, texts=[full(s, q) for s, q in zip(PARITY_SENTENCES, QUERY_FLAGS)], calibration=calibration,
-        rewrites=[qwen3.precision_rewrite(calibration, tok)], strict_max_seq_len=False,
+        rewrites=[qwen3.precision_rewrite(calibration, tok, silu=activations.StableSilu, mlp_down=True)], strict_max_seq_len=False,
         truncate=True,   # the long text is 520 tokens: gate the server's truncation, which keeps the EOS
         timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)

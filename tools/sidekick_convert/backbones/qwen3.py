@@ -15,14 +15,18 @@ What conversion needs:
 - NO RANGE REWRITE. QK-norm keeps activations small (max ~420 on
   F2LLM-v2-160M).
 - PRECISION REWRITE, precision_rewrite() (D20 amendment):
-  - the coarse native silu becomes TanhSilu (2 * silu), with up_proj taking
-    the 1/2, so the MLP adds no op;
+  - the coarse native silu becomes a silu built from accurate ANE ops (2 *
+    silu), with up_proj taking the 1/2, so the MLP adds no op: TanhSilu by
+    default, StableSilu (no fp16 cancellation for negative inputs, D39) in
+    the F2LLM and agent-jev converters;
   - attention's inputs are small in the early layers (q/k/v at rms
     0.06-0.18, o_proj at 0.02-0.35), under the ANE linear's small-input
     floor: power-of-two scales on the input norm's weight (q/k RMSNorm eps
     x s^2, since q and k are re-normalized per head) and on v_proj bring both
-    to rms ~1, and Descale undoes o_proj's before the residual add. The
-    MLP's inputs needed no rescale.
+    to rms ~1, and Descale undoes o_proj's before the residual add;
+  - optionally (mlp_down) down_proj's input too, via up_proj's rows: once
+    the silu is StableSilu, it is the next-largest ANE error on F2LLM
+    (scales up to 16 in the early layers) and on agent-jev.
 """
 
 import types

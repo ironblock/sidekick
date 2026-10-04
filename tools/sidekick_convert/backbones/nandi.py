@@ -21,8 +21,10 @@ What conversion needs:
   calibrated power-of-two input pre-scale with eps compensated as eps * s^2,
   exact in fp32 because RMSNorm is scale-invariant (gemma3's SafeRMSNorm
   technique, without its eps floor).
-- tanh_silu(): Core ML's native silu is coarse on the ANE (D20 amendment);
-  TanhSilu computes 2 * silu, and up_proj takes the 1/2.
+- stable_silu(): Core ML's native silu is coarse on the ANE (D20 amendment).
+  StableSilu computes 2 * silu without cancellation for either sign (D39),
+  and up_proj takes the 1/2. It halves Lumma-fev's worst ANE errors against
+  TanhSilu, whose 1 + tanh(x / 2) cancels in fp16 for negative x.
 """
 
 import json
@@ -213,12 +215,13 @@ def fp16_norms(model, run, report=print):
     return stats
 
 
-def tanh_silu(model):
-    """Every MLP's silu becomes TanhSilu (2 * silu), with up_proj taking 1/2."""
+def stable_silu(model, silu=activations.StableSilu):
+    """Every MLP's silu becomes `silu` (an activations class computing
+    2 * silu: StableSilu by default), with up_proj taking 1/2."""
     for layer in model.layers:
         with torch.no_grad():
-            layer.up_proj.weight.mul_(1.0 / activations.TanhSilu.GAIN)
-        layer.act = activations.TanhSilu()
+            layer.up_proj.weight.mul_(1.0 / silu.GAIN)
+        layer.act = silu()
 
 
 def fold_embedding(model):
