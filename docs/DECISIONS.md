@@ -2084,6 +2084,44 @@ in two processes; 152 ms per case against 128), the GPU keeps its A
 native silu can be the dominant error. Whether StableSilu also lifts the
 other SiLU models (Lumma-fev, LFM2.5) is measured separately.
 
+**Amendment: the other SiLU models.** The three other SiLU models already
+used TanhSilu. Each was reconverted with StableSilu and graded by the full
+parity suite against its fp32 reference (M1 Max, macOS 27.0, each ANE run
+alone on the machine):
+- **Lumma-fev-0.1b** (Nandi decoder, no QK-norm, no rescales before). On
+  its 12 worst ANE cases at 512 tokens, StableSilu alone halved the mean
+  |Δp| (6.2e-3 → 3.0e-3). Adding power-of-two rescales of q/k/v, o_proj
+  and down_proj changed nothing measurable: the calibrated scales came
+  out at 1 for q/k/v and at most 2 for o_proj and 4 for down_proj, since
+  this model's linear inputs aren't small. Over all 2,630 cases the ANE stays B, but p99 moves from
+  1.57× to 1.43× the ceiling and the worst |Δp| from 0.010 to 0.0057,
+  under the ceiling's own worst (0.0059). The GPU stays A (0.92×), the
+  CPU D (5.7×); buckets stay exact on the ANE. The ANE's median rises
+  from 33 to 37 ms per case.
+- **F2LLM-v2-160M** (Qwen3, attention already rescaled). Its ANE grade
+  was A. StableSilu cut the ANE's worst 1 − cosine from 2.8e-5 to
+  1.8e-5; the down_proj rescale (scales up to 16 in the early layers),
+  which TanhSilu's error had masked, cut it to 0.7e-5, with similarity
+  drift from 0.0019 to 0.0008. The GPU is unchanged (worst 1e-6), the
+  CPU stays B. The ANE's median rises from 4.6 to 5.3 ms per input.
+- **LFM2.5-Embedding-350M** (hybrid conv/attention; its MLP input was
+  already rescaled to rms ~1). No measurable change: worst 1 − cosine
+  1.2e-5 → 1.4e-5, drift 0.0033 → 0.0035, mean 6e-6 → 5e-6. Its rescale
+  keeps the silu's inputs where TanhSilu's 1 + tanh(x/2) doesn't cancel
+  in fp16 (that needs large negative inputs), so the form doesn't matter.
+
+So the claim holds with a bound: StableSilu helps where a SiLU sees large
+negative inputs in fp16, and is neutral where an earlier rescale keeps
+them small. Rescales help only where linear inputs sit under the ANE
+linear's floor (agent-jev, F2LLM's down_proj), and do nothing elsewhere
+(Lumma-fev). The explicit exp, abs and divide cost 12–15% of ANE time.
+
+Lumma-fev's converter (`nandi.stable_silu`) and F2LLM's
+(`qwen3.precision_rewrite(silu=StableSilu, mlp_down=True)`) adopt it by
+default; LFM2.5's keeps TanhSilu. Every factor is a power of two, so each
+fp32 gate stays exact. Artifacts converted earlier keep working; a
+reconversion gives the smaller ANE error.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
