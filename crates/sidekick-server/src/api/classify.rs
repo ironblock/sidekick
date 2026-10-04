@@ -9,6 +9,7 @@
 //! (which needs the tokenizer, loaded with the model) before any input runs.
 
 use super::wire::*;
+use super::deadline::{Deadline, Work};
 use super::{model_task, pooling, wrong_route, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
@@ -50,18 +51,15 @@ pub async fn classify(
         ClassifyTask::ZeroShotClassification => params.candidate_labels.len(),
     };
 
-    // One deadline for load + prediction, as for embeddings: it abandons
-    // the wait, not the work (a timed-out load still becomes resident).
-    let deadline = tokio::time::Instant::now() + state.request_timeout;
-    let timeout_err = || Error::Timeout { secs: state.request_timeout.as_secs() };
-    let classifier = tokio::time::timeout_at(deadline, state.classifiers.get(&req.model))
-        .await
-        .map_err(|_| timeout_err())??;
+    // Loading isn't counted against the request timeout (api::deadline).
+    let mut deadline = Deadline::new(Work::Classification, &req.model, state.request_timeout, state.load_timeout);
+    let classifier = deadline.model(state.classifiers.get_tracked(&req.model)).await?;
     let labels: Vec<String> = match manifest.task {
         ClassifyTask::TextClassification | ClassifyTask::TextRanking => classifier.labels().to_vec(),
         ClassifyTask::ZeroShotClassification => params.candidate_labels.clone(),
     };
 
+    let (loaded_tx, loaded) = tokio::sync::oneshot::channel();
     let task = {
         let classifier = classifier.clone();
         let batch = inputs.len() > 1;
@@ -77,16 +75,15 @@ pub async fn classify(
                     })
                 })
                 .collect::<Result<Vec<_>, Error>>()?;
+            let buckets: Vec<usize> = prepared.iter().map(|p| p.bucket).collect();
+            let _ = loaded_tx.send(classifier.load_buckets(&buckets)?);
             prepared
                 .iter()
                 .map(|p| Ok((p.ids.len(), p.bucket, classifier.run(p)?)))
                 .collect::<Result<Vec<_>, Error>>()
         })
     };
-    let results = tokio::time::timeout_at(deadline, task)
-        .await
-        .map_err(|_| timeout_err())?
-        .map_err(|e| ApiError::from(Error::Other(format!("classify task: {e}"))))??;
+    let results = deadline.finish(loaded, task, "classify").await?;
 
     let mut prompt_tokens = 0;
     let mut data = Vec::with_capacity(results.len());

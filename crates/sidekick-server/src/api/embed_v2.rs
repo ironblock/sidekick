@@ -2,6 +2,7 @@
 //! as vLLM serves it (docs/design/rerank.md, D29).
 
 use super::wire::*;
+use super::deadline::{signal, Deadline, Work};
 use super::{model_task, pooling, wrong_route, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
@@ -9,7 +10,7 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::Engine as _;
-use sidekick_core::{truncate_normalized, EmbedLimits, EmbedPurpose, Error, Truncate};
+use sidekick_core::{truncate_normalized, EmbedLimits, EmbedPurpose, Truncate};
 
 /// Texts per request, as `/v1/embeddings` caps them.
 const MAX_TEXTS: usize = 256;
@@ -91,11 +92,9 @@ pub async fn embed_v2(
         None => uuid::Uuid::new_v4().simple().to_string(),
     };
 
-    let deadline = tokio::time::Instant::now() + state.request_timeout;
-    let timeout_err = || Error::Timeout { secs: state.request_timeout.as_secs() };
-    let embedder = tokio::time::timeout_at(deadline, state.embedders.get(&req.model))
-        .await
-        .map_err(|_| timeout_err())??;
+    // Loading isn't counted against the request timeout (api::deadline).
+    let mut deadline = Deadline::new(Work::Embedding, &req.model, state.request_timeout, state.load_timeout);
+    let embedder = deadline.model(state.embedders.get_tracked(&req.model)).await?;
 
     // Matryoshka dimensions, as `dimensions` on /v1/embeddings.
     let target = match req.output_dimension {
@@ -124,14 +123,13 @@ pub async fn embed_v2(
     let limits = EmbedLimits { truncate, max_tokens };
     let (vectors, buckets) = {
         let texts = texts.clone();
+        let (loaded_tx, loaded) = tokio::sync::oneshot::channel();
         let task = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-            embedder.embed_bucketed(&refs, purpose, limits)
+            let mut tx = Some(loaded_tx);
+            embedder.embed_staged(&refs, purpose, limits, &mut |b| signal(&mut tx, b))
         });
-        tokio::time::timeout_at(deadline, task)
-            .await
-            .map_err(|_| timeout_err())?
-            .map_err(|e| ApiError::from(Error::Other(format!("embed task: {e}"))))??
+        deadline.finish(loaded, task, "embed").await?
     };
     let vectors: Vec<Vec<f32>> = vectors
         .into_iter()
