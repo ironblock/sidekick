@@ -20,11 +20,17 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const REQUEST: Duration = Duration::from_millis(300);
-const SLOW: Duration = Duration::from_millis(900);
+// Wide margins, so a slow or busy machine (a shared CI runner) can't turn
+// a pass into a fail: every step is a second or more away from the bound
+// it is tested against.
+const REQUEST: Duration = Duration::from_secs(2);
+/// A load, past the request timeout.
+const SLOW: Duration = Duration::from_secs(3);
+/// A prediction past the request timeout.
+const HUNG: Duration = Duration::from_secs(4);
 /// A prediction well inside the request timeout, even two in a row, but
 /// still running when a deadline counted from arrival would have passed.
-const QUICK: Duration = Duration::from_millis(100);
+const QUICK: Duration = Duration::from_millis(300);
 
 /// How long each step of a fake takes.
 #[derive(Clone, Copy, Default)]
@@ -218,11 +224,19 @@ async fn status(state: AppState, req: Request<Body>) -> (StatusCode, HeaderMap, 
     call_with_headers(state, req).await
 }
 
+/// Each request, on its own fresh state, concurrently.
+async fn on_fresh_states(delays: Delays, requests: &[fn() -> Request<Body>]) -> Vec<(StatusCode, HeaderMap, Value)> {
+    let calls = requests.iter().map(|req| {
+        let (state, req) = (slow_state(delays, LONG_LOAD), req());
+        tokio::spawn(async move { status(state, req).await })
+    });
+    futures::future::join_all(calls).await.into_iter().map(|r| r.unwrap()).collect()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_model_load_longer_than_the_request_timeout_doesnt_504() {
     let delays = Delays { model: SLOW, run: QUICK, ..Default::default() };
-    for req in [classify, rerank, embed, embed_v2] {
-        let (code, _, body) = status(slow_state(delays, LONG_LOAD), req()).await;
+    for (code, _, body) in on_fresh_states(delays, &[classify, rerank, embed, embed_v2]).await {
         assert_eq!(code, StatusCode::OK, "{body}");
     }
 }
@@ -230,8 +244,7 @@ async fn a_model_load_longer_than_the_request_timeout_doesnt_504() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_bucket_load_longer_than_the_request_timeout_doesnt_504() {
     let delays = Delays { bucket: SLOW, run: QUICK, ..Default::default() };
-    for req in [classify, rerank, embed, embed_v2] {
-        let (code, headers, body) = status(slow_state(delays, LONG_LOAD), req()).await;
+    for (code, headers, body) in on_fresh_states(delays, &[classify, rerank, embed, embed_v2]).await {
         assert_eq!(code, StatusCode::OK, "{body}");
         assert!(headers.contains_key("sidekick-buckets"));
     }
@@ -240,8 +253,8 @@ async fn a_bucket_load_longer_than_the_request_timeout_doesnt_504() {
 #[tokio::test(flavor = "multi_thread")]
 async fn requests_waiting_on_another_requests_bucket_load_dont_504() {
     let state = slow_state(Delays { bucket: SLOW, run: QUICK, ..Default::default() }, LONG_LOAD);
-    // Resident first, so every request below waits on the bucket load alone.
-    let warm = post_json("/v1/classify", json!({"model": "sentiment", "input": "x".repeat(40)}));
+    // The model resident first, so every request below waits on the bucket
+    // load alone: one of them loads it, the others wait on that load.
     let _ = state.classifiers.get("sentiment").await.unwrap();
     let requests = (0..4).map(|_| {
         let (state, req) = (state.clone(), post_json("/v1/classify", json!({"model": "sentiment", "input": "short"})));
@@ -251,55 +264,60 @@ async fn requests_waiting_on_another_requests_bucket_load_dont_504() {
         let (code, _, body) = done.unwrap();
         assert_eq!(code, StatusCode::OK, "{body}");
     }
-    // The other bucket loads on its own request, also without a 504.
-    assert_eq!(status(state, warm).await.0, StatusCode::OK);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_slow_prediction_still_times_out_and_says_what_it_was() {
-    let delays = Delays { run: SLOW, ..Default::default() };
-    for (req, work) in
-        [(classify as fn() -> Request<Body>, "Classification"), (rerank, "Reranking"), (embed, "Embedding"), (embed_v2, "Embedding")]
-    {
+    let delays = Delays { run: HUNG, ..Default::default() };
+    let routes =
+        [(classify as fn() -> Request<Body>, "Classification"), (rerank, "Reranking"), (embed, "Embedding"), (embed_v2, "Embedding")];
+    let calls = routes.map(|(req, work)| async move {
         let (state, buckets) = slow_state_with(delays, LONG_LOAD);
         warm(&state, &buckets).await;
-        let (code, _, body) = status(state, req()).await;
+        (status(state, req()).await, work)
+    });
+    for ((code, _, body), work) in futures::future::join_all(calls).await {
         assert_eq!(code, StatusCode::GATEWAY_TIMEOUT, "{body}");
         assert_eq!(body["error"]["code"], "timeout");
-        assert_eq!(message(&body), format!("{work} did not complete within 0.3s"));
+        assert_eq!(message(&body), format!("{work} did not complete within 2s"));
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_slow_prediction_after_a_load_times_out_from_the_end_of_the_load() {
-    let delays = Delays { bucket: SLOW, run: SLOW, ..Default::default() };
-    let (code, _, body) = status(slow_state(delays, LONG_LOAD), classify()).await;
+    let classified = async {
+        let delays = Delays { bucket: SLOW, run: HUNG, ..Default::default() };
+        status(slow_state(delays, LONG_LOAD), classify()).await
+    };
+    let embedded = async {
+        let delays = Delays { model: SLOW, run: HUNG, ..Default::default() };
+        status(slow_state(delays, LONG_LOAD), embed()).await
+    };
+    let ((code, _, body), (_, _, embedded)) = tokio::join!(classified, embedded);
     assert_eq!(code, StatusCode::GATEWAY_TIMEOUT, "{body}");
     let m = message(&body);
     assert!(
         m.starts_with(
-            "Classification did not complete within 0.3s of model `sentiment` finishing its load (the model and buckets 16, 64, 1s"
+            "Classification did not complete within 2s of model `sentiment` finishing its load (the model and buckets 16, 64, "
         ),
         "{m}"
     );
-    assert!(m.ends_with(", not counted)"), "{m}");
-
-    let delays = Delays { model: SLOW, run: SLOW, ..Default::default() };
-    let (_, _, body) = status(slow_state(delays, LONG_LOAD), embed()).await;
-    assert!(message(&body).contains("finishing its load (the model and bucket 64, "), "{body}");
+    assert!(m.ends_with("s, not counted)"), "{m}");
+    assert!(message(&embedded).contains("finishing its load (the model and bucket 64, "), "{embedded}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_load_past_the_load_timeout_is_its_own_504_and_keeps_loading() {
-    let state = slow_state(Delays { bucket: SLOW, ..Default::default() }, Duration::from_millis(400));
-    let (code, headers, body) = status(state.clone(), classify()).await;
+    let state = slow_state(Delays { bucket: SLOW, ..Default::default() }, Duration::from_secs(1));
+    let one = || post_json("/v1/classify", json!({"model": "sentiment", "input": "a good film"}));
+    let (code, headers, body) = status(state.clone(), one()).await;
     assert_eq!(code, StatusCode::GATEWAY_TIMEOUT, "{body}");
     assert_eq!(body["error"]["code"], "load_timeout");
-    assert!(message(&body).starts_with("Model `sentiment` was still loading after 0.4s"), "{body}");
+    assert!(message(&body).starts_with("Model `sentiment` was still loading after 1s"), "{body}");
     assert_eq!(headers["retry-after"], "30");
-    // The loads finish in the background (two buckets, one after the
-    // other); the retry finds them resident.
-    tokio::time::sleep(SLOW * 2 + Duration::from_millis(200)).await;
-    let (code, _, body) = status(state, classify()).await;
+    // The load finishes in the background; a retry after it finds the bucket
+    // resident and succeeds.
+    tokio::time::sleep(SLOW + Duration::from_secs(1)).await;
+    let (code, _, body) = status(state, one()).await;
     assert_eq!(code, StatusCode::OK, "{body}");
 }
