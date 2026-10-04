@@ -44,7 +44,11 @@ B. fp16 RANGE: the residual stream reaches ~870 and every RMSNorm squares
    input scale with eps compensated (backbones.nandi.fp16_norms). No linear
    output comes near the ANE's 2^15 (the largest is ~200), so there is no
    residual rewrite.
-C. SILU as TanhSilu (2 * silu), up_proj taking the 1/2 (D20 amendment).
+C. SILU as StableSilu (2 * silu from exp, without cancellation for either
+   sign), up_proj taking the 1/2 (D20 amendment, D39). The earlier TanhSilu
+   cancels in fp16 for negative inputs: StableSilu halves the worst ANE
+   errors. Power-of-two input rescales add nothing measurable here (the
+   linears' inputs are not small), so there are none.
 D. BUCKET-INVARIANT SOFTMAX: every attention computes its softmax as
    exp(w - rowmax) and one matmul against [V | 1] (laya's constraint F,
    docs/DECISIONS.md D28 amendment).
@@ -71,11 +75,12 @@ model's ideal-fp16 ceiling.
 Measured (M1 Max, macOS 27.0) by the parity suite on the 2,630-case corpus
 (fixtures/classify/lumma-fev-0.1b.corpus.toml), against the checkpoint's
 fp32 forward and its ideal-fp16 ceiling (|dp| max 0.0059, p99 0.0028):
-- ANE: grade B, p99 1.57x the ceiling's; worst |dp| 0.010; no flips;
-  bucket invariance exact; 3,698 of 3,715 operations on the ANE at 2,048;
-  13 / 33 / 98 / 269 / 1,243 ms at buckets 128 to 2,048 (a loaded machine).
-- GPU: grade A, p99 0.95x the ceiling's; worst |dp| 0.0066; no flips.
-- CPU_ONLY: D on accuracy (p99 5.8x), with one flip. Inputs over 512
+- ANE: grade B, p99 1.43x the ceiling's; worst |dp| 0.0057; no flips;
+  bucket invariance exact; 3,858 of 3,875 operations on the ANE at 2,048;
+  17 / 36 / 115 / 305 / 1,308 ms at buckets 128 to 2,048. With TanhSilu
+  (constraint C's earlier form): p99 1.57x, worst 0.010, about 12% faster.
+- GPU: grade A, p99 0.92x the ceiling's; worst |dp| 0.0043; no flips.
+- CPU_ONLY: D on accuracy (p99 5.7x), with one flip. Inputs over 512
   tokens move by up to 0.021 between the 1,024 and 2,048 buckets: Core
   ML's fp16 CPU matmul sums a contraction over 1,024 in a different order
   (tools/repro_cpu_matmul_accumulation.py), and slicing it costs more
@@ -220,7 +225,7 @@ def main():
             model(torch.tensor([it["ids"]]), torch.ones(1, n, dtype=torch.long), cos, sin, n)
 
     nandi.fp16_norms(model, calibrate)              # constraint B
-    nandi.tanh_silu(model)                          # constraint C
+    nandi.stable_silu(model)                        # constraint C
     nandi.fold_embedding(model)                     # constraint G
     model.softmax = "matmul"                        # constraint D
 

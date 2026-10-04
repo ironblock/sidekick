@@ -152,7 +152,13 @@ Notes per model:
   the early layers fell below the ANE `linear`'s precision floor, and they
   mattered only for long texts. The converter builds SiLU from tanh and
   rescales attention's inputs. The ANE now grades A (0.99997, drift
-  0.002, no rank flips) at unchanged latency. The CPU path stays B
+  0.002, no rank flips) at unchanged latency. A second step (D39) builds
+  SiLU from exp instead (StableSilu, which doesn't cancel in fp16 for
+  negative inputs) and rescales down_proj's input too: the ANE's worst
+  case moves to 0.999993 and its drift to 0.0008, a quarter of the
+  distance from fp32, for about 0.7 ms more per input (4.6 → 5.3 ms).
+  Artifacts converted before it keep working; reconvert for the closer
+  ANE output. The CPU path stays B
   (0.99988), which is its own error. The converter had also stopped
   running under torch 2.13: its repeat_kv traced to an Int op coremltools
   can't convert, now replaced.
@@ -266,7 +272,7 @@ the median per input, ANE (CPU).
 |---|---|---|---|---|---|---|
 | bge-small-en-v1.5 | A 0.99993 | A 0.999999 | **A** 0.99997 (empty input) | 0.002 (+0.001) | 0 | 1.9 (7.0) |
 | gte-modernbert-base | B 0.99951 | A 0.99999 | **A** 0.99992 (a delimiter flood) | 0.003 (0.000) | 0 | 6.4 (18.3) |
-| F2LLM-v2-160M | B 0.99988 | A 0.999999 | **A** 0.99997 (a run of digits) | 0.002 (0.000) | 0 | 4.6 (13.0) |
+| F2LLM-v2-160M | B 0.99986 | A 0.999999 | **A** 0.99999 (a run of digits) | 0.001 (0.000) | 0 | 5.3 (13.0) |
 | embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.1 (20.3) |
 | LFM2.5-Embedding-350M | B 0.99986 | A 0.999999 | **A** 0.99999 (a delimiter flood) | 0.003 (0.000) | 0 | 14.9 (33.8) |
 | all-MiniLM-L6-v2 | A 0.99992 | A 0.999998 | **A** 0.99992 (empty input) | 0.003 (+0.000) | 0 | not measured |
@@ -287,7 +293,9 @@ the median per input, ANE (CPU).
 - LFM2.5 graded D before its precision rewrite (D19 amendment): 0.954 on a
   URL, drift 0.187 with scores biased −0.010 low, and 1,399 rank flips.
 - F2LLM graded B before its precision rewrite (D20 amendment): 0.99966 on
-  a run of digits, drift 0.006.
+  a run of digits, drift 0.006; with the rewrite's first form (TanhSilu,
+  attention rescales only), A at 0.99997, drift 0.002. The table's CPU
+  milliseconds predate StableSilu.
 - gte-modernbert graded B before its range rewrite (D25 amendment): 0.99940
   on a Markdown list, drift 0.010. The rewrite costs its GPU path a little
   on one repeated-subword stress case (0.99998 → 0.99995).
@@ -438,7 +446,7 @@ path.
 | [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) as `laya-en` | zero-shot, laya's format | [convert_laya.py](../tools/convert_laya.py) | D 0.16 (13 flips; 6.1× ceiling) | **A** 0.037 (0.93× ceiling) | **C** 0.043 (1 flip caps it; 1.93× ceiling, B level) | 1701/1719 | 40 |
 | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) as `laya-typed-decisions` | zero-shot, laya's format, 1,024 tokens | [convert_laya.py](../tools/convert_laya.py) `--model laya-typed-decisions` | D 0.099 (1 flip; 5.4× ceiling) | **A** 0.034 (1.02× ceiling) | **C** 0.025 (2.14× ceiling) | 2061/2079 | 40 |
 | [fastino/GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) as `gliner2.5-decide` (served on the GPU) | zero-shot, gliner2's format | [convert_gliner2.py](../tools/convert_gliner2.py) | D 0.024 | **A** 3.7e-3 | C 0.019 (512 bucket only) | 947/956 | 1,280 at 512 |
-| [FrontiersMind/Lumma-fev-0.1b](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b) as `lumma-fev-0.1b` | zero-shot, fev format, 2,048 tokens | [convert_fev.py](../tools/convert_fev.py) | D 0.033 (5.8× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.021) | **A** 6.6e-3 (0.95× ceiling) | **B** 0.010 (1.57× ceiling) | 3698/3715 | 33 |
+| [FrontiersMind/Lumma-fev-0.1b](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b) as `lumma-fev-0.1b` | zero-shot, fev format, 2,048 tokens | [convert_fev.py](../tools/convert_fev.py) | D 0.030 (5.7× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.021) | **A** 4.3e-3 (0.92× ceiling) | **B** 5.7e-3 (1.43× ceiling) | 3858/3875 | 37 |
 | [aimeigaoshou/agent-jev](https://huggingface.co/aimeigaoshou/agent-jev) as `agent-jev` (served on the GPU) | zero-shot, agentjev's format, 2,048 tokens | [convert_agentjev.py](../tools/convert_agentjev.py) | D 0.021 (5.9× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.009) | **A** 3.7e-3 (0.84× ceiling) | B 5.6e-3 (1.44× ceiling; no flips), chunked (D37), an operator's option (D38) | 2,710–3,742 (of 2,767–3,775) | 152 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
@@ -613,8 +621,12 @@ plus fev's adversarial cases (delimiter strings in every field, an empty
 state, no instructions, 32 long options) and 15 long cases up to the
 2,048-token window, two of them landing at 2,040 and 2,048 tokens.
 - **Grades,** against the ideal-fp16 ceiling (|Δp| at most 0.0059, p99
-  0.0028; no decision flips): GPU A (p99 0.95× the ceiling, worst |Δp|
-  0.0066), ANE B (p99 1.57×, worst 0.010). Neither changes a decision.
+  0.0028; no decision flips): GPU A (p99 0.92× the ceiling, worst |Δp|
+  0.0043), ANE B (p99 1.43×, worst 0.0057, under the ceiling's own
+  worst). Neither changes a decision. The ANE's silu is StableSilu (D39):
+  with TanhSilu, artifacts converted before it graded B at 1.57× with a
+  worst |Δp| of 0.010. Those keep working; reconvert for the smaller ANE
+  error.
   Long inputs are as accurate as short ones on both (worst |Δp| 0.0031 on
   the ANE over the long cases).
 - **Bucket invariance** is exact on the ANE and 0.0034 on the GPU, inside
@@ -628,14 +640,14 @@ state, no instructions, 32 long options) and 15 long cases up to the
   This is the documented CPU limit over 1,024 tokens (D33): a model served
   on the CPU is capped at 1,024 tokens by default, and the suite reports
   the CPU's bucket check above 1,024 as that limit rather than failing it.
-- **CPU:** D on accuracy (p99 5.8× the ceiling, worst |Δp| 0.033, one flip
-  at a 0.054 margin). As with laya, Core ML's fp16 CPU backend is the
+- **CPU:** D on accuracy (p99 5.7× the ceiling, worst |Δp| 0.030, one flip
+  at a 0.061 margin). As with laya, Core ML's fp16 CPU backend is the
   least accurate path.
-- **Latency** grows with the bucket: 13, 33, 98, 269 and 1,243 ms on the
-  ANE at 128, 256, 512, 1,024 and 2,048 tokens, timed by the converter on
-  a loaded machine. Most fast-decisions inputs land at 256. The ANE and the
-  GPU take the same 33 ms median on this corpus, so it is served on the
-  ANE, the default.
+- **Latency** grows with the bucket: 17, 36, 115, 305 and 1,308 ms on the
+  ANE at 128, 256, 512, 1,024 and 2,048 tokens, timed by the converter.
+  Most fast-decisions inputs land at 256. The ANE takes a 37 ms median on
+  this corpus (33 ms with TanhSilu: StableSilu's exp, abs and divide cost
+  about 12%), the GPU 31 ms; it is served on the ANE, the default.
 - **Size:** about 455 MB per bucket. The checkpoint's factorized embedding
   (a 131k × 196 table and a projection) is folded into one 131k × 832
   table: Core ML keeps the first linear after the CPU gather on the CPU
