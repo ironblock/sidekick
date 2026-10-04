@@ -125,13 +125,19 @@ impl<T: ?Sized + Send + Sync + 'static> ModelPool<T> {
     }
 
     pub async fn get(&self, id: &str) -> Result<Arc<T>> {
+        Ok(self.get_tracked(id).await?.0)
+    }
+
+    /// [`get`](Self::get), and whether it loaded the model (it wasn't
+    /// resident), so a request can leave the load out of its deadline.
+    pub async fn get_tracked(&self, id: &str) -> Result<(Arc<T>, bool)> {
         let ttl = self.idle_ttl;
         {
             let mut entries = self.entries.lock().await;
             entries.retain(|_, e| e.keep(ttl));
             if let Some(entry) = entries.get_mut(id) {
                 entry.last_used = Instant::now();
-                return Ok(entry.model.clone());
+                return Ok((entry.model.clone(), false));
             }
         }
 
@@ -160,9 +166,10 @@ impl<T: ?Sized + Send + Sync + 'static> ModelPool<T> {
                 .or_insert_with(|| Entry { model: model.clone(), last_used: Instant::now() });
             entry.last_used = Instant::now();
             tracing::info!(model = %id, "{kind} loaded");
-            Ok(entry.model.clone())
+            Ok::<_, Error>(entry.model.clone())
         });
-        load.await.map_err(|e| Error::Other(format!("load task failed: {e}")))?
+        let model = load.await.map_err(|e| Error::Other(format!("load task failed: {e}")))??;
+        Ok((model, true))
     }
 
     /// Number of currently-resident models (for /health).

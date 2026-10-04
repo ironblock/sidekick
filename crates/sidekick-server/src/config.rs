@@ -27,8 +27,16 @@ pub struct Config {
     /// its last use.
     pub model_idle_ttl_secs: u64,
     /// Hard cap on a single generation call. A hung Foundation Models call
-    /// otherwise hangs its request forever.
+    /// otherwise hangs its request forever. For embeddings, classify and
+    /// rerank requests, it bounds the work after any model or bucket load
+    /// the request waited on: a first load compiles the bucket, which can
+    /// take minutes, and is bounded by `load_timeout_secs` instead.
     pub request_timeout_secs: u64,
+    /// How long an embeddings, classify or rerank request waits on loading
+    /// its model and the buckets it needs. Far longer than any measured
+    /// first load (about 4 minutes for a 2,048-token bucket); a load that
+    /// outlasts it continues in the background, so a retry finds it.
+    pub load_timeout_secs: u64,
     /// Load models served on the ANE even when their compiled weights exceed
     /// Core ML's 1 GiB limit, which Core ML would quietly run off the ANE.
     /// For experimentation; a manifest's `ane_weight_limit = "ignore"` does
@@ -71,6 +79,7 @@ impl Default for Config {
             session_ttl_secs: 300,
             model_idle_ttl_secs: 900,
             request_timeout_secs: 60,
+            load_timeout_secs: 900,
             ignore_ane_weight_cap: false,
             ignore_cpu_seq_cap: false,
             report_compute_plans: false,
@@ -122,6 +131,10 @@ impl Config {
 
     pub fn request_timeout(&self) -> Duration {
         Duration::from_secs(self.request_timeout_secs)
+    }
+
+    pub fn load_timeout(&self) -> Duration {
+        Duration::from_secs(self.load_timeout_secs)
     }
 }
 

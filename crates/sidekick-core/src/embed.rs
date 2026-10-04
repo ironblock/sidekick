@@ -57,6 +57,24 @@ pub trait Embedder: Send + Sync {
         Ok((self.embed_with(texts, purpose, limits)?, None))
     }
 
+    /// [`embed_bucketed`](Self::embed_bucketed), calling `loaded` once the
+    /// inputs are prepared and the buckets they need are loaded, before any
+    /// prediction, with the buckets it waited on a load for (empty when all
+    /// were resident). A bucket's first load compiles it, which can take
+    /// minutes, so the daemon starts a request's deadline there. Backends
+    /// without buckets call it first.
+    #[allow(clippy::type_complexity)]
+    fn embed_staged(
+        &self,
+        texts: &[&str],
+        purpose: EmbedPurpose,
+        limits: EmbedLimits,
+        loaded: &mut dyn FnMut(&[usize]),
+    ) -> Result<(Vec<Vec<f32>>, Option<Vec<usize>>)> {
+        loaded(&[]);
+        self.embed_bucketed(texts, purpose, limits)
+    }
+
     /// Dimensions this model was trained to truncate to (Matryoshka), largest
     /// first, including the native size. Empty means truncation is lossy and
     /// unsupported.

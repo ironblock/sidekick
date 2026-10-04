@@ -164,6 +164,14 @@ or SGLang works unchanged. What a host needs to know beyond that:
   OpenAI shape `{"error": {"message", "type", "code"}}`. A 400 names the
   field it rejected. Sending a classifier to `/v1/embeddings`, or an
   embedder to `/v1/classify`, is a 400 naming the model's task.
+- **Timeouts.** A model's first request after it loads, and the first to
+  reach a larger bucket, waits while Core ML compiles that bucket:
+  seconds, up to minutes for a 2,048-token bucket. That wait doesn't count
+  toward `request_timeout_secs`; the prediction after it does. Give the
+  first request a generous client timeout. A 504 with code `timeout` is a
+  prediction that ran too long; one with code `load_timeout` (and a
+  `Retry-After` header) means the load outlasted `load_timeout_secs` and
+  continues, so retry later.
 - **Provenance.** Record the `sidekick-model` response header
   (`<id>@<revision>`) with any stored label or score, so results from
   different model revisions don't mix silently. The daemon also sends

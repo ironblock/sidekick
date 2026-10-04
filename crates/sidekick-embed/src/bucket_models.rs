@@ -9,7 +9,7 @@ use sidekick_core::Result;
 use sidekick_coreml::{ComputeUnits, CoremlChain};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 /// One bucket's slot. Its own lock serializes loads of that bucket only.
 type Slot = Arc<Mutex<Option<Arc<CoremlChain>>>>;
@@ -74,6 +74,20 @@ impl BucketModels {
     /// locked during the load, so the other buckets keep serving, and a load
     /// that fails leaves the slot empty for the next call to retry.
     pub fn get(&self, bucket: usize) -> Result<Arc<CoremlChain>> {
+        Ok(self.get_tracked(bucket)?.0)
+    }
+
+    /// Load `bucket` unless it's resident, without running it. True when
+    /// this call waited on a load: its own, or another caller's of the same
+    /// bucket. The daemon loads a request's buckets this way before its
+    /// deadline starts, since a first load compiles the bucket and can take
+    /// minutes.
+    pub fn ensure(&self, bucket: usize) -> Result<bool> {
+        Ok(self.get_tracked(bucket)?.1)
+    }
+
+    /// [`get`](Self::get), and whether it waited on a load.
+    fn get_tracked(&self, bucket: usize) -> Result<(Arc<CoremlChain>, bool)> {
         let paths = self.paths(bucket);
         let slot = self
             .slots
@@ -82,15 +96,20 @@ impl BucketModels {
             .entry(paths[0].clone())
             .or_default()
             .clone();
-        let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        // A held slot is a load in progress: waiting on it is waiting on a load.
+        let (mut slot, waited) = match slot.try_lock() {
+            Ok(slot) => (slot, false),
+            Err(TryLockError::Poisoned(e)) => (e.into_inner(), false),
+            Err(TryLockError::WouldBlock) => (slot.lock().unwrap_or_else(PoisonError::into_inner), true),
+        };
         if let Some(model) = slot.as_ref() {
-            return Ok(model.clone());
+            return Ok((model.clone(), waited));
         }
         let model = Arc::new(CoremlChain::load(&paths, self.units)?);
         *slot = Some(model.clone());
         for path in &paths {
             crate::placement::loaded(path, self.units);
         }
-        Ok(model)
+        Ok((model, true))
     }
 }

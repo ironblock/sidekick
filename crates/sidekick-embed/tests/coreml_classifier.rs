@@ -171,6 +171,18 @@ fn predictions_match_torch_in_every_bucket() {
 }
 
 #[test]
+fn load_buckets_reports_the_buckets_it_loaded() {
+    // No bucket is resident after the model loads; the daemon loads the
+    // ones a request needs before its deadline starts, each once.
+    let dir = model_dir("load-buckets", MANIFEST, Some("model_16.mlmodelc"), Some("model_32.mlmodelc"));
+    let clf = load(&dir).unwrap();
+    assert_eq!(clf.load_buckets(&[32, 32]).unwrap(), vec![32]);
+    assert_eq!(clf.load_buckets(&[16, 32]).unwrap(), vec![16], "32 is resident now");
+    assert_eq!(clf.load_buckets(&[16, 32]).unwrap(), Vec::<usize>::new());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn the_manifest_compute_units_reach_core_ml() {
     // Absent, the default; otherwise each value the manifest can name. The
     // units are read back from the loaded model's Core ML configuration.

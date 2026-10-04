@@ -7,6 +7,7 @@
 //! before any work, and every pair is prepared before any runs.
 
 use super::wire::*;
+use super::deadline::{Deadline, Work};
 use super::{model_task, pooling, wrong_route, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
@@ -65,13 +66,11 @@ async fn rerank(
     pooling::check(&req.pooling)?;
     let parsed = parse(&req, &manifest, shape)?;
 
-    // One deadline for load + prediction, as for classify.
-    let deadline = tokio::time::Instant::now() + state.request_timeout;
-    let timeout_err = || Error::Timeout { secs: state.request_timeout.as_secs() };
-    let classifier = tokio::time::timeout_at(deadline, state.classifiers.get(&req.model))
-        .await
-        .map_err(|_| timeout_err())??;
+    // Loading isn't counted against the request timeout (api::deadline).
+    let mut deadline = Deadline::new(Work::Reranking, &req.model, state.request_timeout, state.load_timeout);
+    let classifier = deadline.model(state.classifiers.get_tracked(&req.model)).await?;
 
+    let (loaded_tx, loaded) = tokio::sync::oneshot::channel();
     let task = {
         let classifier = classifier.clone();
         let (query, documents, params) = (parsed.query.clone(), parsed.documents.clone(), parsed.params.clone());
@@ -88,16 +87,15 @@ async fn rerank(
                     })
                 })
                 .collect::<Result<Vec<_>, Error>>()?;
+            let buckets: Vec<usize> = prepared.iter().map(|p| p.bucket).collect();
+            let _ = loaded_tx.send(classifier.load_buckets(&buckets)?);
             prepared
                 .iter()
                 .map(|p| Ok((p.ids.len(), p.bucket, classifier.run(p)?)))
                 .collect::<Result<Vec<_>, Error>>()
         })
     };
-    let outputs = tokio::time::timeout_at(deadline, task)
-        .await
-        .map_err(|_| timeout_err())?
-        .map_err(|e| ApiError::from(Error::Other(format!("rerank task: {e}"))))??;
+    let outputs = deadline.finish(loaded, task, "rerank").await?;
 
     let mut prompt_tokens = 0usize;
     let mut scored = Vec::with_capacity(outputs.len());

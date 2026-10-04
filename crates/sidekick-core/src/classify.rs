@@ -190,6 +190,17 @@ pub trait Classifier: Send + Sync {
     /// `labels().len()` or `candidate_labels.len()`; 1 for a reranker).
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>>;
 
+    /// Load the programs for `buckets` unless they're resident, without
+    /// running anything. Returns the buckets this call waited on a load
+    /// for, its own or a concurrent caller's; empty when all were resident.
+    /// A bucket's first load compiles it, which can take minutes, so the
+    /// daemon loads a request's buckets before its deadline starts.
+    /// Backends without buckets have nothing to load.
+    fn load_buckets(&self, buckets: &[usize]) -> Result<Vec<usize>> {
+        let _ = buckets;
+        Ok(Vec::new())
+    }
+
     /// `prepare` + `run`.
     fn classify(&self, input: &str, params: &ClassifyParams) -> Result<Vec<f32>> {
         let p = self.prepare(input, params)?;

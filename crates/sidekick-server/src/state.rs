@@ -24,6 +24,10 @@ pub struct AppState {
     /// prediction). Chat enforces the same config value inside the FM
     /// backend.
     pub request_timeout: Duration,
+    /// How long an embeddings, classify or rerank request waits on model
+    /// and bucket loads, which `request_timeout` doesn't count
+    /// (api::deadline).
+    pub load_timeout: Duration,
     /// Where Core ML placed each loaded bucket's operations, read in the
     /// background after the bucket's first load. `None` when
     /// `report_compute_plans` is off or the build has no Core ML.

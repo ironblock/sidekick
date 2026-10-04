@@ -409,14 +409,40 @@ impl Embedder for CoremlEmbedder {
         purpose: EmbedPurpose,
         limits: EmbedLimits,
     ) -> Result<(Vec<Vec<f32>>, Option<Vec<usize>>)> {
+        self.embed_staged(texts, purpose, limits, &mut |_| {})
+    }
+
+    fn embed_staged(
+        &self,
+        texts: &[&str],
+        purpose: EmbedPurpose,
+        limits: EmbedLimits,
+        loaded: &mut dyn FnMut(&[usize]),
+    ) -> Result<(Vec<Vec<f32>>, Option<Vec<usize>>)> {
         // Prepare every text first, so a rejected one costs no prediction.
         let prepared = texts
             .iter()
             .map(|t| self.prepare_with(t, purpose, limits))
             .collect::<Result<Vec<_>>>()?;
+        let buckets: Vec<usize> = prepared.iter().map(|p| p.bucket).collect();
+        loaded(&load_buckets(&self.models, &buckets)?);
         let vectors = prepared.iter().map(|p| self.run(&p.ids, p.bucket)).collect::<Result<_>>()?;
-        Ok((vectors, Some(prepared.iter().map(|p| p.bucket).collect())))
+        Ok((vectors, Some(buckets)))
     }
+}
+
+/// Each of `buckets` loaded, smallest first: the ones that waited on a load.
+pub(crate) fn load_buckets(models: &BucketModels, buckets: &[usize]) -> Result<Vec<usize>> {
+    let mut unique = buckets.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    let mut waited = Vec::new();
+    for bucket in unique {
+        if models.ensure(bucket)? {
+            waited.push(bucket);
+        }
+    }
+    Ok(waited)
 }
 
 #[cfg(test)]

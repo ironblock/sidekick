@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod classify;
+pub mod deadline;
 pub mod embeddings;
 pub mod misc;
 pub mod pooling;

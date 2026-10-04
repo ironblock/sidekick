@@ -258,6 +258,8 @@ addr = "127.0.0.1:8790"        # loopback only by default
 # api_key = "..."              # require Authorization: Bearer <key> on /v1
 session_ttl_secs = 300         # Foundation Models session reuse window
 model_idle_ttl_secs = 900      # model residency (embedders, classifiers) after last use
+request_timeout_secs = 60      # a request's work: generation, or a prediction after any load it waited on
+load_timeout_secs = 900        # how long a request waits on its model's and buckets' first loads
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
 report_compute_plans = false   # read each loaded bucket's Core ML placement live (costs a second compile)
@@ -309,9 +311,12 @@ everything else the machine runs):
   Apple's ANE compiler service grew to 1.3 GB, for four minutes, compiling
   Lumma-fev's 2,048-token bucket. The compiled bundles stay on disk, about
   the weights' size again (3.5 GB for laya-typed-decisions), so later
-  loads take seconds. A first request that has to wait for a long compile
-  can outlast `request_timeout_secs` (default 60) and fail with a 504;
-  the load continues, and a retry finds the bucket ready.
+  loads take seconds. A request that has to wait for a compile doesn't
+  count it against `request_timeout_secs` (default 60): its deadline
+  starts once its buckets are loaded. Loading is bounded instead by
+  `load_timeout_secs` (default 900, well past the four minutes measured);
+  a load that outlasts it is a 504 with code `load_timeout`, the load
+  continues, and a retry finds the bucket ready.
 - **Releasing memory.** A model unloads `model_idle_ttl_secs` (default
   900) after its last use, whether or not anything else reaches the
   daemon. Lower it to give memory back sooner, at the cost of a reload

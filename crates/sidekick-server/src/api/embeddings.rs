@@ -1,4 +1,5 @@
 use super::wire::*;
+use super::deadline::{signal, Deadline, Work};
 use super::{model_task, wrong_route, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
@@ -54,17 +55,9 @@ pub async fn embeddings(
         }
     };
 
-    // Bound load + prediction under one request deadline. This abandons the
-    // wait, not the work: an in-flight predict runs to completion on its
-    // blocking thread, and a timed-out model load still finishes and becomes
-    // resident (the pool loads in a detached task), so a retry benefits.
-    let deadline = tokio::time::Instant::now() + state.request_timeout;
-    let timeout_err =
-        || sidekick_core::Error::Timeout { secs: state.request_timeout.as_secs() };
-
-    let embedder = tokio::time::timeout_at(deadline, state.embedders.get(&req.model))
-        .await
-        .map_err(|_| timeout_err())??;
+    // Loading isn't counted against the request timeout (api::deadline).
+    let mut deadline = Deadline::new(Work::Embedding, &req.model, state.request_timeout, state.load_timeout);
+    let embedder = deadline.model(state.embedders.get_tracked(&req.model)).await?;
 
     // Validate requested dimensions against the model's Matryoshka set.
     let target_dims = match req.dimensions {
@@ -90,14 +83,13 @@ pub async fn embeddings(
     let approx_tokens: usize = texts.iter().map(|t| t.len() / 4).sum();
     let (vectors, buckets) = {
         let texts = texts.clone();
+        let (loaded_tx, loaded) = tokio::sync::oneshot::channel();
         let task = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-            embedder.embed_bucketed(&refs, purpose, EmbedLimits::default())
+            let mut tx = Some(loaded_tx);
+            embedder.embed_staged(&refs, purpose, EmbedLimits::default(), &mut |b| signal(&mut tx, b))
         });
-        tokio::time::timeout_at(deadline, task)
-            .await
-            .map_err(|_| timeout_err())?
-            .map_err(|e| ApiError::from(sidekick_core::Error::Other(format!("embed task: {e}"))))??
+        deadline.finish(loaded, task, "embed").await?
     };
 
     let data = vectors

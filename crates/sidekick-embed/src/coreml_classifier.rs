@@ -480,6 +480,10 @@ impl Classifier for CoremlClassifier {
         self.inputs.prepare_pair(query, document, params)
     }
 
+    fn load_buckets(&self, buckets: &[usize]) -> Result<Vec<usize>> {
+        crate::coreml_embedder::load_buckets(&self.models, buckets)
+    }
+
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {
         self.run_in(prepared, prepared.bucket, &[])
     }
