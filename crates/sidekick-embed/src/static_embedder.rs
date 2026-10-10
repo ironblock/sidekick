@@ -242,6 +242,7 @@ mod tests {
                 compute_units_source: Default::default(),
                 placement: None,
                 chunking: None,
+                onnx_quantized: false,
             },
             dir: dir.clone(),
         }

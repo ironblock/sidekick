@@ -41,6 +41,27 @@ pub struct TensorDecl {
 pub struct GraphInterface {
     pub inputs: Vec<TensorDecl>,
     pub outputs: Vec<TensorDecl>,
+    /// Whether the main graph quantizes: an operator from [`QUANTIZED_OPS`].
+    pub quantized: bool,
+}
+
+/// Operators of a quantized graph. ONNX Runtime's CPU quantizes a dynamic
+/// int8 MatMul's activations with one scale over the whole batch, padding
+/// included, and its optimizer fuses weight-only DequantizeLinear + MatMul
+/// into that kernel, so such a graph's output depends on its batch-mates
+/// (D40).
+pub const QUANTIZED_OPS: &[&str] = &[
+    "DynamicQuantizeLinear",
+    "QuantizeLinear",
+    "DequantizeLinear",
+    "MatMulInteger",
+    "ConvInteger",
+    "MatMulNBits",
+    "DynamicQuantizeMatMul",
+];
+
+fn is_quantized(op: &str) -> bool {
+    QUANTIZED_OPS.contains(&op) || op.starts_with("QLinear")
 }
 
 /// Read `path`'s interface.
@@ -149,6 +170,17 @@ impl<R: Read + Seek> Reader<R> {
         let mut interface = GraphInterface::default();
         let mut initializers = HashSet::new();
         self.fields(end, |r, field, wire, end| match (field, wire) {
+            (1, LEN) => {
+                // NodeProto: op_type (4).
+                r.fields(end, |r, field, wire, end| match (field, wire) {
+                    (4, LEN) => {
+                        let op = r.string(end)?;
+                        interface.quantized |= is_quantized(&op);
+                        Ok(())
+                    }
+                    _ => r.skip(wire, end),
+                })
+            }
             (11, LEN) => {
                 interface.inputs.push(r.value_info(end)?);
                 Ok(())
@@ -281,8 +313,13 @@ pub(crate) mod encode {
     /// A ModelProto with an IR version, a node, `inputs`, `outputs`, and an
     /// initializer named `weight` with `weight_bytes` of raw data.
     pub fn model(inputs: &[Vec<u8>], outputs: &[Vec<u8>], weight_bytes: usize) -> Vec<u8> {
+        model_with_ops(&["MatMul"], inputs, outputs, weight_bytes)
+    }
+
+    /// [`model`] with one node per operator in `ops`.
+    pub fn model_with_ops(ops: &[&str], inputs: &[Vec<u8>], outputs: &[Vec<u8>], weight_bytes: usize) -> Vec<u8> {
         let initializer = [len_field(8, b"weight"), len_field(9, &vec![7u8; weight_bytes])].concat();
-        let mut graph = len_field(1, &len_field(4, b"MatMul"));
+        let mut graph: Vec<u8> = ops.iter().flat_map(|op| len_field(1, &len_field(4, op.as_bytes()))).collect();
         graph.extend(len_field(5, &initializer));
         for i in inputs {
             graph.extend(len_field(11, i));
@@ -325,7 +362,24 @@ mod tests {
         assert_eq!(g.inputs[0].shape, Some(vec![Dim::Symbolic("batch".into()), Dim::Symbolic("sequence".into())]));
         assert_eq!(names(&g.outputs), ["last_hidden_state"]);
         assert_eq!(g.outputs[0].shape.as_ref().unwrap()[2], Dim::Fixed(384));
+        assert!(!g.quantized);
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_quantizing_operator_marks_the_graph_quantized() {
+        let io = || ([tensor("input_ids", ONNX_INT64, &["b", "s"])], [tensor("o", ONNX_FLOAT, &["b", "4"])]);
+        for (ops, want) in [
+            (&["Gather", "MatMul", "Add"][..], false),
+            (&["Gather", "DynamicQuantizeLinear", "MatMulInteger"][..], true),
+            (&["DequantizeLinear", "MatMul"][..], true),
+            (&["QLinearMatMul"][..], true),
+        ] {
+            let (i, o) = io();
+            let path = write("quantized", &model_with_ops(ops, &i, &o, 16));
+            assert_eq!(read_interface(&path).unwrap().quantized, want, "{ops:?}");
+            std::fs::remove_file(&path).unwrap();
+        }
     }
 
     /// A large model (`SIDEKICK_ONNX_BIG_FILE`, written beforehand, with its
@@ -340,7 +394,7 @@ mod tests {
         let size = std::fs::metadata(&path).unwrap().len();
         let started = std::time::Instant::now();
         let g = read_interface(&path).unwrap();
-        println!("{} MB model: {} inputs, {} outputs, read in {:?}", size >> 20, g.inputs.len(), g.outputs.len(), started.elapsed());
+        println!("{} MB model: {} inputs, {} outputs, quantized {}, read in {:?}", size >> 20, g.inputs.len(), g.outputs.len(), g.quantized, started.elapsed());
         assert!(!g.inputs.is_empty() && !g.outputs.is_empty());
     }
 

@@ -20,6 +20,7 @@
 //! ```
 
 use sidekick_core::manifest::ModelRegistry;
+use sidekick_core::{EmbedLimits, EmbedPurpose};
 use sidekick_embed::onnx::OnnxEmbedder;
 
 struct Tally {
@@ -63,13 +64,26 @@ fn main() {
     let registry = ModelRegistry::scan(std::path::Path::new(dir)).expect("scan");
     let model = registry.get(id).unwrap_or_else(|_| panic!("{id} not in {dir}: {:?}", registry.skipped()));
     let reference: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(reference).expect("reference")).unwrap();
+    let max_len = model.manifest.max_seq_len;
+    let one = OnnxEmbedder::load(model, 1).expect("load");
+    // Another model's reference: its texts, through this model's tokenizer.
+    let own = reference["model"]["id"].as_str() == Some(id.as_str());
     let cases: Vec<Vec<i32>> = reference["cases"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|c| c["ids"].as_array().unwrap().iter().map(|x| x.as_i64().unwrap() as i32).collect())
+        .filter_map(|c| {
+            if own {
+                return Some(c["ids"].as_array().unwrap().iter().map(|x| x.as_i64().unwrap() as i32).collect());
+            }
+            let purpose = if c["purpose"] == "query" { EmbedPurpose::Query } else { EmbedPurpose::Document };
+            let text = c["text"].as_str().unwrap_or_default();
+            (!text.is_empty()).then(|| one.prepare(text, purpose, EmbedLimits::default()).unwrap())
+        })
         .collect();
-    let max_len = model.manifest.max_seq_len;
+    if !own {
+        println!("  (cases are another model's reference texts, tokenized with this model's tokenizer)");
+    }
     println!(
         "{id}: {} cases, {}..{} tokens; ONNX Runtime {}",
         cases.len(),
@@ -78,7 +92,6 @@ fn main() {
         sidekick_embed::onnx::runtime().expect("runtime").version
     );
 
-    let one = OnnxEmbedder::load(model, 1).expect("load");
     let started = std::time::Instant::now();
     let base: Vec<Vec<f32>> = cases.iter().map(|ids| one.run(ids).unwrap()).collect();
     println!("  baseline: each input alone on 1 thread, {:.1?}", started.elapsed());

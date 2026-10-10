@@ -2152,16 +2152,23 @@ position_ids = "position_ids"      # optional; fed 0..n per input
 output = "embedding"               # [batch, dims] with pooling = "none", else [batch, seq, hidden]
 ```
 
-Two kinds of graph are served:
-- **sidekick's own exports** wrap the model as its Core ML conversion
-  does, pooling included. They output `embedding`, `[batch, dims]`, with
-  `pooling = "none"`. ONNX and Core ML then compute the same function and
-  differ only in the forward pass. EmbeddingGemma (mean pooling plus a
-  dense stack) is served this way only, so Rust gains no dense layers.
-- **Published exports** emit token-level `last_hidden_state`, pooled in
-  Rust with `mean` or `cls`, or with `last_token` (the last real token,
-  new for decoder embedders such as Qwen3-Embedding's published int8
-  export). BERT-family exports take `token_type_ids`, fed zeros.
+A graph's output is one of two kinds, decided by the model's head, not by
+who exported it:
+- **Token-level `last_hidden_state`**, `[batch, seq, hidden]`, pooled in
+  Rust with `mean`, `cls`, or `last_token` (the last real token, new, for
+  decoder embedders such as F2LLM and Qwen3-Embedding). sidekick's own
+  exports and published ones share this interface, so either can replace
+  the other through one pooling path. BERT-family exports take
+  `token_type_ids`, fed zeros.
+- **A pooled `embedding`**, `[batch, dims]`, with `pooling = "none"`, for
+  a head with layers beyond pooling. EmbeddingGemma's (mean, then a
+  768→3072→768 dense stack) stays in the graph, as onnx-community's export
+  keeps it, so Rust gains no dense layers.
+
+Every export is gated against the same fp32 references as the model's
+Core ML build. sidekick's exports of bge-small-en-v1.5 and
+all-MiniLM-L6-v2 match them at 1 − cos ≈ 2e-12 (graded by the ONNX
+export work, ORT 1.27).
 
 The inputs' element type follows what the graph declares, int64 (ONNX's
 convention) or int32. The graph's batch and sequence axes are dynamic,
@@ -2226,14 +2233,54 @@ intra_op_threads = 2
 - `/health` reports each onnx model's effective threads, the default,
   and any thread setting that named no onnx model, beside the runtime.
 
-**Batching.** Until it is measured, each input runs on its own, at its
-own length, unpadded. That way an embedding never depends on what else is
-in the request. ONNX Runtime's CPU kernels (MLAS) may block their sums
-differently by sequence length, batch size or thread count. The
-measurement in this change says which of those the CPU path is invariant
-to, and only a measured invariance is claimed. Batched execution is
-enabled only if batching is shown to be bit-exact, or within the
-documented tolerance.
+**Batching.** Each input runs on its own, at its own length, unpadded.
+The invariances that gives were measured with `examples/onnx_invariance`
+on ONNX Runtime 1.28.3's CPU (M1 Max, fp32 exports of bge-small-en-v1.5,
+all-MiniLM-L6-v2 and F2LLM-v2-160M, the parity corpus's 50–51 cases of 2
+to 512 tokens):
+- **Thread count: bit-exact.** Every vector was bit-identical on 1, 2, 4
+  and 8 intra-op threads, for all three models. So is a re-run in the
+  same session. `intra_op_threads` is a speed setting only.
+- **Padding and batching: not bit-exact, within 2.1e-7.** The same input
+  padded by 1, 7 or 64 tokens, or to `max_seq_len`, or run in a batch of
+  2 or 8 padded to the longest, was bit-identical in only 14–41 of the
+  cases. The largest component difference was 2.1e-7 (1–2 fp32 ulp), and
+  the cosine was 1.000000000 to nine digits. MLAS orders its sums by
+  sequence length.
+
+So the CPU path claims what running unpadded guarantees: an embedding is
+a function of its own text, bit for bit, whatever else the request holds
+and however many threads run it. Batching would trade that for
+throughput, within 2.1e-7. It stays off, and if it is ever enabled it
+applies to fp32 graphs only.
+
+**Quantized graphs always run alone.** ONNX Runtime's CPU quantizes a
+dynamic int8 MatMul's activations at run time with one scale for the
+whole batch, padding included. Its default optimizations fuse a
+weight-only DequantizeLinear + MatMul into that same kernel. So an int8
+graph's output depends on its batch-mates and its pad values. The ONNX
+export work measured F2LLM-v2-160M (Qwen3) on ORT 1.27, 51 cases:
+- fp32 graded A, exact;
+- dynamic int8 (`quantize_dynamic`, how most published int8 exports are
+  made) graded F, worst cosine 0.875, batch invariance 0.925 and pad
+  invariance 0.918;
+- weight-only int8 graded F on the batch gate (0.998 worst, 0.9998 batch).
+
+Qwen3's activation outliers make the per-tensor scale coarse even for one
+input. The registry marks a graph quantized when its main graph has a
+quantizing operator (DynamicQuantizeLinear, QuantizeLinear,
+DequantizeLinear, MatMulInteger, ConvInteger, MatMulNBits,
+DynamicQuantizeMatMul or any QLinear*). Such a model always runs one
+input at a time, unpadded, and `/health` reports it as `quantized`. An
+int8 artifact is graded like any other, never assumed equivalent, and is
+no model's default. The published int8 exports people reach for,
+Qwen3-Embedding-0.6B's included, use this scheme.
+
+A published decoder export may also expect a KV cache:
+onnx-community's Qwen3-Embedding-0.6B int8 graph takes 59 inputs
+(`past_key_values.*` among them) and returns 57 outputs. It doesn't fit
+`[io]`, so the registry skips it with the input it can't feed. sidekick's
+own export of the model takes only ids, mask and positions.
 
 **Linking.** ort's `load-dynamic`: sidekick links no ONNX Runtime at build
 time and loads `libonnxruntime` at startup.
@@ -2270,7 +2317,8 @@ bucket-invariance gate is the CPU's unless `expectations.toml` sets
 `onnx-cpu`. The bucket check becomes a length check, the same input run
 padded to longer lengths, which applies only if batching is enabled.
 Until the suite runs the backend itself, the `onnx-cpu` path is graded
-from results written outside it: `parity --external FILE` takes a
+from results written outside it, by `tools/onnx_parity.py` (the ONNX
+export work): `parity --external FILE` takes a
 worker result in the suite's own JSON shape (`model`, `path:
 "onnx-cpu"`, `cases`, `repeat_bitwise`, `load_ms`; each case its `id`,
 `ids_match`, its token count as `bucket`, `vector`, `finite`,

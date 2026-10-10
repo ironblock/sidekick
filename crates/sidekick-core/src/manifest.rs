@@ -402,6 +402,11 @@ pub struct ModelManifest {
     /// Each bucket as a chain of programs (coreml backend only; D37).
     #[serde(default)]
     pub chunking: Option<Chunking>,
+    /// An onnx model's graph quantizes (int8): its output would depend on
+    /// its batch-mates, so it always runs one input at a time (D40). Read
+    /// from the graph at scan, never from the file.
+    #[serde(skip)]
+    pub onnx_quantized: bool,
 }
 
 impl ModelManifest {
@@ -1070,8 +1075,11 @@ impl ModelRegistry {
             }
             let loaded = read_manifest::<ModelManifest>(&path)
                 .and_then(|m| validate_embedder(&m).map(|()| m))
-                .and_then(|m| match m.backend {
-                    EmbeddingBackendKind::Onnx => check_onnx_interface(dir, &m).map(|()| m),
+                .and_then(|mut m| match m.backend {
+                    EmbeddingBackendKind::Onnx => {
+                        m.onnx_quantized = check_onnx_interface(dir, &m)?;
+                        Ok(m)
+                    }
                     _ => Ok(m),
                 })
                 .map(|mut m| {
@@ -1343,7 +1351,7 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
 /// `[batch, dims]` with `pooling = "none"`. Read from the file's
 /// declarations alone, so a mismatch skips the manifest at scan, before
 /// any runtime loads it (D40).
-fn check_onnx_interface(dir: &Path, m: &ModelManifest) -> std::result::Result<(), String> {
+fn check_onnx_interface(dir: &Path, m: &ModelManifest) -> std::result::Result<bool, String> {
     use crate::onnx_graph::{read_interface, Dim, ONNX_INT32, ONNX_INT64};
     let path = dir.join(&m.artifact);
     if !path.is_file() {
@@ -1397,7 +1405,7 @@ fn check_onnx_interface(dir: &Path, m: &ModelManifest) -> std::result::Result<()
             }
         }
     }
-    Ok(())
+    Ok(graph.quantized)
 }
 
 fn pooling_name(p: Pooling) -> &'static str {

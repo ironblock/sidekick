@@ -167,15 +167,20 @@ fn embedder_placement(state: &AppState, r: &ResolvedModel, detail: bool) -> Opti
 /// directory.
 fn onnx_health(state: &AppState) -> Value {
     let runtime = sidekick_embed::onnx::runtime();
-    let onnx_ids: Vec<&str> = state
+    let onnx: Vec<&sidekick_core::manifest::ModelManifest> = state
         .registry
         .iter()
         .filter(|r| r.manifest.backend == EmbeddingBackendKind::Onnx)
-        .map(|r| r.manifest.id.as_str())
+        .map(|r| &r.manifest)
         .collect();
-    let models: Map<String, Value> = onnx_ids
+    let onnx_ids: Vec<&str> = onnx.iter().map(|m| m.id.as_str()).collect();
+    let models: Map<String, Value> = onnx
         .iter()
-        .map(|id| (id.to_string(), json!({"intra_op_threads": state.onnx_threads.for_model(id)})))
+        .map(|m| {
+            // A quantized graph's output depends on its batch-mates: it
+            // always runs one input at a time (D40).
+            (m.id.clone(), json!({"intra_op_threads": state.onnx_threads.for_model(&m.id), "quantized": m.onnx_quantized}))
+        })
         .collect();
     let unmatched: Vec<&String> =
         state.onnx_threads.by_model.keys().filter(|id| !onnx_ids.contains(&id.as_str())).collect();

@@ -100,6 +100,6 @@ async fn the_routes_serve_an_onnx_model_on_the_cpu() {
     assert!(onnx["runtime"]["file"].as_str().unwrap().starts_with("libonnxruntime"));
     assert!(onnx["unavailable"].is_null());
     assert_eq!(onnx["default_intra_op_threads"], 3);
-    assert_eq!(onnx["models"], json!({"tiny": {"intra_op_threads": 2}}));
+    assert_eq!(onnx["models"], json!({"tiny": {"intra_op_threads": 2, "quantized": false}}));
     assert_eq!(onnx["unmatched_thread_overrides"], json!(["ghost"]));
 }
