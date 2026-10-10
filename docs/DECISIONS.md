@@ -2122,6 +2122,123 @@ default; LFM2.5's keeps TanhSilu. Every factor is a power of two, so each
 fp32 gate stays exact. Artifacts converted earlier keep working; a
 reconversion gives the smaller ANE error.
 
+## D40 — An ONNX Runtime CPU backend for embeddings
+sidekick serves transformer encoders only through Core ML, so only on
+macOS, and only Apple Silicon releases exist. A client developed on an
+Intel Mac or a Linux machine has no local way to call the same API. A
+third embedding backend, `onnx`, runs the same encoders on the CPU through
+ONNX Runtime (the `ort` crate), on every platform sidekick builds for. On
+Apple Silicon it is also a CPU baseline to compare Core ML's paths with.
+Classifiers, rerankers and GPU execution providers are out of scope: the
+backend is CPU-only by design, so it never competes with a model the GPU
+serves.
+
+**Manifest.** `manifest.toml` takes `backend = "onnx"`:
+
+```toml
+id = "bge-small-en-v1.5"
+backend = "onnx"
+artifact = "model.onnx"            # one graph; external data files beside it are fine
+tokenizer = "tokenizer.json"
+dims = 384
+pooling = "cls"                    # mean | cls | last | none
+max_seq_len = 512
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"  # optional
+token_type_ids = "token_type_ids"  # optional; fed zeros
+position_ids = "position_ids"      # optional; fed 0..n per input
+output = "last_hidden_state"       # [batch, seq, hidden], or [batch, dims] with pooling = "none"
+```
+
+- No `buckets`: the graph takes dynamic shapes, so each input runs at its
+  own length. `max_seq_len` bounds it, and truncation, prefixes,
+  `max_tokens` and `truncate` work as for Core ML models: the tokenizing
+  code is shared.
+- Pooling and normalization stay in Rust and are shared with the Core ML
+  embedder, so the two backends differ only in the forward pass. `mean` and
+  `cls` exist today. `last` is new, for decoder embedders (F2LLM, Qwen3
+  embeddings), whose Core ML graphs pool inside the graph; it takes the
+  last real token. `none` takes a `[batch, dims]` output as it is.
+- Core ML's keys are refused on an `onnx` manifest: `{seq}`, `buckets`,
+  `compute_units`, `ane_weight_limit`, `cpu_seq_limit`, `[chunking]` and
+  `[placement]`. D32's weight limit and D33's CPU cap are Core ML
+  limits and don't apply.
+- An ONNX model keeps the model's id. Clients then address the same model
+  on every platform, whichever backend serves it there. A models directory
+  holds one manifest per id, as now; the operator installs the Core ML or
+  the ONNX build of a model, not both under one id.
+
+**Interface checks fail loudly** (D22's rule, applied at load). At scan,
+the daemon reads the graph's declared inputs and outputs from the `.onnx`
+file's header. That reads the protobuf's input and output declarations
+only, not the weights, and it needs no runtime library. A manifest is
+skipped, with the reason in `/health`'s `skipped_models`, when:
+- an input named in `[io]` is missing;
+- the graph has an input `[io]` doesn't name;
+- an input isn't an int32 or int64 tensor of rank 2;
+- the output's rank doesn't match `pooling` (3, or 2 with `none`);
+- or its last dimension, when the graph fixes it, isn't `dims`.
+
+When ONNX Runtime itself won't load, every `onnx` manifest is skipped with
+that reason, and the rest of the daemon serves as usual.
+
+**Threads.** `intra_op_threads` bounds the CPU threads a model's
+inference uses, so a CPU encoder doesn't starve a larger model's host
+threads. It is the operator's choice, like D38's compute units, not the
+converter's:
+
+```toml
+onnx_intra_op_threads = 4          # daemon default
+
+[models."bge-small-en-v1.5"]
+intra_op_threads = 2
+```
+
+- The default is 4, at most one less than the machine's logical CPUs.
+  `inter_op_threads` is 1: the graphs are sequential.
+- Concurrent requests to one model share its session and its thread pool.
+- `/health` reports each loaded ONNX model's effective threads, beside
+  the runtime's version.
+
+**Batching.** Until it is measured, each input runs on its own, at its
+own length, unpadded. That way an embedding never depends on what else is
+in the request. ONNX Runtime's CPU kernels (MLAS) may block their sums
+differently by sequence length, batch size or thread count. The
+measurement in this change says which of those the CPU path is invariant
+to, and only a measured invariance is claimed. Batched execution is
+enabled only if batching is shown to be bit-exact, or within the
+documented tolerance.
+
+**Linking.** ort's `load-dynamic`: sidekick links no ONNX Runtime at build
+time and loads `libonnxruntime` at startup.
+- It looks for the library at `ORT_DYLIB_PATH`, when set, else beside the
+  `sidekickd` binary (`libonnxruntime.dylib`, `.so`). Release archives
+  ship the library there.
+- The ONNX Runtime version is pinned: ORT 1.28.x, which ort 2.0.0-rc.13
+  is built for. `sidekickd --version` names the pinned version, and
+  `/health` names the version actually loaded and its path. A loaded
+  library of another 1.x version than the pin is used, with a warning in
+  the log and in `/health`, since `ORT_DYLIB_PATH` exists to allow it.
+  One ort can't drive at all is refused, with the reason.
+- Everything is behind an `onnx` cargo feature. A build without it is
+  unchanged, and skips `onnx` manifests as unsupported in that build, as
+  a build without `coreml` skips classifiers.
+- `libsidekick.dylib` (D18) is built without `onnx` in this release.
+
+**Reporting.** `/v1/models` gains `backend` for every embedder (`coreml`,
+`static` or `onnx`). An `onnx` model's `compute_units`, and its
+`sidekick-compute-units` header, are `cpu`. It reports no `placement`
+(D35) and no `seq_cap`. It sends no `sidekick-buckets`: one graph
+serves every length, so there is no compiled program per bucket to name,
+as for a static model.
+
+**The parity suite** grades an `onnx` model on one path, `onnx-cpu`,
+against the same fp32 references as its Core ML build, with the same
+gates. A bucket check becomes a length check: the same input run padded
+to longer lengths. That check applies only if batching is enabled.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
