@@ -13,6 +13,7 @@ pub mod classify;
 pub mod embed;
 pub mod error;
 pub mod manifest;
+pub mod onnx_graph;
 
 pub use chat::{
     ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, FinishReason, ModelInfo, Role,

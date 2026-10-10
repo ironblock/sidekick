@@ -30,6 +30,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
         let r = state.registry.get(id).ok();
         let m = r.map(|r| &r.manifest);
         data.push(ModelObject {
+            backend: m.map(|m| m.backend.name()),
             compute_units: m.map(|m| m.compute_units_name()),
             compute_units_source: m
                 .filter(|m| m.backend == EmbeddingBackendKind::Coreml)

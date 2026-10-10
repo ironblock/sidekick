@@ -109,7 +109,10 @@ pub unsafe extern "C" fn sk_pool_open(
         } else {
             PathBuf::from(utf8(models_dir, "models_dir")?)
         };
-        let registry = ModelRegistry::scan(&dir).map_err(|e| e.to_string())?;
+        let mut registry = ModelRegistry::scan(&dir).map_err(|e| e.to_string())?;
+        if let Err(reason) = sidekick_embed::onnx::runtime() {
+            registry.skip_backend(sidekick_core::EmbeddingBackendKind::Onnx, &reason);
+        }
         Ok(Box::into_raw(Box::new(SkPool {
             registry,
             loaded: Mutex::new(HashMap::new()),

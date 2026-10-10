@@ -22,7 +22,7 @@ pub use config::Config;
 pub use pool::{ClassifierPool, EmbedderPool, ModelPool};
 pub use state::AppState;
 
-use sidekick_core::{ChatBackend, ModelRegistry, ScanOptions};
+use sidekick_core::{ChatBackend, EmbeddingBackendKind, ModelRegistry, ScanOptions};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -34,7 +34,11 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         ignore_ane_weight_cap: config.ignore_ane_weight_cap,
         ignore_cpu_seq_cap: config.ignore_cpu_seq_cap,
     };
-    let registry = Arc::new(ModelRegistry::scan_with(&config.models_dir(), &options)?);
+    let mut registry = ModelRegistry::scan_with(&config.models_dir(), &options)?;
+    if let Err(reason) = sidekick_embed::onnx::runtime() {
+        registry.skip_backend(EmbeddingBackendKind::Onnx, &reason);
+    }
+    let registry = Arc::new(registry);
     if registry.is_empty() && registry.classifier_ids().next().is_none() {
         tracing::warn!(
             dir = %config.models_dir().display(),

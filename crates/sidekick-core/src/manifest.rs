@@ -34,6 +34,19 @@ pub enum EmbeddingBackendKind {
     Coreml,
     /// Static token-embedding lookup (model2vec-style); runs anywhere on CPU.
     Static,
+    /// An ONNX graph run by ONNX Runtime on the CPU, on any platform (D40).
+    Onnx,
+}
+
+impl EmbeddingBackendKind {
+    /// The manifest value, as `/v1/models` reports it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Coreml => "coreml",
+            Self::Static => "static",
+            Self::Onnx => "onnx",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -42,6 +55,8 @@ pub enum Pooling {
     #[default]
     Mean,
     Cls,
+    /// The last real token's vector: decoder embedders (D40).
+    Last,
     /// Model output is already pooled; take it as-is.
     None,
 }
@@ -396,10 +411,10 @@ impl ModelManifest {
     }
 
     /// What the model runs on, as `sidekick-compute-units` reports it:
-    /// `cpu` for a static model, else its Core ML compute units.
+    /// `cpu` for a static or ONNX model, else its Core ML compute units.
     pub fn compute_units_name(&self) -> &'static str {
         match self.backend {
-            EmbeddingBackendKind::Static => "cpu",
+            EmbeddingBackendKind::Static | EmbeddingBackendKind::Onnx => "cpu",
             EmbeddingBackendKind::Coreml => self.compute_units.unwrap_or_default().name(),
         }
     }
@@ -409,6 +424,12 @@ impl ModelManifest {
 pub struct CoremlIoNames {
     pub input_ids: String,
     pub attention_mask: Option<String>,
+    /// Segment ids, fed zeros (onnx backend only).
+    #[serde(default)]
+    pub token_type_ids: Option<String>,
+    /// Positions, fed 0..n for each input (onnx backend only).
+    #[serde(default)]
+    pub position_ids: Option<String>,
     pub output: String,
 }
 
@@ -417,6 +438,8 @@ impl Default for CoremlIoNames {
         Self {
             input_ids: "input_ids".into(),
             attention_mask: Some("attention_mask".into()),
+            token_type_ids: None,
+            position_ids: None,
             output: "embeddings".into(),
         }
     }
@@ -1047,6 +1070,10 @@ impl ModelRegistry {
             }
             let loaded = read_manifest::<ModelManifest>(&path)
                 .and_then(|m| validate_embedder(&m).map(|()| m))
+                .and_then(|m| match m.backend {
+                    EmbeddingBackendKind::Onnx => check_onnx_interface(dir, &m).map(|()| m),
+                    _ => Ok(m),
+                })
                 .map(|mut m| {
                     if let (Some(&units), EmbeddingBackendKind::Coreml) = (options.compute_units.get(&m.id), m.backend) {
                         m.compute_units = Some(units);
@@ -1170,6 +1197,17 @@ impl ModelRegistry {
         path.strip_prefix(&self.root).unwrap_or(path).to_path_buf()
     }
 
+    /// Skip every embedder served by `backend`, with `reason`: what a
+    /// daemon does with `onnx` models when ONNX Runtime isn't available to
+    /// it, a fact of the build or the machine rather than of any manifest.
+    pub fn skip_backend(&mut self, backend: EmbeddingBackendKind, reason: &str) {
+        let ids: Vec<String> = self.models.values().filter(|m| m.manifest.backend == backend).map(|m| m.manifest.id.clone()).collect();
+        for id in ids {
+            let model = self.models.remove(&id).expect("listed above");
+            self.skip(&model.dir.join(EMBEDDER_MANIFEST), reason.to_string());
+        }
+    }
+
     fn skip(&mut self, path: &Path, reason: String) {
         tracing::warn!(manifest = %path.display(), "skipping model: {reason}");
         let path = self.relative(path);
@@ -1276,7 +1314,99 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
         // classifier load only (D37).
         return Err("`[chunking]` is for classifiers; chunked embedders aren't supported yet".into());
     }
+    if m.backend != EmbeddingBackendKind::Onnx && (m.io.token_type_ids.is_some() || m.io.position_ids.is_some()) {
+        return Err("`[io] token_type_ids` and `position_ids` are only valid for the onnx backend".into());
+    }
+    if m.backend != EmbeddingBackendKind::Onnx && m.pooling == Pooling::Last {
+        // Core ML decoder embedders pool inside the graph.
+        return Err("`pooling = \"last\"` is only valid for the onnx backend".into());
+    }
+    if m.backend == EmbeddingBackendKind::Onnx {
+        // One graph with dynamic shapes, on the CPU: Core ML's per-bucket
+        // and ANE settings don't apply (D40).
+        if !m.buckets.is_empty() {
+            return Err("an onnx model has no `buckets`: its graph takes any length up to `max_seq_len`".into());
+        }
+        if m.placement.is_some() {
+            return Err("`[placement]` is only valid for the coreml backend".into());
+        }
+        if m.max_seq_len == 0 {
+            return Err("max_seq_len must be > 0".into());
+        }
+    }
     Ok(())
+}
+
+/// An `onnx` model's graph must take exactly the inputs `[io]` names, each
+/// an integer tensor of rank 2 (`[batch, sequence]`), and produce its
+/// output at the rank `pooling` reads: `[batch, sequence, dims]`, or
+/// `[batch, dims]` with `pooling = "none"`. Read from the file's
+/// declarations alone, so a mismatch skips the manifest at scan, before
+/// any runtime loads it (D40).
+fn check_onnx_interface(dir: &Path, m: &ModelManifest) -> std::result::Result<(), String> {
+    use crate::onnx_graph::{read_interface, Dim, ONNX_INT32, ONNX_INT64};
+    let path = dir.join(&m.artifact);
+    if !path.is_file() {
+        return Err(format!("artifact `{}` not found", m.artifact));
+    }
+    let graph = read_interface(&path)?;
+    let io = &m.io;
+    let named: Vec<&str> = [Some(&io.input_ids), io.attention_mask.as_ref(), io.token_type_ids.as_ref(), io.position_ids.as_ref()]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    let has = |name: &str| graph.inputs.iter().any(|i| i.name == name);
+    if let Some(missing) = named.iter().find(|n| !has(n)) {
+        let inputs: Vec<&str> = graph.inputs.iter().map(|i| i.name.as_str()).collect();
+        return Err(format!("the graph has no input `{missing}` that `[io]` names (its inputs: {inputs:?})"));
+    }
+    for input in &graph.inputs {
+        if !named.contains(&input.name.as_str()) {
+            return Err(format!(
+                "the graph takes `{}`, which `[io]` doesn't name; the daemon feeds input_ids, attention_mask, \
+                 token_type_ids and position_ids only",
+                input.name
+            ));
+        }
+        if ![ONNX_INT32, ONNX_INT64].contains(&input.elem_type) {
+            return Err(format!("input `{}` must be int32 or int64 (ONNX type {})", input.name, input.elem_type));
+        }
+        if input.shape.as_ref().is_some_and(|s| s.len() != 2) {
+            return Err(format!("input `{}` must be [batch, sequence], not rank {}", input.name, input.shape.as_ref().unwrap().len()));
+        }
+    }
+    let output = graph.outputs.iter().find(|o| o.name == io.output).ok_or_else(|| {
+        let outputs: Vec<&str> = graph.outputs.iter().map(|o| o.name.as_str()).collect();
+        format!("the graph has no output `{}` (its outputs: {outputs:?})", io.output)
+    })?;
+    if let Some(shape) = &output.shape {
+        let rank = if m.pooling == Pooling::None { 2 } else { 3 };
+        if shape.len() != rank {
+            return Err(format!(
+                "output `{}` has rank {}, and pooling `{}` reads rank {rank} ({})",
+                io.output,
+                shape.len(),
+                pooling_name(m.pooling),
+                if rank == 2 { "[batch, dims]" } else { "[batch, sequence, dims]" }
+            ));
+        }
+        if let Some(Dim::Fixed(d)) = shape.last() {
+            if *d as usize != m.dims {
+                return Err(format!("output `{}` has {d} dimensions, and the manifest says dims = {}", io.output, m.dims));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn pooling_name(p: Pooling) -> &'static str {
+    match p {
+        Pooling::Mean => "mean",
+        Pooling::Cls => "cls",
+        Pooling::Last => "last",
+        Pooling::None => "none",
+    }
 }
 
 /// Validation per docs/design/classify.md. The artifact-dependent check
@@ -1930,6 +2060,106 @@ output = "logits"
         assert!(e.placement.as_ref().unwrap().bucket(2048).is_some());
         assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
         assert!(reg.get("s").unwrap().manifest.placement.is_none(), "a static model's is dropped");
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// An onnx embedder's manifest, and its graph written beside it.
+    fn onnx_model(tag: &str, manifest_extra: &str, inputs: &[Vec<u8>], outputs: &[Vec<u8>]) -> (PathBuf, ModelRegistry) {
+        onnx_model_io(tag, manifest_extra, "", inputs, outputs)
+    }
+
+    /// [`onnx_model`], with more `[io]` lines.
+    fn onnx_model_io(tag: &str, manifest_extra: &str, io_extra: &str, inputs: &[Vec<u8>], outputs: &[Vec<u8>]) -> (PathBuf, ModelRegistry) {
+        use crate::onnx_graph::encode::model;
+        let tmp = tmp_dir(&format!("onnx-{tag}"));
+        write_manifest(
+            &tmp,
+            "o",
+            &format!(
+                "id = \"o\"\nbackend = \"onnx\"\nartifact = \"model.onnx\"\ntokenizer = \"t\"\ndims = 4\npooling = \"cls\"\n\
+                 max_seq_len = 512\n{manifest_extra}\n[io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\n\
+                 output = \"last_hidden_state\"\n{io_extra}"
+            ),
+        );
+        std::fs::write(tmp.join("o").join("model.onnx"), model(inputs, outputs, 4096)).unwrap();
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        (tmp, reg)
+    }
+
+    #[test]
+    fn onnx_embedders_are_checked_against_their_graph() {
+        use crate::onnx_graph::encode::tensor;
+        use crate::onnx_graph::{ONNX_FLOAT, ONNX_INT32, ONNX_INT64};
+        let ids = || tensor("input_ids", ONNX_INT64, &["batch", "sequence"]);
+        let mask = || tensor("attention_mask", ONNX_INT64, &["batch", "sequence"]);
+        let hidden = || tensor("last_hidden_state", ONNX_FLOAT, &["batch", "sequence", "4"]);
+
+        let (tmp, reg) = onnx_model("ok", "", &[ids(), mask()], &[hidden()]);
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        let m = &reg.get("o").unwrap().manifest;
+        assert_eq!((m.backend.name(), m.compute_units_name()), ("onnx", "cpu"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        let segs = || tensor("token_type_ids", ONNX_INT32, &["batch", "sequence"]);
+        for (name, extra, inputs, outputs, want) in [
+            ("no-mask-input", "", vec![ids()], vec![hidden()], "no input `attention_mask`"),
+            ("extra-input", "", vec![ids(), mask(), segs()], vec![hidden()], "takes `token_type_ids`, which `[io]` doesn't name"),
+            ("float-ids", "", vec![tensor("input_ids", ONNX_FLOAT, &["batch", "sequence"]), mask()], vec![hidden()], "must be int32 or int64"),
+            ("rank-3-ids", "", vec![tensor("input_ids", ONNX_INT64, &["1", "2", "3"]), mask()], vec![hidden()], "not rank 3"),
+            ("no-output", "", vec![ids(), mask()], vec![tensor("pooled", ONNX_FLOAT, &["batch", "4"])], "no output `last_hidden_state`"),
+            ("wrong-dims", "", vec![ids(), mask()], vec![tensor("last_hidden_state", ONNX_FLOAT, &["batch", "sequence", "8"])], "has 8 dimensions"),
+            ("pooled-rank", "", vec![ids(), mask()], vec![tensor("last_hidden_state", ONNX_FLOAT, &["batch", "4"])], "has rank 2, and pooling `cls` reads rank 3"),
+            ("buckets", "buckets = [128]", vec![ids(), mask()], vec![hidden()], "has no `buckets`"),
+            ("units", "compute_units = \"cpu_only\"", vec![ids(), mask()], vec![hidden()], "only valid for the coreml backend"),
+        ] {
+            let (tmp, reg) = onnx_model(name, extra, &inputs, &outputs);
+            assert!(reg.get("o").is_err(), "{name}");
+            assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
+            std::fs::remove_dir_all(&tmp).unwrap();
+        }
+        // The extra inputs are fine once [io] names them; `none` reads [batch, dims].
+        let positions = || tensor("position_ids", ONNX_INT64, &["batch", "sequence"]);
+        let io = "token_type_ids = \"token_type_ids\"\nposition_ids = \"position_ids\"\n";
+        let (tmp, reg) = onnx_model_io("io", "", io, &[ids(), mask(), segs(), positions()], &[hidden()]);
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        std::fs::remove_dir_all(&tmp).unwrap();
+        let pooled = tensor("last_hidden_state", ONNX_FLOAT, &["batch", "4"]);
+        let (tmp, reg) = onnx_model("pooled", "", &[ids(), mask()], &[pooled]);
+        assert!(reg.skipped()[0].reason.contains("rank 2"), "cls still reads rank 3");
+        std::fs::remove_dir_all(&tmp).unwrap();
+        let pooled = tensor("last_hidden_state", ONNX_FLOAT, &["batch", "4"]);
+        let none = |tag: &str| {
+            let tmp = tmp_dir(&format!("onnx-{tag}"));
+            write_manifest(&tmp, "o", "id = \"o\"\nbackend = \"onnx\"\nartifact = \"model.onnx\"\ntokenizer = \"t\"\ndims = 4\n\
+                                       pooling = \"none\"\nmax_seq_len = 64\n[io]\ninput_ids = \"input_ids\"\n\
+                                       attention_mask = \"attention_mask\"\noutput = \"last_hidden_state\"\n");
+            tmp
+        };
+        let tmp = none("none");
+        std::fs::write(tmp.join("o").join("model.onnx"), crate::onnx_graph::encode::model(&[ids(), mask()], &[pooled], 16)).unwrap();
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped().first().map(|s| &s.reason));
+        std::fs::remove_dir_all(&tmp).unwrap();
+        // A missing graph is named.
+        let tmp = none("missing");
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped()[0].reason.contains("artifact `model.onnx` not found"), "{}", reg.skipped()[0].reason);
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // Without a runtime, every onnx model is skipped with the reason.
+        let (tmp, mut reg) = onnx_model("no-runtime", "", &[ids(), mask()], &[hidden()]);
+        reg.skip_backend(EmbeddingBackendKind::Onnx, "no ONNX Runtime here");
+        assert!(reg.get("o").is_err());
+        assert_eq!(reg.skipped()[0].path, Path::new("o").join(EMBEDDER_MANIFEST));
+        assert_eq!(reg.skipped()[0].reason, "no ONNX Runtime here");
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // Core ML models can't use the onnx-only keys.
+        let tmp = tmp_dir("onnx-keys-on-coreml");
+        write_manifest(&tmp, "c", "id = \"c\"\nbackend = \"coreml\"\nartifact = \"m_{seq}\"\ntokenizer = \"t\"\ndims = 4\npooling = \"last\"\n\
+                                   buckets = [128]\nmax_seq_len = 128\n");
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped()[0].reason.contains("`pooling = \"last\"` is only valid for the onnx backend"), "{}", reg.skipped()[0].reason);
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

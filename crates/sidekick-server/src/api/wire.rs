@@ -493,6 +493,10 @@ pub struct ModelObject {
     /// `text-classification`, `zero-shot-classification`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<&'static str>,
+    /// Extension, embedders: what serves the model: `coreml`, `static` or
+    /// `onnx` (D40).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<&'static str>,
     /// Extension, text-classification: the labels in `probs` order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
@@ -547,6 +551,7 @@ impl ModelObject {
             created,
             owned_by: "sidekick",
             task: Some(task),
+            backend: None,
             labels: None,
             max_labels: None,
             max_batch: None,

@@ -10,16 +10,18 @@
 //!   platform-neutral.
 
 pub mod classify_input;
+pub mod embed_input;
 pub mod agentjev;
 pub mod fev;
 pub mod gliner2;
 pub mod laya;
+pub mod onnx;
 pub mod placement;
 mod pooling;
 mod static_embedder;
 
 pub use classify_input::InputBuilder;
-pub use pooling::{mean_pool, normalize_in_place};
+pub use pooling::{mean_pool, normalize_in_place, pool};
 pub use static_embedder::StaticEmbedder;
 
 #[cfg(all(feature = "coreml", target_os = "macos"))]
@@ -69,6 +71,10 @@ pub fn load_embedder(model: &ResolvedModel) -> Result<Box<dyn sidekick_core::Emb
                     sidekick_core::UnavailableReason::NotSupportedInBuild,
                 ))
             }
+        }
+        // Until the backend lands, an onnx model can't be served.
+        EmbeddingBackendKind::Onnx => {
+            Err(sidekick_core::Error::Unavailable(sidekick_core::UnavailableReason::NotSupportedInBuild))
         }
     }
 }
