@@ -214,6 +214,7 @@ class Job:
     chunks: object = None         # None, "auto", "default", a chunk count or layer cuts (chunking.plan_cuts); needs
     backbone: object = None       # the backbone and head the wrapper was composed from
     head: object = None
+    format: str = "coreml"        # "onnx": one dynamic-shape model.onnx instead (onnx_export.py)
 
 
 def trace_convert(wrapper, ports, seq, example, output):
@@ -337,6 +338,9 @@ def _gate(job, fn, *args):
 
 def run(job, install_dir):
     """Convert, gate and install every bucket, then install the job's files."""
+    if job.format == "onnx":
+        from . import onnx_export
+        return onnx_export.run(job, install_dir)
     install_dir = Path(install_dir).expanduser()
     install_dir.mkdir(parents=True, exist_ok=True)
     if job.negative_control:

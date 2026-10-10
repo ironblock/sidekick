@@ -45,10 +45,12 @@ def _apply(backbone, rewrites):
 def embedder(*, model_id, src, buckets, backbone, head, tok, texts, calibration=None, gates=None,
              forbid_ops=frozenset({FUSED_ATTENTION}), rewrites=(), strict_max_seq_len=True,
              truncate=False, negative_control=False, timing=False, int8_embedding=False,
-             ignore_ane_weight_cap=False, chunks=None, chunk_identity_all=False):
+             ignore_ane_weight_cap=False, chunks=None, chunk_identity_all=False, format="coreml"):
     """An embedding job; installs examples/manifests/<model_id>/manifest.toml.
     `rewrites` (functions of the backbone) run after the fp32 references are
-    computed from the unmodified checkpoint."""
+    computed from the unmodified checkpoint. For `format="onnx"` they don't
+    run: they are the ANE's precision rewrites, exact in fp32, and only add
+    operations on the CPU."""
     path = _manifest.embedder_path(model_id)
     m = _manifest.load(path)
     head.bind(backbone)
@@ -56,7 +58,8 @@ def embedder(*, model_id, src, buckets, backbone, head, tok, texts, calibration=
                              strict_max_seq_len=strict_max_seq_len)
     ports = text_ports(token_type_ids=getattr(backbone, "token_types", None) == "input")
     cases = evaluation(backbone, head, tok, texts, max(buckets), truncate=truncate)
-    _apply(backbone, rewrites)
+    if format != "onnx":
+        _apply(backbone, rewrites)
     make_wrapper, example = compose(backbone, head, ports)
     return Job(name=model_id, buckets=buckets, ports=ports, output=head.output, make_wrapper=make_wrapper,
                example=example, evaluation=cases,
@@ -65,17 +68,20 @@ def embedder(*, model_id, src, buckets, backbone, head, tok, texts, calibration=
                install_files=[(path, "manifest.toml")],
                negative_control=negative_control, timing=timing, int8_embedding=int8_embedding,
                ignore_ane_weight_cap=ignore_ane_weight_cap, chunks=chunks, chunk_identity_all=chunk_identity_all,
-               backbone=backbone, head=head)
+               backbone=backbone, head=head, format=format)
 
 
 def classifier(*, model_id, src, buckets, backbone, head, tok, texts=None, pairs=None, calibration=None,
                gates=None, gate_overrides=None, expected_problem_type=None, rewrites=(),
                strict_max_seq_len=True, landing_required=True, negative_control=False, timing=False,
-               int8_embedding=False, ignore_ane_weight_cap=False, chunks=None, chunk_identity_all=False):
+               int8_embedding=False, ignore_ane_weight_cap=False, chunks=None, chunk_identity_all=False,
+               format="coreml"):
     """A classification job; installs examples/classifiers/<model_id>/classifier.toml.
     The gates compare outputs after the manifest's activation; `gate_overrides`
     adjusts ClassifierGates' thresholds. `rewrites` run after the fp32
     references, as in embedder()."""
+    if format != "coreml":
+        raise SystemExit("classifiers convert to Core ML only; ONNX export covers embedders")
     path = _manifest.classifier_path(model_id)
     m = _manifest.load(path)
     head.bind(backbone)
