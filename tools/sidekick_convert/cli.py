@@ -82,8 +82,10 @@ def parse(description, *, flags=(), default_buckets=(128, 256, 512), argv=None):
                    help="coreml: per-bucket .mlmodelc for the ANE (the default); onnx: one dynamic-shape "
                         "fp32 model.onnx for ONNX Runtime's CPU backend")
     p.add_argument("--onnx-weights", choices=("fp32", "fp16"), default="fp32",
-                   help="with --format onnx: store weights in fp16 behind casts, computing in fp32 (half the "
-                        "size; lossless for a bf16 checkpoint, gated like any export)")
+                   help="with --format onnx: store weights in fp16 behind casts, computing in fp32: half the "
+                        "file, not the memory (ONNX Runtime upcasts at load); lossless for a bf16 checkpoint, "
+                        "gated like any export. There is no int8: ONNX Runtime's int8 kernels scale "
+                        "activations per tensor across the batch (docs/CONVERTING.md, ONNX export)")
     for name, kwargs in flags:
         p.add_argument(name, **kwargs)
     args = p.parse_intermixed_args(argv)
