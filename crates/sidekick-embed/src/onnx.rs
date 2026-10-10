@@ -15,6 +15,9 @@
 /// runtime of another 1.x version at least as new loads with a warning.
 pub const PINNED_VERSION: &str = "1.28.3";
 
+/// Whether this build has the ONNX Runtime backend (the `onnx` feature).
+pub const SUPPORTED: bool = cfg!(feature = "onnx");
+
 /// Inference threads per model when the operator doesn't say:
 /// [`DEFAULT_INTRA_OP_THREADS`], or one less than the machine's logical
 /// CPUs if that's fewer, and at least 1.
@@ -33,6 +36,8 @@ pub struct RuntimeInfo {
     pub version: String,
     /// Where it was loaded from.
     pub library: std::path::PathBuf,
+    /// Whether `ORT_DYLIB_PATH` named it (else it sat beside the executable).
+    pub from_env: bool,
     /// Set when the loaded version isn't [`PINNED_VERSION`].
     pub warning: Option<String>,
 }
@@ -72,6 +77,7 @@ mod backend {
     }
 
     fn load_runtime() -> std::result::Result<RuntimeInfo, String> {
+        let from_env = std::env::var_os("ORT_DYLIB_PATH").is_some();
         let library = match std::env::var_os("ORT_DYLIB_PATH") {
             Some(p) => PathBuf::from(p),
             None => {
@@ -100,7 +106,7 @@ mod backend {
             tracing::warn!("{w}");
         }
         tracing::info!(version = %version, library = %library.display(), "ONNX Runtime loaded");
-        Ok(RuntimeInfo { version, library, warning })
+        Ok(RuntimeInfo { version, library, from_env, warning })
     }
 
     /// The version string the library reports, read before ort loads it, so

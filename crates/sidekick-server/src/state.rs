@@ -1,3 +1,4 @@
+use crate::config::OnnxThreads;
 use crate::pool::{ClassifierPool, EmbedderPool};
 use sidekick_core::{ChatBackend, ModelRegistry};
 use sidekick_embed::placement::Placements;
@@ -32,6 +33,8 @@ pub struct AppState {
     /// background after the bucket's first load. `None` when
     /// `report_compute_plans` is off or the build has no Core ML.
     pub placements: Option<Arc<Placements>>,
+    /// Each `onnx` model's inference threads (D40), for /health.
+    pub onnx_threads: OnnxThreads,
 }
 
 /// How long a known Foundation Models variant id is reused before a

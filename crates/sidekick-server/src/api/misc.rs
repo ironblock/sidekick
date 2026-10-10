@@ -162,6 +162,40 @@ fn embedder_placement(state: &AppState, r: &ResolvedModel, detail: bool) -> Opti
     placement(state, &r.dir, &m.artifact, &m.buckets, m.chunks(), units, m.placement.as_ref(), detail)
 }
 
+/// `/health`'s `onnx` section. It names the runtime's source and file, not
+/// its full path, as skipped manifests name theirs relative to the models
+/// directory.
+fn onnx_health(state: &AppState) -> Value {
+    let runtime = sidekick_embed::onnx::runtime();
+    let onnx_ids: Vec<&str> = state
+        .registry
+        .iter()
+        .filter(|r| r.manifest.backend == EmbeddingBackendKind::Onnx)
+        .map(|r| r.manifest.id.as_str())
+        .collect();
+    let models: Map<String, Value> = onnx_ids
+        .iter()
+        .map(|id| (id.to_string(), json!({"intra_op_threads": state.onnx_threads.for_model(id)})))
+        .collect();
+    let unmatched: Vec<&String> =
+        state.onnx_threads.by_model.keys().filter(|id| !onnx_ids.contains(&id.as_str())).collect();
+    json!({
+        "supported": sidekick_embed::onnx::SUPPORTED,
+        "pinned_version": sidekick_embed::onnx::PINNED_VERSION,
+        "runtime": runtime.as_ref().ok().map(|r| json!({
+            "version": r.version,
+            "source": if r.from_env { "ORT_DYLIB_PATH" } else { "beside sidekickd" },
+            "file": r.library.file_name().map(|f| f.to_string_lossy().into_owned()),
+            "warning": r.warning,
+        })),
+        "unavailable": runtime.err(),
+        "default_intra_op_threads": state.onnx_threads.default,
+        "models": models,
+        // Thread settings that named no onnx model.
+        "unmatched_thread_overrides": unmatched,
+    })
+}
+
 pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let chat_availability = state.chat.availability().await;
     // Fetched before context_limit(), which it refreshes.
@@ -247,6 +281,9 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         },
         // Compute units the operator chose in the daemon config (D38), and
         // overrides that named no Core ML model.
+        // The ONNX Runtime CPU backend (D40): what loaded, and each onnx
+        // model's inference threads.
+        "onnx": onnx_health(&state),
         "compute_unit_overrides": {
             "applied": overrides,
             "unmatched": state.registry.unmatched_overrides(),

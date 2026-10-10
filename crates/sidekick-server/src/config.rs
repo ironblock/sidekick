@@ -55,6 +55,10 @@ pub struct Config {
     /// load, and the result is cached. Without it, the plan recorded at
     /// conversion time is reported, when the manifest has one.
     pub report_compute_plans: bool,
+    /// Inference threads for each `onnx` model, unless its
+    /// `[models."<id>"]` says otherwise (D40). Default: 4, or one less than
+    /// the machine's logical CPUs if that's fewer.
+    pub onnx_intra_op_threads: Option<usize>,
     /// Per-model settings, by model id (`[models."agent-jev"]`).
     pub models: BTreeMap<String, ModelConfig>,
 }
@@ -68,6 +72,22 @@ pub struct ModelConfig {
     /// judge it as they would the manifest's choice, and /v1/models and
     /// /health report that the operator chose.
     pub compute_units: Option<ComputeUnits>,
+    /// Inference threads for an `onnx` model (D40).
+    pub intra_op_threads: Option<usize>,
+}
+
+/// Each `onnx` model's inference threads: the operator's, by model id, or
+/// the daemon default.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OnnxThreads {
+    pub default: usize,
+    pub by_model: BTreeMap<String, usize>,
+}
+
+impl OnnxThreads {
+    pub fn for_model(&self, id: &str) -> usize {
+        self.by_model.get(id).copied().unwrap_or(self.default)
+    }
 }
 
 impl Default for Config {
@@ -83,6 +103,7 @@ impl Default for Config {
             ignore_ane_weight_cap: false,
             ignore_cpu_seq_cap: false,
             report_compute_plans: false,
+            onnx_intra_op_threads: None,
             models: BTreeMap::new(),
         }
     }
@@ -105,6 +126,27 @@ impl Config {
     /// The operator's compute units, by model id (D38).
     pub fn compute_units(&self) -> BTreeMap<String, ComputeUnits> {
         self.models.iter().filter_map(|(id, m)| Some((id.clone(), m.compute_units?))).collect()
+    }
+
+    /// The `onnx` models' inference threads. Zero threads is a config
+    /// error: ONNX Runtime would read it as "as many as there are cores",
+    /// the opposite of a limit.
+    pub fn onnx_threads(&self) -> anyhow::Result<OnnxThreads> {
+        let default = self.onnx_intra_op_threads.unwrap_or_else(sidekick_embed::onnx::default_intra_op_threads);
+        if default == 0 {
+            anyhow::bail!("onnx_intra_op_threads must be at least 1");
+        }
+        let mut by_model = BTreeMap::new();
+        for (id, m) in &self.models {
+            match m.intra_op_threads {
+                Some(0) => anyhow::bail!("[models.\"{id}\"] intra_op_threads must be at least 1"),
+                Some(n) => {
+                    by_model.insert(id.clone(), n);
+                }
+                None => {}
+            }
+        }
+        Ok(OnnxThreads { default, by_model })
     }
 
     pub fn models_dir(&self) -> PathBuf {
@@ -145,6 +187,19 @@ pub fn default_config_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn onnx_threads_have_a_default_and_per_model_overrides() {
+        let c: Config = toml::from_str("onnx_intra_op_threads = 3\n[models.e]\nintra_op_threads = 1\n").unwrap();
+        let t = c.onnx_threads().unwrap();
+        assert_eq!((t.default, t.for_model("e"), t.for_model("other")), (3, 1, 3));
+        let t = Config::default().onnx_threads().unwrap();
+        assert_eq!(t.default, sidekick_embed::onnx::default_intra_op_threads());
+        assert!((1..=4).contains(&t.default));
+        // Zero would mean "all cores" to ONNX Runtime: refused.
+        assert!(toml::from_str::<Config>("onnx_intra_op_threads = 0").unwrap().onnx_threads().is_err());
+        assert!(toml::from_str::<Config>("[models.e]\nintra_op_threads = 0").unwrap().onnx_threads().is_err());
+    }
 
     #[test]
     fn a_model_section_sets_its_compute_units() {

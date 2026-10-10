@@ -42,13 +42,17 @@ struct Args {
 /// the binary has. Called once per process, so leaking it for clap's
 /// `'static` requirement is fine.
 fn version() -> &'static str {
-    let text = match sidekick_fm::FM_SDK {
+    let mut text = match sidekick_fm::FM_SDK {
         "none" => format!("{} (Foundation Models: stub build)", env!("CARGO_PKG_VERSION")),
         sdk => format!(
             "{} (Foundation Models shim built with macOS SDK {sdk})",
             env!("CARGO_PKG_VERSION")
         ),
     };
+    if sidekick_embed::onnx::SUPPORTED {
+        // Loaded at startup (D40); /health reports the version that loaded.
+        text.push_str(&format!(" (ONNX Runtime {} expected)", sidekick_embed::onnx::PINNED_VERSION));
+    }
     Box::leak(text.into_boxed_str())
 }
 
