@@ -2218,9 +2218,13 @@ intra_op_threads = 2
   (#64) measure 1, 2, 4 and 8 threads for latency, and against a
   co-located model where they can. The default may be revised from those
   numbers.
-- Concurrent requests to one model share its session and its thread pool.
-- `/health` reports each loaded ONNX model's effective threads, beside
-  the runtime's version.
+- Each model has one session. Concurrent requests to it take turns,
+  since ONNX Runtime's `Run` holds the session (in ort 2.0.0-rc.13), and
+  each uses all of the model's threads, so a model never uses more than
+  its `intra_op_threads`.
+- Zero threads is a config error: ONNX Runtime reads it as every core.
+- `/health` reports each onnx model's effective threads, the default,
+  and any thread setting that named no onnx model, beside the runtime.
 
 **Batching.** Until it is measured, each input runs on its own, at its
 own length, unpadded. That way an embedding never depends on what else is
@@ -2237,11 +2241,17 @@ time and loads `libonnxruntime` at startup.
   `sidekickd` binary (`libonnxruntime.dylib`, `.so`). Release archives
   ship the library there.
 - The ONNX Runtime version is pinned: ORT 1.28.x, which ort 2.0.0-rc.13
-  is built for. `sidekickd --version` names the pinned version, and
-  `/health` names the version actually loaded and its path. A loaded
+  is built for. `sidekickd --version` names the pinned version. `/health`
+  names the version actually loaded, and where it came from
+  (`ORT_DYLIB_PATH`, or beside `sidekickd`) by file name. It doesn't give
+  the full path, just as a skipped manifest is named relative to the models
+  directory. The pinned release is `onnxruntime-osx-arm64-1.28.3.tgz`
+  (sha256 `c436bd9f…0a1d32`) on Apple silicon. A loaded
   library of another 1.x version than the pin is used, with a warning in
   the log and in `/health`, since `ORT_DYLIB_PATH` exists to allow it.
-  One ort can't drive at all is refused, with the reason.
+  One older than 1.28, which ort can't drive, is refused with the
+  reason. The library's version is read through `OrtGetApiBase` before
+  ort loads it, so a wrong file fails with a reason, not a panic.
 - Everything is behind an `onnx` cargo feature. A build without it is
   unchanged, and skips `onnx` manifests as unsupported in that build, as
   a build without `coreml` skips classifiers.

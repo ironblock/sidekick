@@ -33,6 +33,16 @@ Both paths read the same models directory
 empty, the daemon 404s the model and `sk_pool_models` returns `[]` — treat
 either as "fall back".
 
+**On an Intel Mac or Linux,** the daemon serves embedders as ONNX models
+on the CPU (`backend = "onnx"`, D40) under the same ids and the same API,
+so the same client code runs everywhere. `/v1/models` lists each
+embedder's `backend`, and `sidekick-compute-units` reads `cpu` for these.
+Chat (Foundation Models), classification and the dylib are Apple silicon
+only. An ONNX model's vectors come from a different runtime than its
+Core ML build's. Both are graded against the same fp32 reference, but
+don't mix vectors stored from the two in one index without checking
+their agreement in docs/MODELS.md.
+
 Install only artifacts built with the repository's converters (one
 static-shape `.mlmodelc` per bucket). On macOS 27, a Core ML artifact
 whose inputs accept several enumerated shapes can abort the process at its
