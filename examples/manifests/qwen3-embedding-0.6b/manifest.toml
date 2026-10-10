@@ -1,0 +1,38 @@
+# Qwen/Qwen3-Embedding-0.6B: a Qwen3 causal decoder (28 layers, QK-norm,
+# 0.6B parameters, Apache-2.0) with LAST-TOKEN pooling. The server
+# L2-normalizes in f32.
+#
+# Produce the artifacts with tools/convert_qwen3_embedding.py, the same
+# recipe as F2LLM-v2-160M. `--format onnx` exports one fp32 model.onnx for
+# ONNX Runtime's CPU backend, from which the installed ONNX manifest is
+# derived (docs/DECISIONS.md D40). As Core ML artifacts the fp16 weights are
+# about 1.2 GB per bucket, past the ANE's 1 GiB per-program limit (D32), so
+# a Core ML build is chunked (D37).
+#
+# max_seq_len 512 matches the other decoder embedders' buckets; the model
+# itself takes up to 32k tokens.
+#
+# Matryoshka: the model card documents output dimensions from 32 to 1024.
+#
+# Prefixes are asymmetric: queries get the instruction prompt from the
+# model's config_sentence_transformers.json, documents get nothing.
+
+id = "qwen3-embedding-0.6b"
+backend = "coreml"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+dims = 1024
+matryoshka = [1024, 512, 256, 128]
+pooling = "none"          # last-token pooling lives inside the model
+buckets = [128, 256, 512]
+max_seq_len = 512
+source = { repo = "Qwen/Qwen3-Embedding-0.6B", revision = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3" }
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "embedding"
+
+[prefixes]
+query = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
+document = ""
