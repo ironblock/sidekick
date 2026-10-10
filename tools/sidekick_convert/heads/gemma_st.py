@@ -71,6 +71,12 @@ class MeanDenseL2:
         out = y * torch.rsqrt(den + 1e-6)
         return out.reshape(1, self.dims)
 
+    def onnx_module(self, backbone):
+        """The model and this stack for ONNX export (onnx_export.py): dynamic
+        batch and sequence, int64 inputs, masks built from the input's
+        length, in fp32 without the Core ML form's range scales."""
+        return _GemmaOnnx(backbone, self)
+
     def reference(self, outputs):
         """sentence-transformers' math on an unpadded forward: mean ->
         Dense -> Dense -> L2."""
@@ -81,3 +87,33 @@ class MeanDenseL2:
 
     def st_mode(self):
         return "mean"
+
+
+class _GemmaOnnx(torch.nn.Module):
+    """EmbeddingGemma's encoder and stack on dynamic shapes: the key-padding
+    mask and the sliding band are built from the input, so one graph serves
+    every length and batch."""
+
+    def __init__(self, backbone, head):
+        super().__init__()
+        self.model = backbone.model
+        self.window = int(head.window)
+        self.dense1 = torch.nn.Linear(head.dense1_w.shape[1], head.dense1_w.shape[0], bias=False)
+        self.dense1.weight = torch.nn.Parameter(head.dense1_w)
+        self.dense2 = torch.nn.Linear(head.dense2_w.shape[1], head.dense2_w.shape[0], bias=False)
+        self.dense2.weight = torch.nn.Parameter(head.dense2_w)
+
+    def forward(self, input_ids, attention_mask):
+        mask_f = attention_mask.to(torch.float32)
+        addmask = (1.0 - mask_f)[:, None, None, :] * masks.MASK_ADD
+        idx = torch.arange(input_ids.shape[1], device=input_ids.device)
+        band = ((idx[:, None] - idx[None, :]).abs() >= self.window).to(torch.float32)[None, None] * masks.MASK_ADD
+        h = self.model(
+            input_ids=input_ids,
+            attention_mask={"full_attention": addmask, "sliding_attention": addmask + band},
+            position_ids=idx[None, :].expand(input_ids.shape[0], -1),
+            use_cache=False,
+        ).last_hidden_state
+        pooled = (h * mask_f.unsqueeze(-1)).sum(dim=1) / mask_f.sum(dim=1, keepdim=True)
+        y = self.dense2(self.dense1(pooled))
+        return y / torch.linalg.vector_norm(y, dim=-1, keepdim=True)

@@ -22,6 +22,7 @@ cited as Dnn).
 - [Tokenizers](#tokenizers)
 - [Manifests](#manifests)
 - [Converters](#converters)
+- [ONNX export](#onnx-export)
 - [Adding a family](#adding-a-family)
 - [Refactoring a converter: the acceptance method](#refactoring-a-converter-the-acceptance-method)
 - [Gotchas](#gotchas)
@@ -343,6 +344,54 @@ Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
 torch, transformers 4.x (the BERT backbone proves at load that its finite
 mask is on the forward path), tokenizers, coremltools and numpy, and Xcode
 for `xcrun coremlcompiler`.
+
+## ONNX export
+
+`--format onnx` on an embedder converter exports the same model for ONNX
+Runtime's CPU backend (docs/DECISIONS.md D40) instead of Core ML: the same
+backbone, head and gate texts, gated against the same fp32 references
+(`sidekick_convert/onnx_export.py`).
+
+- **One graph, dynamic shapes.** `model.onnx` takes int64 `input_ids` and
+  `attention_mask` of any batch and length; there are no buckets. Weights
+  past protobuf's 2 GB go to one `model.onnx_data` beside it.
+- **Pooling.** The graph outputs `last_hidden_state` and the server pools it
+  (`mean`, `cls` or `last_token`), as it does a published export. A head that
+  is more than pooling stays in the graph: EmbeddingGemma's mean, dense stack
+  and L2 output `embedding`, with `pooling = "none"`.
+- **fp32, no ANE rewrites.** The precision and range rewrites exist for the
+  ANE's fp16 arithmetic; they are exact in fp32 and would only add work on
+  the CPU, so they don't run.
+- **Gates,** through ONNX Runtime's Python API: every gate case against the
+  checkpoint's own output (cosine at least 0.99999), the cases in one
+  right-padded batch against their unpadded runs, and random pad ids.
+- **Manifest.** The installed manifest is derived from the committed Core ML
+  one (same id, tokenizer, dims, prefixes, Matryoshka), with backend
+  `onnx`, artifact `model.onnx`, the pooling, and every extra graph input
+  named in `[io]`. Model ids are the same across backends, so compare the
+  two side by side from separate models directories.
+- **`--onnx-weights fp16`** stores the weights in fp16 behind casts to fp32:
+  half the file, the same fp32 arithmetic. It saves disk, not memory: ONNX
+  Runtime upcasts at load, peaking about 1.5 times the fp32 build's resident
+  memory and settling at it. It is lossless for a bf16 checkpoint, whose
+  weights fp16 represents exactly (Qwen3-Embedding-0.6B: 1 − cosine 2e-11),
+  and gated like any export otherwise (all-MiniLM-L6-v2: 0.9999998).
+- **No int8.** ONNX Runtime's int8 kernels quantize activations at run time
+  with one scale per tensor, computed over the whole batch, padding
+  included. A model's output then depends on what it is batched with, which
+  breaks sidekick's batch and pad invariance, and one scale per tensor
+  collapses on activation outliers. On Qwen3-Embedding-0.6B, both a dynamic
+  int8 export and the published one grade D even one input at a time
+  (median cosine 0.86, worst 0.41), and F batched. A weight-only int8 file
+  doesn't escape it: ONNX Runtime's optimizer fuses its dequantize into the
+  same dynamic kernel.
+
+Grade an export with the parity suite's `onnx-cpu` path:
+`tools/onnx_parity.py <model-dir> --refs <refs> --out result.json` writes
+the suite's worker result, and `parity --models-dir <dir> --refs <refs>
+--model <id> --external result.json` grades it. `tools/bench_onnx.py`
+measures load time, resident memory and latency per length, batch size and
+thread count.
 
 ## Adding a family
 
