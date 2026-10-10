@@ -2138,10 +2138,10 @@ serves.
 ```toml
 id = "bge-small-en-v1.5"
 backend = "onnx"
-artifact = "model.onnx"            # one graph; external data files beside it are fine
+artifact = "model.onnx"            # one graph; an external-data weights file beside it is fine
 tokenizer = "tokenizer.json"
 dims = 384
-pooling = "cls"                    # mean | cls | last | none
+pooling = "none"                   # none | mean | cls | last_token
 max_seq_len = 512
 
 [io]
@@ -2149,40 +2149,57 @@ input_ids = "input_ids"
 attention_mask = "attention_mask"  # optional
 token_type_ids = "token_type_ids"  # optional; fed zeros
 position_ids = "position_ids"      # optional; fed 0..n per input
-output = "last_hidden_state"       # [batch, seq, hidden], or [batch, dims] with pooling = "none"
+output = "embedding"               # [batch, dims] with pooling = "none", else [batch, seq, hidden]
 ```
 
-- No `buckets`: the graph takes dynamic shapes, so each input runs at its
-  own length. `max_seq_len` bounds it, and truncation, prefixes,
-  `max_tokens` and `truncate` work as for Core ML models: the tokenizing
-  code is shared.
-- Pooling and normalization stay in Rust and are shared with the Core ML
-  embedder, so the two backends differ only in the forward pass. `mean` and
-  `cls` exist today. `last` is new, for decoder embedders (F2LLM, Qwen3
-  embeddings), whose Core ML graphs pool inside the graph; it takes the
-  last real token. `none` takes a `[batch, dims]` output as it is.
-- Core ML's keys are refused on an `onnx` manifest: `{seq}`, `buckets`,
-  `compute_units`, `ane_weight_limit`, `cpu_seq_limit`, `[chunking]` and
-  `[placement]`. D32's weight limit and D33's CPU cap are Core ML
-  limits and don't apply.
-- An ONNX model keeps the model's id. Clients then address the same model
-  on every platform, whichever backend serves it there. A models directory
-  holds one manifest per id, as now; the operator installs the Core ML or
-  the ONNX build of a model, not both under one id.
+Two kinds of graph are served:
+- **sidekick's own exports** wrap the model as its Core ML conversion
+  does, pooling included. They output `embedding`, `[batch, dims]`, with
+  `pooling = "none"`. ONNX and Core ML then compute the same function and
+  differ only in the forward pass. EmbeddingGemma (mean pooling plus a
+  dense stack) is served this way only, so Rust gains no dense layers.
+- **Published exports** emit token-level `last_hidden_state`, pooled in
+  Rust with `mean` or `cls`, or with `last_token` (the last real token,
+  new for decoder embedders such as Qwen3-Embedding's published int8
+  export). BERT-family exports take `token_type_ids`, fed zeros.
+
+The inputs' element type follows what the graph declares, int64 (ONNX's
+convention) or int32. The graph's batch and sequence axes are dynamic,
+so there are no `buckets`: each input runs at its own length, up to
+`max_seq_len`. Truncation, prefixes, `max_tokens` and `truncate` work as
+for Core ML models, because the tokenizing code is shared
+(`sidekick_embed::embed_input`). Normalization and Matryoshka truncation
+stay in Rust, as does pooling, shared with the Core ML embedder
+(`sidekick_embed::pool`). An onnx manifest refuses Core ML's keys:
+`{seq}`, `buckets`, `compute_units`, `ane_weight_limit`,
+`cpu_seq_limit`, `[chunking]` and `[placement]`. D32's weight limit
+and D33's CPU cap are Core ML limits and don't apply.
+
+An ONNX build keeps the model's id, so a client addresses the same model
+on every platform, whichever backend serves it there. A models directory
+holds one manifest per id, as now. To compare the two builds on Apple
+Silicon, put them in separate models directories.
 
 **Interface checks fail loudly** (D22's rule, applied at load). At scan,
-the daemon reads the graph's declared inputs and outputs from the `.onnx`
-file's header. That reads the protobuf's input and output declarations
-only, not the weights, and it needs no runtime library. A manifest is
-skipped, with the reason in `/health`'s `skipped_models`, when:
-- an input named in `[io]` is missing;
-- the graph has an input `[io]` doesn't name;
+the registry reads the graph's declared inputs and outputs from the
+`.onnx` protobuf (`sidekick_core::onnx_graph`). It needs no runtime
+library, and it seeks past every length-delimited field it doesn't
+need, so the weights are never read. That matters because exporters
+serialize the initializers before the inputs and outputs. On a 600 MB
+model stored that way, the read took 155 µs, and the whole process
+peaked at 2.4 MiB resident (M1 Max). A graph whose weights sit in an
+external-data file reads the same way. A manifest is skipped, with the
+reason in `/health`'s `skipped_models`, when:
+- `[io]` names an input the graph lacks, or the graph takes an input
+  `[io]` doesn't name;
 - an input isn't an int32 or int64 tensor of rank 2;
-- the output's rank doesn't match `pooling` (3, or 2 with `none`);
-- or its last dimension, when the graph fixes it, isn't `dims`.
+- the output's rank doesn't fit `pooling`;
+- the output's last dimension, when the graph fixes it, isn't `dims`.
 
-When ONNX Runtime itself won't load, every `onnx` manifest is skipped with
-that reason, and the rest of the daemon serves as usual.
+When ONNX Runtime itself won't load, or the build has no `onnx` feature,
+every `onnx` manifest is skipped with that reason
+(`ModelRegistry::skip_backend`), and the rest of the daemon serves as
+usual.
 
 **Threads.** `intra_op_threads` bounds the CPU threads a model's
 inference uses, so a CPU encoder doesn't starve a larger model's host
@@ -2197,7 +2214,10 @@ intra_op_threads = 2
 ```
 
 - The default is 4, at most one less than the machine's logical CPUs.
-  `inter_op_threads` is 1: the graphs are sequential.
+  `inter_op_threads` is 1: the graphs are sequential. The benchmarks
+  (#64) measure 1, 2, 4 and 8 threads for latency, and against a
+  co-located model where they can. The default may be revised from those
+  numbers.
 - Concurrent requests to one model share its session and its thread pool.
 - `/health` reports each loaded ONNX model's effective threads, beside
   the runtime's version.
@@ -2235,9 +2255,20 @@ serves every length, so there is no compiled program per bucket to name,
 as for a static model.
 
 **The parity suite** grades an `onnx` model on one path, `onnx-cpu`,
-against the same fp32 references as its Core ML build, with the same
-gates. A bucket check becomes a length check: the same input run padded
-to longer lengths. That check applies only if batching is enabled.
+against the same fp32 references and gates as its Core ML build. Its
+bucket-invariance gate is the CPU's unless `expectations.toml` sets
+`onnx-cpu`. The bucket check becomes a length check, the same input run
+padded to longer lengths, which applies only if batching is enabled.
+Until the suite runs the backend itself, the `onnx-cpu` path is graded
+from results written outside it: `parity --external FILE` takes a
+worker result in the suite's own JSON shape (`model`, `path:
+"onnx-cpu"`, `cases`, `repeat_bitwise`, `load_ms`; each case its `id`,
+`ids_match`, its token count as `bucket`, `vector`, `finite`,
+`model_only`, `bucket_invariance` and `pad_invariance` as `{n: 0}`
+when not measured, and `ms`). The file must hold every reference case in
+reference order, each with a vector of the model's width, and it is
+graded by the same code as the suite's own paths. Once the backend runs
+natively, the external runner becomes a cross-check.
 
 ## Hardware verification status
 
