@@ -37,6 +37,10 @@ safetensors = "0.5"
 regex = "1"
 half = "2"
 sha2 = "0.10"
+# ONNX Runtime, loaded at startup rather than linked (D40). api-28 makes
+# 1.28 the oldest runtime it accepts; the pinned version is 1.28.3.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-28"] }
+libloading = "0.9"
 base64 = "0.22"
 axum = "0.8"
 tower = "0.5"

@@ -56,8 +56,26 @@ pub(crate) fn byte_cap(text: &str, max_tokens: usize) -> &str {
     &text[..end]
 }
 
-/// Load the right embedder for a registry entry.
+/// Load the right embedder for a registry entry, with default options.
 pub fn load_embedder(model: &ResolvedModel) -> Result<Box<dyn sidekick_core::Embedder>> {
+    load_embedder_with(model, &LoadOptions::default())
+}
+
+/// What the operator chose about how an embedder runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadOptions {
+    /// Inference threads for an `onnx` model (D40).
+    pub onnx_intra_op_threads: usize,
+}
+
+impl Default for LoadOptions {
+    fn default() -> Self {
+        Self { onnx_intra_op_threads: onnx::default_intra_op_threads() }
+    }
+}
+
+/// Load the right embedder for a registry entry.
+pub fn load_embedder_with(model: &ResolvedModel, options: &LoadOptions) -> Result<Box<dyn sidekick_core::Embedder>> {
     match model.manifest.backend {
         EmbeddingBackendKind::Static => Ok(Box::new(StaticEmbedder::load(model)?)),
         EmbeddingBackendKind::Coreml => {
@@ -72,9 +90,16 @@ pub fn load_embedder(model: &ResolvedModel) -> Result<Box<dyn sidekick_core::Emb
                 ))
             }
         }
-        // Until the backend lands, an onnx model can't be served.
         EmbeddingBackendKind::Onnx => {
-            Err(sidekick_core::Error::Unavailable(sidekick_core::UnavailableReason::NotSupportedInBuild))
+            #[cfg(feature = "onnx")]
+            {
+                Ok(Box::new(onnx::OnnxEmbedder::load(model, options.onnx_intra_op_threads)?))
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                let _ = options;
+                Err(sidekick_core::Error::Unavailable(sidekick_core::UnavailableReason::NotSupportedInBuild))
+            }
         }
     }
 }
