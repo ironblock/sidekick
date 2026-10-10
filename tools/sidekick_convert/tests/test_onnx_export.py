@@ -65,6 +65,11 @@ class ManifestTest(unittest.TestCase):
         self.assertEqual(m["prefixes"]["query"], "q: ")
         self.assertNotIn("Core ML artifact's description", text)
 
+    def test_extra_inputs_are_named(self):
+        m = tomllib.loads(onnx_export.manifest_text(COREML_MANIFEST, "cls", onnx_export.TOKEN_OUTPUT,
+                                                    ["token_type_ids"]))
+        self.assertEqual(m["io"]["token_type_ids"], "token_type_ids")
+
     def test_pooled_in_graph(self):
         m = tomllib.loads(onnx_export.manifest_text(COREML_MANIFEST, None, onnx_export.POOLED_OUTPUT))
         self.assertEqual(m["pooling"], "none")

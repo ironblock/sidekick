@@ -14,6 +14,10 @@ differs is the graph's shape contract:
   dense stack) stays in the graph and outputs the pooled vector.
 - fp32, with none of the ANE's precision rewrites: they are exact in fp32
   and only add operations on the CPU.
+- Optionally fp16 weights (fp16_weights()), still computed in fp32. No
+  int8: ONNX Runtime's int8 kernels quantize activations with one scale per
+  tensor over the whole batch, so outputs depend on batch and padding, and
+  the scale collapses on activation outliers (docs/CONVERTING.md).
 
 Gates, in fp32 through ONNX Runtime's Python API on the CPU:
 - every gate case, unpadded, pooled as the server pools it, against the
@@ -112,6 +116,12 @@ def export(module, inputs, output, path):
         onnx.save_model(model, str(path), save_as_external_data=True, all_tensors_to_one_file=True,
                         location=path.name + "_data", size_threshold=1024)
     onnx.checker.check_model(str(path))
+
+
+def graph_inputs(path):
+    """The ONNX graph's input names, read without its weights."""
+    import onnx
+    return [i.name for i in onnx.load(str(path), load_external_data=False).graph.input]
 
 
 def fp16_weights(path):
@@ -215,11 +225,13 @@ def gate(runner, cases, pad_id_range, report=print):
     return result
 
 
-def manifest_text(coreml_text, pooling, output):
+def manifest_text(coreml_text, pooling, output, extra_inputs=()):
     """The installed manifest for the ONNX artifact, from the committed
     Core ML one: the same model (tokenizer, dims, prefixes, Matryoshka,
     max_seq_len, source), with backend, artifact, pooling and [io] set for
-    ONNX and no buckets. Provisional until D40 settles the format."""
+    ONNX and no buckets (docs/DECISIONS.md D40). `extra_inputs` are graph
+    inputs beyond input_ids and attention_mask (token_type_ids,
+    position_ids), named in [io] so the server feeds them."""
     out, section, header = [], None, True
     for line in coreml_text.splitlines():
         s = line.strip()
@@ -238,6 +250,7 @@ def manifest_text(coreml_text, pooling, output):
         elif section is None and key == "buckets":
             continue
         elif section == "[io]" and key == "output":
+            out.extend(f'{name} = "{name}"' for name in extra_inputs)
             line = f'output = "{output}"'
         out.append(line)
     intro = ("# Exported for ONNX Runtime's CPU backend by the conversion library\n"
@@ -277,9 +290,10 @@ def run(job, install_dir, report=print):
             if dest.exists():
                 dest.unlink()
             shutil.move(str(f), dest)
+    extra = [i for i in graph_inputs(install_dir / "model.onnx") if i not in ("input_ids", "attention_mask")]
     for source, name in job.install_files:
         if name == "manifest.toml":
-            (install_dir / name).write_text(manifest_text(Path(source).read_text(), pooling, output))
+            (install_dir / name).write_text(manifest_text(Path(source).read_text(), pooling, output, extra))
     (install_dir / "onnx_gates.json").write_text(json.dumps(result, indent=2) + "\n")
     report(f"installed model.onnx and manifest.toml -> {install_dir}")
     return result
