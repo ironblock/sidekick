@@ -2316,13 +2316,20 @@ onnx-community's Qwen3-Embedding-0.6B int8 graph takes 59 inputs
 own export of the model takes only ids, mask and positions.
 
 **Linking.** ort's `load-dynamic`: sidekick links no ONNX Runtime at build
-time and loads `libonnxruntime` at startup. A daemon built with `onnx`
-loads it at startup even with no onnx model installed, and logs which
-version it loaded. If it's missing, onnx manifests are skipped with the
-reason, and everything else serves.
-- It looks for the library at `ORT_DYLIB_PATH`, when set, else beside the
-  `sidekickd` binary (`libonnxruntime.dylib`, `.so`). Release archives
-  ship the library there.
+time. Each target ships one archive with its runtime bundled; there's no
+separate slim build.
+- The runtime loads only when the scan finds an `onnx` manifest, and then
+  at startup. A missing runtime skips the onnx models with its reason in
+  `/health` right away, and everything else serves. With no onnx model,
+  it's never loaded, and `/health` reports
+  `"runtime": {"state": "not loaded", "reason": "no onnx models"}`.
+- It looks for the library at the daemon config's `onnx_runtime`, else
+  `ORT_DYLIB_PATH`, else beside the `sidekickd` binary
+  (`libonnxruntime.dylib`, `.so`), where release archives ship it. There
+  is no search of Homebrew, `/usr/local/lib` or the system library path:
+  naming the file is the opt-in to an existing install. `onnx_runtime` is
+  the way to use one under launchd, which doesn't pass a shell's
+  environment.
 - The ONNX Runtime version is pinned per target: 1.28.3, and 1.23.2 on
   Intel macOS (`x86_64-apple-darwin`). Microsoft's last osx-x86_64 build
   is 1.23.2 (`onnxruntime-osx-x86_64-1.23.2.tgz`). From 1.24 it publishes
@@ -2339,14 +2346,14 @@ reason, and everything else serves.
   follow-up.
 - `sidekickd --version` names the pinned version for its target.
   `/health` names the version actually loaded, and where it came from
-  (`ORT_DYLIB_PATH`, or beside `sidekickd`) by file name. It doesn't give
+  (`config`, `ORT_DYLIB_PATH` or `beside sidekickd`) and its file name. It doesn't give
   the full path, just as a skipped manifest is named relative to the
   models directory. `tools/fetch_onnxruntime.sh` holds each pinned
   archive's sha256, from the GitHub release's asset digest; the Apple
   silicon one, `c436bd9f…0a1d32`, matches a local download.
 - A loaded library of another 1.x version than the pin is used, with a
-  warning in the log and in `/health`, since `ORT_DYLIB_PATH` exists to
-  allow it. One older than 1.23, which this build of ort can't drive, is
+  warning in the log and in `/health`, since `onnx_runtime` and
+  `ORT_DYLIB_PATH` exist to allow it. One older than 1.23, which this build of ort can't drive, is
   refused with the reason. The library's version is read through `OrtGetApiBase` before
   ort loads it, so a wrong file fails with a reason, not a panic.
 - Everything is behind an `onnx` cargo feature. A build without it is

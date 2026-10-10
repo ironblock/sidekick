@@ -166,7 +166,18 @@ fn embedder_placement(state: &AppState, r: &ResolvedModel, detail: bool) -> Opti
 /// its full path, as skipped manifests name theirs relative to the models
 /// directory.
 fn onnx_health(state: &AppState) -> Value {
-    let runtime = sidekick_embed::onnx::runtime();
+    let runtime = match sidekick_embed::onnx::runtime_state() {
+        // Loaded only when the models directory has an onnx model (D40).
+        None => json!({"state": "not loaded", "reason": "no onnx models"}),
+        Some(Ok(r)) => json!({
+            "state": "loaded",
+            "version": r.version,
+            "source": r.source.name(),
+            "file": r.library.file_name().map(|f| f.to_string_lossy().into_owned()),
+            "warning": r.warning,
+        }),
+        Some(Err(reason)) => json!({"state": "unavailable", "reason": reason}),
+    };
     let onnx: Vec<&sidekick_core::manifest::ModelManifest> = state
         .registry
         .iter()
@@ -187,13 +198,7 @@ fn onnx_health(state: &AppState) -> Value {
     json!({
         "supported": sidekick_embed::onnx::SUPPORTED,
         "pinned_version": sidekick_embed::onnx::PINNED_VERSION,
-        "runtime": runtime.as_ref().ok().map(|r| json!({
-            "version": r.version,
-            "source": if r.from_env { "ORT_DYLIB_PATH" } else { "beside sidekickd" },
-            "file": r.library.file_name().map(|f| f.to_string_lossy().into_owned()),
-            "warning": r.warning,
-        })),
-        "unavailable": runtime.err(),
+        "runtime": runtime,
         "default_intra_op_threads": state.onnx_threads.default,
         "models": models,
         // Thread settings that named no onnx model.

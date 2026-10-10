@@ -10,6 +10,8 @@ Writes crates/sidekick-embed/tests/fixtures/tiny-onnx/:
 - `pooled.onnx`: sidekick's own export's shape. It takes `input_ids` and
   `attention_mask` (int32), and returns the masked mean `embedding`
   [batch, 8], pooled in the graph.
+- `tokenizer.json`: a word-level tokenizer over the 12 ids, splitting on
+  spaces only, for tools/smoke_launch.sh's test model;
 - `expected.json`: for fixed id sequences, numpy's unit-normalized
   vectors for each pooling the Rust side applies (mean, cls, last_token)
   to `hidden`, and for `pooled`. numpy computes the same function
@@ -164,6 +166,15 @@ def main():
             "last_token": unit(h[-1]),
             "pooled": unit(numpy_hidden(w, ids, False).mean(axis=0)),
         })
+    words = ["[UNK]", "[CLS]", "[SEP]", "a", "b", "c", "d", "e", "f", "g", "h", "i"]
+    tokenizer = {
+        "version": "1.0", "truncation": None, "padding": None, "added_tokens": [], "normalizer": None,
+        "pre_tokenizer": {"type": "WhitespaceSplit"}, "post_processor": None, "decoder": None,
+        "model": {"type": "WordLevel", "vocab": {w: i for i, w in enumerate(words)}, "unk_token": "[UNK]"},
+    }
+    with open(os.path.join(out, "tokenizer.json"), "w") as f:
+        json.dump(tokenizer, f, indent=1)
+        f.write("\n")
     with open(os.path.join(out, "expected.json"), "w") as f:
         json.dump({"cases": expected}, f, indent=1)
         f.write("\n")

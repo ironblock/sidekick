@@ -9,8 +9,9 @@
 # Every archive ships the pinned ONNX Runtime (D40) beside sidekickd, as
 # libonnxruntime.dylib or .so, with its license: 1.28.3, or 1.23.2 on Intel
 # macOS, the last release Microsoft built for it. Each archive is
-# smoke-launched: the daemon must start and report its pinned runtime in
-# /health.
+# smoke-launched twice: with the tiny test ONNX model, the daemon must load
+# its pinned runtime from beside it and embed; with no onnx model, it must
+# not load the runtime at all.
 #
 # Release notes are written before tagging, in docs/releases/vX.Y.Z.md, in
 # the same change that bumps [workspace.package] version (AGENTS.md):

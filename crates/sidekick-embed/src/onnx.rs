@@ -6,10 +6,12 @@
 //! (`embed_input`) and the pooling and normalization (`pooling`) are the
 //! Core ML embedder's: the two backends differ only in the forward pass.
 //!
-//! ONNX Runtime isn't linked at build time. `libonnxruntime` loads when
-//! the process first asks for [`runtime`], from `ORT_DYLIB_PATH` or beside
-//! the executable. A build without the `onnx` feature has no runtime, and
-//! the daemon skips every `onnx` manifest with [`runtime`]'s reason.
+//! ONNX Runtime isn't linked at build time. `libonnxruntime` loads the
+//! first time the process calls [`load_runtime`]: the daemon does that at
+//! startup when its models directory has an `onnx` model, and never
+//! otherwise. It comes from the configured path, else `ORT_DYLIB_PATH`,
+//! else beside the executable. A build without the `onnx` feature has no
+//! runtime, and the daemon skips every `onnx` manifest with the reason.
 
 /// The ONNX Runtime version sidekick is built and tested against on this
 /// target: 1.23.2 on Intel macOS, the last Microsoft built for it, and
@@ -41,23 +43,64 @@ pub struct RuntimeInfo {
     pub version: String,
     /// Where it was loaded from.
     pub library: std::path::PathBuf,
-    /// Whether `ORT_DYLIB_PATH` named it (else it sat beside the executable).
-    pub from_env: bool,
-    /// Set when the loaded version isn't [`PINNED_VERSION`].
+    /// Who named it.
+    pub source: RuntimeSource,
+    /// Set when the loaded version isn't [`PINNED_VERSION`]'s minor.
     pub warning: Option<String>,
 }
 
+/// Who named the runtime library, in the order sidekick looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeSource {
+    /// The daemon config's `onnx_runtime`.
+    Config,
+    /// The `ORT_DYLIB_PATH` environment variable.
+    Env,
+    /// Beside the executable, where release archives put it.
+    BesideExecutable,
+}
+
+impl RuntimeSource {
+    /// As `/health` reports it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Config => "config",
+            Self::Env => "ORT_DYLIB_PATH",
+            Self::BesideExecutable => "beside sidekickd",
+        }
+    }
+}
+
+static RUNTIME: std::sync::OnceLock<Result<RuntimeInfo, String>> = std::sync::OnceLock::new();
+
+/// Load ONNX Runtime, once per process: from `configured` (the daemon
+/// config's `onnx_runtime`), else `ORT_DYLIB_PATH`, else beside the
+/// executable. There's no search of system library paths: naming the file
+/// is the opt-in. Later calls return the first call's result, whatever
+/// they pass.
+pub fn load_runtime(configured: Option<&std::path::Path>) -> Result<RuntimeInfo, String> {
+    RUNTIME.get_or_init(|| load(configured)).clone()
+}
+
+/// What [`load_runtime`] gave, or `None` if this process never loaded it
+/// (no `onnx` model).
+pub fn runtime_state() -> Option<Result<RuntimeInfo, String>> {
+    RUNTIME.get().cloned()
+}
+
 #[cfg(not(feature = "onnx"))]
-pub fn runtime() -> Result<RuntimeInfo, String> {
+fn load(_: Option<&std::path::Path>) -> Result<RuntimeInfo, String> {
     Err("this build has no ONNX Runtime support (built without the `onnx` feature)".into())
 }
 
 #[cfg(feature = "onnx")]
-pub use backend::{runtime, OnnxEmbedder};
+use backend::load;
+#[cfg(feature = "onnx")]
+pub use backend::OnnxEmbedder;
 
 #[cfg(feature = "onnx")]
 mod backend {
-    use super::{RuntimeInfo, PINNED_VERSION};
+    use super::{load_runtime, RuntimeInfo, RuntimeSource, PINNED_VERSION};
     use crate::embed_input::EmbedInput;
     use crate::pooling::{normalize_in_place, pool};
     use ort::session::builder::GraphOptimizationLevel;
@@ -66,7 +109,7 @@ mod backend {
     use sidekick_core::manifest::ResolvedModel;
     use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder, Error, Pooling, Result};
     use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, OnceLock, PoisonError};
+    use std::sync::{Mutex, PoisonError};
 
     /// The runtime library's file name on this platform.
     #[cfg(target_os = "macos")]
@@ -74,29 +117,24 @@ mod backend {
     #[cfg(not(target_os = "macos"))]
     const LIBRARY: &str = "libonnxruntime.so";
 
-    /// Load ONNX Runtime once per process, from `ORT_DYLIB_PATH` when set,
-    /// else beside the executable, and report what loaded or why nothing did.
-    pub fn runtime() -> std::result::Result<RuntimeInfo, String> {
-        static RUNTIME: OnceLock<std::result::Result<RuntimeInfo, String>> = OnceLock::new();
-        RUNTIME.get_or_init(load_runtime).clone()
-    }
-
-    fn load_runtime() -> std::result::Result<RuntimeInfo, String> {
-        let from_env = std::env::var_os("ORT_DYLIB_PATH").is_some();
-        let library = match std::env::var_os("ORT_DYLIB_PATH") {
-            Some(p) => PathBuf::from(p),
-            None => {
+    /// The configured library, else `ORT_DYLIB_PATH`'s, else the one beside
+    /// the executable; loaded, and what loaded or why nothing did.
+    pub(super) fn load(configured: Option<&Path>) -> std::result::Result<RuntimeInfo, String> {
+        let (library, source) = match (configured, std::env::var_os("ORT_DYLIB_PATH")) {
+            (Some(p), _) => (p.to_path_buf(), RuntimeSource::Config),
+            (None, Some(p)) => (PathBuf::from(p), RuntimeSource::Env),
+            (None, None) => {
                 let exe = std::env::current_exe().map_err(|e| format!("can't find the executable: {e}"))?;
                 let beside = exe.parent().map(|d| d.join(LIBRARY)).unwrap_or_else(|| PathBuf::from(LIBRARY));
                 if !beside.is_file() {
                     // The executable's name, not its path: /health reports this.
                     let name = exe.file_name().map_or("the executable".into(), |n| n.to_string_lossy().into_owned());
                     return Err(format!(
-                        "ONNX Runtime ({LIBRARY}) isn't beside {name} and ORT_DYLIB_PATH isn't set; install ONNX \
-                         Runtime {PINNED_VERSION} there, or point ORT_DYLIB_PATH at it"
+                        "ONNX Runtime ({LIBRARY}) isn't beside {name}, and neither `onnx_runtime` in the config nor \
+                         ORT_DYLIB_PATH names one; install ONNX Runtime {PINNED_VERSION} there, or name it"
                     ));
                 }
-                beside
+                (beside, RuntimeSource::BesideExecutable)
             }
         };
         let version = library_version(&library)?;
@@ -112,7 +150,7 @@ mod backend {
             tracing::warn!("{w}");
         }
         tracing::info!(version = %version, library = %library.display(), "ONNX Runtime loaded");
-        Ok(RuntimeInfo { version, library, from_env, warning })
+        Ok(RuntimeInfo { version, library, source, warning })
     }
 
     /// The version string the library reports, read before ort loads it, so
@@ -166,7 +204,8 @@ mod backend {
     impl OnnxEmbedder {
         /// Load with `intra_op_threads` inference threads.
         pub fn load(model: &ResolvedModel, intra_op_threads: usize) -> Result<Self> {
-            runtime().map_err(Error::Inference)?;
+            // The daemon loaded it at startup; tools load it here.
+            load_runtime(None).map_err(Error::Inference)?;
             let m = &model.manifest;
             let fail = |what: &str, e: ort::Error| Error::Inference(format!("model `{}`: {what}: {e}", m.id));
             let path = model.dir.join(&m.artifact);

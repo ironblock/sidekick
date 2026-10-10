@@ -59,6 +59,11 @@ pub struct Config {
     /// `[models."<id>"]` says otherwise (D40). Default: 4, or one less than
     /// the machine's logical CPUs if that's fewer.
     pub onnx_intra_op_threads: Option<usize>,
+    /// The ONNX Runtime library to load (`libonnxruntime.dylib` or `.so`),
+    /// when the daemon has an onnx model: before `ORT_DYLIB_PATH` and the
+    /// one beside sidekickd. For an existing install, and for a daemon
+    /// under launchd, which doesn't pass a shell's environment (D40).
+    pub onnx_runtime: Option<PathBuf>,
     /// Per-model settings, by model id (`[models."agent-jev"]`).
     pub models: BTreeMap<String, ModelConfig>,
 }
@@ -104,6 +109,7 @@ impl Default for Config {
             ignore_cpu_seq_cap: false,
             report_compute_plans: false,
             onnx_intra_op_threads: None,
+            onnx_runtime: None,
             models: BTreeMap::new(),
         }
     }

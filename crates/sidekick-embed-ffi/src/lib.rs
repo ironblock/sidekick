@@ -110,8 +110,12 @@ pub unsafe extern "C" fn sk_pool_open(
             PathBuf::from(utf8(models_dir, "models_dir")?)
         };
         let mut registry = ModelRegistry::scan(&dir).map_err(|e| e.to_string())?;
-        if let Err(reason) = sidekick_embed::onnx::runtime() {
-            registry.skip_backend(sidekick_core::EmbeddingBackendKind::Onnx, &reason);
+        // ONNX Runtime loads only for an onnx model (D40).
+        let has_onnx = registry.iter().any(|m| m.manifest.backend == sidekick_core::EmbeddingBackendKind::Onnx);
+        if has_onnx {
+            if let Err(reason) = sidekick_embed::onnx::load_runtime(None) {
+                registry.skip_backend(sidekick_core::EmbeddingBackendKind::Onnx, &reason);
+            }
         }
         Ok(Box::into_raw(Box::new(SkPool {
             registry,

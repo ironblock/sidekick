@@ -14,7 +14,7 @@
 use serde::Deserialize;
 use sidekick_core::manifest::ModelRegistry;
 use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder};
-use sidekick_embed::onnx::{runtime, OnnxEmbedder, PINNED_VERSION};
+use sidekick_embed::onnx::{load_runtime, OnnxEmbedder, RuntimeSource, PINNED_VERSION};
 use std::path::{Path, PathBuf};
 
 fn fixtures() -> PathBuf {
@@ -106,8 +106,9 @@ fn the_runtime_loads_and_reports_its_version() {
     if !have_runtime() {
         return;
     }
-    let rt = runtime().unwrap();
+    let rt = load_runtime(None).unwrap();
     assert_eq!(rt.version, PINNED_VERSION, "the pinned runtime");
+    assert_eq!(rt.source, RuntimeSource::Env);
     assert!(rt.warning.is_none());
     assert!(rt.library.is_file());
 }

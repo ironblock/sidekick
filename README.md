@@ -262,11 +262,13 @@ builds for. It's sidekick's own export with pooling inside the graph, or a
 published export whose `last_hidden_state` sidekick pools (`mean`, `cls`
 or `last_token`). An ONNX build keeps the model's id, so clients address
 the same model everywhere. The daemon needs the `onnx` cargo feature and
-ONNX Runtime (1.28.3, or 1.23.2 on Intel macOS): release archives ship `libonnxruntime` beside
-`sidekickd`, and `ORT_DYLIB_PATH` points elsewhere. A daemon built with
-`onnx` loads the runtime at startup, even with no onnx model installed.
-If it's missing, onnx manifests are skipped with the reason and
-everything else serves. Each manifest's
+ONNX Runtime (1.28.3, or 1.23.2 on Intel macOS). Release archives ship
+`libonnxruntime` beside `sidekickd`. To use an existing install, name
+the library with `onnx_runtime` in the config (the way under launchd),
+or `ORT_DYLIB_PATH`. The daemon looks there first, then beside itself,
+and nowhere else. The runtime loads at startup only when there's an
+onnx model. If it's missing, the onnx models are skipped with the reason
+and everything else serves. Each manifest's
 graph is checked against its `[io]` when the directory is scanned.
 `/health`'s `onnx` section reports the runtime and each model's threads.
 
@@ -308,6 +310,7 @@ ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB wei
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
 report_compute_plans = false   # read each loaded bucket's Core ML placement live (costs a second compile)
 # onnx_intra_op_threads = 4    # inference threads per onnx model (default: 4, or logical CPUs - 1 if fewer)
+# onnx_runtime = "..."         # libonnxruntime to load instead of the bundled one (before ORT_DYLIB_PATH)
 
 # Per model, by id: serve it on other compute units than its manifest names,
 # e.g. keep a companion model off the GPU a larger model uses. Core ML models

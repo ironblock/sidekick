@@ -89,7 +89,7 @@ fn main() {
         cases.len(),
         cases.iter().map(Vec::len).min().unwrap(),
         cases.iter().map(Vec::len).max().unwrap(),
-        sidekick_embed::onnx::runtime().expect("runtime").version
+        sidekick_embed::onnx::load_runtime(None).expect("runtime").version
     );
 
     let started = std::time::Instant::now();

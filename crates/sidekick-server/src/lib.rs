@@ -36,8 +36,14 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
     };
     let onnx_threads = config.onnx_threads()?;
     let mut registry = ModelRegistry::scan_with(&config.models_dir(), &options)?;
-    if let Err(reason) = sidekick_embed::onnx::runtime() {
-        registry.skip_backend(EmbeddingBackendKind::Onnx, &reason);
+    // ONNX Runtime loads only for an onnx model, and then at startup, so a
+    // missing runtime skips the onnx models with its reason in /health
+    // right away. Without one, it's never loaded (D40).
+    let has_onnx = registry.iter().any(|m| m.manifest.backend == EmbeddingBackendKind::Onnx);
+    if has_onnx {
+        if let Err(reason) = sidekick_embed::onnx::load_runtime(config.onnx_runtime.as_deref()) {
+            registry.skip_backend(EmbeddingBackendKind::Onnx, &reason);
+        }
     }
     let registry = Arc::new(registry);
     if registry.is_empty() && registry.classifier_ids().next().is_none() {

@@ -41,7 +41,11 @@ Chat (Foundation Models), classification and the dylib are Apple silicon
 only. An ONNX model's vectors come from a different runtime than its
 Core ML build's. Both are graded against the same fp32 reference, but
 don't mix vectors stored from the two in one index without checking
-their agreement in docs/MODELS.md. Intel Macs run ONNX Runtime 1.23.2,
+their agreement in docs/MODELS.md. The daemon loads ONNX Runtime only
+when it has an onnx model. It uses the library bundled beside
+`sidekickd`, or one the config's `onnx_runtime` or `ORT_DYLIB_PATH`
+names, and `/health`'s `onnx.runtime` says which loaded, or why none did.
+Intel Macs run ONNX Runtime 1.23.2,
 the last release Microsoft built for them, where every other platform
 runs 1.28.3. Each platform's results are graded on that platform. Vectors
 from different CPU architectures, or different runtime versions, agree

@@ -1,0 +1,30 @@
+{
+ "version": "1.0",
+ "truncation": null,
+ "padding": null,
+ "added_tokens": [],
+ "normalizer": null,
+ "pre_tokenizer": {
+  "type": "WhitespaceSplit"
+ },
+ "post_processor": null,
+ "decoder": null,
+ "model": {
+  "type": "WordLevel",
+  "vocab": {
+   "[UNK]": 0,
+   "[CLS]": 1,
+   "[SEP]": 2,
+   "a": 3,
+   "b": 4,
+   "c": 5,
+   "d": 6,
+   "e": 7,
+   "f": 8,
+   "g": 9,
+   "h": 10,
+   "i": 11
+  },
+  "unk_token": "[UNK]"
+ }
+}
