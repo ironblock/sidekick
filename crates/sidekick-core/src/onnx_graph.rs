@@ -328,6 +328,22 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
     }
 
+    /// A large model (`SIDEKICK_ONNX_BIG_FILE`, written beforehand, with its
+    /// weights stored inline before its inputs, as exporters write
+    /// GraphProto), read without reading the weights. Run by hand, under
+    /// `/usr/bin/time -l`: `cargo test -p sidekick-core --release
+    /// reads_a_large -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn reads_a_large_model_without_reading_its_weights() {
+        let path = std::path::PathBuf::from(std::env::var("SIDEKICK_ONNX_BIG_FILE").expect("SIDEKICK_ONNX_BIG_FILE"));
+        let size = std::fs::metadata(&path).unwrap().len();
+        let started = std::time::Instant::now();
+        let g = read_interface(&path).unwrap();
+        println!("{} MB model: {} inputs, {} outputs, read in {:?}", size >> 20, g.inputs.len(), g.outputs.len(), started.elapsed());
+        assert!(!g.inputs.is_empty() && !g.outputs.is_empty());
+    }
+
     #[test]
     fn a_damaged_file_is_an_error_not_a_panic() {
         let model = model(&[tensor("input_ids", ONNX_INT64, &["1", "8"])], &[], 64);

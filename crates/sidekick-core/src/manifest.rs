@@ -56,7 +56,7 @@ pub enum Pooling {
     Mean,
     Cls,
     /// The last real token's vector: decoder embedders (D40).
-    Last,
+    LastToken,
     /// Model output is already pooled; take it as-is.
     None,
 }
@@ -1317,9 +1317,9 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
     if m.backend != EmbeddingBackendKind::Onnx && (m.io.token_type_ids.is_some() || m.io.position_ids.is_some()) {
         return Err("`[io] token_type_ids` and `position_ids` are only valid for the onnx backend".into());
     }
-    if m.backend != EmbeddingBackendKind::Onnx && m.pooling == Pooling::Last {
+    if m.backend != EmbeddingBackendKind::Onnx && m.pooling == Pooling::LastToken {
         // Core ML decoder embedders pool inside the graph.
-        return Err("`pooling = \"last\"` is only valid for the onnx backend".into());
+        return Err("`pooling = \"last_token\"` is only valid for the onnx backend".into());
     }
     if m.backend == EmbeddingBackendKind::Onnx {
         // One graph with dynamic shapes, on the CPU: Core ML's per-bucket
@@ -1404,7 +1404,7 @@ fn pooling_name(p: Pooling) -> &'static str {
     match p {
         Pooling::Mean => "mean",
         Pooling::Cls => "cls",
-        Pooling::Last => "last",
+        Pooling::LastToken => "last_token",
         Pooling::None => "none",
     }
 }
@@ -2156,10 +2156,10 @@ output = "logits"
 
         // Core ML models can't use the onnx-only keys.
         let tmp = tmp_dir("onnx-keys-on-coreml");
-        write_manifest(&tmp, "c", "id = \"c\"\nbackend = \"coreml\"\nartifact = \"m_{seq}\"\ntokenizer = \"t\"\ndims = 4\npooling = \"last\"\n\
+        write_manifest(&tmp, "c", "id = \"c\"\nbackend = \"coreml\"\nartifact = \"m_{seq}\"\ntokenizer = \"t\"\ndims = 4\npooling = \"last_token\"\n\
                                    buckets = [128]\nmax_seq_len = 128\n");
         let reg = ModelRegistry::scan(&tmp).unwrap();
-        assert!(reg.skipped()[0].reason.contains("`pooling = \"last\"` is only valid for the onnx backend"), "{}", reg.skipped()[0].reason);
+        assert!(reg.skipped()[0].reason.contains("`pooling = \"last_token\"` is only valid for the onnx backend"), "{}", reg.skipped()[0].reason);
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

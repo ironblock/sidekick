@@ -36,7 +36,7 @@ pub fn pool(hidden: &[f32], dims: usize, mask: &[u32], pooling: Pooling) -> Vec<
         Pooling::None => hidden.to_vec(),
         Pooling::Mean => mean_pool(hidden, dims, mask),
         Pooling::Cls => hidden[..dims].to_vec(),
-        Pooling::Last => {
+        Pooling::LastToken => {
             let last = mask.iter().rposition(|&m| m != 0).unwrap_or(0);
             hidden[last * dims..(last + 1) * dims].to_vec()
         }
@@ -72,7 +72,7 @@ mod tests {
         let mask = [1, 1, 0];
         assert_eq!(pool(&hidden, 2, &mask, Pooling::Mean), vec![2.0, 3.0]);
         assert_eq!(pool(&hidden, 2, &mask, Pooling::Cls), vec![1.0, 2.0]);
-        assert_eq!(pool(&hidden, 2, &mask, Pooling::Last), vec![3.0, 4.0], "the last real token, not the pad");
+        assert_eq!(pool(&hidden, 2, &mask, Pooling::LastToken), vec![3.0, 4.0], "the last real token, not the pad");
         assert_eq!(pool(&[5.0, 6.0], 2, &[1], Pooling::None), vec![5.0, 6.0]);
     }
 
