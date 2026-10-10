@@ -2283,7 +2283,10 @@ onnx-community's Qwen3-Embedding-0.6B int8 graph takes 59 inputs
 own export of the model takes only ids, mask and positions.
 
 **Linking.** ort's `load-dynamic`: sidekick links no ONNX Runtime at build
-time and loads `libonnxruntime` at startup.
+time and loads `libonnxruntime` at startup. A daemon built with `onnx`
+loads it at startup even with no onnx model installed, and logs which
+version it loaded. If it's missing, onnx manifests are skipped with the
+reason, and everything else serves.
 - It looks for the library at `ORT_DYLIB_PATH`, when set, else beside the
   `sidekickd` binary (`libonnxruntime.dylib`, `.so`). Release archives
   ship the library there.
@@ -2293,7 +2296,11 @@ time and loads `libonnxruntime` at startup.
   arm64 only, as do PyPI and ort's own binaries. sidekick builds ort
   2.0.0-rc.13 with `api-23`, so one binary accepts any runtime from 1.23
   on. The whole workspace builds at that API level, and passes its tests
-  on 1.28.3. Intel results are graded on Intel, and vectors aren't
+  on 1.28.3. The Intel archive's sha256 is `d10359e1…485a6`, matched by a
+  download on an Intel Mac. Its `libonnxruntime.1.23.2.dylib` (sha256
+  `8c9c78de…4c054`) is x86_64 Mach-O linking only system frameworks and
+  libc++, so it is self-contained in a release archive like the arm64
+  one. Intel results are graded on Intel, and vectors aren't
   bit-identical across architectures or runtime versions anyway. Building
   1.28.3 from source for Intel macOS, as an optional download, is a
   follow-up.

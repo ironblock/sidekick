@@ -51,5 +51,13 @@ if [ "$got" != "$sha" ]; then
     echo "$archive: sha256 $got, expected $sha" >&2
     exit 1
 fi
-[ -d "$dest/$name" ] || tar -xzf "$archive" -C "$dest"
+# Extract beside, then move into place, so an interrupted run never leaves a
+# half-extracted directory that looks finished.
+if [ ! -d "$dest/$name" ]; then
+    rm -rf "$dest/.$name.tmp"
+    mkdir -p "$dest/.$name.tmp"
+    tar -xzf "$archive" -C "$dest/.$name.tmp"
+    mv "$dest/.$name.tmp/$name" "$dest/$name"
+    rm -rf "$dest/.$name.tmp"
+fi
 echo "$(cd "$dest/$name/lib" && pwd)/$lib"

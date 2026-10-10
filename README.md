@@ -263,7 +263,10 @@ published export whose `last_hidden_state` sidekick pools (`mean`, `cls`
 or `last_token`). An ONNX build keeps the model's id, so clients address
 the same model everywhere. The daemon needs the `onnx` cargo feature and
 ONNX Runtime (1.28.3, or 1.23.2 on Intel macOS): release archives ship `libonnxruntime` beside
-`sidekickd`, and `ORT_DYLIB_PATH` points elsewhere. Each manifest's
+`sidekickd`, and `ORT_DYLIB_PATH` points elsewhere. A daemon built with
+`onnx` loads the runtime at startup, even with no onnx model installed.
+If it's missing, onnx manifests are skipped with the reason and
+everything else serves. Each manifest's
 graph is checked against its `[io]` when the directory is scanned.
 `/health`'s `onnx` section reports the runtime and each model's threads.
 

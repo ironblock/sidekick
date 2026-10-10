@@ -23,7 +23,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          # Only the x86-64 leg cross-checks macOS code.
+          targets: ${{ matrix.runner == 'ubuntu-24.04' && 'aarch64-apple-darwin' || '' }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:

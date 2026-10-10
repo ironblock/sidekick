@@ -284,11 +284,11 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "models": classifier_models,
             "resident": state.classifiers.resident().await,
         },
-        // Compute units the operator chose in the daemon config (D38), and
-        // overrides that named no Core ML model.
         // The ONNX Runtime CPU backend (D40): what loaded, and each onnx
         // model's inference threads.
         "onnx": onnx_health(&state),
+        // Compute units the operator chose in the daemon config (D38), and
+        // overrides that named no Core ML model.
         "compute_unit_overrides": {
             "applied": overrides,
             "unmatched": state.registry.unmatched_overrides(),

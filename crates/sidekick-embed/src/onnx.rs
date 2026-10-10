@@ -270,7 +270,13 @@ mod backend {
             }
             let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
             let outputs = session.run(inputs).map_err(fail)?;
-            let (out_shape, data) = outputs[self.output.as_str()].try_extract_tensor::<f32>().map_err(fail)?;
+            // Checked at scan, but the file may have changed since: an error
+            // naming what the graph does return, not a panic.
+            let output = outputs.get(self.output.as_str()).ok_or_else(|| {
+                let names: Vec<&str> = outputs.keys().collect();
+                Error::Inference(format!("model `{}`: the graph returned no `{}` (its outputs: {names:?})", self.id, self.output))
+            })?;
+            let (out_shape, data) = output.try_extract_tensor::<f32>().map_err(fail)?;
             let out_shape: Vec<i64> = out_shape.iter().copied().collect();
             let want: Vec<i64> = match self.pooling {
                 Pooling::None => vec![n as i64, self.dims as i64],
