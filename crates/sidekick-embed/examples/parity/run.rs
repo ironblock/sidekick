@@ -278,6 +278,63 @@ fn finite_cos(a: &[f32], b: &[f32]) -> Option<f64> {
     }
 }
 
+/// The onnx-cpu worker (D40): the product path on ONNX Runtime's CPU, in the
+/// Core ML worker's result shape, so `tools/onnx_parity.py`'s files and
+/// this grade alike. Each input runs alone and unpadded, as the daemon runs
+/// it, so there are no bucket or pad comparisons (n = 0).
+#[cfg(feature = "onnx")]
+fn onnx_worker(model: &ResolvedModel, reference: &Reference, id: &str, out: &str, limit: Option<usize>) -> Result<(), String> {
+    use sidekick_core::EmbedLimits;
+    use sidekick_embed::onnx::{default_intra_op_threads, OnnxEmbedder};
+    let e = |e: sidekick_core::Error| e.to_string();
+    let t0 = Instant::now();
+    let emb = OnnxEmbedder::load(model, default_intra_op_threads()).map_err(e)?;
+    let load_ms = t0.elapsed().as_secs_f64() * 1e3;
+    let cases = &reference.cases[..limit.unwrap_or(reference.cases.len()).min(reference.cases.len())];
+    let purpose = |p: &str| if p == "query" { EmbedPurpose::Query } else { EmbedPurpose::Document };
+    let mut results = Vec::with_capacity(cases.len());
+    let mut raw = Vec::with_capacity(cases.len());
+    for case in cases {
+        let ids = emb.prepare(&case.text, purpose(&case.purpose), EmbedLimits::default()).map_err(e)?;
+        let t = Instant::now();
+        let v = emb.embed(&[case.text.as_str()], purpose(&case.purpose)).map_err(e)?.remove(0);
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        let ids_match = ids == case.ids;
+        let model_only = if ids_match { None } else { Some(emb.run(&case.ids).map_err(e)?) };
+        let finite = v.iter().all(|x| x.is_finite());
+        results.push(CaseResult {
+            id: case.id.clone(),
+            ids_match,
+            bucket: ids.len(),
+            vector: v.iter().map(|&x| if x.is_finite() { x } else { 0.0 }).collect(),
+            finite,
+            model_only,
+            bucket_invariance: Check::default(),
+            pad_invariance: Check::default(),
+            ms,
+        });
+        raw.push(v);
+    }
+    let mut repeat_bitwise = true;
+    for (case, first) in cases.iter().zip(&raw).take(5) {
+        let again = emb.embed(&[case.text.as_str()], purpose(&case.purpose)).map_err(e)?.remove(0);
+        repeat_bitwise &= bitwise_eq(first, &again);
+    }
+    let result = WorkerResult {
+        model: id.to_string(),
+        path: Path3::OnnxCpu.name().into(),
+        cases: results,
+        repeat_bitwise,
+        load_ms,
+    };
+    std::fs::write(out, serde_json::to_vec(&result).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+
+#[cfg(not(feature = "onnx"))]
+fn onnx_worker(_: &ResolvedModel, _: &Reference, _: &str, _: &str, _: Option<usize>) -> Result<(), String> {
+    Err("this parity build has no onnx backend: build it with --features onnx".into())
+}
+
 /// `--worker <models-dir> <model-id> <refs-dir|-> <path> <out.json> [limit]`
 fn worker(args: &[String]) -> Result<(), String> {
     let [models_dir, id, refs, path, out, rest @ ..] = args else {
@@ -300,6 +357,12 @@ fn worker(args: &[String]) -> Result<(), String> {
     }
     let model = load_model(Path::new(models_dir), id)?;
     let reference = Reference::load(&reference_dir(&model, refs.as_deref()))?;
+    if model.manifest.backend == EmbeddingBackendKind::Onnx {
+        if path != Path3::OnnxCpu {
+            return Err(format!("an onnx model runs on onnx-cpu, not {}", path.name()));
+        }
+        return onnx_worker(&model, &reference, id, out, limit);
+    }
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
         .map_err(|e| e.to_string())?
         .get_vocab_size(true) as u64;
@@ -793,12 +856,14 @@ fn parent(args: &[String]) -> Result<bool, String> {
         let id = &model.manifest.id;
         let refs_dir = reference_dir(model, o.refs.as_deref());
         println!("\n=== {id}");
-        // An onnx model runs on ONNX Runtime, which the suite doesn't run
-        // yet: it is graded from --external results alone (D40).
+        // An onnx model runs on ONNX Runtime's CPU (D40): natively, in a
+        // build with the onnx feature, and from any --external results,
+        // graded as a cross-check.
         let onnx = model.manifest.backend == EmbeddingBackendKind::Onnx;
+        let native_onnx = onnx && sidekick_embed::onnx::SUPPORTED;
         let external: Vec<&WorkerResult> = externals.iter().filter(|r| &r.model == id).collect();
-        if onnx && external.is_empty() {
-            println!("  SKIPPED: an onnx model is graded from --external results (see --help)");
+        if onnx && !native_onnx && external.is_empty() {
+            println!("  SKIPPED: an onnx model needs a parity build with --features onnx, or --external results");
             continue;
         }
         let reference = match Reference::load(&refs_dir) {
@@ -883,8 +948,13 @@ fn parent(args: &[String]) -> Result<bool, String> {
         }
 
         let mut results: Vec<(Path3, WorkerResult)> = Vec::new();
-        let core_ml_paths: &[Path3] = if onnx { &[] } else { &o.paths };
-        for &path in core_ml_paths {
+        let onnx_cpu = [Path3::OnnxCpu];
+        let worker_paths: &[Path3] = match (onnx, native_onnx) {
+            (false, _) => &o.paths,
+            (true, true) => &onnx_cpu,
+            (true, false) => &[],
+        };
+        for &path in worker_paths {
             match spawn_worker::<WorkerResult>(id, models_dir, path, None, &scratch, &o) {
                 Ok(r) => results.push((path, r)),
                 Err(e) => {
@@ -896,6 +966,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             }
         }
 
+        let natives = results.len();
         for r in &external {
             match check_external(&reference, r) {
                 Ok(()) => results.push((Path3::OnnxCpu, (*r).clone())),
@@ -942,6 +1013,14 @@ fn parent(args: &[String]) -> Result<bool, String> {
                     floor,
                     &model.manifest.matryoshka,
                 )
+            })
+            .enumerate()
+            // Results written outside the suite are a cross-check, named apart.
+            .map(|(i, mut g)| {
+                if i >= natives {
+                    g.path = format!("{}:external", g.path);
+                }
+                g
             })
             .collect();
 
@@ -1063,8 +1142,10 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
     if grades.is_empty() {
         return;
     }
+    // Wide enough for every path's name (onnx-cpu:external is the longest).
+    let w = grades.iter().map(|g| g.path.len()).max().unwrap_or(4).max(4);
     println!(
-        "  {:<4} {:<5} {:>10} {:<24} {:>10} {:>9} {:>9} {:>8} {:>6} {:>10} {:>10} {:>8}",
+        "  {:<w$} {:<5} {:>10} {:<24} {:>10} {:>9} {:>9} {:>8} {:>6} {:>10} {:>10} {:>8}",
         "path",
         "grade",
         "worst",
@@ -1080,7 +1161,7 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
     );
     for g in grades {
         println!(
-            "  {:<4} {:<5} {:>10} {:<24} {:>10} {:>9.6} {:>9} {:>+8.4} {:>6} {:>10} {:>10} {:>8.1}",
+            "  {:<w$} {:<5} {:>10} {:<24} {:>10} {:>9.6} {:>9} {:>+8.4} {:>6} {:>10} {:>10} {:>8.1}",
             g.path,
             g.letter,
             fmt(g.worst),
@@ -1112,11 +1193,12 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
     }
 
     // Worst case per tag, per path.
+    let cw = (w + 1).max(10);
     println!(
         "  worst by tag:  {}",
         grades
             .iter()
-            .map(|g| format!("{:>10}", g.path))
+            .map(|g| format!("{:>cw$}", g.path))
             .collect::<String>()
     );
     for tag in grades[0].by_tag.keys() {
@@ -1124,7 +1206,7 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
             .iter()
             .map(|g| {
                 format!(
-                    "{:>10}",
+                    "{:>cw$}",
                     fmt(g.by_tag[tag]).get(..8).unwrap_or("?").to_string()
                 )
             })

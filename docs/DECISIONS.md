@@ -2324,19 +2324,27 @@ as for a static model.
 **The parity suite** grades an `onnx` model on one path, `onnx-cpu`,
 against the same fp32 references and gates as its Core ML build. Its
 bucket-invariance gate is the CPU's unless `expectations.toml` sets
-`onnx-cpu`. The bucket check becomes a length check, the same input run
-padded to longer lengths, which applies only if batching is enabled.
-Until the suite runs the backend itself, the `onnx-cpu` path is graded
-from results written outside it, by `tools/onnx_parity.py` (the ONNX
-export work): `parity --external FILE` takes a
-worker result in the suite's own JSON shape (`model`, `path:
-"onnx-cpu"`, `cases`, `repeat_bitwise`, `load_ms`; each case its `id`,
-`ids_match`, its token count as `bucket`, `vector`, `finite`,
-`model_only`, `bucket_invariance` and `pad_invariance` as `{n: 0}`
-when not measured, and `ms`). The file must hold every reference case in
-reference order, each with a vector of the model's width, and it is
-graded by the same code as the suite's own paths. Once the backend runs
-natively, the external runner becomes a cross-check.
+`onnx-cpu`. A parity build with the `onnx` feature runs the path
+natively: a worker runs the product path (prefix, tokenizer, truncation,
+ONNX Runtime, pooling, normalization) and writes the suite's own worker
+result. Each input runs alone and unpadded, as the daemon runs it, so
+there are no bucket or pad comparisons. If batching is ever enabled, the
+bucket check becomes a length check, the same input run padded to longer
+lengths. A copy of the references and a parity build grade any machine,
+an Intel Mac included, with no Python or torch there.
+
+`tools/onnx_parity.py` (the ONNX export work) writes the same result from
+Python's onnxruntime, and `parity --external FILE` grades it beside the
+native run as `onnx-cpu:external`, as a cross-check. The file is a worker
+result in the suite's JSON shape: `model`, `path: "onnx-cpu"`, `cases`,
+`repeat_bitwise`, `load_ms`. Each case gives its `id`, `ids_match`, its
+token count as `bucket`, `vector`, `finite`, `model_only`, and
+`bucket_invariance` and `pad_invariance` as `{n: 0}` when not measured,
+and `ms`. It must hold every reference case in reference order, each with
+a vector of the model's width. On ONNX Runtime 1.28.3 (M1 Max) the native
+path grades sidekick's exports of bge-small-en-v1.5 and all-MiniLM-L6-v2
+A, at 1 − cos 1.91e-12 and 1.97e-12 worst against fp32 torch. Token ids
+match the reference pipeline's, and re-runs are bit-identical.
 
 ## Hardware verification status
 
