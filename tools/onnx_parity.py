@@ -23,12 +23,15 @@ ONNX Runtime has no buckets, so the suite's two invariance checks become:
 
 Usage:
     python tools/onnx_parity.py <model-dir> --refs <refs-dir> --out <result.json>
-        [--model-file model.onnx] [--threads N]
+        [--model-file model.onnx] [--threads N] [--batch-1]
 
     model-dir: an ONNX model directory: manifest.toml (backend "onnx"),
                tokenizer.json and the model file
     --model-file: another ONNX file to run under the same manifest, e.g. a
                published int8 export (its outputs and pooling must match)
+    --batch-1: for a model served one input at a time, unpadded (an int8
+               build, D40): skip the batch and pad checks (n = 0), which
+               don't apply to it
 """
 
 import argparse
@@ -55,6 +58,7 @@ def main():
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--model-file", default=None)
     p.add_argument("--threads", type=int, default=None)
+    p.add_argument("--batch-1", action="store_true")
     args = p.parse_args()
 
     manifest = tomllib.loads((args.model_dir / "manifest.toml").read_text())
@@ -88,16 +92,19 @@ def main():
         v = runner.run([ids])[0]
         ms = (time.perf_counter() - t) * 1000
         finite = bool(np.isfinite(v).all())
-        batch = runner.run([ids, longest])[0]
-        padded = runner.run([ids, longest], pad_ids=pads)[0]
+        if not args.batch_1:
+            batch = runner.run([ids, longest])[0]
+            padded = runner.run([ids, longest], pad_ids=pads)[0]
         vec = unit(np.where(np.isfinite(v), v, 0.0)).astype(np.float32)
         if len(first) < REPEAT_CASES:
             first.append(vec)
         cases.append({
             "id": case["id"], "ids_match": True, "bucket": len(ids), "vector": vec.tolist(), "finite": finite,
             "model_only": None,
-            "bucket_invariance": {"n": 1, "min": _finite(cosine(batch, v))},
-            "pad_invariance": {"n": 1, "min": _finite(cosine(padded, batch))},
+            "bucket_invariance": ({"n": 0, "min": None} if args.batch_1
+                                  else {"n": 1, "min": _finite(cosine(batch, v))}),
+            "pad_invariance": ({"n": 0, "min": None} if args.batch_1
+                               else {"n": 1, "min": _finite(cosine(padded, batch))}),
             "ms": ms,
         })
     again = [unit(runner.run([ids])[0]).astype(np.float32) for ids in rows[:REPEAT_CASES]]
@@ -107,8 +114,10 @@ def main():
     args.out.write_text(json.dumps(result))
     worst = min(cosine(c["vector"], t) for c, t in zip(cases, _torch(args.refs / model_id)))
     print(f"{model_id} ({path_name}, {path.name}): {len(cases)} cases; worst 1 - cosine vs torch {1 - worst:.1e}; "
-          f"batch {min(c['bucket_invariance']['min'] or 0 for c in cases):.8f}; "
-          f"pads {min(c['pad_invariance']['min'] or 0 for c in cases):.8f}; repeat bitwise {repeat}; "
+          + ("batch-1 only; " if args.batch_1 else
+             f"batch {min(c['bucket_invariance']['min'] or 0 for c in cases):.8f}; "
+             f"pads {min(c['pad_invariance']['min'] or 0 for c in cases):.8f}; ")
+          + f"repeat bitwise {repeat}; "
           f"median {np.median([c['ms'] for c in cases]):.1f} ms; load {load_ms:.0f} ms -> {args.out}")
 
 

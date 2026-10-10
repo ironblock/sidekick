@@ -102,8 +102,13 @@ def export(module, inputs, output, path):
                           output_names=[output], dynamic_axes=dynamic, opset_version=OPSET, dynamo=False,
                           do_constant_folding=True)
     import onnx
-    model = onnx.load(str(path), load_external_data=True)
-    if model.ByteSize() > 1_900_000_000:
+    # Past protobuf's 2 GB the exporter writes each weight to its own file
+    # beside the model; gather them into one model.onnx_data.
+    scattered = [f for f in path.parent.iterdir() if f != path]
+    if scattered or path.stat().st_size > 1_900_000_000:
+        model = onnx.load(str(path), load_external_data=True)
+        for f in scattered:
+            f.unlink()
         onnx.save_model(model, str(path), save_as_external_data=True, all_tensors_to_one_file=True,
                         location=path.name + "_data", size_threshold=1024)
     onnx.checker.check_model(str(path))
@@ -119,7 +124,8 @@ class Runner:
             opts.intra_op_num_threads = threads
         self.session = ort.InferenceSession(str(path), opts, providers=["CPUExecutionProvider"])
         self.inputs = [i.name for i in self.session.get_inputs()]
-        self.output = self.session.get_outputs()[0].name
+        names = [o.name for o in self.session.get_outputs()]
+        self.output = TOKEN_OUTPUT if TOKEN_OUTPUT in names else names[0]
         self.pooling = pooling
 
     def run(self, rows, pad_id=0, pad_ids=None):
@@ -135,6 +141,14 @@ class Runner:
         feed = {"input_ids": ids, "attention_mask": mask}
         if "token_type_ids" in self.inputs:
             feed["token_type_ids"] = np.zeros_like(ids)
+        if "position_ids" in self.inputs:
+            feed["position_ids"] = np.broadcast_to(np.arange(n, dtype=np.int64), ids.shape).copy()
+        for i in self.session.get_inputs():
+            if i.name.startswith("past_key_values."):
+                # a decoder exported with a KV cache (transformers.js style):
+                # run it as an encoder, with an empty cache
+                heads, dim = i.shape[1], i.shape[3]
+                feed[i.name] = np.zeros((len(rows), heads, 0, dim), dtype=np.float32)
         out = self.session.run([self.output], {k: v for k, v in feed.items() if k in self.inputs})[0]
         out = out.astype(np.float64)
         if self.pooling is None:
