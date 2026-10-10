@@ -63,6 +63,19 @@ don't want to run the daemon — see
 [docs/INTEGRATING.md](docs/INTEGRATING.md) for the daemon → dylib →
 fallback probe chain.
 
+## Supported platforms
+
+| Platform | Chat (Foundation Models) | Embeddings | Classify, rerank | Release archive |
+|---|---|---|---|---|
+| macOS 26+, Apple silicon (`aarch64-apple-darwin`) | yes | Core ML (ANE, GPU, CPU), ONNX on the CPU, static | Core ML | yes |
+| macOS, Intel (`x86_64-apple-darwin`) | no (503) | Core ML (GPU, CPU), static | Core ML | not yet: no ONNX Runtime 1.28 build exists for it |
+| Linux x86-64 (`x86_64-unknown-linux-gnu`) | no (503) | ONNX on the CPU, static | no | yes, glibc 2.35+ |
+| Linux arm64 (`aarch64-unknown-linux-gnu`) | no (503) | ONNX on the CPU, static | no | yes, glibc 2.35+ |
+
+ONNX models need ONNX Runtime 1.28 (D40). Release archives ship it beside
+`sidekickd`. An ONNX build of a model keeps its id, so a client calls the
+same model the same way on every platform.
+
 ## Quickstart
 
 ```sh
