@@ -2245,24 +2245,47 @@ intra_op_threads = 2
 
 **Batching.** Each input runs on its own, at its own length, unpadded.
 The invariances that gives were measured with `examples/onnx_invariance`
-on ONNX Runtime 1.28.3's CPU (M1 Max, fp32 exports of bge-small-en-v1.5,
-all-MiniLM-L6-v2 and F2LLM-v2-160M, the parity corpus's 50–51 cases of 2
-to 512 tokens):
-- **Thread count: bit-exact.** Every vector was bit-identical on 1, 2, 4
-  and 8 intra-op threads, for all three models. So is a re-run in the
-  same session. `intra_op_threads` is a speed setting only.
-- **Padding and batching: not bit-exact, within 2.1e-7.** The same input
+on ONNX Runtime 1.28.3's CPU. The machine was an M1 Max. The models were
+fp32 exports of bge-small-en-v1.5, all-MiniLM-L6-v2, F2LLM-v2-160M,
+EmbeddingGemma-300m and Qwen3-Embedding-0.6B, on the parity corpus's
+50–51 cases of 1 to 512 tokens:
+- **Re-runs: bit-exact.** The same input in the same session gave the
+  same bits, in every case, for all five.
+- **Thread count: bit-exact for four of five.** Every vector was
+  bit-identical on 1, 2, 4 and 8 intra-op threads for every model but
+  EmbeddingGemma. On 4 and 8 threads, 4 of its 51 vectors changed, by at
+  most 1.43e-7 per component, at cosine 1.000000000. So an embedding is
+  bit-exact for a given `intra_op_threads`, and changing the setting
+  moves it only within rounding.
+- **Padding and batching: not bit-exact, within 2.6e-7.** The same input
   padded by 1, 7 or 64 tokens, or to `max_seq_len`, or run in a batch of
-  2 or 8 padded to the longest, was bit-identical in only 14–41 of the
-  cases. The largest component difference was 2.1e-7 (1–2 fp32 ulp), and
+  2 or 8 padded to the longest, was bit-identical in only 3–41 of the
+  cases. The largest component difference was 2.6e-7 (1–2 fp32 ulp), and
   the cosine was 1.000000000 to nine digits. MLAS orders its sums by
   sequence length.
 
-So the CPU path claims what running unpadded guarantees: an embedding is
-a function of its own text, bit for bit, whatever else the request holds
-and however many threads run it. Batching would trade that for
-throughput, within 2.1e-7. It stays off, and if it is ever enabled it
+So the CPU path claims what running unpadded guarantees: for a given
+thread setting, an embedding is a function of its own text, bit for
+bit, whatever else the request holds. Batching would trade that for
+throughput, within 2.6e-7. It stays off, and if it is ever enabled it
 applies to fp32 graphs only.
+
+Graded natively on the same machine (4 threads, every corpus case), all
+six of sidekick's exports grade A against fp32 torch, with token ids
+matching the reference pipeline's and re-runs bit-identical:
+
+| model | 1 − cos, worst | median per input |
+|---|---|---|
+| all-MiniLM-L6-v2 | 1.97e-12 | 2.6 ms |
+| bge-small-en-v1.5 | 1.91e-12 | 5.8 ms |
+| F2LLM-v2-160M | 4.52e-12 | 14.5 ms |
+| gte-modernbert-base | 1.94e-11 | 23.1 ms |
+| EmbeddingGemma-300m | 2.86e-12 | 24.9 ms |
+| Qwen3-Embedding-0.6B | 1.71e-11 | 84.6 ms |
+
+The timings aren't a benchmark; #64 measures latency. Qwen3's export with
+fp16 weights also grades A (2.14e-11). Its dynamic int8 export grades D:
+worst cosine 0.406, with 8,355 rank flips and similarity drift 0.31.
 
 **Quantized graphs always run alone.** ONNX Runtime's CPU quantizes a
 dynamic int8 MatMul's activations at run time with one scale for the
