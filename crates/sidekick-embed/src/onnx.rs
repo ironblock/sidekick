@@ -84,10 +84,11 @@ mod backend {
                 let exe = std::env::current_exe().map_err(|e| format!("can't find the executable: {e}"))?;
                 let beside = exe.parent().map(|d| d.join(LIBRARY)).unwrap_or_else(|| PathBuf::from(LIBRARY));
                 if !beside.is_file() {
+                    // The executable's name, not its path: /health reports this.
+                    let name = exe.file_name().map_or("the executable".into(), |n| n.to_string_lossy().into_owned());
                     return Err(format!(
-                        "ONNX Runtime ({LIBRARY}) isn't beside {} and ORT_DYLIB_PATH isn't set; install ONNX \
-                         Runtime {PINNED_VERSION} there, or point ORT_DYLIB_PATH at it",
-                        exe.display()
+                        "ONNX Runtime ({LIBRARY}) isn't beside {name} and ORT_DYLIB_PATH isn't set; install ONNX \
+                         Runtime {PINNED_VERSION} there, or point ORT_DYLIB_PATH at it"
                     ));
                 }
                 beside

@@ -38,6 +38,12 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 
 `tools/classifier_reference.py` imports `modeling_fev.py`, `modeling_nandi.py` and their configuration modules from a local copy of the checkpoint at the same revision, after checking their sha256. It doesn't vendor them. `fixtures/classify/lumma-fev-0.1b.tokens.json` holds token ids that `modeling_fev.py` produced.
 
+## ONNX Runtime
+
+- **Source:** [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime), release v1.28.3, the prebuilt `onnxruntime-<platform>-1.28.3.tgz` archives
+- **License:** MIT License. The archive's `LICENSE` and `ThirdPartyNotices.txt` ship in each release archive as `ONNXRUNTIME_LICENSE` and `ONNXRUNTIME_THIRD_PARTY_NOTICES.txt`.
+- **What sidekick uses:** release archives include the unmodified shared library (`libonnxruntime.dylib` or `.so`) beside `sidekickd`, which loads it at startup to serve `onnx` embedding models (D40). `tools/fetch_onnxruntime.sh` fetches it and checks it against a pinned sha256. Nothing from ONNX Runtime is compiled into sidekick.
+
 ## fast-decisions
 
 - **Source:** [fastino/fast-decisions](https://huggingface.co/datasets/fastino/fast-decisions), revision `1a33070`
