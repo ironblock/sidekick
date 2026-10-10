@@ -1358,6 +1358,7 @@ fn check_onnx_interface(dir: &Path, m: &ModelManifest) -> std::result::Result<bo
         return Err(format!("artifact `{}` not found", m.artifact));
     }
     let graph = read_interface(&path)?;
+    check_external_data(&path, &graph.external_data)?;
     let io = &m.io;
     let named: Vec<&str> = [Some(&io.input_ids), io.attention_mask.as_ref(), io.token_type_ids.as_ref(), io.position_ids.as_ref()]
         .into_iter()
@@ -1406,6 +1407,38 @@ fn check_onnx_interface(dir: &Path, m: &ModelManifest) -> std::result::Result<bo
         }
     }
     Ok(graph.quantized)
+}
+
+/// Every external-data file a graph names must lie inside the model's
+/// directory: a relative path without `..`, that exists, and that resolves
+/// (symlinks included) inside the directory the graph file is in, which is
+/// where ONNX Runtime looks. ONNX Runtime before 1.24 doesn't check this,
+/// so a crafted graph could make it read any file; sidekick refuses such a
+/// graph at scan on every platform (D40). A model directory installed as a
+/// symlink is fine; an external-data file symlinked out of it isn't.
+fn check_external_data(graph: &Path, locations: &[String]) -> std::result::Result<(), String> {
+    use std::path::Component;
+    let dir = graph.parent().unwrap_or(Path::new("."));
+    let real_dir = std::fs::canonicalize(dir).map_err(|e| format!("can't resolve the model directory: {e}"))?;
+    for location in locations {
+        let p = Path::new(location);
+        let lexical_ok = !location.is_empty() && p.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+        if !lexical_ok {
+            return Err(format!(
+                "the graph keeps weights in `{location}`, outside its directory: external data must be a relative \
+                 path inside the model's directory"
+            ));
+        }
+        let real = std::fs::canonicalize(dir.join(p))
+            .map_err(|_| format!("the graph keeps weights in `{location}`, which isn't in the model's directory"))?;
+        if !real.starts_with(&real_dir) {
+            return Err(format!(
+                "the graph keeps weights in `{location}`, which resolves outside the model's directory; copy it \
+                 in, or install the whole model directory as one symlink"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn pooling_name(p: Pooling) -> &'static str {
@@ -2161,6 +2194,48 @@ output = "logits"
         assert_eq!(reg.skipped()[0].path, Path::new("o").join(EMBEDDER_MANIFEST));
         assert_eq!(reg.skipped()[0].reason, "no ONNX Runtime here");
         std::fs::remove_dir_all(&tmp).unwrap();
+
+        // External data must stay inside the model's directory.
+        use crate::onnx_graph::encode::model_with_external;
+        let external = |tag: &str, location: &str, setup: &dyn Fn(&Path)| {
+            let tmp = tmp_dir(&format!("onnx-ext-{tag}"));
+            write_manifest(
+                &tmp,
+                "o",
+                "id = \"o\"\nbackend = \"onnx\"\nartifact = \"model.onnx\"\ntokenizer = \"t\"\ndims = 4\npooling = \"cls\"\n\
+                 max_seq_len = 64\n[io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\n\
+                 output = \"last_hidden_state\"\n",
+            );
+            std::fs::write(tmp.join("o/model.onnx"), model_with_external(location, &[ids(), mask()], &[hidden()])).unwrap();
+            setup(&tmp);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            let why = reg.skipped().first().map(|s| s.reason.clone());
+            std::fs::remove_dir_all(&tmp).unwrap();
+            why
+        };
+        let data = |tmp: &Path| std::fs::write(tmp.join("o/model.onnx_data"), b"weights").unwrap();
+        assert_eq!(external("sibling", "model.onnx_data", &data), None, "a sibling data file is fine");
+        assert_eq!(external("subdir", "./data/w.bin", &|t| {
+            std::fs::create_dir_all(t.join("o/data")).unwrap();
+            std::fs::write(t.join("o/data/w.bin"), b"w").unwrap();
+        }), None);
+        for (tag, location, want) in [
+            ("absolute", "/etc/hosts", "outside its directory"),
+            ("parent", "../secret", "outside its directory"),
+            ("deep-parent", "data/../../secret", "outside its directory"),
+            ("empty", "", "outside its directory"),
+            ("missing", "model.onnx_data", "isn't in the model's directory"),
+        ] {
+            let why = external(tag, location, &|t| std::fs::write(t.join("secret"), b"s").unwrap()).unwrap();
+            assert!(why.contains(want), "{tag}: {why}");
+        }
+        // A symlink in the model directory pointing out of it.
+        let why = external("symlink-out", "model.onnx_data", &|t| {
+            std::fs::write(t.join("secret"), b"s").unwrap();
+            std::os::unix::fs::symlink(t.join("secret"), t.join("o/model.onnx_data")).unwrap();
+        })
+        .unwrap();
+        assert!(why.contains("resolves outside the model's directory"), "{why}");
 
         // Core ML models can't use the onnx-only keys.
         let tmp = tmp_dir("onnx-keys-on-coreml");

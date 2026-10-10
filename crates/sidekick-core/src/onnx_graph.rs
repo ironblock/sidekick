@@ -43,6 +43,10 @@ pub struct GraphInterface {
     pub outputs: Vec<TensorDecl>,
     /// Whether the main graph quantizes: an operator from [`QUANTIZED_OPS`].
     pub quantized: bool,
+    /// Where the main graph's initializers keep their data outside the
+    /// file: each `TensorProto.external_data` `location`, as written.
+    /// Subgraphs' (If, Loop) initializers aren't read.
+    pub external_data: Vec<String>,
 }
 
 /// Operators of a quantized graph. ONNX Runtime's CPU quantizes a dynamic
@@ -190,11 +194,31 @@ impl<R: Read + Seek> Reader<R> {
                 Ok(())
             }
             (5, LEN) => {
-                // TensorProto: its name (8); its data is skipped.
+                // TensorProto: its name (8) and external_data (13, each a
+                // StringStringEntryProto: key 1, value 2); its data is
+                // skipped.
                 let mut name = None;
                 r.fields(end, |r, field, wire, end| match (field, wire) {
                     (8, LEN) => {
                         name = Some(r.string(end)?);
+                        Ok(())
+                    }
+                    (13, LEN) => {
+                        let (mut key, mut value) = (String::new(), String::new());
+                        r.fields(end, |r, field, wire, end| match (field, wire) {
+                            (1, LEN) => {
+                                key = r.string(end)?;
+                                Ok(())
+                            }
+                            (2, LEN) => {
+                                value = r.string(end)?;
+                                Ok(())
+                            }
+                            _ => r.skip(wire, end),
+                        })?;
+                        if key == "location" {
+                            interface.external_data.push(value);
+                        }
                         Ok(())
                     }
                     _ => r.skip(wire, end),
@@ -314,6 +338,22 @@ pub(crate) mod encode {
     /// initializer named `weight` with `weight_bytes` of raw data.
     pub fn model(inputs: &[Vec<u8>], outputs: &[Vec<u8>], weight_bytes: usize) -> Vec<u8> {
         model_with_ops(&["MatMul"], inputs, outputs, weight_bytes)
+    }
+
+    /// [`model`] whose initializer keeps its data in `location`.
+    pub fn model_with_external(location: &str, inputs: &[Vec<u8>], outputs: &[Vec<u8>]) -> Vec<u8> {
+        let entry = |k: &str, v: &str| len_field(13, &[len_field(1, k.as_bytes()), len_field(2, v.as_bytes())].concat());
+        let initializer =
+            [len_field(8, b"weight"), entry("location", location), entry("offset", "0"), varint_field(14, 1)].concat();
+        let mut graph = len_field(1, &len_field(4, b"MatMul"));
+        graph.extend(len_field(5, &initializer));
+        for i in inputs {
+            graph.extend(len_field(11, i));
+        }
+        for o in outputs {
+            graph.extend(len_field(12, o));
+        }
+        [varint_field(1, 8), len_field(7, &graph)].concat()
     }
 
     /// [`model`] with one node per operator in `ops`.

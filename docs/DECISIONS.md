@@ -2203,6 +2203,16 @@ reason in `/health`'s `skipped_models`, when:
 - the output's rank doesn't fit `pooling`;
 - the output's last dimension, when the graph fixes it, isn't `dims`.
 
+sidekick checks external-data locations at scan time, because ONNX Runtime
+before 1.24 doesn't, and Intel macOS runs 1.23.2. A crafted graph's
+external data could otherwise make the runtime read any file. Every
+`location` an initializer in the main graph names must be relative,
+without `..`, exist, and resolve (symlinks included) inside the graph's
+directory, or the manifest is skipped with the reason. A model directory
+installed as one symlink is fine, but an external-data file symlinked out
+of it isn't. Subgraphs' (If, Loop) initializers aren't walked; no
+exporter puts weights there, and none of sidekick's graphs has them.
+
 When ONNX Runtime itself won't load, or the build has no `onnx` feature,
 every `onnx` manifest is skipped with that reason
 (`ModelRegistry::skip_backend`), and the rest of the daemon serves as
