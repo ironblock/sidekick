@@ -2287,17 +2287,27 @@ time and loads `libonnxruntime` at startup.
 - It looks for the library at `ORT_DYLIB_PATH`, when set, else beside the
   `sidekickd` binary (`libonnxruntime.dylib`, `.so`). Release archives
   ship the library there.
-- The ONNX Runtime version is pinned: ORT 1.28.x, which ort 2.0.0-rc.13
-  is built for. `sidekickd --version` names the pinned version. `/health`
-  names the version actually loaded, and where it came from
+- The ONNX Runtime version is pinned per target: 1.28.3, and 1.23.2 on
+  Intel macOS (`x86_64-apple-darwin`). Microsoft's last osx-x86_64 build
+  is 1.23.2 (`onnxruntime-osx-x86_64-1.23.2.tgz`). From 1.24 it publishes
+  arm64 only, as do PyPI and ort's own binaries. sidekick builds ort
+  2.0.0-rc.13 with `api-23`, so one binary accepts any runtime from 1.23
+  on. The whole workspace builds at that API level, and passes its tests
+  on 1.28.3. Intel results are graded on Intel, and vectors aren't
+  bit-identical across architectures or runtime versions anyway. Building
+  1.28.3 from source for Intel macOS, as an optional download, is a
+  follow-up.
+- `sidekickd --version` names the pinned version for its target.
+  `/health` names the version actually loaded, and where it came from
   (`ORT_DYLIB_PATH`, or beside `sidekickd`) by file name. It doesn't give
-  the full path, just as a skipped manifest is named relative to the models
-  directory. The pinned release is `onnxruntime-osx-arm64-1.28.3.tgz`
-  (sha256 `c436bd9f…0a1d32`) on Apple silicon. A loaded
-  library of another 1.x version than the pin is used, with a warning in
-  the log and in `/health`, since `ORT_DYLIB_PATH` exists to allow it.
-  One older than 1.28, which ort can't drive, is refused with the
-  reason. The library's version is read through `OrtGetApiBase` before
+  the full path, just as a skipped manifest is named relative to the
+  models directory. `tools/fetch_onnxruntime.sh` holds each pinned
+  archive's sha256, from the GitHub release's asset digest; the Apple
+  silicon one, `c436bd9f…0a1d32`, matches a local download.
+- A loaded library of another 1.x version than the pin is used, with a
+  warning in the log and in `/health`, since `ORT_DYLIB_PATH` exists to
+  allow it. One older than 1.23, which this build of ort can't drive, is
+  refused with the reason. The library's version is read through `OrtGetApiBase` before
   ort loads it, so a wrong file fails with a reason, not a panic.
 - Everything is behind an `onnx` cargo feature. A build without it is
   unchanged, and skips `onnx` manifests as unsupported in that build, as

@@ -11,8 +11,13 @@
 //! the executable. A build without the `onnx` feature has no runtime, and
 //! the daemon skips every `onnx` manifest with [`runtime`]'s reason.
 
-/// The ONNX Runtime version sidekick is built and tested against. A
-/// runtime of another 1.x version at least as new loads with a warning.
+/// The ONNX Runtime version sidekick is built and tested against on this
+/// target: 1.23.2 on Intel macOS, the last Microsoft built for it, and
+/// 1.28.3 everywhere else. Another version from 1.23 on loads, with a
+/// warning; older ones are refused.
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub const PINNED_VERSION: &str = "1.23.2";
+#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
 pub const PINNED_VERSION: &str = "1.28.3";
 
 /// Whether this build has the ONNX Runtime backend (the `onnx` feature).

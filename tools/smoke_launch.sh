@@ -3,11 +3,15 @@
 # wait for /health, and require the ONNX Runtime beside it to have loaded
 # at the pinned version (D40).
 #
-#   tools/smoke_launch.sh <path to sidekickd> [expected ONNX Runtime version]
+#   tools/smoke_launch.sh <path to sidekickd>
+#
+# The expected version is the one the binary names in --version: the pin
+# for its target.
 set -eu
 
-daemon=${1:?usage: smoke_launch.sh <sidekickd> [onnx runtime version]}
-want=${2:-1.28.3}
+daemon=${1:?usage: smoke_launch.sh <sidekickd>}
+want=$("$daemon" --version | sed -n 's/.*(ONNX Runtime \([0-9.]*\) expected).*/\1/p')
+[ -n "$want" ] || { echo "$daemon --version names no ONNX Runtime: built without the onnx feature?" >&2; exit 1; }
 work=$(mktemp -d)
 trap 'kill "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT
 mkdir -p "$work/models"

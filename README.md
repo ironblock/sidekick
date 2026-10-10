@@ -68,11 +68,12 @@ fallback probe chain.
 | Platform | Chat (Foundation Models) | Embeddings | Classify, rerank | Release archive |
 |---|---|---|---|---|
 | macOS 26+, Apple silicon (`aarch64-apple-darwin`) | yes | Core ML (ANE, GPU, CPU), ONNX on the CPU, static | Core ML | yes |
-| macOS, Intel (`x86_64-apple-darwin`) | no (503) | Core ML (GPU, CPU), static | Core ML | not yet: no ONNX Runtime 1.28 build exists for it |
+| macOS, Intel (`x86_64-apple-darwin`) | no (503) | Core ML (GPU, CPU), ONNX on the CPU (ONNX Runtime 1.23.2), static | Core ML | yes |
 | Linux x86-64 (`x86_64-unknown-linux-gnu`) | no (503) | ONNX on the CPU, static | no | yes, glibc 2.35+ |
 | Linux arm64 (`aarch64-unknown-linux-gnu`) | no (503) | ONNX on the CPU, static | no | yes, glibc 2.35+ |
 
-ONNX models need ONNX Runtime 1.28 (D40). Release archives ship it beside
+ONNX models need ONNX Runtime (D40): 1.28.3, or 1.23.2 on Intel macOS, the
+last release Microsoft built for it. Release archives ship it beside
 `sidekickd`. An ONNX build of a model keeps its id, so a client calls the
 same model the same way on every platform.
 
@@ -261,7 +262,7 @@ builds for. It's sidekick's own export with pooling inside the graph, or a
 published export whose `last_hidden_state` sidekick pools (`mean`, `cls`
 or `last_token`). An ONNX build keeps the model's id, so clients address
 the same model everywhere. The daemon needs the `onnx` cargo feature and
-ONNX Runtime 1.28: release archives ship `libonnxruntime` beside
+ONNX Runtime (1.28.3, or 1.23.2 on Intel macOS): release archives ship `libonnxruntime` beside
 `sidekickd`, and `ORT_DYLIB_PATH` points elsewhere. Each manifest's
 graph is checked against its `[io]` when the directory is scanned.
 `/health`'s `onnx` section reports the runtime and each model's threads.
