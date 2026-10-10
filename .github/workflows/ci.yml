@@ -10,8 +10,15 @@ env:
 
 jobs:
   linux:
-    name: Test (Linux) + macOS cross-check
-    runs-on: ubuntu-latest
+    # x86-64 and arm64 Linux. The onnx backend (D40) runs against the pinned
+    # ONNX Runtime there, and SIDEKICK_REQUIRE_ONNX turns its tests' skip
+    # into a failure, so a missing runtime can't pass silently.
+    name: Test (Linux ${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -19,12 +26,48 @@ jobs:
           targets: aarch64-apple-darwin
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.runner }}
       - name: Test (platform-neutral surface)
         run: cargo test --workspace
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: ONNX Runtime (pinned, sha256-checked)
+        run: echo "ORT_DYLIB_PATH=$(tools/fetch_onnxruntime.sh "$RUNNER_TEMP/onnxruntime")" >> "$GITHUB_ENV"
+      - name: Test with the onnx backend
+        env:
+          SIDEKICK_REQUIRE_ONNX: "1"
+        run: cargo test --workspace --features sidekick-server/onnx
+      - name: Clippy with the onnx backend
+        run: cargo clippy --workspace --all-targets --features sidekick-server/onnx -- -D warnings
       - name: Cross-check macOS-only code compiles
+        if: matrix.runner == 'ubuntu-24.04'
         run: cargo check --workspace --target aarch64-apple-darwin --features sidekick-embed/coreml
+
+  macos-intel:
+    # Intel Macs: no Foundation Models (sidekick-fm's build script stubs it on
+    # x86_64-apple-darwin) and no ANE, but Core ML still builds. Microsoft
+    # publishes no Intel macOS ONNX Runtime 1.28, so the onnx backend isn't
+    # tested here yet.
+    name: Build + test (Intel macOS)
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-intel
+      - name: Test
+        run: cargo test --workspace --features sidekick-server/coreml
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --features sidekick-server/coreml -- -D warnings
+      - name: Chat is the stub, without SIDEKICK_FM_STUB
+        run: |
+          cargo build --release -p sidekick-server --features coreml --bin sidekickd
+          ./target/release/sidekickd --version | grep -q "Foundation Models: stub build"
+          ! otool -L target/release/sidekickd | grep -q FoundationModels
 
   macos:
     # The Foundation Models shim compiles differently per SDK: macOS 27
@@ -54,7 +97,11 @@ jobs:
         run: |
           xcodebuild -version
           echo "macOS SDK: $(xcrun --show-sdk-version)"
-      - name: Test with all features (Core ML + real FM shim + C ABI)
+      - name: ONNX Runtime (pinned, sha256-checked)
+        run: echo "ORT_DYLIB_PATH=$(tools/fetch_onnxruntime.sh "$RUNNER_TEMP/onnxruntime")" >> "$GITHUB_ENV"
+      - name: Test with all features (Core ML + ONNX + real FM shim + C ABI)
+        env:
+          SIDEKICK_REQUIRE_ONNX: "1"
         run: cargo test --workspace --all-features
       - name: Clippy (macOS-only code, incl. the FFI)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
