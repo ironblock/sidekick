@@ -48,7 +48,7 @@ pub struct ClassifyGates {
 impl Default for ClassifyGates {
     fn default() -> Self {
         Self {
-            bucket_invariance: PerPath { cpu: 1e-5, gpu: 1e-3, ane: 1e-3 },
+            bucket_invariance: PerPath { cpu: 1e-5, gpu: 1e-3, ane: 1e-3, onnx_cpu: None },
             pad_invariance: 1e-4,
             determinism: 1e-5,
             flip_margin: 0.05,

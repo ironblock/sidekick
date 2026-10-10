@@ -8,7 +8,7 @@
 mod classify;
 
 use crate::expect::{Expectations, Path3};
-use crate::grade::{fmt, grade, suggest_floor, CaseResult, Check, PathGrade, WorkerResult};
+use crate::grade::{check_external, fmt, grade, suggest_floor, CaseResult, Check, PathGrade, WorkerResult};
 use crate::metrics::cosine;
 use crate::reference::{corpus_sha256, sha256_hex, Reference};
 use serde::Serialize;
@@ -36,6 +36,10 @@ usage: parity [options]
                        (a warning, not a failure), provided its ANE output
                        isn't bit-identical to CPU_ONLY
   --timeout SECS       per worker (default 1200)
+  --external FILE      grade results written outside the suite, a worker's
+                       JSON (model, path, cases, repeat_bitwise, load_ms)
+                       for path onnx-cpu, as that model's onnx-cpu path
+                       (repeatable; D40)
   --bucket-invariance MODE
                        classifiers: which larger buckets each case re-runs in
                        for bucket invariance. full: every larger bucket.
@@ -92,6 +96,7 @@ fn units(path: Path3) -> ComputeUnits {
         Path3::Cpu => ComputeUnits::CpuOnly,
         Path3::Gpu => ComputeUnits::CpuAndGpu,
         Path3::Ane => ComputeUnits::CpuAndNeuralEngine,
+        Path3::OnnxCpu => unreachable!("onnx-cpu isn't a Core ML path; it is graded from --external results"),
     }
 }
 
@@ -410,6 +415,9 @@ struct Options {
     allow_unverified: bool,
     timeout: Duration,
     pub bucket_invariance: BucketInvariance,
+    /// Results written outside the suite, graded as their own path
+    /// (`--external`; D40).
+    externals: Vec<PathBuf>,
 }
 
 /// Which larger buckets a classifier case re-runs in for bucket invariance
@@ -447,6 +455,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         allow_unverified: false,
         timeout: Duration::from_secs(1200),
         bucket_invariance: BucketInvariance::Auto,
+        externals: Vec::new(),
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -462,9 +471,14 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--paths" => {
                 o.paths = val()?
                     .split(',')
-                    .map(|p| Path3::parse(p.trim()).ok_or(format!("unknown path {p:?}")))
+                    .map(|p| match Path3::parse(p.trim()) {
+                        Some(Path3::OnnxCpu) => Err("onnx-cpu is graded from --external results".to_string()),
+                        Some(path) => Ok(path),
+                        None => Err(format!("unknown path {p:?}")),
+                    })
                     .collect::<Result<_, _>>()?
             }
+            "--external" => o.externals.push(val()?.into()),
             "--expectations" => o.expectations = val()?.into(),
             "--json" => o.json = Some(val()?.into()),
             "--suggest-floors" => o.suggest = true,
@@ -716,11 +730,20 @@ fn parent(args: &[String]) -> Result<bool, String> {
     let scratch = std::env::temp_dir().join(format!("sidekick-parity-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
 
+    // Results written outside the suite (`--external`), by model id.
+    let mut externals: Vec<WorkerResult> = Vec::new();
+    for file in &o.externals {
+        let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let r: WorkerResult = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+        externals.push(r);
+    }
+
     let mut models: Vec<(PathBuf, ResolvedModel)> = Vec::new();
     for dir in &o.models_dirs {
         let reg = ModelRegistry::scan_with(dir, &MEASURE_ALL).map_err(|e| e.to_string())?;
         for m in reg.iter() {
-            if m.manifest.backend == EmbeddingBackendKind::Coreml
+            let graded_backend = matches!(m.manifest.backend, EmbeddingBackendKind::Coreml | EmbeddingBackendKind::Onnx);
+            if graded_backend
                 && (o.models.is_empty() || o.models.contains(&m.manifest.id))
             {
                 models.push((dir.clone(), m.clone()));
@@ -734,6 +757,11 @@ fn parent(args: &[String]) -> Result<bool, String> {
             if o.models.is_empty() || o.models.contains(&c.manifest.id) {
                 classifiers.push((dir.clone(), c.clone()));
             }
+        }
+    }
+    for r in &externals {
+        if !models.iter().any(|(_, m)| m.manifest.id == r.model) {
+            return Err(format!("--external results for model {}, which no --models-dir has", r.model));
         }
     }
     for want in &o.models {
@@ -765,6 +793,14 @@ fn parent(args: &[String]) -> Result<bool, String> {
         let id = &model.manifest.id;
         let refs_dir = reference_dir(model, o.refs.as_deref());
         println!("\n=== {id}");
+        // An onnx model runs on ONNX Runtime, which the suite doesn't run
+        // yet: it is graded from --external results alone (D40).
+        let onnx = model.manifest.backend == EmbeddingBackendKind::Onnx;
+        let external: Vec<&WorkerResult> = externals.iter().filter(|r| &r.model == id).collect();
+        if onnx && external.is_empty() {
+            println!("  SKIPPED: an onnx model is graded from --external results (see --help)");
+            continue;
+        }
         let reference = match Reference::load(&refs_dir) {
             Ok(r) => r,
             Err(e) if !refs_dir.join("reference.json").exists() && o.models.is_empty() => {
@@ -821,17 +857,22 @@ fn parent(args: &[String]) -> Result<bool, String> {
         );
 
         // Compute plans first, on every bucket, before anything predicts:
-        // an artifact the ANE rejects can abort the process at predict.
-        let plans = check_plans(
-            id,
-            &model.manifest.buckets,
-            |b| model.artifact_paths_for_bucket(b),
-            model.manifest.compute_units.unwrap_or_default(),
-            &o,
-            &scratch,
-            &mut mr.failures,
-            &mut mr.warnings,
-        );
+        // an artifact the ANE rejects can abort the process at predict. An
+        // onnx model has none.
+        let plans = if onnx {
+            Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() }
+        } else {
+            check_plans(
+                id,
+                &model.manifest.buckets,
+                |b| model.artifact_paths_for_bucket(b),
+                model.manifest.compute_units.unwrap_or_default(),
+                &o,
+                &scratch,
+                &mut mr.failures,
+                &mut mr.warnings,
+            )
+        };
         mr.buckets = plans.buckets;
         let (plan_ok, unverified) = (plans.ok, plans.unverified);
         if !plan_ok {
@@ -842,7 +883,8 @@ fn parent(args: &[String]) -> Result<bool, String> {
         }
 
         let mut results: Vec<(Path3, WorkerResult)> = Vec::new();
-        for &path in &o.paths {
+        let core_ml_paths: &[Path3] = if onnx { &[] } else { &o.paths };
+        for &path in core_ml_paths {
             match spawn_worker::<WorkerResult>(id, models_dir, path, None, &scratch, &o) {
                 Ok(r) => results.push((path, r)),
                 Err(e) => {
@@ -851,6 +893,13 @@ fn parent(args: &[String]) -> Result<bool, String> {
                     mr.failures
                         .push(format!("{}: worker failed: {e}", path.name()));
                 }
+            }
+        }
+
+        for r in &external {
+            match check_external(&reference, r) {
+                Ok(()) => results.push((Path3::OnnxCpu, (*r).clone())),
+                Err(e) => mr.failures.push(format!("onnx-cpu: unusable --external results: {e}")),
             }
         }
 
