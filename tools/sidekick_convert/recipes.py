@@ -45,7 +45,8 @@ def _apply(backbone, rewrites):
 def embedder(*, model_id, src, buckets, backbone, head, tok, texts, calibration=None, gates=None,
              forbid_ops=frozenset({FUSED_ATTENTION}), rewrites=(), strict_max_seq_len=True,
              truncate=False, negative_control=False, timing=False, int8_embedding=False,
-             ignore_ane_weight_cap=False, chunks=None, chunk_identity_all=False, format="coreml"):
+             ignore_ane_weight_cap=False, chunks=None, chunk_identity_all=False, format="coreml",
+             onnx_weights="fp32"):
     """An embedding job; installs examples/manifests/<model_id>/manifest.toml.
     `rewrites` (functions of the backbone) run after the fp32 references are
     computed from the unmodified checkpoint. For `format="onnx"` they don't
@@ -68,14 +69,14 @@ def embedder(*, model_id, src, buckets, backbone, head, tok, texts, calibration=
                install_files=[(path, "manifest.toml")],
                negative_control=negative_control, timing=timing, int8_embedding=int8_embedding,
                ignore_ane_weight_cap=ignore_ane_weight_cap, chunks=chunks, chunk_identity_all=chunk_identity_all,
-               backbone=backbone, head=head, format=format)
+               backbone=backbone, head=head, format=format, onnx_weights=onnx_weights)
 
 
 def classifier(*, model_id, src, buckets, backbone, head, tok, texts=None, pairs=None, calibration=None,
                gates=None, gate_overrides=None, expected_problem_type=None, rewrites=(),
                strict_max_seq_len=True, landing_required=True, negative_control=False, timing=False,
                int8_embedding=False, ignore_ane_weight_cap=False, chunks=None, chunk_identity_all=False,
-               format="coreml"):
+               format="coreml", onnx_weights="fp32"):
     """A classification job; installs examples/classifiers/<model_id>/classifier.toml.
     The gates compare outputs after the manifest's activation; `gate_overrides`
     adjusts ClassifierGates' thresholds. `rewrites` run after the fp32

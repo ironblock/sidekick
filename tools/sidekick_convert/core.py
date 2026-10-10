@@ -215,6 +215,7 @@ class Job:
     backbone: object = None       # the backbone and head the wrapper was composed from
     head: object = None
     format: str = "coreml"        # "onnx": one dynamic-shape model.onnx instead (onnx_export.py)
+    onnx_weights: str = "fp32"    # "fp16": ONNX weights stored in fp16, computed in fp32
 
 
 def trace_convert(wrapper, ports, seq, example, output):

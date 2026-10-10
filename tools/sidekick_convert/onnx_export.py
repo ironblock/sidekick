@@ -114,6 +114,33 @@ def export(module, inputs, output, path):
     onnx.checker.check_model(str(path))
 
 
+def fp16_weights(path):
+    """Store every float initializer of 2+ dimensions as fp16 behind a Cast to
+    float, in place: half the size, and ONNX Runtime's CPU still computes in
+    fp32. Lossless for weights a bf16 checkpoint holds (fp16 represents
+    nearly every bf16 value exactly); otherwise the fp32 gate measures it."""
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+    model = onnx.load(str(path), load_external_data=True)
+    graph, casts = model.graph, []
+    for init in list(graph.initializer):
+        if init.data_type != TensorProto.FLOAT or len(init.dims) < 2:
+            continue
+        w = numpy_helper.to_array(init)
+        graph.initializer.remove(init)
+        graph.initializer.append(numpy_helper.from_array(w.astype(np.float16), init.name + "_fp16"))
+        casts.append(helper.make_node("Cast", [init.name + "_fp16"], [init.name], to=TensorProto.FLOAT))
+    for c in reversed(casts):
+        graph.node.insert(0, c)
+    for f in path.parent.iterdir():
+        if f != path:
+            f.unlink()
+    onnx.save_model(model, str(path), save_as_external_data=True, all_tensors_to_one_file=True,
+                    location=path.name + "_data", size_threshold=1024)
+    onnx.checker.check_model(str(path))
+    return len(casts)
+
+
 class Runner:
     """An ONNX Runtime CPU session that feeds int64 and pools like the server."""
 
@@ -240,6 +267,8 @@ def run(job, install_dir, report=print):
         path = Path(work) / "model.onnx"
         t = time.perf_counter()
         export(module, inputs, output, path)
+        if job.onnx_weights == "fp16":
+            report(f"{job.name}: {fp16_weights(path)} weights stored in fp16")
         report(f"{job.name}: exported in {time.perf_counter() - t:.1f}s; pooling {pooling or 'in the graph'}; "
                f"output {output}")
         result = gate(Runner(path, pooling), job.evaluation.cases, job.gates.pad_id_range, report)
