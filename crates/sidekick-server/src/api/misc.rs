@@ -190,7 +190,12 @@ fn onnx_health(state: &AppState) -> Value {
         .map(|m| {
             // A quantized graph's output depends on its batch-mates: it
             // always runs one input at a time (D40).
-            (m.id.clone(), json!({"intra_op_threads": state.onnx_threads.for_model(&m.id), "quantized": m.onnx_quantized}))
+            let model_default = m.onnx.as_ref().and_then(|o| o.default_intra_op_threads);
+            let (threads, source) = state.onnx_threads.resolve(&m.id, model_default);
+            (
+                m.id.clone(),
+                json!({"intra_op_threads": threads, "source": source, "model_default": model_default, "quantized": m.onnx_quantized}),
+            )
         })
         .collect();
     let unmatched: Vec<&String> =
@@ -199,7 +204,9 @@ fn onnx_health(state: &AppState) -> Value {
         "supported": sidekick_embed::onnx::SUPPORTED,
         "pinned_version": sidekick_embed::onnx::PINNED_VERSION,
         "runtime": runtime,
-        "default_intra_op_threads": state.onnx_threads.default,
+        // The machine's default for a model without its own: its fast
+        // cores, capped at 8 (D40).
+        "default_intra_op_threads": state.onnx_threads.machine_default(),
         // What the built-in default is based on (D40).
         "detected": {
             "source": sidekick_embed::onnx::detected_cores().source,

@@ -2224,45 +2224,70 @@ threads. It is the operator's choice, like D38's compute units, not the
 converter's:
 
 ```toml
-onnx_intra_op_threads = 8          # daemon default: detected (below)
+onnx_intra_op_threads = 8          # every onnx model (default: computed, below)
 
 [models."bge-small-en-v1.5"]
 intra_op_threads = 2
 ```
 
-- The default is one thread per physical core of the machine's fastest
-  tier, so the threads never share a core (SMT) or wait on an efficiency
-  core:
-  - on macOS, `hw.perflevel0.physicalcpu` (Apple silicon's P-cores), or
-    `hw.physicalcpu` on an Intel Mac, which has no performance levels;
-  - on Linux, a hybrid Intel CPU's P-cores (`/sys/devices/cpu_core/cpus`),
-    else every physical core: unique (package, core) pairs in sysfs
-    topology, so SMT siblings count once;
-  - if neither can be read, 4, or one less than the logical CPUs if that's
-    fewer.
+- The default is `min(max(8, the model's default), the machine's fast
+  physical cores)`:
+  - **fast physical cores:** one per physical core of the machine's
+    fastest tier, so the threads never share a core (SMT) or wait on an
+    efficiency core. On macOS that's `hw.perflevel0.physicalcpu` (Apple
+    silicon's P-cores), or `hw.physicalcpu` where there are no performance
+    levels. On Linux it's a hybrid Intel CPU's P-cores
+    (`/sys/devices/cpu_core/cpus`), else every physical core: unique
+    (package, core) pairs in sysfs topology, so SMT siblings count once.
+    If neither can be read, it's 4, or one less than the logical CPUs if
+    that's fewer. It's never the logical CPU count.
+  - **8** (`MAX_DEFAULT_INTRA_OP_THREADS`) caps it: past 8 threads,
+    latency stopped improving for every model but the largest.
+  - **the model's default:** `[onnx] default_intra_op_threads` in its
+    manifest can raise the cap, for a model that gains from more cores,
+    never lower it. A value under 8 is accepted and has no effect, and
+    nothing exceeds the fast cores. A base M1, with 4 P-cores, gets 4
+    whatever the manifest says. 0 is a scan error.
 
-  It is never the logical CPU count. `MAX_DEFAULT_INTRA_OP_THREADS` can
-  cap it for many-core machines, and is unset. `/health` reports the
-  default and what it was detected from (`detected: {source, cores}`).
-  The config overrides it, for every model or for one.
+  The operator's setting always wins: `[models."<id>"] intra_op_threads`
+  first, then `onnx_intra_op_threads` for every model, then the default.
+  `/health` reports each onnx model's `intra_op_threads`, its `source`
+  (`config (model)`, `config` or `default`) and its `model_default`. It
+  also reports `default_intra_op_threads`, the machine's capped value,
+  and what it was `detected` from (`{source, cores}`).
   `inter_op_threads` is 1: the graphs are sequential.
-- Measured (benchmarks, #64):
-  - On an M1 Max (8 P-cores, 2 E-cores, ONNX Runtime 1.28.3, 256-token
-    inputs), 8 threads beat ONNX Runtime's own default of every core by
-    16–27%. Latency scaled almost linearly from 1 to 8 threads, so the
-    earlier default of 4 was about twice as slow as 8.
-  - On an Intel Xeon W-3235 (12 cores, 24 threads, ONNX Runtime 1.23.2,
-    290-token inputs, under a background load of 4–16, so indicative
-    only), per-input latency in ms by threads:
+- Measured (#64), on four machines, with ONNX Runtime 1.28.3 (1.23.2 on
+  the Intel Mac):
+  - **M1 Max** (8 P-cores, 2 E-cores, 256-token inputs): 8 threads beat
+    ONNX Runtime's own all-cores default by 16–27%, scaling almost
+    linearly from 1 to 8.
+  - **The three x86-64 machines**, median ms for one 290-token input (best
+    per row in bold; the Xeon ran under a background load of 4–16, so its
+    row is indicative):
 
-    | threads | 4 | 8 | 12 | 16 | 24 |
-    |---|---|---|---|---|---|
-    | Qwen3-Embedding-0.6B | 572 | 337 | 385 | 317 | 451 |
-    | gte-modernbert-base | 161 | 98 | 119 | 99 | 241 |
-    | bge-small-en-v1.5 | 37 | 24 | 30 | 28 | 69 |
+    | machine | model | 4 | 8 | 12 | 16 | 24 | 32 |
+    |---|---|---|---|---|---|---|---|
+    | Intel Xeon W-3235 (12 cores, SMT 2×) | bge-small | 37 | **24** | 30 | 28 | 69 | – |
+    | Intel Xeon W-3235 (12 cores, SMT 2×) | gte-modernbert | 161 | **98** | 119 | 99 | 241 | – |
+    | Intel Xeon W-3235 (12 cores, SMT 2×) | EmbeddingGemma | 161 | **97** | 112 | 108 | 187 | – |
+    | Intel Xeon W-3235 (12 cores, SMT 2×) | Qwen3-0.6B | 572 | 337 | 385 | **316** | 451 | – |
+    | AMD Ryzen 7 5800X (8 cores, SMT 2×) | bge-small | 33 | **20** | 24 | 23 | – | – |
+    | AMD Ryzen 7 5800X (8 cores, SMT 2×) | gte-modernbert | 143 | **85** | 101 | 87 | – | – |
+    | AMD Ryzen 7 5800X (8 cores, SMT 2×) | EmbeddingGemma | 140 | **83** | 100 | 86 | – | – |
+    | AMD Ryzen 7 5800X (8 cores, SMT 2×) | Qwen3-0.6B | 501 | **277** | 370 | 298 | – | – |
+    | AMD Threadripper 3970X (32 cores, SMT off) | bge-small | **31** | 35 | 32 | 33 | 34 | 41 |
+    | AMD Threadripper 3970X (32 cores, SMT off) | gte-modernbert | 133 | 117 | 103 | 104 | **103** | 118 |
+    | AMD Threadripper 3970X (32 cores, SMT off) | EmbeddingGemma | 129 | 113 | 120 | 112 | **106** | 137 |
+    | AMD Threadripper 3970X (32 cores, SMT off) | Qwen3-0.6B | 460 | 335 | 303 | **277** | 294 | 339 |
 
-    The 24 logical CPUs ran 1.4–2.9× slower than 8 threads. The
-    detected default there is 12.
+  At about 290 tokens, 8 threads is within about 20% of each machine's
+  best for every model, and is the fastest on the M1 Max and the 5800X.
+  More threads help short inputs least: on the Threadripper, 32 threads
+  ran a 16-token bge-small input in 21 ms against 5.7 ms on 8, and is at
+  best level with 8 at 290 tokens. Hyperthreads never helped. Only
+  Qwen3-0.6B kept gaining past 8: on the Threadripper 277 ms at 16
+  against 335 at 8, and on the Xeon 317 against 337. That's why a model's
+  manifest can raise its default (Qwen3's sets 16).
 - Each model has one session. Concurrent requests to it take turns,
   since ONNX Runtime's `Run` holds the session (in ort 2.0.0-rc.13), and
   each uses all of the model's threads, so a model never uses more than

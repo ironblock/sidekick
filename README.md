@@ -286,7 +286,15 @@ input_ids = "input_ids"
 attention_mask = "attention_mask"
 token_type_ids = "token_type_ids"  # when the graph takes it: fed zeros
 output = "last_hidden_state"
+
+[onnx]
+default_intra_op_threads = 16      # optional: let this model use more than 8 threads
 ```
+
+An onnx model runs on the machine's fast physical cores, at most 8 unless
+its manifest's `[onnx] default_intra_op_threads` raises that limit. A value
+under 8 has no effect. The config's `onnx_intra_op_threads`, or a model's
+`intra_op_threads` under `[models."<id>"]`, sets threads outright.
 
 Classifier manifests are in [examples/classifiers/](examples/classifiers/):
 laya-en, from `tools/convert_laya.py`, and nlptown-sentiment, from
@@ -309,7 +317,7 @@ load_timeout_secs = 900        # how long a request waits on its model's and buc
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
 report_compute_plans = false   # read each loaded bucket's Core ML placement live (costs a second compile)
-# onnx_intra_op_threads = 8    # inference threads per onnx model (default: the fastest tier's physical cores)
+# onnx_intra_op_threads = 8    # inference threads for every onnx model (default: fast physical cores, at most 8)
 # onnx_runtime = "..."         # libonnxruntime to load instead of the bundled one (before ORT_DYLIB_PATH)
 
 # Per model, by id: serve it on other compute units than its manifest names,

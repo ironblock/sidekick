@@ -27,7 +27,7 @@ async fn the_configured_runtime_wins_and_loads_at_startup() {
     std::fs::write(
         model.join("manifest.toml"),
         "id = \"tiny\"\nbackend = \"onnx\"\nartifact = \"hidden.onnx\"\ntokenizer = \"tokenizer.json\"\ndims = 8\n\
-         pooling = \"cls\"\nmax_seq_len = 16\n\n[io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\n\
+         pooling = \"cls\"\nmax_seq_len = 16\n\n[onnx]\ndefault_intra_op_threads = 16\n\n[io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\n\
          token_type_ids = \"token_type_ids\"\nposition_ids = \"position_ids\"\noutput = \"last_hidden_state\"\n",
     )
     .unwrap();
@@ -44,5 +44,18 @@ async fn the_configured_runtime_wins_and_loads_at_startup() {
     assert_eq!(health["onnx"]["runtime"]["state"], "loaded");
     assert_eq!(health["onnx"]["runtime"]["source"], "config");
     assert_eq!(health["embeddings"]["models"], serde_json::json!(["tiny"]));
+    // No thread setting in the config: the computed default, raised by the
+    // manifest's [onnx] default, within the machine's fast cores.
+    let cores = sidekick_embed::onnx::detected_cores().cores;
+    assert_eq!(
+        health["onnx"]["models"]["tiny"],
+        serde_json::json!({
+            "intra_op_threads": sidekick_embed::onnx::default_threads(cores, Some(16)),
+            "source": "default",
+            "model_default": 16,
+            "quantized": false,
+        })
+    );
+    assert_eq!(health["onnx"]["default_intra_op_threads"], cores.min(8));
     std::fs::remove_dir_all(&dir).unwrap();
 }

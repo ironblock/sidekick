@@ -30,9 +30,19 @@ pub const SUPPORTED: bool = cfg!(feature = "onnx");
 /// CPUs if that's fewer, and at least 1.
 pub const FALLBACK_INTRA_OP_THREADS: usize = 4;
 
-/// An upper bound on the detected default, for machines with many cores.
-/// Unset: the default is every fast physical core (D40).
-pub const MAX_DEFAULT_INTRA_OP_THREADS: Option<usize> = None;
+/// The default's cap: past 8 threads, latency stopped improving on every
+/// machine measured, except for the largest model, which may raise it
+/// (`[onnx] default_intra_op_threads`; D40).
+pub const MAX_DEFAULT_INTRA_OP_THREADS: Option<usize> = Some(8);
+
+/// A model's default inference threads, when the operator configured none:
+/// `min(max(cap, model_default), cores)`. The cap is
+/// [`MAX_DEFAULT_INTRA_OP_THREADS`]. A model's own default can raise it,
+/// never lower it, and nothing exceeds the machine's fast cores.
+pub fn default_threads(cores: usize, model_default: Option<usize>) -> usize {
+    let cap = MAX_DEFAULT_INTRA_OP_THREADS.unwrap_or(usize::MAX);
+    cap.max(model_default.unwrap_or(0)).min(cores).max(1)
+}
 
 /// The machine's fastest tier of physical cores, and how they were found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,25 +54,24 @@ pub struct DetectedCores {
     pub cores: usize,
 }
 
-/// The default intra-op threads on this machine (D40): one per physical core
-/// of its fastest tier, so ONNX Runtime's threads don't share a core with
-/// each other (SMT) or wait on an efficiency core. Never the logical CPU
-/// count: on a 12-core, 24-thread Xeon, 24 threads ran 1.4-2.9x slower than
-/// 8. If nothing can be detected, the fallback rule.
+/// The default intra-op threads on this machine, for a model without its
+/// own (D40): its fast physical cores, capped at 8. One thread per physical
+/// core of the fastest tier means ONNX Runtime's threads don't share a core
+/// (SMT) or wait on an efficiency core. Never the logical CPU count: on a
+/// 12-core, 24-thread Xeon, 24 threads ran 1.4-2.9x slower than 8.
 pub fn default_intra_op_threads() -> usize {
-    detected_cores().cores
+    default_threads(detected_cores().cores, None)
 }
 
-/// What [`default_intra_op_threads`] is based on, detected once.
+/// The machine's fastest tier of physical cores, detected once; if nothing
+/// can be detected, the fallback rule's count.
 pub fn detected_cores() -> DetectedCores {
     static DETECTED: std::sync::OnceLock<DetectedCores> = std::sync::OnceLock::new();
     *DETECTED.get_or_init(|| {
-        let detected = detect().unwrap_or_else(|| {
+        detect().unwrap_or_else(|| {
             let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
             DetectedCores { source: "fallback", cores: FALLBACK_INTRA_OP_THREADS.min(cpus.saturating_sub(1)).max(1) }
-        });
-        let cores = MAX_DEFAULT_INTRA_OP_THREADS.map_or(detected.cores, |cap| detected.cores.min(cap));
-        DetectedCores { cores, ..detected }
+        })
     })
 }
 
@@ -207,6 +216,16 @@ mod linux {
             for r in [root, root2] {
                 std::fs::remove_dir_all(&r).unwrap();
             }
+        }
+
+        #[test]
+        fn the_default_is_capped_at_8_unless_the_model_raises_it_within_the_cores() {
+            use super::super::default_threads;
+            assert_eq!(default_threads(4, Some(16)), 4, "never past the fast cores");
+            assert_eq!(default_threads(32, None), 8, "the cap");
+            assert_eq!(default_threads(32, Some(16)), 16, "a model raises it");
+            assert_eq!(default_threads(12, Some(4)), 8, "never below the cap");
+            assert_eq!(default_threads(8, None), 8);
         }
 
         #[test]

@@ -55,7 +55,7 @@ fn onnx_state() -> AppState {
     std::os::unix::fs::symlink(fixtures.join("hidden.onnx"), model.join("hidden.onnx")).unwrap();
     let registry = Arc::new(ModelRegistry::scan(&dir).unwrap());
     assert!(registry.skipped().is_empty(), "{:?}", registry.skipped().first().map(|s| &s.reason));
-    let threads = OnnxThreads { default: 3, by_model: [("tiny".into(), 2), ("ghost".into(), 1)].into() };
+    let threads = OnnxThreads { configured: None, by_model: [("tiny".into(), 2), ("ghost".into(), 1)].into(), cores: 3 };
     let mut state = test_state(true, None);
     state.embedders = Arc::new(EmbedderPool::embedders_with(registry.clone(), Duration::from_secs(60), threads.clone()));
     state.registry = registry;
@@ -99,9 +99,12 @@ async fn the_routes_serve_an_onnx_model_on_the_cpu() {
     assert_eq!(onnx["runtime"]["version"], onnx["pinned_version"]);
     assert_eq!(onnx["runtime"]["source"], "ORT_DYLIB_PATH");
     assert!(onnx["runtime"]["file"].as_str().unwrap().starts_with("libonnxruntime"));
-    assert_eq!(onnx["default_intra_op_threads"], 3);
+    assert_eq!(onnx["default_intra_op_threads"], 3, "three fast cores, under the cap of 8");
     let detected = sidekick_embed::onnx::detected_cores();
     assert_eq!(onnx["detected"], json!({"source": detected.source, "cores": detected.cores}));
-    assert_eq!(onnx["models"], json!({"tiny": {"intra_op_threads": 2, "quantized": false}}));
+    assert_eq!(
+        onnx["models"],
+        json!({"tiny": {"intra_op_threads": 2, "source": "config (model)", "model_default": null, "quantized": false}})
+    );
     assert_eq!(onnx["unmatched_thread_overrides"], json!(["ghost"]));
 }

@@ -341,6 +341,19 @@ fn check_recorded_placement(path: &Path, placement: &mut Option<RecordedPlacemen
     }
 }
 
+/// `[onnx]` in an embedder's manifest (D40).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OnnxSection {
+    /// Inference threads this model may use by default, when the operator
+    /// sets none: it raises the daemon's cap of 8 for a model that gains
+    /// from more cores (Qwen3-Embedding-0.6B), up to the machine's fast
+    /// cores. It never lowers the default below 8: a smaller value is
+    /// accepted and has no effect.
+    #[serde(default)]
+    pub default_intra_op_threads: Option<usize>,
+}
+
 /// `manifest.toml` for an embedding model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelManifest {
@@ -402,6 +415,9 @@ pub struct ModelManifest {
     /// Each bucket as a chain of programs (coreml backend only; D37).
     #[serde(default)]
     pub chunking: Option<Chunking>,
+    /// `[onnx]`: settings for the onnx backend (D40).
+    #[serde(default)]
+    pub onnx: Option<OnnxSection>,
     /// An onnx model's graph quantizes (int8): its output would depend on
     /// its batch-mates, so it always runs one input at a time (D40). Read
     /// from the graph at scan, never from the file.
@@ -1329,6 +1345,12 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
         // Core ML decoder embedders pool inside the graph.
         return Err("`pooling = \"last_token\"` is only valid for the onnx backend".into());
     }
+    if m.backend != EmbeddingBackendKind::Onnx && m.onnx.is_some() {
+        return Err("`[onnx]` is only valid for the onnx backend".into());
+    }
+    if m.onnx.as_ref().and_then(|o| o.default_intra_op_threads) == Some(0) {
+        return Err("`[onnx] default_intra_op_threads` must be at least 1".into());
+    }
     if m.backend == EmbeddingBackendKind::Onnx {
         // One graph with dynamic shapes, on the CPU: Core ML's per-bucket
         // and ANE settings don't apply (D40).
@@ -2193,6 +2215,17 @@ output = "logits"
         assert!(reg.get("o").is_err());
         assert_eq!(reg.skipped()[0].path, Path::new("o").join(EMBEDDER_MANIFEST));
         assert_eq!(reg.skipped()[0].reason, "no ONNX Runtime here");
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // [onnx] default_intra_op_threads: read; 0 refused; onnx only.
+        let (tmp, reg) = onnx_model("threads", "[onnx]\ndefault_intra_op_threads = 16\n", &[ids(), mask()], &[hidden()]);
+        assert_eq!(reg.get("o").unwrap().manifest.onnx.as_ref().unwrap().default_intra_op_threads, Some(16));
+        std::fs::remove_dir_all(&tmp).unwrap();
+        let (tmp, reg) = onnx_model("threads-zero", "[onnx]\ndefault_intra_op_threads = 0\n", &[ids(), mask()], &[hidden()]);
+        assert!(reg.skipped()[0].reason.contains("must be at least 1"), "{}", reg.skipped()[0].reason);
+        std::fs::remove_dir_all(&tmp).unwrap();
+        let (tmp, reg) = onnx_model("threads-typo", "[onnx]\ndefault_threads = 16\n", &[ids(), mask()], &[hidden()]);
+        assert!(reg.get("o").is_err(), "unknown [onnx] keys are refused");
         std::fs::remove_dir_all(&tmp).unwrap();
 
         // External data must stay inside the model's directory.
