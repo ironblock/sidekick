@@ -408,7 +408,8 @@ everything else the machine runs):
   no buckets, and where Core ML maps weights from the file, ONNX Runtime
   loads them: about +0.9 GB for gte-modernbert and +1.7 GB for
   Qwen3-Embedding-0.6B in fp32. An fp16-weight export halves the file but
-  not the memory, since its weights are upcast when loaded. See the
+  holds more memory than fp32 (+2.7 GB for Qwen3-Embedding), since its
+  weights are upcast when loaded. See the
   `onnx-cpu` section of [docs/MODELS.md](docs/MODELS.md).
 
 ## Workspace layout
