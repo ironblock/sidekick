@@ -68,7 +68,7 @@ fallback probe chain.
 | Platform | Chat (Foundation Models) | Embeddings | Classify, rerank | Release archive |
 |---|---|---|---|---|
 | macOS 26+, Apple silicon (`aarch64-apple-darwin`) | yes | Core ML (ANE, GPU, CPU), ONNX on the CPU, static | Core ML | yes |
-| macOS, Intel (`x86_64-apple-darwin`) | no (503) | Core ML (GPU, CPU), ONNX on the CPU (ONNX Runtime 1.23.2), static | Core ML | yes |
+| macOS 13.4+, Intel (`x86_64-apple-darwin`); built and tested on macOS 26 | no (503) | Core ML (GPU, CPU), ONNX on the CPU (ONNX Runtime 1.23.2), static | Core ML | yes |
 | Linux x86-64 (`x86_64-unknown-linux-gnu`) | no (503) | ONNX on the CPU, static | no | yes, glibc 2.35+ |
 | Linux arm64 (`aarch64-unknown-linux-gnu`) | no (503) | ONNX on the CPU, static | no | yes, glibc 2.35+ |
 

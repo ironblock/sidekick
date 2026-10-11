@@ -236,7 +236,12 @@ jobs:
         with:
           key: release-x86_64-apple-darwin
       - name: Build
-        run: cargo build --release -p sidekick-server --features coreml,onnx --bin sidekickd
+        # The declared floor is ONNX Runtime 1.23.2's own (macOS 13.4); the
+        # release is built and tested on macOS 26.
+        run: |
+          MACOSX_DEPLOYMENT_TARGET=13.4 \
+            cargo build --release -p sidekick-server --features coreml,onnx --bin sidekickd
+          otool -l target/release/sidekickd | grep -A4 LC_BUILD_VERSION | grep -q 'minos 13.4'
       - name: ONNX Runtime (pinned 1.23.2, sha256-checked)
         run: echo "ORT_LIB=$(tools/fetch_onnxruntime.sh "$RUNNER_TEMP/onnxruntime" osx-x86_64)" >> "$GITHUB_ENV"
       - name: Package
