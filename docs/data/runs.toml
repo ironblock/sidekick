@@ -198,4 +198,4 @@ threads = 8
 # Notes for a row, by "<report file>:<model id>:<path>", added to what the
 # report says (its gate failures).
 [notes]
-"coreml-x86_64-nlptown.json:nlptown-sentiment:coreml-cpu" = "Fails the bucket-invariance gate on Intel (#74); its accuracy is fine, and the GPU grades A"
+"coreml-x86_64-nlptown.json:nlptown-sentiment:coreml-cpu" = "Fails the bucket-invariance gate, a known Core ML CPU behavior on Intel (#74); its accuracy is fine, and its GPU path grades A"
