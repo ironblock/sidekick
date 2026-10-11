@@ -4,8 +4,8 @@
 //! `classify_grade`.
 
 use super::{
-    bitwise_eq, check_plans, spawn_worker, units, BucketInfo, BucketInvariance, Options, XorShift,
-    DETERMINISM_CASES,
+    bitwise_eq, check_plans, paths_for, spawn_worker, units, BucketInfo, BucketInvariance, Options, Runtime,
+    XorShift, DETERMINISM_CASES,
 };
 use crate::classify_grade::{
     delta_p, fmt, grade, BucketPair, ClassifyCaseResult, ClassifyGrade, ClassifyWorkerResult, Delta,
@@ -42,7 +42,7 @@ pub fn worker(
         .get_vocab_size(true) as u64;
 
     let t0 = Instant::now();
-    let clf = CoremlClassifier::load_with(model, units(path)).map_err(|e| e.to_string())?;
+    let clf = CoremlClassifier::load_with(model, units(path)?).map_err(|e| e.to_string())?;
     let load_ms = t0.elapsed().as_secs_f64() * 1e3;
     let buckets = clf.buckets().to_vec();
     let cases = &reference.cases[..limit.unwrap_or(reference.cases.len()).min(reference.cases.len())];
@@ -256,6 +256,12 @@ pub fn grade_model(
     let gates = &expectations.classify_gates;
     let refs_dir = reference_dir(model, o.refs.as_deref());
     println!("\n=== {id} ({})", serde_json::to_value(m.task).ok()?.as_str()?);
+    // A classifier is Core ML's: cpu, gpu and ane.
+    let worker_paths = paths_for(o, Runtime::CoreMl);
+    if worker_paths.is_empty() {
+        println!("  SKIPPED: none of --paths runs on this model");
+        return None;
+    }
     let mut report = ClassifierReport {
         id: id.clone(),
         task: serde_json::to_value(m.task).ok()?.as_str()?.to_string(),
@@ -321,7 +327,7 @@ pub fn grade_model(
     }
 
     let mut results: Vec<(Path3, ClassifyWorkerResult)> = Vec::new();
-    for &path in &o.paths {
+    for &path in &worker_paths {
         match spawn_worker::<ClassifyWorkerResult>(id, models_dir, path, None, scratch, o) {
             Ok(r) => results.push((path, r)),
             Err(e) => {

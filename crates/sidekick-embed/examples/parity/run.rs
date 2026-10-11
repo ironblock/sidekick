@@ -104,13 +104,14 @@ pub fn main() -> i32 {
     }
 }
 
+/// The Core ML compute units for a path; onnx-cpu isn't one.
 #[cfg(all(target_os = "macos", feature = "coreml"))]
-fn units(path: Path3) -> ComputeUnits {
+fn units(path: Path3) -> Result<ComputeUnits, String> {
     match path {
-        Path3::Cpu => ComputeUnits::CpuOnly,
-        Path3::Gpu => ComputeUnits::CpuAndGpu,
-        Path3::Ane => ComputeUnits::CpuAndNeuralEngine,
-        Path3::OnnxCpu => unreachable!("onnx-cpu isn't a Core ML path; it is graded from --external results"),
+        Path3::Cpu => Ok(ComputeUnits::CpuOnly),
+        Path3::Gpu => Ok(ComputeUnits::CpuAndGpu),
+        Path3::Ane => Ok(ComputeUnits::CpuAndNeuralEngine),
+        Path3::OnnxCpu => Err("a Core ML model runs on cpu, gpu or ane, not onnx-cpu".into()),
     }
 }
 
@@ -407,7 +408,7 @@ fn coreml_worker(
         .get_vocab_size(true) as u64;
 
     let t0 = Instant::now();
-    let emb = CoremlEmbedder::load_with(model, units(path)).map_err(|e| e.to_string())?;
+    let emb = CoremlEmbedder::load_with(model, units(path)?).map_err(|e| e.to_string())?;
     let load_ms = t0.elapsed().as_secs_f64() * 1e3;
     let buckets = emb.buckets().to_vec();
     let cases = &reference.cases[..limit
@@ -511,6 +512,9 @@ struct Options {
     refs: Option<PathBuf>,
     models: Vec<String>,
     paths: Vec<Path3>,
+    /// Whether `--paths` named them, rather than the default: a named path
+    /// a model can't run is reported as skipped.
+    paths_named: bool,
     /// `--expectations`; `parity/expectations.toml` in the fixtures by default.
     expectations: Option<PathBuf>,
     /// `--fixtures`.
@@ -553,9 +557,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
         models_dirs: Vec::new(),
         refs: None,
         models: Vec::new(),
-        // Core ML's three paths and onnx-cpu; onnx-cpu alone in a build
-        // without Core ML.
-        paths: if CORE_ML { Path3::ALL.into_iter().chain([Path3::OnnxCpu]).collect() } else { vec![Path3::OnnxCpu] },
+        paths: default_paths(),
+        paths_named: false,
         expectations: None,
         fixtures: None,
         json: None,
@@ -585,7 +588,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
                         Some(path) => Ok(path),
                         None => Err(format!("unknown path {p:?}")),
                     })
-                    .collect::<Result<_, _>>()?
+                    .collect::<Result<_, _>>()?;
+                o.paths_named = true;
             }
             "--external" => o.externals.push(val()?.into()),
             "--expectations" => o.expectations = Some(val()?.into()),
@@ -615,6 +619,55 @@ fn parse(args: &[String]) -> Result<Options, String> {
 
 /// Whether this build runs Core ML paths.
 const CORE_ML: bool = cfg!(all(target_os = "macos", feature = "coreml"));
+
+/// The paths run without `--paths`: Core ML's three and onnx-cpu; onnx-cpu
+/// alone in a build without Core ML. Each model runs those of them it can
+/// ([`model_paths`]).
+fn default_paths() -> Vec<Path3> {
+    if CORE_ML {
+        Path3::ALL.into_iter().chain([Path3::OnnxCpu]).collect()
+    } else {
+        vec![Path3::OnnxCpu]
+    }
+}
+
+/// What a model runs on, which decides its paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Runtime {
+    /// A Core ML embedder or classifier: cpu, gpu and ane.
+    CoreMl,
+    /// An onnx model (D40): onnx-cpu, in a worker when this build has the
+    /// backend (`native`), and from any `--external` results either way.
+    Onnx { native: bool },
+}
+
+/// Of the paths asked for, those a model's workers run, and those it
+/// can't, with why. An onnx model's onnx-cpu in a build without the
+/// backend is neither: only `--external` results grade it.
+fn model_paths(asked: &[Path3], runtime: Runtime) -> (Vec<Path3>, Vec<(Path3, &'static str)>) {
+    let (mut run, mut skip) = (Vec::new(), Vec::new());
+    for &path in asked {
+        match (runtime, path) {
+            (Runtime::CoreMl, Path3::OnnxCpu) => skip.push((path, "a Core ML model doesn't run on ONNX Runtime")),
+            (Runtime::CoreMl, _) => run.push(path),
+            (Runtime::Onnx { native: true }, Path3::OnnxCpu) => run.push(path),
+            (Runtime::Onnx { native: false }, Path3::OnnxCpu) => {}
+            (Runtime::Onnx { .. }, _) => skip.push((path, "an onnx model runs on onnx-cpu, not Core ML")),
+        }
+    }
+    (run, skip)
+}
+
+/// A model's worker paths, printing each `--paths` named that it can't run.
+fn paths_for(o: &Options, runtime: Runtime) -> Vec<Path3> {
+    let (run, skip) = model_paths(&o.paths, runtime);
+    if o.paths_named {
+        for (path, why) in skip {
+            println!("  {}: skipped ({why})", path.name());
+        }
+    }
+    run
+}
 
 /// The chip, as floors name it, and the OS. On macOS, the CPU's brand
 /// string (`Apple M1 Max`, or an Intel Mac's `Intel(R) Xeon(R) W-3235 …`)
@@ -936,6 +989,8 @@ fn parent(args: &[String]) -> Result<bool, String> {
     };
     let mut ok = true;
     let mut graded = 0usize;
+    // Models none of `--paths` runs on.
+    let mut unrunnable = 0usize;
     let mut suggestions = Vec::new();
     for (models_dir, model) in &models {
         let id = &model.manifest.id;
@@ -949,6 +1004,12 @@ fn parent(args: &[String]) -> Result<bool, String> {
         let external: Vec<&WorkerResult> = externals.iter().filter(|r| &r.model == id).collect();
         if onnx && !native_onnx && external.is_empty() {
             println!("  SKIPPED: an onnx model needs a parity build with --features onnx, or --external results");
+            continue;
+        }
+        let worker_paths = paths_for(&o, if onnx { Runtime::Onnx { native: native_onnx } } else { Runtime::CoreMl });
+        if worker_paths.is_empty() && external.is_empty() {
+            println!("  SKIPPED: none of --paths runs on this model");
+            unrunnable += 1;
             continue;
         }
         let reference = match Reference::load(&refs_dir) {
@@ -1038,14 +1099,6 @@ fn parent(args: &[String]) -> Result<bool, String> {
         }
 
         let mut results: Vec<(Path3, WorkerResult)> = Vec::new();
-        // A Core ML model runs on the Core ML paths asked for; an onnx model
-        // on onnx-cpu, natively when this build has the backend.
-        let worker_paths: Vec<Path3> = o
-            .paths
-            .iter()
-            .copied()
-            .filter(|&p| if onnx { native_onnx && p == Path3::OnnxCpu } else { p != Path3::OnnxCpu })
-            .collect();
         for &path in &worker_paths {
             match spawn_worker::<WorkerResult>(id, models_dir, path, None, &scratch, &o) {
                 Ok(r) => results.push((path, r)),
@@ -1202,6 +1255,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
 
     #[cfg(all(target_os = "macos", feature = "coreml"))]
     for (models_dir, model) in &classifiers {
+        unrunnable += usize::from(model_paths(&o.paths, Runtime::CoreMl).0.is_empty());
         if let Some((mr, pass)) = classify::grade_model(model, models_dir, &o, &expectations, &scratch) {
             graded += 1;
             ok &= pass;
@@ -1225,6 +1279,9 @@ fn parent(args: &[String]) -> Result<bool, String> {
     if graded == 0 {
         if models.is_empty() && classifiers.is_empty() && !skipped_core_ml.is_empty() {
             println!("\nFAIL: nothing was graded (every model needs Core ML)");
+        } else if unrunnable > 0 {
+            let paths: Vec<&str> = o.paths.iter().map(|p| p.name()).collect();
+            println!("\nFAIL: nothing was graded (no model runs on --paths {})", paths.join(","));
         } else {
             println!("\nFAIL: nothing was graded (no model had a reference)");
         }
@@ -1368,5 +1425,45 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
             cells.join("  "),
             c.tags.join(",")
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ONNX: Runtime = Runtime::Onnx { native: true };
+
+    #[test]
+    fn by_default_each_model_runs_its_own_backends_paths() {
+        let paths = default_paths();
+        let (core_ml, skipped) = model_paths(&paths, Runtime::CoreMl);
+        let (onnx, _) = model_paths(&paths, ONNX);
+        if CORE_ML {
+            // Both backends in one build: a Core ML embedder or classifier
+            // never gets onnx-cpu, nor an onnx model a Core ML path.
+            assert_eq!(paths, [Path3::Cpu, Path3::Gpu, Path3::Ane, Path3::OnnxCpu]);
+            assert_eq!(core_ml, Path3::ALL);
+            assert_eq!(skipped.iter().map(|s| s.0).collect::<Vec<_>>(), [Path3::OnnxCpu]);
+        } else {
+            assert_eq!(paths, [Path3::OnnxCpu]);
+            assert!(core_ml.is_empty());
+        }
+        assert_eq!(onnx, [Path3::OnnxCpu]);
+    }
+
+    #[test]
+    fn a_path_a_model_cant_run_is_skipped_with_why() {
+        let (run, skip) = model_paths(&[Path3::OnnxCpu, Path3::Ane], Runtime::CoreMl);
+        assert_eq!(run, [Path3::Ane]);
+        assert_eq!(skip, [(Path3::OnnxCpu, "a Core ML model doesn't run on ONNX Runtime")]);
+        let (run, skip) = model_paths(&[Path3::Cpu, Path3::OnnxCpu], ONNX);
+        assert_eq!(run, [Path3::OnnxCpu]);
+        assert_eq!(skip, [(Path3::Cpu, "an onnx model runs on onnx-cpu, not Core ML")]);
+        // Nothing it can run: no worker at all.
+        assert!(model_paths(&[Path3::OnnxCpu], Runtime::CoreMl).0.is_empty());
+        // Without the backend, onnx-cpu comes from --external results only:
+        // no worker, and not a skip.
+        assert_eq!(model_paths(&[Path3::OnnxCpu], Runtime::Onnx { native: false }), (vec![], vec![]));
     }
 }
