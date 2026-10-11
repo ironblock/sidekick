@@ -40,7 +40,13 @@ models on the CPU (`backend = "onnx"`, D40), under the same ids and the
 same API. What else it serves depends on the platform:
 - **Intel macOS:** Core ML models too, embedders and classifiers alike,
   on the CPU and GPU (there is no Neural Engine). Chat answers 503 (no
-  Foundation Models).
+  Foundation Models). A Core ML model's default units (`cpu_and_ne`) run
+  it on the CPU there. Core ML's CPU path on Intel isn't bucket-invariant
+  for classifiers: an input's probabilities can move by up to about 2e-4
+  between buckets, where Apple silicon's CPU path is exact. The GPU path
+  grades A, so `[models."<id>"] compute_units = "cpu_and_gpu"` in the
+  daemon config is the more consistent choice for a classifier on an
+  Intel Mac.
 - **Linux:** ONNX embedders only. There is no Core ML, so no
   classification or reranking, and chat answers 503.
 - **The dylib** ships only in the Apple silicon archive.

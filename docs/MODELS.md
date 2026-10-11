@@ -610,8 +610,12 @@ length, and the artifact's size on disk. Footprints repeated to within
   Linux it is the only path. Intel Macs also have Core ML's CPU and GPU
   paths: bge-small-en-v1.5's Core ML build grades A on both on the Xeon
   W-3235 (worst cosine 0.999998 and 0.999999); the parity suite skips the
-  ANE path on a Mac without one. Other Core ML models aren't graded there
-  yet.
+  ANE path on a Mac without one. nlptown-sentiment's GPU path grades A
+  there (worst Δp 4.78e-4); its CPU path is accurate (worst Δp 7.35e-4)
+  but fails the bucket-invariance gate, moving probabilities by up to
+  1.9e-4 between buckets, where Apple silicon's CPU path is exact. On an
+  Intel Mac, serve a classifier with `compute_units = "cpu_and_gpu"`.
+  Other Core ML models aren't graded there yet.
 - **Threads:** the default, the fastest physical cores capped at 8, needs no
   setting. To leave cores to a primary model, lower it with `[models."<id>"]
   intra_op_threads` or, for every model, `onnx_intra_op_threads` in the
