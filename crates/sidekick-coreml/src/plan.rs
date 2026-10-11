@@ -9,7 +9,7 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObjectProtocol;
 use objc2::{available, ClassType};
 use objc2_core_ml::{
-    MLComputePlan, MLGPUComputeDevice, MLModelConfiguration, MLModelStructureProgramBlock,
+    MLComputePlan, MLGPUComputeDevice, MLModel, MLModelConfiguration, MLModelStructureProgramBlock,
     MLNeuralEngineComputeDevice,
 };
 use objc2_foundation::{NSError, NSString, NSURL};
@@ -79,6 +79,23 @@ pub fn compute_plan(path: &Path, units: ComputeUnits) -> Result<PlanSummary> {
     })?
 }
 
+/// Whether this Mac has a Neural Engine, as Core ML lists the devices its
+/// predictions can use (macOS 14+; before that, whether it's Apple
+/// silicon). An Intel Mac has none: every plan puts every operation on the
+/// CPU or GPU there, and `cpu_and_ne` runs on the CPU.
+///
+/// A class method, sent at run time, rather than the C function
+/// `MLAllComputeDevices`: Rust links that strongly, and the Intel build
+/// declares macOS 13.4, where it doesn't exist.
+pub fn has_neural_engine() -> bool {
+    if !available!(macos = 14.0) {
+        return cfg!(target_arch = "aarch64");
+    }
+    unsafe { MLModel::availableComputeDevices() }
+        .iter()
+        .any(|device| device.isKindOfClass(MLNeuralEngineComputeDevice::class()))
+}
+
 fn summarize(plan: &MLComputePlan) -> Result<PlanSummary> {
     let structure = unsafe { plan.modelStructure() };
     let program = unsafe { structure.program() }.ok_or_else(|| {
@@ -120,5 +137,29 @@ fn walk(plan: &MLComputePlan, block: &Retained<MLModelStructureProgramBlock>, su
         for nested in unsafe { op.blocks() }.iter() {
             walk(plan, &nested, summary);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Whether this process runs in a virtual machine (`kern.hv_vmm_present`).
+    #[cfg(target_arch = "aarch64")]
+    fn virtualized() -> bool {
+        std::process::Command::new("sysctl")
+            .args(["-n", "kern.hv_vmm_present"])
+            .output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
+    }
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn apple_silicon_has_a_neural_engine() {
+        let ane = super::has_neural_engine();
+        // macOS VMs (CI's arm64 runners among them) don't expose the ANE to Core ML.
+        if virtualized() {
+            eprintln!("skipping: in a virtual machine, where Core ML lists no Neural Engine (found one: {ane})");
+            return;
+        }
+        assert!(ane);
     }
 }
