@@ -50,7 +50,7 @@ REPORT_PATH = {"ane": "coreml-ane", "gpu": "coreml-gpu", "cpu": "coreml-cpu", "o
 
 FIELDS = [
     "model", "name", "family", "task", "checkpoint", "path", "precision", "chip", "os", "runtime",
-    "sidekick", "date", "served", "grade", "error_kind", "error", "worst_case", "stress", "mean",
+    "sidekick", "threads", "date", "served", "grade", "error_kind", "error", "worst_case", "stress", "mean",
     "drift", "rank_flips", "matryoshka", "ms", "ms_source", "ms_idle", "ms_tokens", "latency",
     "footprint_mb", "footprint_measured", "peak_mb", "peak_measured", "disk_mb", "disk_measured",
     "machine_mb", "machine_measured", "note", "source",
@@ -109,7 +109,9 @@ def from_reports(dirs, runs, models):
             if chip is None:
                 raise SystemExit(f"{f.name}: chip {report.get('chip')!r} isn't in runs.toml [chips]")
             common = dict(chip=chip, os=meta.get("os"), runtime=meta.get("runtime"), sidekick=meta.get("sidekick"),
-                          date=meta.get("date"), precision=meta.get("precision"), source=f.name)
+                          threads=meta.get("threads"), date=meta.get("date"), precision=meta.get("precision"),
+                          source=f.name)
+            notes = runs.get("notes", {})
             for m in report.get("models", []):
                 for p in m["paths"]:
                     row = blank(m["id"], models, path=REPORT_PATH[p["path"]], **common)
@@ -122,7 +124,8 @@ def from_reports(dirs, runs, models):
                                matryoshka={k: rounded(1 - v) for k, v in sorted(p["matryoshka"].items(), key=lambda kv: -int(kv[0]))}
                                if p.get("matryoshka") else None)
                     grading_ms(row, p, meta)
-                    row["note"] = failures_note(p, m)
+                    row["note"] = join_notes(notes.get(f"{f.name}:{m['id']}:{row['path']}"), failures_note(p, m))
+                    row["threads"] = runs.get("threads", {}).get(f"{f.name}:{m['id']}", row["threads"])
                     rows.append(row)
             for c in report.get("classifiers", []):
                 for p in c["paths"]:
@@ -131,7 +134,7 @@ def from_reports(dirs, runs, models):
                                worst_case=p.get("worst_case"), stress=rounded(finite(p.get("stress_dp"))),
                                mean=rounded(finite(p.get("mean_dp"))), rank_flips=len(p.get("flips") or []))
                     grading_ms(row, p, meta)
-                    row["note"] = failures_note(p, c)
+                    row["note"] = join_notes(notes.get(f"{f.name}:{c['id']}:{row['path']}"), failures_note(p, c))
                     rows.append(row)
     return rows, used
 
@@ -145,6 +148,10 @@ def grading_ms(row, p, meta):
     ms = finite(p.get("median_ms"))
     if ms is not None:
         row.update(ms=round(ms, 1), ms_source="grading: median per input over the corpus", ms_idle=meta.get("idle"))
+
+
+def join_notes(*notes):
+    return ". ".join(n for n in notes if n) or None
 
 
 def failures_note(p, m):
@@ -164,6 +171,10 @@ def from_carried(carried, models):
                    error=None if worst is None else rounded(1 - worst if kind == "cos" else worst),
                    worst_case=c.get("worst_case"), drift=c.get("drift"), rank_flips=c.get("rank_flips"),
                    note=c.get("note"))
+        if c["model"] in carried.get("disk", {}):
+            row.update(disk_mb=carried["disk"][c["model"]],
+                       disk_measured="every bucket of the Core ML install, shared by its three paths "
+                                     "(measured on the installed directory)")
         if c.get("ms") is not None:
             row.update(ms=c["ms"], ms_source="grading: median per input (docs/MODELS.md table)", ms_idle=None,
                        ms_tokens=c.get("ms_tokens"))

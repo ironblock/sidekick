@@ -139,7 +139,7 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     </div>
     <div>
       <h2>ms / input</h2>
-      <p>Median per input from the grading run, one input at a time. Dotted values were measured while other work ran. Fixed-length benchmark timings, where they exist, are in the value's tooltip.</p>
+      <p>Median per input from the grading run, one input at a time. Dotted values come from a machine that wasn't idle, or whose load wasn't recorded. Fixed-length benchmark timings, where they exist, are in the value's tooltip.</p>
     </div>
     <div>
       <h2>Memory</h2>
@@ -231,11 +231,11 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     return {
       model:r.model, name:r.name, family:r.family, task:r.task, path:r.path, precision:r.precision, chip:r.chip,
       runtime:[r.runtime, r.os].filter(Boolean).join(" · "), grade:r.grade, err:r.error, errKind:r.error_kind,
-      flips:r.rank_flips, ms:r.ms, prov:r.ms != null && r.ms_idle !== true, msSource:r.ms_source, latency:r.latency || [],
+      flips:r.rank_flips, ms:r.ms, prov:r.ms != null && r.ms_idle !== true, msIdle:r.ms_idle, msSource:r.ms_source, latency:r.latency || [],
       served:r.served, note:notes.join(". "), nines:r.error == null ? null : -Math.log10(Math.max(r.error, 1e-15)),
       mem:r.footprint_mb, memWhy:r.footprint_measured, peak:r.peak_mb, peakWhy:r.peak_measured,
       machine:r.machine_mb, machineWhy:r.machine_measured, disk:r.disk_mb, diskWhy:r.disk_measured,
-      date:r.date, source:r.source, matryoshka:r.matryoshka
+      date:r.date, source:r.source, matryoshka:r.matryoshka, threads:r.threads, sidekick:r.sidekick
     };
   }
 
@@ -365,7 +365,10 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
   }
   function msTitle(r) {
     var parts = [];
-    if (r.ms != null) parts.push((r.prov ? "Measured while other work ran, so not a benchmark. " : "") + r.msSource + ".");
+    var load = r.msIdle === false ? "Measured while other work ran, so not a benchmark. " :
+      r.msIdle == null ? "The machine's load wasn't recorded, so not a benchmark. " : "Measured on an idle machine. ";
+    if (r.ms != null) parts.push(load + r.msSource +
+      (r.threads ? ", " + r.threads + " threads" : "") + ".");
     var lat = r.latency.filter(function (e) { return e.batch === 1; });
     if (lat.length) {
       parts.push("Benchmarked, one input at a time: " + lat.map(function (e) {

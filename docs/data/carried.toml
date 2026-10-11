@@ -15,6 +15,13 @@ date = "2026-09"
 precision = "fp16"
 source = "docs/MODELS.md table (M1 Max, Sept 2026)"
 
+# Size on disk of a Core ML install: every bucket's .mlmodelc, shared by the
+# three paths, measured on the installed directory (M1 Max, October 2026).
+# Models with a benchmark run get theirs from it instead.
+[disk]
+"lfm2.5-embedding-350m" = 2029
+"laya-typed-decisions" = 3233
+
 # Embedders: "Confidence grades" table. Drift and rank flips are given for
 # the ANE only; ms is ANE (CPU).
 

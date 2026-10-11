@@ -3,7 +3,9 @@
 # holding them as arguments). A report carries the chip and its results;
 # this adds the runtime, OS, precision, sidekick version, date, and whether
 # the machine was otherwise idle, which decides whether its timings are
-# shown as provisional. A field nobody recorded is left out (null).
+# shown as provisional, and the inference threads (a model's own thread
+# default may raise them: Qwen3-Embedding ran 16 on the Threadripper). A
+# field nobody recorded is left out (null).
 
 # Chip names as the reports give them (sysctl / /proc/cpuinfo), and as the
 # page shows them: by model, never by machine.
@@ -29,42 +31,56 @@ os = "macOS 27.0"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit 571c7d3)"
+threads = 4
 [runs."native-arm64-bge-small-en-v1.5.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit 571c7d3)"
+threads = 4
 [runs."native-arm64-embeddinggemma-300m.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit 571c7d3)"
+threads = 4
 [runs."native-arm64-f2llm-v2-160m.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit 571c7d3)"
+threads = 4
 [runs."native-arm64-gte-modernbert-base.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit 571c7d3)"
+threads = 4
 [runs."native-arm64-qwen3-embedding-0.6b.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit 571c7d3)"
+threads = 4
 [runs."native-arm64-qwen3-embedding-0.6b-fp16w.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp16 weights"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit 571c7d3)"
+threads = 4
 [runs."native-arm64-qwen3-embedding-0.6b-int8.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
@@ -74,60 +90,79 @@ idle = false
 
 # An Intel Xeon W-3235 Mac: onnx-cpu on ONNX Runtime 1.23.2 (the last
 # release built for Intel macOS) and Core ML, while other work ran.
+sidekick = "0.8.0 pre-release (commit 571c7d3)"
+threads = 4
 [runs."native-x86_64-all-minilm-l6-v2.json"]
 runtime = "ONNX Runtime 1.23.2"
 os = "macOS 26.6.2"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit f839d78)"
+threads = 4
 [runs."native-x86_64-bge-small-en-v1.5.json"]
 runtime = "ONNX Runtime 1.23.2"
 os = "macOS 26.6.2"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit f839d78)"
+threads = 4
 [runs."native-x86_64-embeddinggemma-300m.json"]
 runtime = "ONNX Runtime 1.23.2"
 os = "macOS 26.6.2"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit f839d78)"
+threads = 4
 [runs."native-x86_64-f2llm-v2-160m.json"]
 runtime = "ONNX Runtime 1.23.2"
 os = "macOS 26.6.2"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit f839d78)"
+threads = 4
 [runs."native-x86_64-gte-modernbert-base.json"]
 runtime = "ONNX Runtime 1.23.2"
 os = "macOS 26.6.2"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit f839d78)"
+threads = 4
 [runs."native-x86_64-qwen3-embedding-0.6b.json"]
 runtime = "ONNX Runtime 1.23.2"
 os = "macOS 26.6.2"
 precision = "fp32"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit f839d78)"
+threads = 4
 [runs."native-x86_64-qwen3-fp16w.json"]
 runtime = "ONNX Runtime 1.23.2"
 os = "macOS 26.6.2"
 precision = "fp16 weights"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit f839d78)"
+threads = 4
 [runs."native-x86_64-qwen3-int8.json"]
 runtime = "ONNX Runtime 1.23.2"
 os = "macOS 26.6.2"
 precision = "int8"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit f839d78)"
+threads = 4
 [runs."coreml-x86_64-bge-small.json"]
 runtime = "Core ML"
 os = "macOS 26.6.2"
 precision = "fp16"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit 611207e)"
 [runs."coreml-x86_64-nlptown.json"]
 runtime = "Core ML"
 os = "macOS 26.6.2"
@@ -136,15 +171,31 @@ date = "2026-10-10"
 idle = false
 
 # Linux x86-64, ONNX Runtime 1.28.3, idle machines.
+sidekick = "0.8.0 pre-release (commit 611207e)"
 [runs."native-linux-ryzen-5800x.json"]
 runtime = "ONNX Runtime 1.28.3"
-os = "Linux (Bazzite)"
+os = "Linux (Bazzite, Fedora 44 base)"
 precision = "fp32"
 date = "2026-10-10"
 idle = true
+sidekick = "0.8.0 pre-release (commit 396f006)"
+threads = 8
 [runs."native-linux-threadripper-3970x.json"]
 runtime = "ONNX Runtime 1.28.3"
-os = "Linux (Ubuntu 26.04)"
+os = "Linux (Ubuntu 26.04.1 LTS)"
 precision = "fp32"
 date = "2026-10-10"
 idle = true
+sidekick = "0.8.0 pre-release (commit 396f006)"
+threads = 8
+
+# A model whose threads differ from its run's, by "<report file>:<model id>":
+# Qwen3-Embedding's manifest raises its default to 16, which the
+# Threadripper's cores allow.
+[threads]
+"native-linux-threadripper-3970x.json:qwen3-embedding-0.6b" = 16
+
+# Notes for a row, by "<report file>:<model id>:<path>", added to what the
+# report says (its gate failures).
+[notes]
+"coreml-x86_64-nlptown.json:nlptown-sentiment:coreml-cpu" = "Fails the bucket-invariance gate on Intel (#74); its accuracy is fine, and the GPU grades A"
