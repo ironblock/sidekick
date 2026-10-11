@@ -8,7 +8,7 @@
 mod classify;
 
 use crate::expect::{Expectations, Path3};
-use crate::grade::{fmt, grade, suggest_floor, CaseResult, Check, PathGrade, WorkerResult};
+use crate::grade::{check_external, fmt, grade, suggest_floor, CaseResult, Check, PathGrade, WorkerResult};
 use crate::metrics::cosine;
 use crate::reference::{corpus_sha256, sha256_hex, Reference};
 use serde::Serialize;
@@ -36,6 +36,10 @@ usage: parity [options]
                        (a warning, not a failure), provided its ANE output
                        isn't bit-identical to CPU_ONLY
   --timeout SECS       per worker (default 1200)
+  --external FILE      grade results written outside the suite, a worker's
+                       JSON (model, path, cases, repeat_bitwise, load_ms)
+                       for path onnx-cpu, as that model's onnx-cpu path
+                       (repeatable; D40)
   --bucket-invariance MODE
                        classifiers: which larger buckets each case re-runs in
                        for bucket invariance. full: every larger bucket.
@@ -92,6 +96,7 @@ fn units(path: Path3) -> ComputeUnits {
         Path3::Cpu => ComputeUnits::CpuOnly,
         Path3::Gpu => ComputeUnits::CpuAndGpu,
         Path3::Ane => ComputeUnits::CpuAndNeuralEngine,
+        Path3::OnnxCpu => unreachable!("onnx-cpu isn't a Core ML path; it is graded from --external results"),
     }
 }
 
@@ -273,6 +278,63 @@ fn finite_cos(a: &[f32], b: &[f32]) -> Option<f64> {
     }
 }
 
+/// The onnx-cpu worker (D40): the product path on ONNX Runtime's CPU, in the
+/// Core ML worker's result shape, so `tools/onnx_parity.py`'s files and
+/// this grade alike. Each input runs alone and unpadded, as the daemon runs
+/// it, so there are no bucket or pad comparisons (n = 0).
+#[cfg(feature = "onnx")]
+fn onnx_worker(model: &ResolvedModel, reference: &Reference, id: &str, out: &str, limit: Option<usize>) -> Result<(), String> {
+    use sidekick_core::EmbedLimits;
+    use sidekick_embed::onnx::{default_intra_op_threads, OnnxEmbedder};
+    let e = |e: sidekick_core::Error| e.to_string();
+    let t0 = Instant::now();
+    let emb = OnnxEmbedder::load(model, default_intra_op_threads()).map_err(e)?;
+    let load_ms = t0.elapsed().as_secs_f64() * 1e3;
+    let cases = &reference.cases[..limit.unwrap_or(reference.cases.len()).min(reference.cases.len())];
+    let purpose = |p: &str| if p == "query" { EmbedPurpose::Query } else { EmbedPurpose::Document };
+    let mut results = Vec::with_capacity(cases.len());
+    let mut raw = Vec::with_capacity(cases.len());
+    for case in cases {
+        let ids = emb.prepare(&case.text, purpose(&case.purpose), EmbedLimits::default()).map_err(e)?;
+        let t = Instant::now();
+        let v = emb.embed(&[case.text.as_str()], purpose(&case.purpose)).map_err(e)?.remove(0);
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        let ids_match = ids == case.ids;
+        let model_only = if ids_match { None } else { Some(emb.run(&case.ids).map_err(e)?) };
+        let finite = v.iter().all(|x| x.is_finite());
+        results.push(CaseResult {
+            id: case.id.clone(),
+            ids_match,
+            bucket: ids.len(),
+            vector: v.iter().map(|&x| if x.is_finite() { x } else { 0.0 }).collect(),
+            finite,
+            model_only,
+            bucket_invariance: Check::default(),
+            pad_invariance: Check::default(),
+            ms,
+        });
+        raw.push(v);
+    }
+    let mut repeat_bitwise = true;
+    for (case, first) in cases.iter().zip(&raw).take(5) {
+        let again = emb.embed(&[case.text.as_str()], purpose(&case.purpose)).map_err(e)?.remove(0);
+        repeat_bitwise &= bitwise_eq(first, &again);
+    }
+    let result = WorkerResult {
+        model: id.to_string(),
+        path: Path3::OnnxCpu.name().into(),
+        cases: results,
+        repeat_bitwise,
+        load_ms,
+    };
+    std::fs::write(out, serde_json::to_vec(&result).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+
+#[cfg(not(feature = "onnx"))]
+fn onnx_worker(_: &ResolvedModel, _: &Reference, _: &str, _: &str, _: Option<usize>) -> Result<(), String> {
+    Err("this parity build has no onnx backend: build it with --features onnx".into())
+}
+
 /// `--worker <models-dir> <model-id> <refs-dir|-> <path> <out.json> [limit]`
 fn worker(args: &[String]) -> Result<(), String> {
     let [models_dir, id, refs, path, out, rest @ ..] = args else {
@@ -295,6 +357,12 @@ fn worker(args: &[String]) -> Result<(), String> {
     }
     let model = load_model(Path::new(models_dir), id)?;
     let reference = Reference::load(&reference_dir(&model, refs.as_deref()))?;
+    if model.manifest.backend == EmbeddingBackendKind::Onnx {
+        if path != Path3::OnnxCpu {
+            return Err(format!("an onnx model runs on onnx-cpu, not {}", path.name()));
+        }
+        return onnx_worker(&model, &reference, id, out, limit);
+    }
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
         .map_err(|e| e.to_string())?
         .get_vocab_size(true) as u64;
@@ -410,6 +478,9 @@ struct Options {
     allow_unverified: bool,
     timeout: Duration,
     pub bucket_invariance: BucketInvariance,
+    /// Results written outside the suite, graded as their own path
+    /// (`--external`; D40).
+    externals: Vec<PathBuf>,
 }
 
 /// Which larger buckets a classifier case re-runs in for bucket invariance
@@ -447,6 +518,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         allow_unverified: false,
         timeout: Duration::from_secs(1200),
         bucket_invariance: BucketInvariance::Auto,
+        externals: Vec::new(),
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -462,9 +534,14 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--paths" => {
                 o.paths = val()?
                     .split(',')
-                    .map(|p| Path3::parse(p.trim()).ok_or(format!("unknown path {p:?}")))
+                    .map(|p| match Path3::parse(p.trim()) {
+                        Some(Path3::OnnxCpu) => Err("onnx-cpu is graded from --external results".to_string()),
+                        Some(path) => Ok(path),
+                        None => Err(format!("unknown path {p:?}")),
+                    })
                     .collect::<Result<_, _>>()?
             }
+            "--external" => o.externals.push(val()?.into()),
             "--expectations" => o.expectations = val()?.into(),
             "--json" => o.json = Some(val()?.into()),
             "--suggest-floors" => o.suggest = true,
@@ -716,11 +793,20 @@ fn parent(args: &[String]) -> Result<bool, String> {
     let scratch = std::env::temp_dir().join(format!("sidekick-parity-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
 
+    // Results written outside the suite (`--external`), by model id.
+    let mut externals: Vec<WorkerResult> = Vec::new();
+    for file in &o.externals {
+        let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let r: WorkerResult = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+        externals.push(r);
+    }
+
     let mut models: Vec<(PathBuf, ResolvedModel)> = Vec::new();
     for dir in &o.models_dirs {
         let reg = ModelRegistry::scan_with(dir, &MEASURE_ALL).map_err(|e| e.to_string())?;
         for m in reg.iter() {
-            if m.manifest.backend == EmbeddingBackendKind::Coreml
+            let graded_backend = matches!(m.manifest.backend, EmbeddingBackendKind::Coreml | EmbeddingBackendKind::Onnx);
+            if graded_backend
                 && (o.models.is_empty() || o.models.contains(&m.manifest.id))
             {
                 models.push((dir.clone(), m.clone()));
@@ -734,6 +820,11 @@ fn parent(args: &[String]) -> Result<bool, String> {
             if o.models.is_empty() || o.models.contains(&c.manifest.id) {
                 classifiers.push((dir.clone(), c.clone()));
             }
+        }
+    }
+    for r in &externals {
+        if !models.iter().any(|(_, m)| m.manifest.id == r.model) {
+            return Err(format!("--external results for model {}, which no --models-dir has", r.model));
         }
     }
     for want in &o.models {
@@ -765,6 +856,16 @@ fn parent(args: &[String]) -> Result<bool, String> {
         let id = &model.manifest.id;
         let refs_dir = reference_dir(model, o.refs.as_deref());
         println!("\n=== {id}");
+        // An onnx model runs on ONNX Runtime's CPU (D40): natively, in a
+        // build with the onnx feature, and from any --external results,
+        // graded as a cross-check.
+        let onnx = model.manifest.backend == EmbeddingBackendKind::Onnx;
+        let native_onnx = onnx && sidekick_embed::onnx::SUPPORTED;
+        let external: Vec<&WorkerResult> = externals.iter().filter(|r| &r.model == id).collect();
+        if onnx && !native_onnx && external.is_empty() {
+            println!("  SKIPPED: an onnx model needs a parity build with --features onnx, or --external results");
+            continue;
+        }
         let reference = match Reference::load(&refs_dir) {
             Ok(r) => r,
             Err(e) if !refs_dir.join("reference.json").exists() && o.models.is_empty() => {
@@ -821,17 +922,22 @@ fn parent(args: &[String]) -> Result<bool, String> {
         );
 
         // Compute plans first, on every bucket, before anything predicts:
-        // an artifact the ANE rejects can abort the process at predict.
-        let plans = check_plans(
-            id,
-            &model.manifest.buckets,
-            |b| model.artifact_paths_for_bucket(b),
-            model.manifest.compute_units.unwrap_or_default(),
-            &o,
-            &scratch,
-            &mut mr.failures,
-            &mut mr.warnings,
-        );
+        // an artifact the ANE rejects can abort the process at predict. An
+        // onnx model has none.
+        let plans = if onnx {
+            Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() }
+        } else {
+            check_plans(
+                id,
+                &model.manifest.buckets,
+                |b| model.artifact_paths_for_bucket(b),
+                model.manifest.compute_units.unwrap_or_default(),
+                &o,
+                &scratch,
+                &mut mr.failures,
+                &mut mr.warnings,
+            )
+        };
         mr.buckets = plans.buckets;
         let (plan_ok, unverified) = (plans.ok, plans.unverified);
         if !plan_ok {
@@ -842,7 +948,13 @@ fn parent(args: &[String]) -> Result<bool, String> {
         }
 
         let mut results: Vec<(Path3, WorkerResult)> = Vec::new();
-        for &path in &o.paths {
+        let onnx_cpu = [Path3::OnnxCpu];
+        let worker_paths: &[Path3] = match (onnx, native_onnx) {
+            (false, _) => &o.paths,
+            (true, true) => &onnx_cpu,
+            (true, false) => &[],
+        };
+        for &path in worker_paths {
             match spawn_worker::<WorkerResult>(id, models_dir, path, None, &scratch, &o) {
                 Ok(r) => results.push((path, r)),
                 Err(e) => {
@@ -851,6 +963,14 @@ fn parent(args: &[String]) -> Result<bool, String> {
                     mr.failures
                         .push(format!("{}: worker failed: {e}", path.name()));
                 }
+            }
+        }
+
+        let natives = results.len();
+        for r in &external {
+            match check_external(&reference, r) {
+                Ok(()) => results.push((Path3::OnnxCpu, (*r).clone())),
+                Err(e) => mr.failures.push(format!("onnx-cpu: unusable --external results: {e}")),
             }
         }
 
@@ -893,6 +1013,14 @@ fn parent(args: &[String]) -> Result<bool, String> {
                     floor,
                     &model.manifest.matryoshka,
                 )
+            })
+            .enumerate()
+            // Results written outside the suite are a cross-check, named apart.
+            .map(|(i, mut g)| {
+                if i >= natives {
+                    g.path = format!("{}:external", g.path);
+                }
+                g
             })
             .collect();
 
@@ -1014,8 +1142,10 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
     if grades.is_empty() {
         return;
     }
+    // Wide enough for every path's name (onnx-cpu:external is the longest).
+    let w = grades.iter().map(|g| g.path.len()).max().unwrap_or(4).max(4);
     println!(
-        "  {:<4} {:<5} {:>10} {:<24} {:>10} {:>9} {:>9} {:>8} {:>6} {:>10} {:>10} {:>8}",
+        "  {:<w$} {:<5} {:>10} {:<24} {:>10} {:>9} {:>9} {:>8} {:>6} {:>10} {:>10} {:>8}",
         "path",
         "grade",
         "worst",
@@ -1031,7 +1161,7 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
     );
     for g in grades {
         println!(
-            "  {:<4} {:<5} {:>10} {:<24} {:>10} {:>9.6} {:>9} {:>+8.4} {:>6} {:>10} {:>10} {:>8.1}",
+            "  {:<w$} {:<5} {:>10} {:<24} {:>10} {:>9.6} {:>9} {:>+8.4} {:>6} {:>10} {:>10} {:>8.1}",
             g.path,
             g.letter,
             fmt(g.worst),
@@ -1063,11 +1193,12 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
     }
 
     // Worst case per tag, per path.
+    let cw = (w + 1).max(10);
     println!(
         "  worst by tag:  {}",
         grades
             .iter()
-            .map(|g| format!("{:>10}", g.path))
+            .map(|g| format!("{:>cw$}", g.path))
             .collect::<String>()
     );
     for tag in grades[0].by_tag.keys() {
@@ -1075,7 +1206,7 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
             .iter()
             .map(|g| {
                 format!(
-                    "{:>10}",
+                    "{:>cw$}",
                     fmt(g.by_tag[tag]).get(..8).unwrap_or("?").to_string()
                 )
             })

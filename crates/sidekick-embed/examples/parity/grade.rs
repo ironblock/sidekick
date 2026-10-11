@@ -105,6 +105,33 @@ pub struct PathGrade {
     pub regressions: Vec<String>,
 }
 
+/// Whether `result`, written outside the suite (`--external`), can be graded
+/// against `reference`: the `onnx-cpu` path, every reference case in order,
+/// and a vector of the model's width for each. The suite's own workers
+/// meet this by construction.
+pub fn check_external(reference: &Reference, result: &WorkerResult) -> Result<(), String> {
+    if result.path != Path3::OnnxCpu.name() {
+        return Err(format!("path {:?}: external results are for `onnx-cpu` only", result.path));
+    }
+    let want: Vec<&str> = reference.cases.iter().map(|c| c.id.as_str()).collect();
+    let got: Vec<&str> = result.cases.iter().map(|c| c.id.as_str()).collect();
+    if want != got {
+        let first = want.iter().zip(&got).position(|(a, b)| a != b).unwrap_or(want.len().min(got.len()));
+        return Err(format!(
+            "{} cases, the reference has {}; they first differ at position {first} ({:?} vs {:?})",
+            got.len(),
+            want.len(),
+            got.get(first),
+            want.get(first)
+        ));
+    }
+    let dims = reference.model.dims;
+    if let Some(c) = result.cases.iter().find(|c| c.vector.len() != dims) {
+        return Err(format!("case {}: {} values, the model has {dims} dimensions", c.id, c.vector.len()));
+    }
+    Ok(())
+}
+
 fn truncate(v: &[f32], dims: usize) -> Vec<f32> {
     sidekick_core::truncate_normalized(v, dims)
 }
@@ -376,6 +403,7 @@ mod tests {
                 cpu: 0.999999,
                 gpu: 0.9999,
                 ane: 0.995,
+                onnx_cpu: None,
             },
             pad_invariance: 0.99999,
             determinism: 0.999999,
@@ -452,6 +480,37 @@ mod tests {
     fn unit(v: &[f32]) -> Vec<f32> {
         let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         v.iter().map(|x| x / n).collect()
+    }
+
+    #[test]
+    fn external_onnx_results_are_checked_then_graded_like_any_path() {
+        let v = vec![unit(&[1.0, 0.0, 0.0]), unit(&[0.0, 1.0, 0.0]), unit(&[0.0, 0.0, 1.0])];
+        let r = reference(v.clone(), &[&[], &[], &[]]);
+        // Written outside the suite: no bucket or pad comparisons (n = 0).
+        let mut ext = result(v.clone());
+        ext.path = "onnx-cpu".into();
+        for c in &mut ext.cases {
+            c.bucket_invariance = Check::default();
+            c.pad_invariance = Check::default();
+        }
+        check_external(&r, &ext).unwrap();
+        let g = grade(&r, &ext, Path3::OnnxCpu, &gates(), None, &[]);
+        assert_eq!((g.path.as_str(), g.letter, g.bucket_invariance.n), ("onnx-cpu", 'A', 0));
+
+        let mut wrong = ext.clone();
+        wrong.path = "ane".into();
+        assert!(check_external(&r, &wrong).unwrap_err().contains("for `onnx-cpu` only"));
+        let mut wrong = ext.clone();
+        wrong.cases.swap(0, 1);
+        assert!(check_external(&r, &wrong).unwrap_err().contains("first differ at position 0"));
+        let mut wrong = ext.clone();
+        wrong.cases.pop();
+        assert!(check_external(&r, &wrong).unwrap_err().contains("2 cases, the reference has 3"));
+        let mut wrong = ext.clone();
+        wrong.cases[2].vector.push(0.0);
+        assert!(check_external(&r, &wrong).unwrap_err().contains("case c2: 4 values"));
+        // The CPU's gate holds unless the expectations name one for onnx-cpu.
+        assert_eq!(gates().bucket_invariance.get(Path3::OnnxCpu), gates().bucket_invariance.cpu);
     }
 
     #[test]

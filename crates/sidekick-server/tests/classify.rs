@@ -573,6 +573,8 @@ async fn listings_are_task_aware() {
     assert_eq!(model("apple-fm")["task"], "text-generation");
     let e = model("test-static");
     assert_eq!(e["task"], "feature-extraction");
+    assert_eq!(e["backend"], "static");
+    assert!(model("sentiment").get("backend").is_none(), "classifiers are Core ML models; no backend listed");
     assert!(e.get("labels").is_none() && e.get("max_batch").is_none());
     assert_eq!(e["compute_units"], "cpu");
 

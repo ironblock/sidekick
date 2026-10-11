@@ -25,10 +25,15 @@
 //!    accuracy (classify_grade.rs); and the worst cases side by side across
 //!    paths.
 //!
+//! An `onnx` model (D40) is graded on ONNX Runtime's CPU instead, as the
+//! `onnx-cpu` path: natively when the suite is built with `--features
+//! onnx` (and ORT_DYLIB_PATH names the runtime), and from results written
+//! by tools/onnx_parity.py through `--external`, as a cross-check.
+//!
 //! ```sh
-//! cargo run --release -p sidekick-embed --features coreml --example parity -- \
+//! cargo run --release -p sidekick-embed --features coreml[,onnx] --example parity -- \
 //!     [--models-dir DIR]... [--refs DIR] [--model ID]... [--paths cpu,gpu,ane] \
-//!     [--json report.json] [--suggest-floors]
+//!     [--external FILE]... [--json report.json] [--suggest-floors]
 //! ```
 //!
 //! Exit status: 0 pass, 1 a gate or floor failed, 2 usage or setup error.

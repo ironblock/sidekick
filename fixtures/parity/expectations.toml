@@ -202,3 +202,105 @@ path = "ane"
 worst = 0.999919
 stress = 0.999983
 drift = 0.002743
+
+# Intel Xeon W-3235 (Mac Pro), macOS 26.6.2, ONNX Runtime 1.23.2, onnx-cpu (D40),
+# sidekick's own fp32 exports. October 2026.
+
+[[floor]]
+chip = "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz"
+model = "all-minilm-l6-v2"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000011
+
+[[floor]]
+chip = "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz"
+model = "bge-small-en-v1.5"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000011
+
+[[floor]]
+chip = "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz"
+model = "embeddinggemma-300m"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000011
+
+[[floor]]
+chip = "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz"
+model = "f2llm-v2-160m"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000011
+
+[[floor]]
+chip = "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz"
+model = "gte-modernbert-base"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000012
+
+[[floor]]
+chip = "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz"
+model = "qwen3-embedding-0.6b"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000013
+
+# M1 Max, macOS 27.0, ONNX Runtime 1.28.3, onnx-cpu (D40), sidekick's own fp32
+# exports. October 2026.
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "all-minilm-l6-v2"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000011
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "bge-small-en-v1.5"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000011
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "embeddinggemma-300m"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000011
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "f2llm-v2-160m"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000011
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "gte-modernbert-base"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000011
+
+[[floor]]
+chip = "Apple M1 Max"
+model = "qwen3-embedding-0.6b"
+path = "onnx-cpu"
+worst = 0.999989
+stress = 0.999989
+drift = 0.000013

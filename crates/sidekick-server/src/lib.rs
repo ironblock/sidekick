@@ -22,7 +22,7 @@ pub use config::Config;
 pub use pool::{ClassifierPool, EmbedderPool, ModelPool};
 pub use state::AppState;
 
-use sidekick_core::{ChatBackend, ModelRegistry, ScanOptions};
+use sidekick_core::{ChatBackend, EmbeddingBackendKind, ModelRegistry, ScanOptions};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -34,7 +34,18 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         ignore_ane_weight_cap: config.ignore_ane_weight_cap,
         ignore_cpu_seq_cap: config.ignore_cpu_seq_cap,
     };
-    let registry = Arc::new(ModelRegistry::scan_with(&config.models_dir(), &options)?);
+    let onnx_threads = config.onnx_threads()?;
+    let mut registry = ModelRegistry::scan_with(&config.models_dir(), &options)?;
+    // ONNX Runtime loads only for an onnx model, and then at startup, so a
+    // missing runtime skips the onnx models with its reason in /health
+    // right away. Without one, it's never loaded (D40).
+    let has_onnx = registry.iter().any(|m| m.manifest.backend == EmbeddingBackendKind::Onnx);
+    if has_onnx {
+        if let Err(reason) = sidekick_embed::onnx::load_runtime(config.onnx_runtime.as_deref()) {
+            registry.skip_backend(EmbeddingBackendKind::Onnx, &reason);
+        }
+    }
+    let registry = Arc::new(registry);
     if registry.is_empty() && registry.classifier_ids().next().is_none() {
         tracing::warn!(
             dir = %config.models_dir().display(),
@@ -45,7 +56,7 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         Arc::new(sidekick_fm::fm_backend(config.session_ttl(), config.request_timeout()));
     Ok(AppState {
         chat,
-        embedders: Arc::new(EmbedderPool::embedders(registry.clone(), config.model_idle_ttl())),
+        embedders: Arc::new(EmbedderPool::embedders_with(registry.clone(), config.model_idle_ttl(), onnx_threads.clone())),
         classifiers: Arc::new(ClassifierPool::classifiers(registry.clone(), config.model_idle_ttl())),
         registry,
         classifiers_supported: sidekick_embed::CLASSIFIERS_SUPPORTED,
@@ -54,6 +65,7 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         started_at: Instant::now(),
         request_timeout: config.request_timeout(),
         load_timeout: config.load_timeout(),
+        onnx_threads,
         placements: config
             .report_compute_plans
             .then(|| sidekick_embed::placement::enable(config.compute_plan_cache_dir()))

@@ -19,6 +19,7 @@ path = "src/bin/smoke_test.rs"
 default = []
 # Enable the Core ML embedding backend (meaningful on macOS only).
 coreml = ["sidekick-embed/coreml"]
+onnx = ["sidekick-embed/onnx"]
 
 [dependencies]
 sidekick-core = { workspace = true }

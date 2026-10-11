@@ -1,9 +1,17 @@
 # Tag-triggered release: check the release notes, build sidekickd +
 # libsidekick.dylib with Xcode 27 (real Foundation Models shim — build.rs
 # hard-errors on the stub — compiled against the macOS 27 SDK so the macOS 27
-# features are in the binary), prove the daemon still loads on macOS 26, then
-# publish a GitHub release whose body is the release notes, with the tarball
-# and checksum attached.
+# features are in the binary), prove the daemon still loads on macOS 26,
+# build sidekickd for Intel macOS and x86-64 and arm64 Linux, then publish a
+# GitHub release
+# whose body is the release notes, with every tarball and checksum attached.
+#
+# Every archive ships the pinned ONNX Runtime (D40) beside sidekickd, as
+# libonnxruntime.dylib or .so, with its license: 1.28.3, or 1.23.2 on Intel
+# macOS, the last release Microsoft built for it. Each archive is
+# smoke-launched twice: with the tiny test ONNX model, the daemon must load
+# its pinned runtime from beside it and embed; with no onnx model, it must
+# not load the runtime at all.
 #
 # Release notes are written before tagging, in docs/releases/vX.Y.Z.md, in
 # the same change that bumps [workspace.package] version (AGENTS.md):
@@ -91,7 +99,7 @@ jobs:
           # target the default debuginfo strip leaves proc-macro dylibs that
           # macOS 27's dyld refuses to load.
           MACOSX_DEPLOYMENT_TARGET=26.0 CARGO_PROFILE_RELEASE_STRIP=none \
-            cargo build --release -p sidekick-server --features coreml --bin sidekickd
+            cargo build --release -p sidekick-server --features coreml,onnx --bin sidekickd
           # The C ABI dylib doesn't link FoundationModels; default floor.
           cargo build --release -p sidekick-embed-ffi
 
@@ -107,6 +115,9 @@ jobs:
             nm -gU target/release/libsidekick.dylib | grep -q " $sym\$"
           done
 
+      - name: ONNX Runtime (pinned, sha256-checked)
+        run: echo "ORT_LIB=$(tools/fetch_onnxruntime.sh "$RUNNER_TEMP/onnxruntime" osx-arm64)" >> "$GITHUB_ENV"
+
       - name: Package
         id: package
         run: |
@@ -117,6 +128,9 @@ jobs:
           NAME="sidekick-${VERSION}-aarch64-apple-darwin"
           mkdir -p "dist/${NAME}"
           cp target/release/sidekickd "dist/${NAME}/"
+          cp "${ORT_LIB}" "dist/${NAME}/libonnxruntime.dylib"
+          cp "$(dirname "${ORT_LIB}")/../LICENSE" "dist/${NAME}/ONNXRUNTIME_LICENSE"
+          cp "$(dirname "${ORT_LIB}")/../ThirdPartyNotices.txt" "dist/${NAME}/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"
           cp target/release/libsidekick.dylib "dist/${NAME}/"
           cp crates/sidekick-embed-ffi/include/sidekick.h "dist/${NAME}/"
           cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/INTEGRATING.md "dist/${NAME}/"
@@ -139,19 +153,126 @@ jobs:
     needs: build
     runs-on: macos-26
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: ${{ needs.build.outputs.name }}
-      - name: Launch (dyld binds every import here)
+      - name: Launch (dyld binds every import here) and load ONNX Runtime
         run: |
           tar -xzf "${{ needs.build.outputs.name }}.tar.gz"
           sw_vers
           "./${{ needs.build.outputs.name }}/sidekickd" --version
+          tools/smoke_launch.sh "./${{ needs.build.outputs.name }}/sidekickd"
+
+  build-linux:
+    # x86-64 and arm64 Linux: sidekickd with the onnx backend (D40), no Core
+    # ML, and chat reporting Unavailable (no Foundation Models). Built on
+    # Ubuntu 22.04, so the binary needs glibc 2.35 or later.
+    name: Build release artifacts (${{ matrix.target }})
+    needs: notes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            ort: linux-x64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            ort: linux-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Build
+        run: cargo build --release -p sidekick-server --features onnx --bin sidekickd
+      - name: ONNX Runtime (pinned, sha256-checked)
+        run: echo "ORT_LIB=$(tools/fetch_onnxruntime.sh "$RUNNER_TEMP/onnxruntime" ${{ matrix.ort }})" >> "$GITHUB_ENV"
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="dry-run-$(git rev-parse --short HEAD)"
+          fi
+          NAME="sidekick-${VERSION}-${{ matrix.target }}"
+          mkdir -p "dist/${NAME}"
+          cp target/release/sidekickd "dist/${NAME}/"
+          cp "${ORT_LIB}" "dist/${NAME}/libonnxruntime.so"
+          cp "$(dirname "${ORT_LIB}")/../LICENSE" "dist/${NAME}/ONNXRUNTIME_LICENSE"
+          cp "$(dirname "${ORT_LIB}")/../ThirdPartyNotices.txt" "dist/${NAME}/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"
+          cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/INTEGRATING.md "dist/${NAME}/"
+          cp "docs/releases/${{ needs.notes.outputs.version }}.md" "dist/${NAME}/RELEASE_NOTES.md"
+          tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
+          (cd dist && sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
+          echo "NAME=${NAME}" >> "$GITHUB_ENV"
+      - name: Smoke-launch from the archive
+        run: |
+          mkdir smoke && tar -C smoke -xzf "dist/${NAME}.tar.gz"
+          "smoke/${NAME}/sidekickd" --version
+          tools/smoke_launch.sh "smoke/${NAME}/sidekickd"
+      - name: Upload artifacts to the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+
+  build-macos-intel:
+    # Intel Macs: sidekickd with Core ML (CPU and GPU; no ANE) and the onnx
+    # backend on ONNX Runtime 1.23.2, the last release Microsoft built for
+    # Intel macOS (D40). Chat reports Unavailable: Foundation Models needs
+    # Apple silicon.
+    name: Build release artifacts (x86_64-apple-darwin)
+    needs: notes
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-x86_64-apple-darwin
+      - name: Build
+        run: cargo build --release -p sidekick-server --features coreml,onnx --bin sidekickd
+      - name: ONNX Runtime (pinned 1.23.2, sha256-checked)
+        run: echo "ORT_LIB=$(tools/fetch_onnxruntime.sh "$RUNNER_TEMP/onnxruntime" osx-x86_64)" >> "$GITHUB_ENV"
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="dry-run-$(git rev-parse --short HEAD)"
+          fi
+          NAME="sidekick-${VERSION}-x86_64-apple-darwin"
+          mkdir -p "dist/${NAME}"
+          cp target/release/sidekickd "dist/${NAME}/"
+          cp "${ORT_LIB}" "dist/${NAME}/libonnxruntime.dylib"
+          cp "$(dirname "${ORT_LIB}")/../LICENSE" "dist/${NAME}/ONNXRUNTIME_LICENSE"
+          cp "$(dirname "${ORT_LIB}")/../ThirdPartyNotices.txt" "dist/${NAME}/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"
+          cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/INTEGRATING.md "dist/${NAME}/"
+          cp "docs/releases/${{ needs.notes.outputs.version }}.md" "dist/${NAME}/RELEASE_NOTES.md"
+          tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
+          (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
+          echo "NAME=${NAME}" >> "$GITHUB_ENV"
+      - name: Smoke-launch from the archive
+        run: |
+          mkdir smoke && tar -C smoke -xzf "dist/${NAME}.tar.gz"
+          "smoke/${NAME}/sidekickd" --version
+          tools/smoke_launch.sh "smoke/${NAME}/sidekickd"
+      - name: Upload artifacts to the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-x86_64-apple-darwin
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
 
   publish:
     name: Create GitHub release
     if: github.event_name == 'push'
-    needs: [notes, build, verify-macos26]
+    needs: [notes, build, verify-macos26, build-linux, build-macos-intel]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -159,6 +280,11 @@ jobs:
         with:
           name: ${{ needs.build.outputs.name }}
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

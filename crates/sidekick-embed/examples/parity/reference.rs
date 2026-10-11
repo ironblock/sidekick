@@ -163,7 +163,10 @@ impl Reference {
         if m.dims != manifest.dims {
             why.push(format!("dims {} != {}", m.dims, manifest.dims));
         }
-        if m.buckets != manifest.buckets || m.max_seq_len != manifest.max_seq_len {
+        // An onnx build of the model has no buckets (D40) and is graded
+        // against its Core ML build's reference: its length limit must match.
+        let onnx = manifest.backend == sidekick_core::EmbeddingBackendKind::Onnx;
+        if (!onnx && m.buckets != manifest.buckets) || m.max_seq_len != manifest.max_seq_len {
             why.push("buckets or max_seq_len changed".into());
         }
         if m.prefixes.query != manifest.prefixes.query

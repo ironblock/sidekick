@@ -1,9 +1,12 @@
 //! Compiles the Swift Foundation Models shim on macOS hosts.
 //!
-//! Anywhere the shim can't be built by design (non-macOS host/target, or
-//! `SIDEKICK_FM_STUB=1`), we emit `cfg(fm_stub)` and the crate compiles a
-//! stub backend that reports `Unavailable`. This keeps Linux CI and
-//! cross-checks working while real behavior lights up on a Mac.
+//! Anywhere the shim can't be built by design (a non-macOS host or target,
+//! an Intel Mac target, or `SIDEKICK_FM_STUB=1`), we emit `cfg(fm_stub)` and
+//! the crate compiles a stub backend that reports `Unavailable`. Apple
+//! Intelligence, and so Foundation Models, exists only on Apple silicon:
+//! an `x86_64-apple-darwin` build serves chat as Linux does, with a 503.
+//! This keeps Linux CI and cross-checks working while real behavior lights
+//! up on an Apple silicon Mac.
 //!
 //! On macOS the shim is mandatory: a missing or failing Swift toolchain is a
 //! hard build error, not a silent stub fallback. A daemon that builds green
@@ -43,10 +46,11 @@ fn main() {
     println!("cargo::rerun-if-env-changed=DEVELOPER_DIR");
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let host_is_macos = cfg!(target_os = "macos");
     let forced_stub = std::env::var("SIDEKICK_FM_STUB").map(|v| v == "1").unwrap_or(false);
 
-    if target_os != "macos" || !host_is_macos || forced_stub {
+    if target_os != "macos" || target_arch != "aarch64" || !host_is_macos || forced_stub {
         println!("cargo::rustc-cfg=fm_stub");
         println!("cargo::rustc-env=SIDEKICK_FM_SDK=none");
         return;

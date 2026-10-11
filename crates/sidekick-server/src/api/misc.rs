@@ -30,6 +30,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
         let r = state.registry.get(id).ok();
         let m = r.map(|r| &r.manifest);
         data.push(ModelObject {
+            backend: m.map(|m| m.backend.name()),
             compute_units: m.map(|m| m.compute_units_name()),
             compute_units_source: m
                 .filter(|m| m.backend == EmbeddingBackendKind::Coreml)
@@ -161,6 +162,62 @@ fn embedder_placement(state: &AppState, r: &ResolvedModel, detail: bool) -> Opti
     placement(state, &r.dir, &m.artifact, &m.buckets, m.chunks(), units, m.placement.as_ref(), detail)
 }
 
+/// `/health`'s `onnx` section. It names the runtime's source and file, not
+/// its full path, as skipped manifests name theirs relative to the models
+/// directory.
+fn onnx_health(state: &AppState) -> Value {
+    let runtime = match sidekick_embed::onnx::runtime_state() {
+        // Loaded only when the models directory has an onnx model (D40).
+        None => json!({"state": "not loaded", "reason": "no onnx models"}),
+        Some(Ok(r)) => json!({
+            "state": "loaded",
+            "version": r.version,
+            "source": r.source.name(),
+            "file": r.library.file_name().map(|f| f.to_string_lossy().into_owned()),
+            "warning": r.warning,
+        }),
+        Some(Err(reason)) => json!({"state": "unavailable", "reason": reason}),
+    };
+    let onnx: Vec<&sidekick_core::manifest::ModelManifest> = state
+        .registry
+        .iter()
+        .filter(|r| r.manifest.backend == EmbeddingBackendKind::Onnx)
+        .map(|r| &r.manifest)
+        .collect();
+    let onnx_ids: Vec<&str> = onnx.iter().map(|m| m.id.as_str()).collect();
+    let models: Map<String, Value> = onnx
+        .iter()
+        .map(|m| {
+            // A quantized graph's output depends on its batch-mates: it
+            // always runs one input at a time (D40).
+            let model_default = m.onnx.as_ref().and_then(|o| o.default_intra_op_threads);
+            let (threads, source) = state.onnx_threads.resolve(&m.id, model_default);
+            (
+                m.id.clone(),
+                json!({"intra_op_threads": threads, "source": source, "model_default": model_default, "quantized": m.onnx_quantized}),
+            )
+        })
+        .collect();
+    let unmatched: Vec<&String> =
+        state.onnx_threads.by_model.keys().filter(|id| !onnx_ids.contains(&id.as_str())).collect();
+    json!({
+        "supported": sidekick_embed::onnx::SUPPORTED,
+        "pinned_version": sidekick_embed::onnx::PINNED_VERSION,
+        "runtime": runtime,
+        // The machine's default for a model without its own: its fast
+        // cores, capped at 8 (D40).
+        "default_intra_op_threads": state.onnx_threads.machine_default(),
+        // What the built-in default is based on (D40).
+        "detected": {
+            "source": sidekick_embed::onnx::detected_cores().source,
+            "cores": sidekick_embed::onnx::detected_cores().cores,
+        },
+        "models": models,
+        // Thread settings that named no onnx model.
+        "unmatched_thread_overrides": unmatched,
+    })
+}
+
 pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let chat_availability = state.chat.availability().await;
     // Fetched before context_limit(), which it refreshes.
@@ -244,6 +301,9 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "models": classifier_models,
             "resident": state.classifiers.resident().await,
         },
+        // The ONNX Runtime CPU backend (D40): what loaded, and each onnx
+        // model's inference threads.
+        "onnx": onnx_health(&state),
         // Compute units the operator chose in the daemon config (D38), and
         // overrides that named no Core ML model.
         "compute_unit_overrides": {

@@ -96,10 +96,21 @@ pub type EmbedderPool = ModelPool<dyn Embedder>;
 pub type ClassifierPool = ModelPool<dyn Classifier>;
 
 impl EmbedderPool {
-    /// The registry's embedding models, loaded by `sidekick_embed`.
+    /// The registry's embedding models, loaded by `sidekick_embed`, with
+    /// the daemon's default options.
     pub fn embedders(registry: Arc<ModelRegistry>, idle_ttl: Duration) -> Self {
+        let threads = crate::config::OnnxThreads { cores: sidekick_embed::onnx::detected_cores().cores, ..Default::default() };
+        Self::embedders_with(registry, idle_ttl, threads)
+    }
+
+    /// [`embedders`](Self::embedders), each `onnx` model with the
+    /// operator's inference threads (D40).
+    pub fn embedders_with(registry: Arc<ModelRegistry>, idle_ttl: Duration, threads: crate::config::OnnxThreads) -> Self {
         Self::new("embedding model", idle_ttl, move |id| {
-            Ok(Arc::from(sidekick_embed::load_embedder(registry.get(id)?)?))
+            let model = registry.get(id)?;
+            let model_default = model.manifest.onnx.as_ref().and_then(|o| o.default_intra_op_threads);
+            let options = sidekick_embed::LoadOptions { onnx_intra_op_threads: threads.resolve(id, model_default).0 };
+            Ok(Arc::from(sidekick_embed::load_embedder_with(model, &options)?))
         })
     }
 }

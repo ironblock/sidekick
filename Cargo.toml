@@ -37,6 +37,11 @@ safetensors = "0.5"
 regex = "1"
 half = "2"
 sha2 = "0.10"
+# ONNX Runtime, loaded at startup rather than linked (D40). api-23 makes
+# 1.23 the oldest runtime it accepts: 1.23.2 is the last Microsoft built for
+# Intel macOS, which sidekick pins there; 1.28.3 everywhere else.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-23"] }
+libloading = "0.9"
 base64 = "0.22"
 axum = "0.8"
 tower = "0.5"

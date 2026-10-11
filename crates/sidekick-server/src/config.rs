@@ -55,6 +55,16 @@ pub struct Config {
     /// load, and the result is cached. Without it, the plan recorded at
     /// conversion time is reported, when the manifest has one.
     pub report_compute_plans: bool,
+    /// Inference threads for each `onnx` model, unless its
+    /// `[models."<id>"]` says otherwise (D40). Default: the physical cores
+    /// of the machine's fastest tier (an Apple silicon Mac's P-cores), or
+    /// 4 if they can't be detected.
+    pub onnx_intra_op_threads: Option<usize>,
+    /// The ONNX Runtime library to load (`libonnxruntime.dylib` or `.so`),
+    /// when the daemon has an onnx model: before `ORT_DYLIB_PATH` and the
+    /// one beside sidekickd. For an existing install, and for a daemon
+    /// under launchd, which doesn't pass a shell's environment (D40).
+    pub onnx_runtime: Option<PathBuf>,
     /// Per-model settings, by model id (`[models."agent-jev"]`).
     pub models: BTreeMap<String, ModelConfig>,
 }
@@ -68,6 +78,39 @@ pub struct ModelConfig {
     /// judge it as they would the manifest's choice, and /v1/models and
     /// /health report that the operator chose.
     pub compute_units: Option<ComputeUnits>,
+    /// Inference threads for an `onnx` model (D40).
+    pub intra_op_threads: Option<usize>,
+}
+
+/// Each `onnx` model's inference threads (D40): the operator's for that
+/// model, else the operator's for every model, else the computed default,
+/// `min(max(8, the model's [onnx] default), the machine's fast cores)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OnnxThreads {
+    /// `onnx_intra_op_threads`.
+    pub configured: Option<usize>,
+    /// `[models."<id>"] intra_op_threads`.
+    pub by_model: BTreeMap<String, usize>,
+    /// The machine's fast physical cores (`sidekick_embed::onnx::detected_cores`).
+    pub cores: usize,
+}
+
+impl OnnxThreads {
+    /// A model's threads, and who chose them: `config (model)`, `config`,
+    /// or `default`.
+    pub fn resolve(&self, id: &str, model_default: Option<usize>) -> (usize, &'static str) {
+        match (self.by_model.get(id), self.configured) {
+            (Some(&n), _) => (n, "config (model)"),
+            (None, Some(n)) => (n, "config"),
+            (None, None) => (sidekick_embed::onnx::default_threads(self.cores, model_default), "default"),
+        }
+    }
+
+    /// The default for a model without its own: the machine's fast cores,
+    /// capped at 8.
+    pub fn machine_default(&self) -> usize {
+        sidekick_embed::onnx::default_threads(self.cores, None)
+    }
 }
 
 impl Default for Config {
@@ -83,6 +126,8 @@ impl Default for Config {
             ignore_ane_weight_cap: false,
             ignore_cpu_seq_cap: false,
             report_compute_plans: false,
+            onnx_intra_op_threads: None,
+            onnx_runtime: None,
             models: BTreeMap::new(),
         }
     }
@@ -105,6 +150,26 @@ impl Config {
     /// The operator's compute units, by model id (D38).
     pub fn compute_units(&self) -> BTreeMap<String, ComputeUnits> {
         self.models.iter().filter_map(|(id, m)| Some((id.clone(), m.compute_units?))).collect()
+    }
+
+    /// The `onnx` models' inference threads. Zero threads is a config
+    /// error: ONNX Runtime would read it as "as many as there are cores",
+    /// the opposite of a limit.
+    pub fn onnx_threads(&self) -> anyhow::Result<OnnxThreads> {
+        if self.onnx_intra_op_threads == Some(0) {
+            anyhow::bail!("onnx_intra_op_threads must be at least 1");
+        }
+        let mut by_model = BTreeMap::new();
+        for (id, m) in &self.models {
+            match m.intra_op_threads {
+                Some(0) => anyhow::bail!("[models.\"{id}\"] intra_op_threads must be at least 1"),
+                Some(n) => {
+                    by_model.insert(id.clone(), n);
+                }
+                None => {}
+            }
+        }
+        Ok(OnnxThreads { configured: self.onnx_intra_op_threads, by_model, cores: sidekick_embed::onnx::detected_cores().cores })
     }
 
     pub fn models_dir(&self) -> PathBuf {
@@ -145,6 +210,26 @@ pub fn default_config_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn onnx_threads_have_a_default_and_per_model_overrides() {
+        let c: Config = toml::from_str("onnx_intra_op_threads = 3\n[models.e]\nintra_op_threads = 1\n").unwrap();
+        let t = c.onnx_threads().unwrap();
+        assert_eq!(t.resolve("e", Some(16)), (1, "config (model)"), "the model's setting wins");
+        assert_eq!(t.resolve("other", Some(16)), (3, "config"), "then the daemon's, over a manifest default");
+        let t = Config::default().onnx_threads().unwrap();
+        let detected = sidekick_embed::onnx::detected_cores();
+        assert_eq!(t.cores, detected.cores);
+        assert_eq!(t.machine_default(), detected.cores.min(8), "the fast cores ({}), capped at 8", detected.source);
+        assert_eq!(t.resolve("m", None), (t.machine_default(), "default"));
+        assert_eq!(t.resolve("m", Some(64)).0, detected.cores, "a model's default never passes the cores");
+        if cfg!(target_os = "macos") {
+            assert_ne!(detected.source, "fallback", "a Mac reports its cores");
+        }
+        // Zero would mean "all cores" to ONNX Runtime: refused.
+        assert!(toml::from_str::<Config>("onnx_intra_op_threads = 0").unwrap().onnx_threads().is_err());
+        assert!(toml::from_str::<Config>("[models.e]\nintra_op_threads = 0").unwrap().onnx_threads().is_err());
+    }
 
     #[test]
     fn a_model_section_sets_its_compute_units() {

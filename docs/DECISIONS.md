@@ -2122,6 +2122,330 @@ default; LFM2.5's keeps TanhSilu. Every factor is a power of two, so each
 fp32 gate stays exact. Artifacts converted earlier keep working; a
 reconversion gives the smaller ANE error.
 
+## D40 — An ONNX Runtime CPU backend for embeddings
+sidekick serves transformer encoders only through Core ML, so only on
+macOS, and only Apple Silicon releases exist. A client developed on an
+Intel Mac or a Linux machine has no local way to call the same API. A
+third embedding backend, `onnx`, runs the same encoders on the CPU through
+ONNX Runtime (the `ort` crate), on every platform sidekick builds for. On
+Apple Silicon it is also a CPU baseline to compare Core ML's paths with.
+Classifiers, rerankers and GPU execution providers are out of scope: the
+backend is CPU-only by design, so it never competes with a model the GPU
+serves.
+
+**Manifest.** `manifest.toml` takes `backend = "onnx"`:
+
+```toml
+id = "bge-small-en-v1.5"
+backend = "onnx"
+artifact = "model.onnx"            # one graph; an external-data weights file beside it is fine
+tokenizer = "tokenizer.json"
+dims = 384
+pooling = "none"                   # none | mean | cls | last_token
+max_seq_len = 512
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"  # optional
+token_type_ids = "token_type_ids"  # optional; fed zeros
+position_ids = "position_ids"      # optional; fed 0..n per input
+output = "embedding"               # [batch, dims] with pooling = "none", else [batch, seq, hidden]
+```
+
+A graph's output is one of two kinds, decided by the model's head, not by
+who exported it:
+- **Token-level `last_hidden_state`**, `[batch, seq, hidden]`, pooled in
+  Rust with `mean`, `cls`, or `last_token` (the last real token, new, for
+  decoder embedders such as F2LLM and Qwen3-Embedding). sidekick's own
+  exports and published ones share this interface, so either can replace
+  the other through one pooling path. BERT-family exports take
+  `token_type_ids`, fed zeros.
+- **A pooled `embedding`**, `[batch, dims]`, with `pooling = "none"`, for
+  a head with layers beyond pooling. EmbeddingGemma's (mean, then a
+  768→3072→768 dense stack) stays in the graph, as onnx-community's export
+  keeps it, so Rust gains no dense layers.
+
+Every export is gated against the same fp32 references as the model's
+Core ML build. sidekick's exports of bge-small-en-v1.5 and
+all-MiniLM-L6-v2 match them at 1 − cos ≈ 2e-12 (graded by the ONNX
+export work, ORT 1.27).
+
+The inputs' element type follows what the graph declares, int64 (ONNX's
+convention) or int32. The graph's batch and sequence axes are dynamic,
+so there are no `buckets`: each input runs at its own length, up to
+`max_seq_len`. Truncation, prefixes, `max_tokens` and `truncate` work as
+for Core ML models, because the tokenizing code is shared
+(`sidekick_embed::embed_input`). Normalization and Matryoshka truncation
+stay in Rust, as does pooling, shared with the Core ML embedder
+(`sidekick_embed::pool`). An onnx manifest refuses Core ML's keys:
+`{seq}`, `buckets`, `compute_units`, `ane_weight_limit`,
+`cpu_seq_limit`, `[chunking]` and `[placement]`. D32's weight limit
+and D33's CPU cap are Core ML limits and don't apply.
+
+An ONNX build keeps the model's id, so a client addresses the same model
+on every platform, whichever backend serves it there. A models directory
+holds one manifest per id, as now. To compare the two builds on Apple
+Silicon, put them in separate models directories.
+
+**Interface checks fail loudly** (D22's rule, applied at load). At scan,
+the registry reads the graph's declared inputs and outputs from the
+`.onnx` protobuf (`sidekick_core::onnx_graph`). It needs no runtime
+library, and it seeks past every length-delimited field it doesn't
+need, so the weights are never read. That matters because exporters
+serialize the initializers before the inputs and outputs. On a 600 MB
+model stored that way, the read took 155 µs, and the whole process
+peaked at 2.4 MiB resident (M1 Max). A graph whose weights sit in an
+external-data file reads the same way. A manifest is skipped, with the
+reason in `/health`'s `skipped_models`, when:
+- `[io]` names an input the graph lacks, or the graph takes an input
+  `[io]` doesn't name;
+- an input isn't an int32 or int64 tensor of rank 2;
+- the output's rank doesn't fit `pooling`;
+- the output's last dimension, when the graph fixes it, isn't `dims`.
+
+sidekick checks external-data locations at scan time, because ONNX Runtime
+before 1.24 doesn't, and Intel macOS runs 1.23.2. A crafted graph's
+external data could otherwise make the runtime read any file. Every
+`location` an initializer in the main graph names must be relative,
+without `..`, exist, and resolve (symlinks included) inside the graph's
+directory, or the manifest is skipped with the reason. A model directory
+installed as one symlink is fine, but an external-data file symlinked out
+of it isn't. Subgraphs' (If, Loop) initializers aren't walked; no
+exporter puts weights there, and none of sidekick's graphs has them.
+
+When ONNX Runtime itself won't load, or the build has no `onnx` feature,
+every `onnx` manifest is skipped with that reason
+(`ModelRegistry::skip_backend`), and the rest of the daemon serves as
+usual.
+
+**Threads.** `intra_op_threads` bounds the CPU threads a model's
+inference uses, so a CPU encoder doesn't starve a larger model's host
+threads. It is the operator's choice, like D38's compute units, not the
+converter's:
+
+```toml
+onnx_intra_op_threads = 8          # every onnx model (default: computed, below)
+
+[models."bge-small-en-v1.5"]
+intra_op_threads = 2
+```
+
+- The default is `min(max(8, the model's default), the machine's fast
+  physical cores)`:
+  - **fast physical cores:** one per physical core of the machine's
+    fastest tier, so the threads never share a core (SMT) or wait on an
+    efficiency core. On macOS that's `hw.perflevel0.physicalcpu` (Apple
+    silicon's P-cores), or `hw.physicalcpu` where there are no performance
+    levels. On Linux it's a hybrid Intel CPU's P-cores
+    (`/sys/devices/cpu_core/cpus`), else every physical core: unique
+    (package, core) pairs in sysfs topology, so SMT siblings count once.
+    If neither can be read, it's 4, or one less than the logical CPUs if
+    that's fewer. It's never the logical CPU count.
+  - **8** (`MAX_DEFAULT_INTRA_OP_THREADS`) caps it: past 8 threads,
+    latency stopped improving for every model but the largest.
+  - **the model's default:** `[onnx] default_intra_op_threads` in its
+    manifest can raise the cap, for a model that gains from more cores,
+    never lower it. A value under 8 is accepted and has no effect, and
+    nothing exceeds the fast cores. A base M1, with 4 P-cores, gets 4
+    whatever the manifest says. 0 is a scan error.
+
+  The operator's setting always wins: `[models."<id>"] intra_op_threads`
+  first, then `onnx_intra_op_threads` for every model, then the default.
+  `/health` reports each onnx model's `intra_op_threads`, its `source`
+  (`config (model)`, `config` or `default`) and its `model_default`. It
+  also reports `default_intra_op_threads`, the machine's capped value,
+  and what it was `detected` from (`{source, cores}`).
+  `inter_op_threads` is 1: the graphs are sequential.
+- Measured (#64), on four machines, with ONNX Runtime 1.28.3 (1.23.2 on
+  the Intel Mac):
+  - **M1 Max** (8 P-cores, 2 E-cores, 256-token inputs): 8 threads beat
+    ONNX Runtime's own all-cores default by 16–27%, scaling almost
+    linearly from 1 to 8.
+  - **The three x86-64 machines**, median ms for one 290-token input (best
+    per row in bold; the Xeon ran under a background load of 4–16, so its
+    row is indicative):
+
+    | machine | model | 4 | 8 | 12 | 16 | 24 | 32 |
+    |---|---|---|---|---|---|---|---|
+    | Intel Xeon W-3235 (12 cores, SMT 2×) | bge-small | 37 | **24** | 30 | 28 | 69 | – |
+    | Intel Xeon W-3235 (12 cores, SMT 2×) | gte-modernbert | 161 | **98** | 119 | 99 | 241 | – |
+    | Intel Xeon W-3235 (12 cores, SMT 2×) | EmbeddingGemma | 161 | **97** | 112 | 108 | 187 | – |
+    | Intel Xeon W-3235 (12 cores, SMT 2×) | Qwen3-0.6B | 572 | 337 | 385 | **316** | 451 | – |
+    | AMD Ryzen 7 5800X (8 cores, SMT 2×) | bge-small | 33 | **20** | 24 | 23 | – | – |
+    | AMD Ryzen 7 5800X (8 cores, SMT 2×) | gte-modernbert | 143 | **85** | 101 | 87 | – | – |
+    | AMD Ryzen 7 5800X (8 cores, SMT 2×) | EmbeddingGemma | 140 | **83** | 100 | 86 | – | – |
+    | AMD Ryzen 7 5800X (8 cores, SMT 2×) | Qwen3-0.6B | 501 | **277** | 370 | 298 | – | – |
+    | AMD Threadripper 3970X (32 cores, SMT off) | bge-small | **31** | 35 | 32 | 33 | 34 | 41 |
+    | AMD Threadripper 3970X (32 cores, SMT off) | gte-modernbert | 133 | 117 | 103 | 104 | **103** | 118 |
+    | AMD Threadripper 3970X (32 cores, SMT off) | EmbeddingGemma | 129 | 113 | 120 | 112 | **106** | 137 |
+    | AMD Threadripper 3970X (32 cores, SMT off) | Qwen3-0.6B | 460 | 335 | 303 | **277** | 294 | 339 |
+
+  At about 290 tokens, 8 threads is within about 20% of each machine's
+  best for every model, and is the fastest on the M1 Max and the 5800X.
+  More threads help short inputs least: on the Threadripper, 32 threads
+  ran a 16-token bge-small input in 21 ms against 5.7 ms on 8, and is at
+  best level with 8 at 290 tokens. Hyperthreads never helped. Only
+  Qwen3-0.6B kept gaining past 8: on the Threadripper 277 ms at 16
+  against 335 at 8, and on the Xeon 317 against 337. That's why a model's
+  manifest can raise its default (Qwen3's sets 16).
+- Each model has one session. Concurrent requests to it take turns,
+  since ONNX Runtime's `Run` holds the session (in ort 2.0.0-rc.13), and
+  each uses all of the model's threads, so a model never uses more than
+  its `intra_op_threads`.
+- Zero threads is a config error: ONNX Runtime reads it as every core.
+- `/health` reports each onnx model's effective threads, the default,
+  and any thread setting that named no onnx model, beside the runtime.
+
+**Batching.** Each input runs on its own, at its own length, unpadded.
+The invariances that gives were measured with `examples/onnx_invariance`
+on ONNX Runtime 1.28.3's CPU. The machine was an M1 Max. The models were
+fp32 exports of bge-small-en-v1.5, all-MiniLM-L6-v2, F2LLM-v2-160M,
+EmbeddingGemma-300m and Qwen3-Embedding-0.6B, on the parity corpus's
+50–51 cases of 1 to 512 tokens:
+- **Re-runs: bit-exact.** The same input in the same session gave the
+  same bits, in every case, for all five.
+- **Thread count: bit-exact for four of five.** Every vector was
+  bit-identical on 1, 2, 4 and 8 intra-op threads for every model but
+  EmbeddingGemma. On 4 and 8 threads, 4 of its 51 vectors changed, by at
+  most 1.43e-7 per component, at cosine 1.000000000. So an embedding is
+  bit-exact for a given `intra_op_threads`, and changing the setting
+  moves it only within rounding.
+- **Padding and batching: not bit-exact, within 2.6e-7.** The same input
+  padded by 1, 7 or 64 tokens, or to `max_seq_len`, or run in a batch of
+  2 or 8 padded to the longest, was bit-identical in only 3–41 of the
+  cases. The largest component difference was 2.6e-7 (1–2 fp32 ulp), and
+  the cosine was 1.000000000 to nine digits. MLAS orders its sums by
+  sequence length.
+
+So the CPU path claims what running unpadded guarantees: for a given
+thread setting, an embedding is a function of its own text, bit for
+bit, whatever else the request holds. Batching would trade that for
+throughput, within 2.6e-7. It stays off, and if it is ever enabled it
+applies to fp32 graphs only.
+
+Graded natively on the same machine (4 threads, every corpus case), all
+six of sidekick's exports grade A against fp32 torch, with token ids
+matching the reference pipeline's and re-runs bit-identical:
+
+| model | 1 − cos, worst | median per input |
+|---|---|---|
+| all-MiniLM-L6-v2 | 1.97e-12 | 2.6 ms |
+| bge-small-en-v1.5 | 1.91e-12 | 5.8 ms |
+| F2LLM-v2-160M | 4.52e-12 | 14.5 ms |
+| gte-modernbert-base | 1.94e-11 | 23.1 ms |
+| EmbeddingGemma-300m | 2.86e-12 | 24.9 ms |
+| Qwen3-Embedding-0.6B | 1.71e-11 | 84.6 ms |
+
+The timings aren't a benchmark; #64 measures latency. Qwen3's export with
+fp16 weights also grades A (2.14e-11). Its dynamic int8 export grades D:
+worst cosine 0.406, with 8,355 rank flips and similarity drift 0.31.
+
+**Quantized graphs always run alone.** ONNX Runtime's CPU quantizes a
+dynamic int8 MatMul's activations at run time with one scale for the
+whole batch, padding included. Its default optimizations fuse a
+weight-only DequantizeLinear + MatMul into that same kernel. So an int8
+graph's output depends on its batch-mates and its pad values. The ONNX
+export work measured F2LLM-v2-160M (Qwen3) on ORT 1.27, 51 cases:
+- fp32 graded A, exact;
+- dynamic int8 (`quantize_dynamic`, how most published int8 exports are
+  made) graded F, worst cosine 0.875, batch invariance 0.925 and pad
+  invariance 0.918;
+- weight-only int8 graded F on the batch gate (0.998 worst, 0.9998 batch).
+
+Qwen3's activation outliers make the per-tensor scale coarse even for one
+input. The registry marks a graph quantized when its main graph has a
+quantizing operator (DynamicQuantizeLinear, QuantizeLinear,
+DequantizeLinear, MatMulInteger, ConvInteger, MatMulNBits,
+DynamicQuantizeMatMul or any QLinear*). Such a model always runs one
+input at a time, unpadded, and `/health` reports it as `quantized`. An
+int8 artifact is graded like any other, never assumed equivalent, and is
+no model's default. The published int8 exports people reach for,
+Qwen3-Embedding-0.6B's included, use this scheme.
+
+A published decoder export may also expect a KV cache:
+onnx-community's Qwen3-Embedding-0.6B int8 graph takes 59 inputs
+(`past_key_values.*` among them) and returns 57 outputs. It doesn't fit
+`[io]`, so the registry skips it with the input it can't feed. sidekick's
+own export of the model takes only ids, mask and positions.
+
+**Linking.** ort's `load-dynamic`: sidekick links no ONNX Runtime at build
+time. Each target ships one archive with its runtime bundled; there's no
+separate slim build.
+- The runtime loads only when the scan finds an `onnx` manifest, and then
+  at startup. A missing runtime skips the onnx models with its reason in
+  `/health` right away, and everything else serves. With no onnx model,
+  it's never loaded, and `/health` reports
+  `"runtime": {"state": "not loaded", "reason": "no onnx models"}`.
+- It looks for the library at the daemon config's `onnx_runtime`, else
+  `ORT_DYLIB_PATH`, else beside the `sidekickd` binary
+  (`libonnxruntime.dylib`, `.so`), where release archives ship it. There
+  is no search of Homebrew, `/usr/local/lib` or the system library path:
+  naming the file is the opt-in to an existing install. `onnx_runtime` is
+  the way to use one under launchd, which doesn't pass a shell's
+  environment.
+- The ONNX Runtime version is pinned per target: 1.28.3, and 1.23.2 on
+  Intel macOS (`x86_64-apple-darwin`). Microsoft's last osx-x86_64 build
+  is 1.23.2 (`onnxruntime-osx-x86_64-1.23.2.tgz`). From 1.24 it publishes
+  arm64 only, as do PyPI and ort's own binaries. sidekick builds ort
+  2.0.0-rc.13 with `api-23`, so one binary accepts any runtime from 1.23
+  on. The whole workspace builds at that API level, and passes its tests
+  on 1.28.3. The Intel archive's sha256 is `d10359e1…485a6`, matched by a
+  download on an Intel Mac. Its `libonnxruntime.1.23.2.dylib` (sha256
+  `8c9c78de…4c054`) is x86_64 Mach-O linking only system frameworks and
+  libc++, so it is self-contained in a release archive like the arm64
+  one. Intel results are graded on Intel, and vectors aren't
+  bit-identical across architectures or runtime versions anyway. Building
+  1.28.3 from source for Intel macOS, as an optional download, is a
+  follow-up.
+- `sidekickd --version` names the pinned version for its target.
+  `/health` names the version actually loaded, and where it came from
+  (`config`, `ORT_DYLIB_PATH` or `beside sidekickd`) and its file name. It doesn't give
+  the full path, just as a skipped manifest is named relative to the
+  models directory. `tools/fetch_onnxruntime.sh` holds each pinned
+  archive's sha256, from the GitHub release's asset digest; the Apple
+  silicon one, `c436bd9f…0a1d32`, matches a local download.
+- A loaded library of another 1.x version than the pin is used, with a
+  warning in the log and in `/health`, since `onnx_runtime` and
+  `ORT_DYLIB_PATH` exist to allow it. One older than 1.23, which this build of ort can't drive, is
+  refused with the reason. The library's version is read through `OrtGetApiBase` before
+  ort loads it, so a wrong file fails with a reason, not a panic.
+- Everything is behind an `onnx` cargo feature. A build without it is
+  unchanged, and skips `onnx` manifests as unsupported in that build, as
+  a build without `coreml` skips classifiers.
+- `libsidekick.dylib` (D18) is built without `onnx` in this release.
+
+**Reporting.** `/v1/models` gains `backend` for every embedder (`coreml`,
+`static` or `onnx`). An `onnx` model's `compute_units`, and its
+`sidekick-compute-units` header, are `cpu`. It reports no `placement`
+(D35) and no `seq_cap`. It sends no `sidekick-buckets`: one graph
+serves every length, so there is no compiled program per bucket to name,
+as for a static model.
+
+**The parity suite** grades an `onnx` model on one path, `onnx-cpu`,
+against the same fp32 references and gates as its Core ML build. Its
+bucket-invariance gate is the CPU's unless `expectations.toml` sets
+`onnx-cpu`. A parity build with the `onnx` feature runs the path
+natively: a worker runs the product path (prefix, tokenizer, truncation,
+ONNX Runtime, pooling, normalization) and writes the suite's own worker
+result. Each input runs alone and unpadded, as the daemon runs it, so
+there are no bucket or pad comparisons. If batching is ever enabled, the
+bucket check becomes a length check, the same input run padded to longer
+lengths. A copy of the references and a parity build grade any machine,
+an Intel Mac included, with no Python or torch there.
+
+`tools/onnx_parity.py` (the ONNX export work) writes the same result from
+Python's onnxruntime, and `parity --external FILE` grades it beside the
+native run as `onnx-cpu:external`, as a cross-check. The file is a worker
+result in the suite's JSON shape: `model`, `path: "onnx-cpu"`, `cases`,
+`repeat_bitwise`, `load_ms`. Each case gives its `id`, `ids_match`, its
+token count as `bucket`, `vector`, `finite`, `model_only`, and
+`bucket_invariance` and `pad_invariance` as `{n: 0}` when not measured,
+and `ms`. It must hold every reference case in reference order, each with
+a vector of the model's width. On ONNX Runtime 1.28.3 (M1 Max) the native
+path grades sidekick's exports of bge-small-en-v1.5 and all-MiniLM-L6-v2
+A, at 1 − cos 1.91e-12 and 1.97e-12 worst against fp32 torch. Token ids
+match the reference pipeline's, and re-runs are bit-identical.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

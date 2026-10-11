@@ -4,15 +4,20 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-/// A compute path sidekick can run a Core ML model on.
+/// A compute path a model is graded on: Core ML's three, and ONNX
+/// Runtime's CPU (D40).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Path3 {
     Cpu,
     Gpu,
     Ane,
+    /// An `onnx` model on ONNX Runtime's CPU: graded from `--external`
+    /// results until the suite runs the backend itself.
+    OnnxCpu,
 }
 
 impl Path3 {
+    /// Core ML's paths, which the suite runs.
     pub const ALL: [Path3; 3] = [Path3::Cpu, Path3::Gpu, Path3::Ane];
 
     pub fn name(self) -> &'static str {
@@ -20,11 +25,12 @@ impl Path3 {
             Path3::Cpu => "cpu",
             Path3::Gpu => "gpu",
             Path3::Ane => "ane",
+            Path3::OnnxCpu => "onnx-cpu",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|p| p.name() == s)
+        Self::ALL.into_iter().chain([Path3::OnnxCpu]).find(|p| p.name() == s)
     }
 }
 
@@ -33,6 +39,9 @@ pub struct PerPath {
     pub cpu: f64,
     pub gpu: f64,
     pub ane: f64,
+    /// ONNX Runtime's CPU; Core ML's CPU value when absent.
+    #[serde(default, rename = "onnx-cpu")]
+    pub onnx_cpu: Option<f64>,
 }
 
 impl PerPath {
@@ -41,6 +50,7 @@ impl PerPath {
             Path3::Cpu => self.cpu,
             Path3::Gpu => self.gpu,
             Path3::Ane => self.ane,
+            Path3::OnnxCpu => self.onnx_cpu.unwrap_or(self.cpu),
         }
     }
 }

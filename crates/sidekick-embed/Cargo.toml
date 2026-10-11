@@ -11,10 +11,14 @@ default = []
 # Core ML encoder backend (only meaningful on macOS; elsewhere it is a stub
 # that reports Unavailable).
 coreml = ["dep:sidekick-coreml"]
+# The ONNX Runtime CPU backend (D40): libonnxruntime loads at startup.
+onnx = ["dep:ort", "dep:libloading"]
 
 [dependencies]
 sidekick-core = { workspace = true }
 sidekick-coreml = { workspace = true, optional = true }
+ort = { workspace = true, optional = true }
+libloading = { workspace = true, optional = true }
 tokenizers = { workspace = true }
 regex = { workspace = true }
 safetensors = { workspace = true }
@@ -26,6 +30,11 @@ sha2 = { workspace = true }
 [dev-dependencies]
 serde = { workspace = true }
 toml = { workspace = true }
+
+# Which invariances the onnx backend's CPU path has (D40).
+[[example]]
+name = "onnx_invariance"
+required-features = ["onnx"]
 
 # The parity suite (examples/parity): `cargo test` runs its grading unit
 # tests on every platform; the live runner needs macOS and `--features coreml`.

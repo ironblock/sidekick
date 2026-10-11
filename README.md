@@ -63,6 +63,20 @@ don't want to run the daemon — see
 [docs/INTEGRATING.md](docs/INTEGRATING.md) for the daemon → dylib →
 fallback probe chain.
 
+## Supported platforms
+
+| Platform | Chat (Foundation Models) | Embeddings | Classify, rerank | Release archive |
+|---|---|---|---|---|
+| macOS 26+, Apple silicon (`aarch64-apple-darwin`) | yes | Core ML (ANE, GPU, CPU), ONNX on the CPU, static | Core ML | yes |
+| macOS, Intel (`x86_64-apple-darwin`) | no (503) | Core ML (GPU, CPU), ONNX on the CPU (ONNX Runtime 1.23.2), static | Core ML | yes |
+| Linux x86-64 (`x86_64-unknown-linux-gnu`) | no (503) | ONNX on the CPU, static | no | yes, glibc 2.35+ |
+| Linux arm64 (`aarch64-unknown-linux-gnu`) | no (503) | ONNX on the CPU, static | no | yes, glibc 2.35+ |
+
+ONNX models need ONNX Runtime (D40): 1.28.3, or 1.23.2 on Intel macOS, the
+last release Microsoft built for it. Release archives ship it beside
+`sidekickd`. An ONNX build of a model keeps its id, so a client calls the
+same model the same way on every platform.
+
 ## Quickstart
 
 ```sh
@@ -242,6 +256,46 @@ runs badly; `/v1/models` lists each model's (see "Compute units" in
 parse or validate is skipped with a warning, and listed with the reason under
 `skipped_models` in `/health`; the rest of the directory still loads.
 
+**ONNX models on the CPU.** An embedder may instead be an ONNX graph run by
+ONNX Runtime on the CPU (`backend = "onnx"`, D40), on any platform sidekick
+builds for. It's sidekick's own export with pooling inside the graph, or a
+published export whose `last_hidden_state` sidekick pools (`mean`, `cls`
+or `last_token`). An ONNX build keeps the model's id, so clients address
+the same model everywhere. The daemon needs the `onnx` cargo feature and
+ONNX Runtime (1.28.3, or 1.23.2 on Intel macOS). Release archives ship
+`libonnxruntime` beside `sidekickd`. To use an existing install, name
+the library with `onnx_runtime` in the config (the way under launchd),
+or `ORT_DYLIB_PATH`. The daemon looks there first, then beside itself,
+and nowhere else. The runtime loads at startup only when there's an
+onnx model. If it's missing, the onnx models are skipped with the reason
+and everything else serves. Each manifest's
+graph is checked against its `[io]` when the directory is scanned.
+`/health`'s `onnx` section reports the runtime and each model's threads.
+
+```toml
+id = "bge-small-en-v1.5"
+backend = "onnx"
+artifact = "model.onnx"
+tokenizer = "tokenizer.json"
+dims = 384
+pooling = "cls"
+max_seq_len = 512
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+token_type_ids = "token_type_ids"  # when the graph takes it: fed zeros
+output = "last_hidden_state"
+
+[onnx]
+default_intra_op_threads = 16      # optional: let this model use more than 8 threads
+```
+
+An onnx model runs on the machine's fast physical cores, at most 8 unless
+its manifest's `[onnx] default_intra_op_threads` raises that limit. A value
+under 8 has no effect. The config's `onnx_intra_op_threads`, or a model's
+`intra_op_threads` under `[models."<id>"]`, sets threads outright.
+
 Classifier manifests are in [examples/classifiers/](examples/classifiers/):
 laya-en, from `tools/convert_laya.py`, and nlptown-sentiment, from
 `tools/convert_bert_classifier.py`. Each converter writes the artifacts and
@@ -263,12 +317,16 @@ load_timeout_secs = 900        # how long a request waits on its model's and buc
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
 report_compute_plans = false   # read each loaded bucket's Core ML placement live (costs a second compile)
+# onnx_intra_op_threads = 8    # inference threads for every onnx model (default: fast physical cores, at most 8)
+# onnx_runtime = "..."         # libonnxruntime to load instead of the bundled one (before ORT_DYLIB_PATH)
 
 # Per model, by id: serve it on other compute units than its manifest names,
 # e.g. keep a companion model off the GPU a larger model uses. Core ML models
 # only; the ANE weight limit and the CPU length cap apply as to the manifest's.
 # [models."agent-jev"]
 # compute_units = "cpu_and_ne"   # cpu_and_ne, cpu_and_gpu, cpu_only or all
+# [models."bge-small-en-v1.5"]
+# intra_op_threads = 2           # an onnx model's inference threads
 ```
 
 CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...
