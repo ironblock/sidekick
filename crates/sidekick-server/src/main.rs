@@ -39,7 +39,8 @@ struct Args {
 
 /// `sidekickd --version`: the crate version plus the SDK the Foundation
 /// Models shim was built with, since that decides which macOS 27 features
-/// the binary has. Called once per process, so leaking it for clap's
+/// the binary has, the ONNX Runtime it expects, and the model backends
+/// compiled in. Called once per process, so leaking it for clap's
 /// `'static` requirement is fine.
 fn version() -> &'static str {
     let mut text = match sidekick_fm::FM_SDK {
@@ -53,6 +54,7 @@ fn version() -> &'static str {
         // Loaded at startup (D40); /health reports the version that loaded.
         text.push_str(&format!(" (ONNX Runtime {} expected)", sidekick_embed::onnx::PINNED_VERSION));
     }
+    text.push_str(&format!(" (backends: {})", sidekick_embed::compiled_backends().join(", ")));
     Box::leak(text.into_boxed_str())
 }
 

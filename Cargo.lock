@@ -1375,8 +1375,6 @@ name = "sidekick-embed"
 version = "0.8.0"
 dependencies = [
  "half",
- "libloading",
- "ort",
  "regex",
  "safetensors",
  "serde",
@@ -1384,6 +1382,7 @@ dependencies = [
  "sha2",
  "sidekick-core",
  "sidekick-coreml",
+ "sidekick-onnx",
  "tokenizers",
  "toml",
  "tracing",
@@ -1410,6 +1409,16 @@ dependencies = [
  "sha2",
  "sidekick-core",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sidekick-onnx"
+version = "0.8.0"
+dependencies = [
+ "libloading",
+ "ort",
+ "sidekick-core",
  "tracing",
 ]
 

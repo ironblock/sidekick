@@ -58,6 +58,16 @@ jobs:
             echo "::error::the Linux onnx build depends on Core ML crates"
             exit 1
           fi
+      - name: A build without the onnx feature pulls in no ONNX Runtime
+        # ort comes only through sidekick-onnx's runtime feature, which
+        # sidekick-embed's onnx feature turns on. libsidekick never has it.
+        run: |
+          for pkg in sidekick-server sidekick-embed-ffi; do
+            if cargo tree -p "$pkg" -e normal | grep -E '(^|[^a-z_-])ort(-sys)? v[0-9]'; then
+              echo "::error::$pkg depends on ONNX Runtime without the onnx feature"
+              exit 1
+            fi
+          done
       - name: The parity suite grades onnx-cpu here
         # A build with the onnx feature alone grades onnx models on any OS.
         # tiny-onnx's parity model has a committed reference over the whole

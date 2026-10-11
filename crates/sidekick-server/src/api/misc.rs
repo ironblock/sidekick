@@ -279,6 +279,8 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(json!({
         "status": "ok",
         "uptime_secs": state.started_at.elapsed().as_secs(),
+        // The model backends this build serves (`static` always).
+        "backends": sidekick_embed::compiled_backends(),
         "chat": {
             "model": state.chat.id(),
             "availability": chat_availability,
