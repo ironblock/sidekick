@@ -42,6 +42,8 @@ objc2-core-ml = { version = "0.3", default-features = false, features = [
     "MLComputePlan",
     "MLComputePlanDeviceUsage",
     "MLComputeDeviceProtocol",
+    # Whether this Mac has a Neural Engine at all (an Intel Mac doesn't).
+    "MLModel_MLComputeDevice",
     "MLNeuralEngineComputeDevice",
     "MLCPUComputeDevice",
     "MLGPUComputeDevice",
