@@ -1,17 +1,18 @@
-"""Run an ONNX embedder over a model's parity references, for the parity
-suite to grade as its `onnx` path.
+"""Run an ONNX embedder over a model's parity references from Python, for
+the parity suite to grade as an `onnx-cpu` result beside its native one.
 
-Until sidekick's ONNX backend can run in the suite's own workers, this is
-that worker, in Python: it loads model.onnx with ONNX Runtime on the CPU,
-feeds every reference case's token ids (the reference pipeline's, so
-tokenization isn't exercised here; the server's own tokenizer is the one
-the Core ML paths already grade), pools as the manifest says, normalizes,
-and writes the suite's worker result (one JSON object: model, path
-"onnx-cpu", cases, repeat_bitwise, load_ms). The suite grades it as the
-model's onnx-cpu path (docs/DECISIONS.md D40), against the same references
-and gates as every other path:
+The suite grades the onnx-cpu path natively (built with `--features onnx`);
+this is a cross-check of that worker, in Python: it loads model.onnx with
+ONNX Runtime on the CPU, feeds every reference case's token ids (the
+reference pipeline's, so tokenization isn't exercised here; the server's
+own tokenizer is the one the native paths grade), pools as the manifest
+says, normalizes, and writes the suite's worker result (one JSON object:
+model, path "onnx-cpu", cases, repeat_bitwise, load_ms). The suite grades
+it as the model's onnx-cpu path (docs/DECISIONS.md D40), against the same
+references and gates as every other path:
 
-    cargo run --release -p sidekick-embed --features coreml --example parity -- \\
+    ORT_DYLIB_PATH=<dir>/libonnxruntime.dylib \\
+    cargo run --release -p sidekick-embed --features onnx --example parity -- \\
         --models-dir <dir holding the onnx model> --refs <refs-dir> \\
         --model <id> --external <result.json>
 

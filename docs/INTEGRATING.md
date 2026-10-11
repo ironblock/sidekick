@@ -28,38 +28,62 @@ a service, want process-lifetime control, or are embedding sidekick into a
 sandboxed host.
 
 Both paths read the same models directory
-(`~/Library/Application Support/sidekick/models`), so models converted once
-(e.g. with `tools/convert_bge_small.py`) serve both. If the models dir is
-empty, the daemon 404s the model and `sk_pool_models` returns `[]` — treat
-either as "fall back".
+(`~/Library/Application Support/sidekick/models`), so Core ML models
+converted once (e.g. with `tools/convert_bge_small.py`) serve both. The
+dylib serves Core ML and static models only: it skips ONNX manifests,
+and `sk_pool_skipped` gives the reason. If the models dir is empty, the
+daemon 404s the model and `sk_pool_models` returns `[]` — treat either as
+"fall back".
 
-**On an Intel Mac or Linux,** the daemon serves embedders as ONNX models
-on the CPU (`backend = "onnx"`, D40) under the same ids and the same API,
-so the same client code runs everywhere. `/v1/models` lists each
-embedder's `backend`, and `sidekick-compute-units` reads `cpu` for these.
-Chat (Foundation Models), classification and the dylib are Apple silicon
-only. An ONNX model's vectors come from a different runtime than its
-Core ML build's. Both are graded against the same fp32 reference, but
-don't mix vectors stored from the two in one index without checking
-their agreement in docs/MODELS.md. The daemon loads ONNX Runtime only
-when it has an onnx model. It uses the library bundled beside
-`sidekickd`, or one the config's `onnx_runtime` or `ORT_DYLIB_PATH`
-names, and `/health`'s `onnx.runtime` says which loaded, or why none did.
-Intel Macs run ONNX Runtime 1.23.2,
-the last release Microsoft built for them, where every other platform
-runs 1.28.3. Each platform's results are graded on that platform. Vectors
-from different CPU architectures, or different runtime versions, agree
-to within rounding, but aren't bit-identical.
+**On an Intel Mac or Linux,** the daemon can serve embedders as ONNX
+models on the CPU (`backend = "onnx"`, D40), under the same ids and the
+same API. What else it serves depends on the platform:
+- **Intel macOS:** Core ML models too, embedders and classifiers alike,
+  on the CPU and GPU (there is no Neural Engine). Chat answers 503 (no
+  Foundation Models). A Core ML model's default units (`cpu_and_ne`) run
+  it on the CPU there. Core ML's CPU path on Intel isn't bucket-invariant
+  for classifiers: an input's probabilities can move by up to about 2e-4
+  between buckets, where Apple silicon's CPU path is exact. The GPU path
+  grades A, so `[models."<id>"] compute_units = "cpu_and_gpu"` in the
+  daemon config is the more consistent choice for a classifier on an
+  Intel Mac.
+- **Linux:** ONNX embedders only. There is no Core ML, so no
+  classification or reranking, and chat answers 503.
+- **The dylib** ships only in the Apple silicon archive.
 
-Install only artifacts built with the repository's converters (one
-static-shape `.mlmodelc` per bucket). On macOS 27, a Core ML artifact
-whose inputs accept several enumerated shapes can abort the process at its
-first prediction, with an exception nothing can catch. With the dylib, that
+So the same client code runs everywhere, as long as it checks what's
+there: `/v1/models` lists each embedder's `backend` (`coreml`, `static`
+or `onnx`), and `sidekick-compute-units` reads `cpu` for ONNX models. An
+ONNX model's vectors come from a different runtime than its Core ML
+build's. Both are graded against the same fp32 reference, but don't mix
+vectors stored from the two in one index without checking their
+agreement in docs/MODELS.md. The daemon loads ONNX Runtime only when it
+has an onnx model. It uses the library bundled beside `sidekickd`, or
+one the config's `onnx_runtime` or `ORT_DYLIB_PATH` names, and
+`/health`'s `onnx.runtime` says which loaded, or why none did. Intel
+Macs run ONNX Runtime 1.23.2, the last release Microsoft built for them,
+where every other platform runs 1.28.3. Each platform's results are
+graded on that platform.
+
+How far ONNX vectors are reproducible: at a given thread count, re-runs
+are bit-identical, and so were two Linux x86-64 machines with different
+CPUs on the same runtime and thread count. Across runtime versions,
+architectures or thread counts, vectors agree to within rounding but
+aren't guaranteed bit-identical (EmbeddingGemma moved by up to 1.43e-7
+per component between 4 and 8 threads). Padding and batching would move
+them by up to 2.6e-7, which is why sidekick runs each input alone.
+
+For Core ML, install only artifacts built with the repository's converters
+(one static-shape `.mlmodelc` per bucket). An ONNX model can come from a
+converter's `--format onnx` or from a published export; grade it with the
+parity suite before relying on it. On macOS 27, a Core ML artifact whose
+inputs accept several enumerated shapes can abort the process at its first
+prediction, with an exception nothing can catch. With the dylib, that
 process is your host app. So on macOS 27 sidekick refuses to load such a
-model: `sk_embed` returns NULL with an error naming the input, and the daemon
-answers with an error. Other flexible-shape artifacts load with a warning and
-run on the CPU, off the ANE. `ane_check` rejects all of them without running
-them (docs/MODELS.md, D27).
+model: `sk_embed` returns NULL with an error naming the input, and the
+daemon answers with an error. Other flexible-shape artifacts load with a
+warning and run on the CPU, off the ANE. `ane_check` rejects all of them
+without running them (docs/MODELS.md, D27).
 
 ## Path 1: the daemon
 
@@ -71,7 +95,8 @@ below.
 
 To make "installed but not running" disappear entirely, install the
 LaunchAgent from the README (`KeepAlive` keeps it warm); then path 2 only
-matters for machines where the user skipped that step.
+matters for machines where the user skipped that step. On Linux, run
+sidekickd under your service manager; no unit file ships.
 
 ## Path 2: `libsidekick.dylib`
 
@@ -79,7 +104,8 @@ C ABI defined in
 [`crates/sidekick-embed-ffi/include/sidekick.h`](../crates/sidekick-embed-ffi/include/sidekick.h);
 build with `cargo build --release -p sidekick-embed-ffi` → 
 `target/release/libsidekick.dylib` (~5 MB, embeddings only, no
-FoundationModels linkage — it runs on any macOS the models run on).
+FoundationModels linkage — it runs Core ML and static models on any macOS
+they run on). Releases ship it only in the Apple silicon archive.
 
 Suggested `dlopen` search order for hosts:
 
@@ -117,8 +143,9 @@ Notes:
 - The first `sk_embed` per model loads it (Core ML: ~1s for bge-small,
   seconds for large encoders) and it stays resident until `sk_pool_close`.
   Loads don't block calls on other, already-loaded models.
-- Thread-safe; calls from multiple threads are fine. The ANE serializes
-  predictions anyway, so client-side batching beats client-side threading.
+- Thread-safe; calls from multiple threads are fine. On Apple silicon the
+  ANE serializes predictions anyway, so client-side batching beats
+  client-side threading.
 - Chat is deliberately not in the dylib: it would drag the FoundationModels
   Swift shim into every host, and conversational sessions want a daemon
   lifetime. If you need chat too, run sidekickd.
@@ -148,7 +175,8 @@ or SGLang works unchanged. What a host needs to know beyond that:
   (`required`), its calibration temperatures, and the compute units it runs
   on. Nothing is loaded to answer.
 - **Batch up to `max_batch`.** One request with several inputs beats
-  several requests: the ANE serializes predictions anyway.
+  several requests: on Apple silicon the ANE serializes predictions
+  anyway.
 - **Zero-shot labels are the answer space.** `probs` follows
   `candidate_labels`, and `label` is the most probable one. laya's
   `noul` questions take exactly `["false", "true"]`, each optionally with a
@@ -197,7 +225,8 @@ or SGLang works unchanged. What a host needs to know beyond that:
   model is configured for, also in its `/v1/models` entry) and
   `sidekick-buckets` (the sequence-length bucket each input ran in, in
   input order, e.g. `256,256,512`). The embeddings and rerank routes send
-  the same headers; a static embedder sends no `sidekick-buckets`. A
+  the same headers. A static or ONNX embedder sends no `sidekick-buckets`,
+  and an ONNX model's `sidekick-compute-units` is `cpu`. A
   model's `/v1/models` entry reports, under `placement`, how many of each
   bucket's operations Core ML runs on the ANE, the GPU and the CPU
   (`docs/design/classify.md`, "Where Core ML places operations").
@@ -220,9 +249,10 @@ on the ANE whose compiled weights exceed Core ML's 1 GiB limit, which
 Core ML would otherwise run off the ANE without telling you; the reason
 names the fixes (`docs/design/classify.md`, "The ANE weight cap").
 
-A model served on the CPU (`compute_units = "cpu_only"`) runs no longer
-than 1,024 tokens, past which Core ML's CPU gives slightly different
+A Core ML model served on the CPU (`compute_units = "cpu_only"`) runs no
+longer than 1,024 tokens, past which Core ML's CPU gives slightly different
 results in different buckets. Its `/v1/models` entry then shows the
 effective maximum under `seq_cap`, beside the manifest's own; send longer
 inputs to a model served on the GPU or the ANE (`docs/design/classify.md`,
-"The CPU sequence cap").
+"The CPU sequence cap"). The cap is Core ML's: an ONNX model reports
+`compute_units: "cpu"` but has no cap and no `seq_cap`.

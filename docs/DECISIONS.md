@@ -95,6 +95,17 @@ Loopback by default because this fronts on-device models. When an `api_key`
 is configured it guards `/v1/*` only; `/health` stays open for probes
 (launchd, uptime checks) and leaks nothing beyond availability states.
 
+**Amendment (October 2026, v0.8.0): what `/health` reports has grown.**
+Beyond availability, it now gives the chat model's variant, context
+limit and the SDK the shim was built with (D21); the models resident;
+each skipped manifest with its reason and its path relative to the
+models directory; seq caps (D33), compute-unit overrides (D38),
+compute plans (D35) and chunked models (D37); and, for ONNX Runtime
+(D40), the runtime's version, where it came from and its file name
+(never a path), each onnx model's threads and their source, the
+detected cores, and which models are quantized. It still carries no
+credentials.
+
 ## D14 — Compute units default to `.cpuAndNeuralEngine`
 Not `.all`: keeping background work off the GPU is the project's thesis. The
 wrapper exposes the choice; measurement can override. (D31 lets a manifest
@@ -273,6 +284,12 @@ Chat is deliberately excluded: it would drag the Swift shim (and the
 Xcode 26 build requirement) into every host, and sessions want a daemon
 lifetime. The daemon remains the primary interface — it shares resident
 models across clients; the dylib trades that for zero service management.
+
+**Amendment (October 2026, v0.8.0): no ONNX in the dylib.**
+`libsidekick.dylib` is built without the `onnx` feature (D40). It skips
+onnx manifests, with the reason in `sk_pool_skipped`, and never loads
+ONNX Runtime, so a host gets no new library dependency. Releases ship it
+only in the Apple silicon archive.
 
 ## D19 — Model registry doc + LFM2.5: flexibility validated, ColBERT declined (amended: full ANE parity after a precision rewrite)
 Two LiquidAI models were run through the stack to test whether the recipe
@@ -539,6 +556,13 @@ classification in CI on both SDKs, without a model.
     supervise.
   - It is useful as a conformance reference, and the token counts above were
     checked against it.
+
+**Amendment (October 2026, v0.8.0): the 27 SDK rule is for the Apple
+silicon archive.** Only `aarch64-apple-darwin` links the Foundation
+Models shim, so only that archive must be built with the 27 SDK. The
+`x86_64-apple-darwin` archive builds the shim as a stub (chat answers
+503, as on Linux); it declares macOS 13.4 and is built and tested on
+macOS 26. The Linux archives use no Apple SDK.
 
 ## D22 — Reject request parameters the daemon can't honor
 Extends D8's fail-loudly rule from `response_format` to the rest of the chat
@@ -1027,6 +1051,24 @@ up, only for inputs outside the sample and the adversarial cases, and never
 in the next bucket. Every model graded before this keeps full coverage and
 an unchanged report, and the report prints the coverage it used.
 
+**Amendment (October 2026, v0.8.0): ONNX is a graded path.** With D40's
+backend, three points above no longer hold as written:
+- `onnx-cpu` is graded, not report-only. It runs natively through
+  `OnnxEmbedder`, the daemon's own code path, in a build with the `onnx`
+  feature (on macOS or Linux), and has floors for the M1 Max (ONNX
+  Runtime 1.28.3) and the Xeon W-3235 (1.23.2). `--external` grades
+  vectors produced elsewhere as a cross-check. Published exports still
+  run at reference time, as before.
+- Not every path goes through `CoremlEmbedder`: an onnx model goes
+  through `OnnxEmbedder`, with the same prefix, tokenizer, truncation,
+  pooling and normalization, and no buckets or padding.
+- Not every registry model pools inside its graph: an ONNX graph with
+  token-level output is pooled in Rust. The suite still sees only the
+  pooled vector.
+
+The Core ML gates (compute plans, bucket invariance, ANE determinism)
+don't apply to an onnx model, which has no plan and no buckets.
+
 ## D27 — Refuse multi-shape Core ML models at load on macOS 27
 D24 said that on macOS 27 a flexible-shape artifact aborts the process at
 its first prediction "whatever the compute units". Measured again on an M1 Max
@@ -1414,6 +1456,13 @@ laya-typed-decisions (A on the GPU, served on the ANE) and
 GLiNER2.5-Decide (A on the GPU, served there) are supported. Julia-1,
 whose fp16 paths are both capped at C by decision flips, stays a preview.
 
+**Amendment (October 2026, v0.8.0): provenance headers for ONNX models.**
+`sidekick-compute-units` reads `cpu` for static embedders (the "static
+ones" above) and for onnx models (D40); a Core ML model's value is its
+configured units, which D31 and D38 let differ from `cpu_and_ne`. An
+onnx model, like a static one, sends no `sidekick-buckets`: it runs each
+input at its own length.
+
 ## D29 — Reranking: vLLM's and Cohere's contracts, a reranker is a classifier
 Reranking (scoring documents against a query) is how retrieval pipelines
 use cross-encoders, and it has the strongest API convention of anything
@@ -1521,6 +1570,14 @@ collides with SGLang's unrelated route); late interaction (ColBERT,
 MaxSim); LLM-based rerankers, which need decoder support and chat
 templates.
 
+**Amendment (October 2026, v0.8.0): `token_type_ids` in ONNX embedder
+manifests.** The rule that converters write `token_type_ids` only for
+text-ranking models is about classifier manifests (`[classify.io]`). An
+ONNX embedder's `[io]` (D40) names `token_type_ids` whenever its graph
+takes it, as BERT-family exports do, and the daemon feeds it zeros. That
+reopens no hazard: a daemon before v0.8.0 can't parse `backend = "onnx"`
+and skips the whole manifest.
+
 ## D30 — Two more zero-shot formats: Julia-1's rendering and gliner2
 D28 served zero-shot classification in one format, laya's. Two more decision
 models are worth serving, and both fit `/v1/classify`'s zero-shot contract
@@ -1598,6 +1655,11 @@ which grade A on the GPU and C on the ANE at about the same latency:
 keeping background work off the GPU is still the project's thesis, and a
 manifest that wants the GPU can say so. A v0.4 daemon ignores the key and
 loads on the ANE.
+
+**Amendment (October 2026, v0.8.0): onnx manifests reject the key too.**
+An onnx embedder (D40) always runs on ONNX Runtime's CPU, so, like a
+static embedder, it has no compute units to choose: a manifest naming
+`compute_units` is skipped ("only valid for the coreml backend").
 
 ## D32 — Refuse ANE-served models over the Neural Engine's weight limit
 Core ML places an ML program on the Neural Engine only if its weights are
@@ -1687,6 +1749,11 @@ reported, and every path is still graded. Placement isn't correctness: the
 other hard gates (bucket and pad invariance, determinism, finite output)
 still apply on every path, because they catch defects in the artifact
 itself whichever device runs it.
+
+**Amendment (October 2026, v0.8.0): Core ML models only.** The cap is
+Core ML's CPU behavior. An onnx model (D40) reports `compute_units:
+"cpu"` but runs each input unpadded at its own length, so it has no cap
+and no `seq_cap`.
 
 ## D34 — The fev format: Lumma-fev decision models
 Lumma-fev (FrontiersMind/Lumma-fev, Apache-2.0) is a family of decision
@@ -2033,6 +2100,14 @@ compute_units = "cpu_and_ne"
 `libsidekick.dylib` reads no daemon config, so it keeps the manifests'
 choices.
 
+**Amendment (October 2026, v0.8.0): threads for onnx models.** The same
+table takes `intra_op_threads` for an onnx model (D40), over the global
+`onnx_intra_op_threads` and the default. `compute_units` set for an onnx
+id isn't applied: like one naming a static embedder, it is logged and
+listed among the overrides that named no Core ML model. Likewise,
+`intra_op_threads` naming no onnx model is listed in `/health`'s
+`onnx.unmatched_thread_overrides`.
+
 ## D39 — The ANE's SiLU, and a cancellation-free form
 Chunked agent-jev (Qwen3-0.6B, D37) graded D on the ANE: p99 |Δp| at 4.23×
 its ideal-fp16 ceiling, worst 0.022, though no decision flipped. Its GPU
@@ -2123,15 +2198,15 @@ fp32 gate stays exact. Artifacts converted earlier keep working; a
 reconversion gives the smaller ANE error.
 
 ## D40 — An ONNX Runtime CPU backend for embeddings
-sidekick serves transformer encoders only through Core ML, so only on
-macOS, and only Apple Silicon releases exist. A client developed on an
-Intel Mac or a Linux machine has no local way to call the same API. A
-third embedding backend, `onnx`, runs the same encoders on the CPU through
-ONNX Runtime (the `ort` crate), on every platform sidekick builds for. On
-Apple Silicon it is also a CPU baseline to compare Core ML's paths with.
-Classifiers, rerankers and GPU execution providers are out of scope: the
-backend is CPU-only by design, so it never competes with a model the GPU
-serves.
+Until v0.7.1, sidekick served transformer encoders only through Core ML,
+so only on macOS, and only Apple Silicon releases existed. A client
+developed on an Intel Mac or a Linux machine had no local way to call the
+same API. A third embedding backend, `onnx`, runs the same encoders on the
+CPU through ONNX Runtime (the `ort` crate), on every platform sidekick
+builds for. On Apple Silicon it is also a CPU baseline to compare
+Core ML's paths with. Classifiers, rerankers and GPU execution providers
+are out of scope: the backend is CPU-only by design, so it never
+competes with a model the GPU serves.
 
 **Manifest.** `manifest.toml` takes `backend = "onnx"`:
 
@@ -2166,9 +2241,14 @@ who exported it:
   keeps it, so Rust gains no dense layers.
 
 Every export is gated against the same fp32 references as the model's
-Core ML build. sidekick's exports of bge-small-en-v1.5 and
-all-MiniLM-L6-v2 match them at 1 − cos ≈ 2e-12 (graded by the ONNX
-export work, ORT 1.27).
+Core ML build. sidekick's exports come from the converters' `--format
+onnx`, which exports the model's backbone with the same head and gate
+texts as its Core ML build. `--onnx-weights fp16` stores the weights in
+fp16 and still computes in fp32; it halves the file but saves no memory,
+since the weights are upcast when loaded. There is no int8 export (see
+below). sidekick's exports of bge-small-en-v1.5 and all-MiniLM-L6-v2
+match the references at 1 − cos ≈ 2e-12 (graded from Python's
+onnxruntime 1.27 when the exports were written).
 
 The inputs' element type follows what the graph declares, int64 (ONNX's
 convention) or int32. The graph's batch and sequence axes are dynamic,
@@ -2258,9 +2338,13 @@ intra_op_threads = 2
   `inter_op_threads` is 1: the graphs are sequential.
 - Measured (#64), on four machines, with ONNX Runtime 1.28.3 (1.23.2 on
   the Intel Mac):
-  - **M1 Max** (8 P-cores, 2 E-cores, 256-token inputs): 8 threads beat
-    ONNX Runtime's own all-cores default by 16–27%, scaling almost
-    linearly from 1 to 8.
+  - **M1 Max** (8 P-cores, 2 E-cores), two ways. From Python's
+    onnxruntime at 256 tokens (#64's latency runs), 8 threads beat ONNX
+    Runtime's own all-cores default by 16–27%, scaling almost linearly
+    from 1 to 8. Through sidekickd's HTTP API at about 290 tokens (the
+    method of the table below; docs/MODELS.md has its M1 Max rows), 10
+    threads, one per core including the efficiency cores, were about
+    twice as slow as 8 (Qwen3-0.6B 638 ms against 358).
   - **The three x86-64 machines**, median ms for one 290-token input (best
     per row in bold; the Xeon ran under a background load of 4–16, so its
     row is indicative):
@@ -2280,14 +2364,18 @@ intra_op_threads = 2
     | AMD Threadripper 3970X (32 cores, SMT off) | EmbeddingGemma | 129 | 113 | 120 | 112 | **106** | 137 |
     | AMD Threadripper 3970X (32 cores, SMT off) | Qwen3-0.6B | 460 | 335 | 303 | **277** | 294 | 339 |
 
-  At about 290 tokens, 8 threads is within about 20% of each machine's
-  best for every model, and is the fastest on the M1 Max and the 5800X.
-  More threads help short inputs least: on the Threadripper, 32 threads
-  ran a 16-token bge-small input in 21 ms against 5.7 ms on 8, and is at
-  best level with 8 at 290 tokens. Hyperthreads never helped. Only
-  Qwen3-0.6B kept gaining past 8: on the Threadripper 277 ms at 16
-  against 335 at 8, and on the Xeon 317 against 337. That's why a model's
-  manifest can raise its default (Qwen3's sets 16).
+  At about 290 tokens, 8 threads is within 21% of each machine's best for
+  every model (the widest gap: the Threadripper's Qwen3-0.6B, 335 ms
+  against 277), and is the fastest on the M1 Max and the 5800X. More
+  threads help short inputs least: on the Threadripper, 32 threads ran a
+  16-token bge-small input in 21 ms against 5.7 ms on 8, and is at best
+  level with 8 at 290 tokens. More threads than physical cores (SMT
+  siblings) never clearly helped: the one row where they came out ahead,
+  the Xeon's Qwen3-0.6B at 16 threads (316 ms against 337 at 8), is
+  within that loaded machine's noise. Only Qwen3-0.6B kept gaining past
+  8: on the Threadripper, 277 ms at 16 against 335 at 8. That's why a
+  model's manifest can raise its default (Qwen3's sets 16). On the Xeon
+  the rule then gives Qwen3 its 12 physical cores, measured at 385 ms.
 - Each model has one session. Concurrent requests to it take turns,
   since ONNX Runtime's `Run` holds the session (in ort 2.0.0-rc.13), and
   each uses all of the model's threads, so a model never uses more than
@@ -2337,15 +2425,30 @@ matching the reference pipeline's and re-runs bit-identical:
 | Qwen3-Embedding-0.6B | 1.71e-11 | 84.6 ms |
 
 The timings aren't a benchmark; #64 measures latency. Qwen3's export with
-fp16 weights also grades A (2.14e-11). Its dynamic int8 export grades D:
-worst cosine 0.406, with 8,355 rank flips and similarity drift 0.31.
+fp16 weights also grades A (2.14e-11). An int8 graph quantized from
+sidekick's fp32 export with `quantize_dynamic` grades D: worst cosine
+0.406 on the M1 Max (8,355 rank flips, similarity drift 0.31) and 0.404
+on the Xeon W-3235 (ONNX Runtime 1.23.2). onnx-community's published
+int8 export also grades D (docs/MODELS.md). `--format onnx` writes no
+int8 graph.
+
+The same six exports also grade A on the Xeon W-3235 (macOS, ONNX
+Runtime 1.23.2), the Ryzen 7 5800X and the Threadripper 3970X (Linux,
+1.28.3), and the two Linux machines produce bit-identical vectors. For
+comparison, Core ML's fp16 CPU path grades B on gte-modernbert,
+EmbeddingGemma and F2LLM. Among published exports, onnx-community's
+EmbeddingGemma fp32 diverges past about 257 tokens (worst cosine 0.9936
+at 512): it applies the configuration's 512-token sliding window where
+transformers halves it for this bidirectional model. sidekick's export
+matches transformers at every length.
 
 **Quantized graphs always run alone.** ONNX Runtime's CPU quantizes a
 dynamic int8 MatMul's activations at run time with one scale for the
 whole batch, padding included. Its default optimizations fuse a
 weight-only DequantizeLinear + MatMul into that same kernel. So an int8
-graph's output depends on its batch-mates and its pad values. The ONNX
-export work measured F2LLM-v2-160M (Qwen3) on ORT 1.27, 51 cases:
+graph's output depends on its batch-mates and its pad values. Measured
+from Python's onnxruntime 1.27 while sidekick's exports were written, on
+F2LLM-v2-160M (Qwen3), 51 cases:
 - fp32 graded A, exact;
 - dynamic int8 (`quantize_dynamic`, how most published int8 exports are
   made) graded F, worst cosine 0.875, batch invariance 0.925 and pad
@@ -2384,19 +2487,21 @@ separate slim build.
   the way to use one under launchd, which doesn't pass a shell's
   environment.
 - The ONNX Runtime version is pinned per target: 1.28.3, and 1.23.2 on
-  Intel macOS (`x86_64-apple-darwin`). Microsoft's last osx-x86_64 build
-  is 1.23.2 (`onnxruntime-osx-x86_64-1.23.2.tgz`). From 1.24 it publishes
-  arm64 only, as do PyPI and ort's own binaries. sidekick builds ort
-  2.0.0-rc.13 with `api-23`, so one binary accepts any runtime from 1.23
-  on. The whole workspace builds at that API level, and passes its tests
-  on 1.28.3. The Intel archive's sha256 is `d10359e1…485a6`, matched by a
-  download on an Intel Mac. Its `libonnxruntime.1.23.2.dylib` (sha256
-  `8c9c78de…4c054`) is x86_64 Mach-O linking only system frameworks and
-  libc++, so it is self-contained in a release archive like the arm64
-  one. Intel results are graded on Intel, and vectors aren't
-  bit-identical across architectures or runtime versions anyway. Building
-  1.28.3 from source for Intel macOS, as an optional download, is a
-  follow-up.
+  Intel macOS (`x86_64-apple-darwin`). The Intel archive declares macOS
+  13.4, ONNX Runtime 1.23.2's own minimum, and is built and tested on
+  macOS 26; the Linux archives are built on Ubuntu 22.04 and need glibc
+  2.35 or later. Microsoft's last osx-x86_64 build is 1.23.2
+  (`onnxruntime-osx-x86_64-1.23.2.tgz`). From 1.24 it publishes arm64
+  only, as do PyPI and ort's own binaries. sidekick builds ort 2.0.0-rc.13
+  with `api-23`, so one binary accepts any runtime from 1.23 on. The whole
+  workspace builds at that API level, and passes its tests on 1.28.3. The
+  Intel archive's sha256 is `d10359e1…485a6`, matched by a download on an
+  Intel Mac. Its `libonnxruntime.1.23.2.dylib` (sha256 `8c9c78de…4c054`)
+  is x86_64 Mach-O linking only system frameworks and libc++, so it is
+  self-contained in a release archive like the arm64 one. Intel results
+  are graded on Intel, and vectors aren't bit-identical across
+  architectures or runtime versions anyway. Building 1.28.3 from source
+  for Intel macOS, as an optional download, is a follow-up.
 - `sidekickd --version` names the pinned version for its target.
   `/health` names the version actually loaded, and where it came from
   (`config`, `ORT_DYLIB_PATH` or `beside sidekickd`) and its file name. It doesn't give
@@ -2424,33 +2529,43 @@ as for a static model.
 **The parity suite** grades an `onnx` model on one path, `onnx-cpu`,
 against the same fp32 references and gates as its Core ML build. Its
 bucket-invariance gate is the CPU's unless `expectations.toml` sets
-`onnx-cpu`. A parity build with the `onnx` feature runs the path
-natively: a worker runs the product path (prefix, tokenizer, truncation,
-ONNX Runtime, pooling, normalization) and writes the suite's own worker
-result. Each input runs alone and unpadded, as the daemon runs it, so
-there are no bucket or pad comparisons. If batching is ever enabled, the
-bucket check becomes a length check, the same input run padded to longer
-lengths. A copy of the references and a parity build grade any machine,
-an Intel Mac included, with no Python or torch there. A build with the
-`onnx` feature alone runs on any OS, Linux included. It grades onnx
-models on `onnx-cpu`, which is then its only path, lists Core ML models
-as skipped, and names the chip by `/proc/cpuinfo`'s model name, as floors
-do. CI grades the tiny test graph that way on x86-64 and arm64 Linux,
-against a reference over the whole corpus that is built with numpy and
-committed beside it.
+`onnx-cpu`. A parity build with the `onnx` feature runs the path natively:
+a worker runs the product path (prefix, tokenizer, truncation, ONNX
+Runtime, pooling, normalization) and writes the suite's own worker result.
+Each input runs alone and unpadded, as the daemon runs it, so there are no
+bucket or pad comparisons. If batching is ever enabled, the bucket check
+becomes a length check, the same input run padded to longer lengths. A
+copy of the references and a parity build grade any machine, an Intel Mac
+included, with no Python or torch there. A build with the `onnx` feature
+alone runs on any OS, Linux included. It grades onnx models on `onnx-cpu`,
+which is then its only path, lists Core ML models as skipped, and names
+the chip by `/proc/cpuinfo`'s model name, as floors (below) do. CI grades
+the tiny test graph that way on x86-64 and arm64 Linux, against a
+reference over the whole corpus that is built with numpy and committed
+beside it. A copied parity binary finds its fixtures (corpora and
+expectations) at `--fixtures DIR`, else `$SIDEKICK_FIXTURES`, else
+`./fixtures`, else the checkout it was built from.
 
-`tools/onnx_parity.py` (the ONNX export work) writes the same result from
-Python's onnxruntime, and `parity --external FILE` grades it beside the
-native run as `onnx-cpu:external`, as a cross-check. The file is a worker
-result in the suite's JSON shape: `model`, `path: "onnx-cpu"`, `cases`,
-`repeat_bitwise`, `load_ms`. Each case gives its `id`, `ids_match`, its
-token count as `bucket`, `vector`, `finite`, `model_only`, and
-`bucket_invariance` and `pad_invariance` as `{n: 0}` when not measured,
-and `ms`. It must hold every reference case in reference order, each with
-a vector of the model's width. On ONNX Runtime 1.28.3 (M1 Max) the native
-path grades sidekick's exports of bge-small-en-v1.5 and all-MiniLM-L6-v2
-A, at 1 − cos 1.91e-12 and 1.97e-12 worst against fp32 torch. Token ids
-match the reference pipeline's, and re-runs are bit-identical.
+Floors are the suite's per-chip regression thresholds, in
+`fixtures/parity/expectations.toml`: each is a measured value less a
+margin, so a later run that does worse fails, and on a chip with none the
+suite reports accuracy without judging it. `onnx-cpu` floors are recorded
+for the M1 Max (ONNX Runtime 1.28.3) and the Xeon W-3235 (1.23.2). An int8
+build fails them by design.
+
+`tools/onnx_parity.py`, the Python grader written with sidekick's exports,
+writes the same result from Python's onnxruntime, and `parity --external
+FILE` grades it beside the native run as `onnx-cpu:external`, as a
+cross-check. The file is a worker result in the suite's JSON shape:
+`model`, `path: "onnx-cpu"`, `cases`, `repeat_bitwise`, `load_ms`. Each
+case gives its `id`, `ids_match`, its token count as `bucket`, `vector`,
+`finite`, `model_only`, and `bucket_invariance` and `pad_invariance` as
+`{n: 0}` when not measured, and `ms`. It must hold every reference case in
+reference order, each with a vector of the model's width. On ONNX Runtime
+1.28.3 (M1 Max) the native path grades sidekick's exports of
+bge-small-en-v1.5 and all-MiniLM-L6-v2 A, at 1 − cos 1.91e-12 and 1.97e-12
+worst against fp32 torch. Token ids match the reference pipeline's, and
+re-runs are bit-identical.
 
 ## Hardware verification status
 

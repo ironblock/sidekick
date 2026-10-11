@@ -1,9 +1,12 @@
 # Model compatibility registry
 
-What runs on the ANE through sidekick's Core ML encoder path, what doesn't,
-and how to tell before spending an afternoon finding out. Every entry here
-was measured on real hardware (Apple Silicon, macOS 26; ANE eligibility
-re-checked on macOS 27); nothing is extrapolated from model cards.
+What runs through sidekick's two embedding backends, what doesn't, and how
+to tell before spending an afternoon finding out: Core ML on the ANE, GPU
+and CPU (Apple Silicon), and ONNX Runtime on the CPU of any supported
+platform ([onnx-cpu](#onnx-runtime-on-the-cpu-onnx-cpu)). Every entry here
+was measured on real hardware: the Core ML entries on Apple Silicon (macOS
+26; ANE eligibility re-checked on macOS 27), each onnx-cpu entry on the
+machines its section names. Nothing is extrapolated from model cards.
 
 How confident to be in each model on each compute path, graded on inputs
 chosen to break it, is in [Confidence grades](#confidence-grades-the-parity-suite)
@@ -139,27 +142,27 @@ Notes per model:
   macOS 27 above).
 - **F2LLM-v2-160M** — the first **causal decoder** and first **last-token
   pooling** on the stack. A Qwen3 decoder; its QK-norm keeps activations
-  tiny (max ~420), so it converts as cleanly as bge (ANE parity 0.99985). Last-token pooling is baked in-graph via the attention mask
-  (no data-dependent index): `last_onehot = mask · (1 − shift_left(mask))`,
-  then a masked sum. Validating it surfaced and fixed a real server bug:
-  naive `take(max)` truncation dropped the trailing EOS that last-token
-  pooling reads, collapsing over-length-doc parity to 0.36 — the server now
-  preserves the final token on truncation (harmless for CLS/mean).
-  ~950 MB installed; a 640-dim decoder for ~0.95 GB.
-  **Precision rewrite (D20 amendment).** It graded B on the ANE (0.99966
-  on a run of digits), mostly from Core ML's coarse native SiLU. Its
-  activations are about ten times LFM2.5's, so only attention's inputs in
-  the early layers fell below the ANE `linear`'s precision floor, and they
-  mattered only for long texts. The converter builds SiLU from tanh and
-  rescales attention's inputs. The ANE now grades A (0.99997, drift
+  tiny (max ~420), so it converts as cleanly as bge (ANE parity 0.99985).
+  Last-token pooling is baked in-graph via the attention mask (no
+  data-dependent index): `last_onehot = mask · (1 − shift_left(mask))`, then
+  a masked sum. Validating it surfaced and fixed a real server bug: naive
+  `take(max)` truncation dropped the trailing EOS that last-token pooling
+  reads, collapsing over-length-doc parity to 0.36 — the server now
+  preserves the final token on truncation (harmless for CLS/mean). About 920
+  MB installed (three buckets of about 305 MB each, and the tokenizer) for a
+  640-dim decoder. **Precision rewrite (D20 amendment).** It graded B on the
+  ANE (0.99966 on a run of digits), mostly from Core ML's coarse native
+  SiLU. Its activations are about ten times LFM2.5's, so only attention's
+  inputs in the early layers fell below the ANE `linear`'s precision floor,
+  and they mattered only for long texts. The converter builds SiLU from tanh
+  and rescales attention's inputs. The ANE now grades A (0.99997, drift
   0.002, no rank flips) at unchanged latency. A second step (D39) builds
   SiLU from exp instead (StableSilu, which doesn't cancel in fp16 for
-  negative inputs) and rescales down_proj's input too: the ANE's worst
-  case moves to 0.999993 and its drift to 0.0008, a quarter of the
-  distance from fp32, for about 0.7 ms more per input (4.6 → 5.3 ms).
-  Artifacts converted before it keep working; reconvert for the closer
-  ANE output. The CPU path stays B
-  (0.99988), which is its own error. The converter had also stopped
+  negative inputs) and rescales down_proj's input too: the ANE's worst case
+  moves to 0.999993 and its drift to 0.0008, a quarter of the distance from
+  fp32, for about 0.7 ms more per input (4.6 → 5.3 ms). Artifacts converted
+  before it keep working; reconvert for the closer ANE output. The CPU path
+  stays B (0.99988), which is its own error. The converter had also stopped
   running under torch 2.13: its repeat_kv traced to an Int op coremltools
   can't convert, now replaced.
 
@@ -244,9 +247,10 @@ inputs are each tagged with the failure they exist to catch:
 
 It runs them through sidekick's product path: the same prefixes,
 tokenizer, truncation, bucketing, padding and pooling the daemon uses.
-Each run happens on `.cpuOnly`, `.cpuAndGPU` and `.cpuAndNeuralEngine`, and
-the output is compared with the model as published: sentence-transformers
-in fp32, one input at a time.
+Each run happens on Core ML's `.cpuOnly`, `.cpuAndGPU` and
+`.cpuAndNeuralEngine`, and, for a model with an ONNX build, on ONNX
+Runtime's CPU (`onnx-cpu`); the output is compared with the model as
+published: sentence-transformers in fp32, one input at a time.
 
 A grade is the worst-case cosine over the corpus, with repeated-token
 stress inputs graded separately:
@@ -358,15 +362,12 @@ measure the ecosystem, not sidekick:
   and gte-modernbert's fp16 export at 0.999994.
 - gte-modernbert's published int8 export reaches only 0.892, on a
   repeated-syllable input. sidekick's ANE path is 0.9994.
-- onnx-community's EmbeddingGemma exports, fp32 and fp16 alike, differ from
-  sentence-transformers at 0.9936 on inputs of 400 tokens or more, and match
-  below about 200. That fits the export applying Gemma's full 512-token
-  window, which leaves no band within 512 tokens. transformers halves the
-  window for bidirectional models (D17), and in fp32, no band against the
-  halved window measures 0.997 on a 394-token text. It's a convention
-  difference, not an error in either. sidekick follows
-  sentence-transformers: its CPU path scores 0.99989 on the same inputs.
-  The export's q8 variant reaches 0.972.
+- onnx-community's EmbeddingGemma exports, fp32 and fp16 alike, diverge
+  from sentence-transformers past about 257 tokens (worst 0.9936, at 512),
+  because they don't halve the sliding window as transformers does for
+  bidirectional models (D17): running the checkpoint with the unhalved
+  512-token window reproduces them to 0.99998. sidekick's own ONNX export
+  matches at every length. The export's q8 variant reaches 0.972.
 
 **Running it.**
 
@@ -375,13 +376,22 @@ measure the ecosystem, not sidekick:
 python tools/parity_reference.py "<data dir>/models/gte-modernbert-base" \
     --source Alibaba-NLP/gte-modernbert-base \
     --onnx Alibaba-NLP/gte-modernbert-base:onnx/model_int8.onnx
-# The suite: every model that has a reference (about 10 minutes for five).
-cargo run --release -p sidekick-embed --features coreml --example parity
+# The suite on macOS: every model that has a reference, Core ML paths
+# (about 10 minutes for five), plus onnx-cpu with the onnx feature.
+cargo run --release -p sidekick-embed --features coreml,onnx --example parity
+# onnx-cpu only, on any OS (Linux included):
+ORT_DYLIB_PATH=<dir>/libonnxruntime.so \
+cargo run --release -p sidekick-embed --features onnx --example parity -- \
+    --models-dir <dir> --refs <refs> [--fixtures <repo>/fixtures]
 ```
 
-- Each model runs on each path in its own process, after its compute plan
-  is checked, so an artifact that aborts inside Core ML costs one cell of
-  the report, not the run.
+- The fixtures (corpora, expectations) come from `--fixtures`,
+  `$SIDEKICK_FIXTURES`, `./fixtures`, or the checkout the suite was built
+  from. `--external <result.json>` grades onnx-cpu results produced outside
+  the suite (`tools/onnx_parity.py`) beside the native ones.
+- Each model runs on each Core ML path in its own process, after its compute
+  plan is checked, so an artifact that aborts inside Core ML costs one cell
+  of the report, not the run. (The timing above is for the Core ML paths.)
 - [fixtures/parity/expectations.toml](../fixtures/parity/expectations.toml)
   holds the hard gates and, per chip, floors set at 1.5x the measured error.
   Floors turn this table into a regression test; `--suggest-floors` prints
@@ -389,20 +399,22 @@ cargo run --release -p sidekick-embed --features coreml --example parity
 - On a chip with no floors, the suite enforces the gates and reports
   accuracy without judging it. Other Apple Silicon generations have their
   own ANE and will measure differently.
-- Re-run after every macOS update, because the ANE's numerics come with the
-  OS.
+- For Core ML, re-run after every macOS update, because the ANE's numerics
+  come with the OS.
 - The suite builds with `--features onnx` alone on Linux, where it grades
   onnx models on `onnx-cpu` and names the chip by its CPU model.
-- `onnx-cpu` (D40) has floors per chip and per ONNX Runtime version (1.28.3
-  on Apple silicon, 1.23.2 on Intel macOS), set from sidekick's own fp32
-  exports. An int8 graph of a model with fp32 floors fails them by design:
-  int8 is graded like any other build, never assumed equivalent.
+- `onnx-cpu` (D40) has floors only for the Apple M1 Max (ONNX Runtime
+  1.28.3) and the Intel Xeon W-3235 (1.23.2), set from sidekick's own fp32
+  exports; other chips are reported, not judged. An int8 graph of a model
+  with fp32 floors fails them by design: int8 is graded like any other
+  build, never assumed equivalent.
 
 ### Confidence by architecture family
 
 For a model that isn't validated yet, the closest validated relative is the
-best available prior. Each family has one validated model so far, so treat
-its grade as a starting expectation, not a promise, and run the suite.
+best available prior. Most families have one validated model so far, so
+treat its grade as a starting expectation, not a promise, and run the
+suite.
 
 | family | validated | ANE grade | risks seen | inputs that find them |
 |---|---|---|---|---|
@@ -418,16 +430,23 @@ sidekick's `onnx` backend (D40) serves the same embedders through ONNX
 Runtime on the CPU of any supported platform: one fp32 `model.onnx` per
 model, exported by the conversion library (`--format onnx`, see
 docs/CONVERTING.md) from the same checkpoint and gated against the same
-fp32 references. The parity suite grades it as the `onnx-cpu` path.
+fp32 references, or fp16 weights computed in fp32 (`--onnx-weights fp16`).
+It serves embedders only: classifiers and rerankers are Core ML only. At
+scan time the daemon checks the graph's inputs and outputs against the
+manifest's `[io]`, marks a quantized graph (run one input at a time), and
+keeps external weight data inside the model's directory. The parity suite
+grades it as the `onnx-cpu` path.
 
 ### Accuracy
 
 Graded natively on the shipped runtimes, 51-case corpus: ONNX Runtime
-1.28.3 on an Apple M1 Max (macOS, arm64) and an AMD Ryzen 7 5800X (Linux,
-x86-64), and 1.23.2 on an Intel Xeon W-3235 (macOS, x86-64). The Core ML
-columns are the Apple paths from the table above.
+1.28.3 on an Apple M1 Max (macOS, arm64), an AMD Ryzen 7 5800X and an AMD
+Threadripper 3970X (Linux, x86-64), and 1.23.2 on an Intel Xeon W-3235
+(macOS, x86-64). onnx-cpu cells give 1 − the worst-case cosine; the
+Threadripper's grades match the Ryzen's bit for bit, so they share a
+column. The Core ML columns are the Apple paths from the table above.
 
-| model | onnx-cpu, M1 Max | onnx-cpu, Ryzen 7 5800X | onnx-cpu, Xeon W-3235 | Core ML CPU | Core ML GPU | Core ML ANE |
+| model | onnx-cpu, M1 Max | onnx-cpu, Ryzen 7 5800X and Threadripper 3970X | onnx-cpu, Xeon W-3235 | Core ML CPU | Core ML GPU | Core ML ANE |
 |---|---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99992 | A 0.999998 | A 0.99992 |
 | bge-small-en-v1.5 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99993 | A 0.999999 | A 0.99997 |
@@ -439,22 +458,26 @@ columns are the Apple paths from the table above.
 | Qwen3-Embedding-0.6B, int8 | **D** 0.406 | | **D** 0.404 | | | |
 
 - onnx-cpu is fp32, so it reproduces the reference to rounding: no rank
-  flips and similarity drift under 3e-6 on every model. It is the most
-  accurate CPU path on Apple Silicon, where Core ML's CPU path computes in
-  fp16 and grades B for three of these five models.
-- Results are bit-identical across thread counts (1, 2, 4 and 8), and
-  padding or batching moves them by at most 2e-7 per component (cosine
-  1.000000000).
-- fp16 weights (`--onnx-weights fp16`) are lossless for a bf16 checkpoint
-  such as Qwen3-Embedding: fp16 represents its weights exactly.
+  flips on any model or machine, and similarity drift at most 2.3e-6
+  (Qwen3-Embedding; at most 1.3e-6 for the others) in the native grades. It
+  is the most accurate CPU path on Apple Silicon, where Core ML's CPU path
+  computes in fp16 and grades B for three of these five models.
+- At a given thread count results are bit-identical run to run. Across 1,
+  2, 4 and 8 threads they are bit-identical for four of the five models
+  measured; EmbeddingGemma moves by at most 1.4e-7 per component at 4 and
+  8 threads. Padding or batching moves results by at most 2.6e-7 per
+  component (cosine 1.000000000).
+- fp16 weights (`--onnx-weights fp16`) grade A on Qwen3-Embedding (1 −
+  cosine at most 2.1e-11 on both architectures measured). They save disk,
+  not memory (see Memory).
 - **int8 isn't offered.** ONNX Runtime's int8 kernels quantize activations
   with one scale per tensor, computed over the whole batch. On
   Qwen3-Embedding a dynamic int8 export and onnx-community's published one
-  both grade D one input at a time (median cosine 0.86, worst 0.41 on the
-  empty input; 7,500–8,700 rank flips), and batched they also fail the batch
-  and pad gates, because an input's vector depends on what it is batched
-  with. The same holds on x86-64 (0.404 on the Xeon). The backend runs any quantized
-  graph one input at a time.
+  both grade D one input at a time (median cosine 0.86, worst 0.406 on the
+  empty input on the M1 Max; 7,500–8,700 rank flips), and batched they also
+  fail the batch and pad gates, because an input's vector depends on what it
+  is batched with. The same holds on x86-64 (0.404 on the Xeon). The backend
+  runs any quantized graph one input at a time.
 
 Published ONNX exports, graded the same way: bge-small-en-v1.5's and
 gte-modernbert-base's fp32 exports match their checkpoints exactly
@@ -468,12 +491,13 @@ model. Running the checkpoint with a 512 window reproduces the export to
 
 ### Latency
 
-M1 Max (8 performance and 2 efficiency cores), macOS 27.0, from Python
-(ONNX Runtime 1.27, coremltools 9): the median of 20 forward passes after
-warm-up, one input at a time, real tokens cut to each length, with the load
-average recorded per run: 5–10 at rest, rising to about 20 during the
-longest onnx-cpu runs from their own threads. Core ML runs a length in the
-smallest bucket that fits it, padded. ms per input:
+M1 Max (8 performance and 2 efficiency cores), macOS 27.0, from Python (ONNX
+Runtime 1.27, coremltools 9; the daemon ships 1.28.3, and the thread table
+below was re-measured on it through sidekickd): the median of 20 forward
+passes after warm-up, one input at a time, real tokens cut to each length,
+with the load average recorded per run: 5–10 at rest, rising to about 20
+during the longest onnx-cpu runs from their own threads. Core ML runs a
+length in the smallest bucket that fits it, padded. ms per input:
 
 | model | tokens | onnx-cpu (fp32) | Core ML CPU (fp16) | Core ML GPU | Core ML ANE |
 |---|---|---|---|---|---|
@@ -495,8 +519,10 @@ smallest bucket that fits it, padded. ms per input:
   must finish together. Through sidekickd on the M1 Max, 10 threads are
   about twice as slow as 8 (Qwen3-Embedding 638 against 358 ms at ~290
   tokens); from Python in the latency runs above, 8 threads beat the
-  default by 16–27% at 256 tokens. sidekickd defaults to the
-  performance-core count, capped at 8 unless a model asks for more (D40).
+  default by 16–27% at 256 tokens. sidekickd defaults to the fastest
+  physical cores (the P-cores on Apple silicon and hybrid Intel CPUs,
+  physical cores elsewhere, never SMT siblings), capped at 8 unless a model
+  asks for more (D40).
   Fewer threads leave room for a primary model on the same machine, at a
   cost. Median ms for one long input by intra-op threads, on four
   machines:
@@ -535,7 +561,8 @@ smallest bucket that fits it, padded. ms per input:
   cores (Threadripper: 277 ms at 16 threads against 335 at 8).
 - Batching helps little on the CPU: a batch of 8 costs 0.9–1.0× per input
   at 256 tokens and 0.6–0.8× at 16.
-- x86-64 latency hasn't been measured on a quiet machine yet.
+- x86-64 latency is from the thread table only: the two Linux machines
+  were idle, the Xeon W-3235 was not.
 
 ### Memory
 
@@ -577,16 +604,31 @@ length, and the artifact's size on disk. Footprints repeated to within
   are busy. It is the most accurate CPU path: fp32, A on every model, against
   Core ML CPU's B on gte-modernbert, EmbeddingGemma and F2LLM, at 3–5× its
   latency on long inputs.
-- **On x86-64 macOS and Linux,** onnx-cpu is the path, at the same grades as
+- **On x86-64 macOS and Linux,** onnx-cpu is graded at the same grades as
   on arm64 (shipped runtime 1.23.2 on Intel macOS, 1.28.3 elsewhere;
-  graded on a Xeon W-3235 and a Ryzen 7 5800X).
-- **Threads:** set `intra_op_threads` to the performance-core count (8 on an
-  M1 Max), or lower to leave cores to a primary model; latency scales
-  almost linearly with threads.
+  graded on a Xeon W-3235, a Ryzen 7 5800X and a Threadripper 3970X). On
+  Linux it is the only path. Intel Macs also have Core ML's CPU and GPU
+  paths: bge-small-en-v1.5's Core ML build grades A on both on the Xeon
+  W-3235 (worst cosine 0.999998 and 0.999999); the parity suite skips the
+  ANE path on a Mac without one. nlptown-sentiment's GPU path grades A
+  there (worst Δp 4.78e-4); its CPU path is accurate (worst Δp 7.35e-4)
+  but fails the bucket-invariance gate, moving probabilities by up to
+  1.9e-4 between buckets, where Apple silicon's CPU path is exact. On an
+  Intel Mac, serve a classifier with `compute_units = "cpu_and_gpu"`.
+  Other Core ML models aren't graded there yet.
+- **Threads:** the default, the fastest physical cores capped at 8, needs no
+  setting. To leave cores to a primary model, lower it with `[models."<id>"]
+  intra_op_threads` or, for every model, `onnx_intra_op_threads` in the
+  daemon config: latency roughly halves per doubling up to 4–8 threads, then
+  flattens. Qwen3-Embedding's manifest raises its cap to 16 (`[onnx]
+  default_intra_op_threads`), which pays only on machines with more than 8
+  fast cores (Threadripper 3970X: 277 ms at 16 threads against 335 at 8).
 - **Qwen3-Embedding-0.6B:** serve fp32 (or fp16 weights to halve the disk).
   Don't use int8 on ONNX Runtime.
 
 ## Classifiers (`/v1/classify`)
+
+Classifiers run as Core ML only; the ONNX backend serves embedders.
 
 Classifiers are served by `POST /v1/classify` (D28), from a
 `classifier.toml` manifest ([examples/classifiers/](../examples/classifiers/)).
@@ -994,6 +1036,8 @@ exactly 2,048 tokens.
 
 ## Rerankers (`/v1/rerank`)
 
+Rerankers run as Core ML only; the ONNX backend serves embedders.
+
 Rerankers are cross-encoders served by `/v1/rerank`, `/rerank` and
 `/v2/rerank` (D29), from a `classifier.toml` with `task = "text-ranking"`
 ([examples/classifiers/](../examples/classifiers/)). The parity suite
@@ -1055,12 +1099,20 @@ for the document).
 
 | model | class | why |
 |---|---|---|
-| [LiquidAI/LFM2.5-ColBERT-350M](https://huggingface.co/LiquidAI/LFM2.5-ColBERT-350M) | late-interaction (multi-vector) | Emits one 128-d vector **per token**, scored with MaxSim — there is no single vector to return through `/v1/embeddings` or `sk_embed`. The encoder itself converts and offloads fine (smoke-tested at seq 256: per-token parity 0.9995 CPU / 0.9919 ANE, 2.0x ANE speedup, MaxSim ranking preserved — [smoke_lfm25_colbert.py](../tools/smoke_lfm25_colbert.py)), so a future late-interaction API could host it; nothing in today's API can. Its padded-batch conv semantics (expansion tokens must NOT be zeroed) also make real-token embeddings bucket-dependent under static shapes. Re-run on macOS 27: unchanged (per-token ANE parity 0.9919, 2.1x over CPU, MaxSim ranking preserved). |
+| [LiquidAI/LFM2.5-ColBERT-350M](https://huggingface.co/LiquidAI/LFM2.5-ColBERT-350M) | late-interaction (multi-vector) | Emits one 128-d vector **per token**, scored with MaxSim — there is no single vector to return through `/v1/embeddings` or `sk_embed`. The encoder itself converts and offloads fine (smoke-tested at seq 256: per-token parity 0.9995 CPU / 0.9919 ANE, 2.0x ANE speedup, MaxSim ranking preserved — [smoke_lfm25_colbert.py](../tools/smoke_lfm25_colbert.py)), so a future late-interaction API could host it; nothing in today's API can. Its padded-batch conv semantics (expansion tokens must NOT be zeroed) also make real-token embeddings bucket-dependent under Core ML's static buckets. Re-run on macOS 27: unchanged (per-token ANE parity 0.9919, 2.1x over CPU, MaxSim ranking preserved). |
 | Apple NLContextualEmbedding | OS-provided contextual | Mean-pooled MLM states, strongly anisotropic (unrelated-pair cosine ~0.75) — unusable for similarity thresholds without post-hoc calibration sidekick doesn't own (D16). Re-measured on macOS 27: same model revision, same cosines (0.96/0.89 vs 0.75), faster (~11 ms). |
 | Apple NLEmbedding.sentenceEmbedding | OS-provided static-ish | 2020-era quality, measurably weaker than bge-small on the same pairs; no prefixes, no control over dims (D16). Unchanged on macOS 27 (revision 1; 0.74/0.44 vs 0.14). |
 | Apple FoundationModels | LLM | Has **no embedding API at all** (verified against macOS 26 SDK docs/headers, D16) — chat only. Still none in the macOS 27 SDK; 27's Spotlight integration is a search tool for sessions, not vectors. |
 
 ## Quick triage: is a model worth converting?
+
+The triage, the checklist and the gates below are for Core ML. The ANE's
+weight cap, fp16 range and precision limits don't apply to onnx-cpu, which
+computes in fp32 with dynamic shapes, so an embedder rejected only by those
+may still serve there (Qwen3-Embedding-0.6B is one: past the ANE's cap
+unchunked, A on onnx-cpu). Its gate is the ONNX export's own (fp32 parity
+against the checkpoint, batch and pad invariance; docs/CONVERTING.md, "ONNX
+export"), then the parity suite's `onnx-cpu` path.
 
 Most rejections are visible long before a conversion. Cheapest first:
 
@@ -1136,11 +1188,11 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   token, so truncation must preserve it — the server keeps `[first max-1,
   last]` for exactly this reason. A short-input-only parity gate misses
   both; test an over-length input that fills the largest bucket.
-- **Explicit attention with fp16-safe masks.** Masks must use a finite
-  constant such as -30000, not `-inf`/`finfo.min`, which NaN in fp16 (D15).
-  The converters patch the mask builders to do this. Then use attention that
-  converts to explicit matmul → softmax → matmul (gemma, F2LLM, ModernBERT
-  via `attn_implementation="eager"`). Passing `scale=` to
+- **Explicit attention with fp16-safe masks.** For Core ML, masks must use a
+  finite constant such as -30000, not `-inf`/`finfo.min`, which NaN in fp16
+  (D15). The converters patch the mask builders to do this. Then use
+  attention that converts to explicit matmul → softmax → matmul (gemma,
+  F2LLM, ModernBERT via `attn_implementation="eager"`). Passing `scale=` to
   `F.scaled_dot_product_attention` works too: coremltools then emits
   explicit ops instead of the fused one. Whatever the form, `ane_check`'s
   pad-invariance gate must pass.
@@ -1171,13 +1223,14 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
     is correct.
 
   CPU_ONLY parity catches both.
-- **Static-shape-friendly graph** — no data-dependent shapes. Stock
+- **Static-shape-friendly graph** (for Core ML; an ONNX export takes dynamic
+  axes by design) — no data-dependent shapes. Stock
   `rotate_half`/`repeat_kv` and any `F.conv1d(padding=shape-derived)`
   need the traceable rewrites (D17 constraint 8, LFM2.5 constraint B).
 - **fp16-safe activations** — calibrate first (forward hooks, max |activation|
   on a mixed corpus). Under ~30k: convert directly (bge, LFM2.5). Over:
-  apply the D17 power-of-two range rewrite (gemma). Watch for `-1e9` mask
-  constants (rewrite at -30000) and rmsnorm eps below ~1e-4.
+  apply the D17 power-of-two range rewrite (gemma). For Core ML, watch for
+  `-1e9` mask constants (rewrite at -30000) and rmsnorm eps below ~1e-4.
 - **Keep every linear-layer input near rms 1.** The ANE's `linear` op has
   an absolute precision floor on its input, not a relative one: its
   relative error is ~3e-4 / rms(input) (0.04% at rms 1, 2% at 0.016, 10% at
@@ -1230,10 +1283,11 @@ above 1.0 on a quiet machine). Then generate a reference with
 `tools/parity_reference.py` and run the parity suite. It repeats those gates
 through the product code on every path and adds the adversarial corpus. Its
 grade is the one to publish, and `--suggest-floors` records it for the
-chip.
+chip. For an embedder's ONNX build: the export's fp32 gate, then the
+suite's `onnx-cpu` path.
 
-Flexible input shapes are ruled out (D15), and on macOS 27 one kind became
-dangerous. Under `.cpuOnly`, an artifact whose inputs have several
+For Core ML, flexible input shapes are ruled out (D15), and on macOS 27 one
+kind became dangerous. Under `.cpuOnly`, an artifact whose inputs have several
 enumerated shapes (`ct.EnumeratedShapes`) aborts the process at its first
 prediction ("E5RT: No memory object bound to port"). Under
 `.cpuAndNeuralEngine` and `.all` it still falls back to the CPU: 85 ms per

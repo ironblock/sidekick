@@ -1,16 +1,21 @@
 # Converting models for sidekick
 
-sidekick runs embedders and classifiers as Core ML models on the Apple
-Neural Engine (ANE). Getting a Hugging Face checkpoint there faithfully takes
-more than `coremltools.convert`: the ANE computes in fp16 with its own
-arithmetic limits, Core ML has op-level bugs, and a model that converts can
-still be wrong in ways only a careful gate catches. This document catalogs
-what the conversion library knows, and how to use and extend it.
+sidekick runs embedders either as Core ML models on the Apple Neural Engine
+(ANE), GPU or CPU, or as ONNX models on ONNX Runtime's CPU backend (D40);
+classifiers and rerankers run as Core ML only. Getting a Hugging Face
+checkpoint onto the ANE faithfully takes more than `coremltools.convert`:
+the ANE computes in fp16 with its own arithmetic limits, Core ML has
+op-level bugs, and a model that converts can still be wrong in ways only a
+careful gate catches. Most of this document covers that Core ML path; the
+ONNX export (`--format onnx`, [ONNX export](#onnx-export)) reuses the same
+converters and references, in fp32. This document catalogs what the
+conversion library knows, and how to use and extend it.
 
 The library is `tools/sidekick_convert`. The converters in `tools/` are thin
-scripts on top of it. docs/MODELS.md lists the validated models and their
-measured accuracy; docs/DECISIONS.md records why each rule exists (entries
-cited as Dnn).
+scripts on top of it; an embedder converter writes Core ML artifacts by
+default, or one ONNX model with `--format onnx`. docs/MODELS.md lists the
+validated models and their measured accuracy; docs/DECISIONS.md records why
+each rule exists (entries cited as Dnn).
 
 ## Contents
 
@@ -41,8 +46,9 @@ don't multiply into one script per combination:
   constant buffers the wrapper needs per bucket (`buffers`), and how to run
   the unpadded fp32 reference (`reference`).
 - **Head** (`sidekick_convert.heads`): what the artifact returns.
-  `pool.Pool` pools an embedding in-graph (CLS, mean or last token, optionally
-  L2-normalized). `sequence.SequenceClassification` is the checkpoint's own
+  `pool.Pool` pools an embedding in-graph for Core ML (CLS, mean or last
+  token, optionally L2-normalized); an ONNX export leaves that pooling to the
+  server. `sequence.SequenceClassification` is the checkpoint's own
   classification head, run through its task class, so each family's head
   semantics are exactly the checkpoint's; a reranker is this head with one
   label and a token_type_ids input. `per_token.PerToken` applies a module to
@@ -54,7 +60,8 @@ don't multiply into one script per combination:
 
 `wrapper.compose(backbone, head, ports)` builds one static wrapper per
 bucket; `recipes.embedder()` and `recipes.classifier()` turn the three into
-a `core.Job`; `core.run(job, install_dir)` converts and installs it.
+a `core.Job`; `core.run(job, install_dir)` converts and installs it (an
+ONNX job goes to `onnx_export.run()` instead, without buckets).
 
 A backbone's contract, for a new family: `model` (the module the wrapper
 holds, under the attribute `attr`, which names the converted weights),
@@ -67,7 +74,7 @@ rewrite exact.
 
 ## The conversion run and its gates
 
-For every bucket, `core.run()`:
+For a Core ML job, for every bucket, `core.run()`:
 
 1. builds the static-shape wrapper, `Job.make_wrapper(seq)`, so a recipe may
    differ per bucket (if one does, bucket invariance across the boundary
@@ -293,16 +300,18 @@ run on any mismatch with the checkpoint, where the field exists:
   transformers' activation rule (D28). A reranker (`task = "text-ranking"`)
   has one label, `"score"`, and the `problem_type` vLLM derives from the
   checkpoint;
-- `token_type_ids` is named only by text-ranking manifests, exactly when
-  pairs carry segment ids (older daemons would feed a text-classification
-  model no segment ids);
+- classifiers: `token_type_ids` is named only by text-ranking manifests,
+  exactly when pairs carry segment ids (older daemons would feed a
+  text-classification model no segment ids). An ONNX embedder's manifest
+  names it when its graph takes it (BERT-family published exports);
 - `source.revision` equals the snapshot's revision.
 
-The installed copy gains one thing the committed file doesn't have: a
-`[placement]` table recording, per bucket, the compute plan the gates read
-on this machine. A live plan read in the daemon is a second compile, up to
-minutes and hundreds of MB for a large bucket, so the daemon reports this
-record instead.
+Buckets and `[placement]` are Core ML's; an ONNX install has neither (see
+[ONNX export](#onnx-export)). A Core ML install gains one thing the
+committed file doesn't have: a `[placement]` table recording, per bucket,
+the compute plan the gates read on this machine. A live plan read in the
+daemon is a second compile, up to minutes and hundreds of MB for a large
+bucket, so the daemon reports this record instead.
 
     [placement]
     compute_units = "cpu_and_ne"   # the units the model is served with
@@ -340,10 +349,16 @@ structs don't deny unknown fields.
 | `convert_lfm25_embedding.py` | LFM2 (short convolutions with pad zeroing, attention), per-layer precision scales | CLS pool, L2 in graph | `--no-pad-zeroing` builds the negative control |
 
 Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
-`--time` and its own flags. The library needs arm64-native Python with
-torch, transformers 4.x (the BERT backbone proves at load that its finite
-mask is on the forward path), tokenizers, coremltools and numpy, and Xcode
-for `xcrun coremlcompiler`.
+`--time` and its own flags; the embedder converters also take `--format
+onnx`. Requirements:
+- every converter: Python with torch, transformers 4.x (the BERT backbone
+  proves at load that its finite mask is on the forward path), tokenizers
+  and numpy;
+- the Core ML path (the default): arm64-native Python on macOS, coremltools,
+  and Xcode for `xcrun coremlcompiler`;
+- `--format onnx`: `onnx` and `onnxruntime` instead, with neither
+  coremltools nor Xcode. Every export so far was made on Apple silicon; it
+  hasn't been tested elsewhere.
 
 ## ONNX export
 
@@ -359,12 +374,20 @@ backbone, head and gate texts, gated against the same fp32 references
   (`mean`, `cls` or `last_token`), as it does a published export. A head that
   is more than pooling stays in the graph: EmbeddingGemma's mean, dense stack
   and L2 output `embedding`, with `pooling = "none"`.
-- **fp32, no ANE rewrites.** The precision and range rewrites exist for the
-  ANE's fp16 arithmetic; they are exact in fp32 and would only add work on
-  the CPU, so they don't run.
+- **Buckets.** For `--format onnx` the bucket arguments only bound the
+  gate texts (the longest one is cut to the largest bucket); the installed
+  manifest drops them. Only embedder converters take `--format onnx`.
+- **fp32, no rewrites.** A recipe's `rewrites=` don't run for an ONNX
+  export: the precision and range rewrites exist for the ANE's fp16
+  arithmetic, and the activation swaps for its coarse native ops (so
+  `--twice-gelu` has no effect). All are exact in fp32 and would only add
+  work on the CPU.
 - **Gates,** through ONNX Runtime's Python API: every gate case against the
   checkpoint's own output (cosine at least 0.99999), the cases in one
-  right-padded batch against their unpadded runs, and random pad ids.
+  right-padded batch against their unpadded runs, and random pad ids. The
+  daemon ships ONNX Runtime 1.28.3 (1.23.2 on Intel macOS, the last release
+  built for it), pinned by `tools/fetch_onnxruntime.sh`; the parity suite
+  grades the export on that runtime.
 - **Manifest.** The installed manifest is derived from the committed Core ML
   one (same id, tokenizer, dims, prefixes, Matryoshka), with backend
   `onnx`, artifact `model.onnx`, the pooling, and every extra graph input
@@ -375,26 +398,39 @@ backbone, head and gate texts, gated against the same fp32 references
   two side by side from separate models directories.
 - **`--onnx-weights fp16`** stores the weights in fp16 behind casts to fp32:
   half the file, the same fp32 arithmetic. It saves disk, not memory: ONNX
-  Runtime upcasts at load, peaking about 1.5 times the fp32 build's resident
-  memory and settling at it. It is lossless for a bf16 checkpoint, whose
-  weights fp16 represents exactly (Qwen3-Embedding-0.6B: 1 − cosine 2e-11),
-  and gated like any export otherwise (all-MiniLM-L6-v2: 0.9999998).
+  Runtime upcasts at load, and Qwen3-Embedding-0.6B's fp16-weight build
+  holds more than its fp32 one (a footprint of 2.7 GB against 1.7 GB, M1
+  Max). Measured: Qwen3-Embedding-0.6B, a bf16 checkpoint, grades A at
+  1 − cosine 2e-11, and all-MiniLM-L6-v2, an fp32 one, passes the export
+  gate at 0.9999998.
 - **No int8.** ONNX Runtime's int8 kernels quantize activations at run time
   with one scale per tensor, computed over the whole batch, padding
   included. A model's output then depends on what it is batched with, which
   breaks sidekick's batch and pad invariance, and one scale per tensor
   collapses on activation outliers. On Qwen3-Embedding-0.6B, both a dynamic
   int8 export and the published one grade D even one input at a time
-  (median cosine 0.86, worst 0.41), and F batched. A weight-only int8 file
+  (median cosine 0.86, worst 0.406 on an M1 Max), and fail the batch and
+  pad gates when batched. A weight-only int8 file
   doesn't escape it: ONNX Runtime's optimizer fuses its dequantize into the
   same dynamic kernel.
 
-Grade an export with the parity suite's `onnx-cpu` path:
-`tools/onnx_parity.py <model-dir> --refs <refs> --out result.json` writes
-the suite's worker result, and `parity --models-dir <dir> --refs <refs>
---model <id> --external result.json` grades it. `tools/bench_onnx.py`
-measures load time, resident memory and latency per length, batch size and
-thread count.
+Grade an export with the parity suite's `onnx-cpu` path, natively: build
+the suite with `--features onnx` (any OS, Linux included; add `coreml` on
+macOS to grade the Core ML paths too), point `ORT_DYLIB_PATH` at the
+runtime library, and run it on a models directory holding the ONNX install:
+
+    ORT_DYLIB_PATH=<dir>/libonnxruntime.dylib \
+    cargo run --release -p sidekick-embed --features onnx --example parity -- \
+        --models-dir <dir> --refs <refs> --model <id> \
+        [--fixtures <repo>/fixtures]
+
+The fixtures (corpora, expectations) come from `--fixtures`,
+`$SIDEKICK_FIXTURES`, `./fixtures` or the checkout the suite was built
+from. `tools/onnx_parity.py` is a cross-check from Python: it writes the
+suite's worker result for the same model, which `parity --external
+result.json` grades beside the native run. An int8 build fails the floors
+by design. `tools/bench_onnx.py` measures load time, resident memory and
+latency per length, batch size and thread count.
 
 ## Adding a family
 
@@ -419,6 +455,9 @@ thread count.
 7. **Grade** with the parity suite (D26) against sentence-transformers or the
    checkpoint's own fp32 forward, and record the model in docs/MODELS.md; a
    new constraint gets a DECISIONS entry.
+8. **For an embedder, export it with `--format onnx`** and grade the
+   `onnx-cpu` path too. A head that is more than pooling needs an
+   `onnx_module(backbone)` with dynamic shapes (see `heads/gemma_st.py`).
 
 ## Refactoring a converter: the acceptance method
 

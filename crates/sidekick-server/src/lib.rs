@@ -1,10 +1,13 @@
-//! sidekickd — an OpenAI-compatible daemon over Apple on-device inference.
+//! sidekickd — an OpenAI-compatible daemon for on-device embeddings,
+//! classification and chat: Apple Foundation Models and Core ML on macOS,
+//! and ONNX Runtime on the CPU on macOS and Linux.
 //!
 //! Endpoints:
 //! - `POST /v1/chat/completions` — Apple Foundation Models (streaming and
 //!   non-streaming, `response_format: json_schema` via guided generation)
-//! - `POST /v1/embeddings` — registry models (Core ML/ANE encoders, static
-//!   floor tier), with Matryoshka `dimensions` and base64 support
+//! - `POST /v1/embeddings` — registry models (Core ML/ANE encoders, ONNX
+//!   Runtime CPU encoders, static floor tier), with Matryoshka `dimensions`
+//!   and base64 support
 //! - `POST /v1/classify` — registry classifiers (Core ML/ANE):
 //!   text-classification and zero-shot, vLLM's `/classify` contract
 //! - `GET /v1/models`, `GET /health`
