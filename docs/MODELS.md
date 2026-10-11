@@ -490,16 +490,38 @@ smallest bucket that fits it, padded. ms per input:
 - **Threads.** ONNX Runtime's default (one thread per core) is slower on
   Apple Silicon than one thread per performance core: at 256 tokens 8
   threads beat the default by 16–27% (Qwen3-Embedding 468 against 620 ms,
-  EmbeddingGemma 118 against 161, gte-modernbert 149 against 178). Fewer
-  threads leave room for a primary model on the same machine, at a cost:
+  EmbeddingGemma 118 against 161, gte-modernbert 149 against 178), because
+  the efficiency cores hold back threads that must finish together. Fewer
+  threads leave room for a primary model on the same machine, at a cost.
+  Median ms for one long input by intra-op threads, on four machines:
 
-  | model, 256 tokens | 1 thread | 2 | 4 | 8 |
-  |---|---|---|---|---|
-  | all-MiniLM-L6-v2 | 79 ms | 41 | 22 | 17 |
-  | gte-modernbert-base | 720 | 374 | 204 | 149 |
-  | embeddinggemma-300m | 653 | 340 | 186 | 118 |
-  | Qwen3-Embedding-0.6B | 2,585 | 1,354 | 710 | 468 |
+  | machine, model | 1 | 2 | 4 | 6 | 8 | 12 | 16 | 24 | 32 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | M1 Max (8P + 2E), gte-modernbert-base | 720 | 374 | 204 | | 149 | | | | |
+  | M1 Max, embeddinggemma-300m | 653 | 340 | 186 | | 118 | | | | |
+  | M1 Max, Qwen3-Embedding-0.6B | 2,585 | 1,354 | 710 | | 468 | | | | |
+  | Ryzen 7 5800X (8 cores, 16 threads), gte-modernbert-base | 514 | 267 | 143 | 104 | 85 | 101 | 87 | | |
+  | Ryzen 7 5800X, embeddinggemma-300m | 476 | 256 | 140 | 99 | 83 | 100 | 86 | | |
+  | Ryzen 7 5800X, Qwen3-Embedding-0.6B | 1,861 | 947 | 501 | 358 | 277 | 370 | 298 | | |
+  | Threadripper 3970X (32 cores), gte-modernbert-base | 451 | 236 | 133 | | 117 | 103 | 104 | 103 | 118 |
+  | Threadripper 3970X, embeddinggemma-300m | 417 | 223 | 129 | | 113 | 120 | 112 | 106 | 137 |
+  | Threadripper 3970X, Qwen3-Embedding-0.6B | 1,627 | 833 | 460 | | 335 | 303 | 277 | 294 | 339 |
+  | Xeon W-3235 (12 cores, 24 threads), gte-modernbert-base | 573 | 292 | 161 | 116 | 98 | 119 | 99 | 241 | |
+  | Xeon W-3235, embeddinggemma-300m | 564 | 292 | 161 | 115 | 97 | 112 | 108 | 187 | |
+  | Xeon W-3235, Qwen3-Embedding-0.6B | 2,132 | 1,091 | 572 | 409 | 337 | 385 | 316 | 451 | |
 
+  The M1 Max rows are ONNX Runtime 1.27 from Python at 256 tokens (load
+  average 6–18). The others are sidekickd's onnx-cpu path through the HTTP
+  API (`/v1/embeddings`, one request at a time, 15 repetitions) at about 290
+  tokens: Linux with ONNX Runtime 1.28.3 for the Ryzen 5800X and the
+  Threadripper 3970X (load average under 6), macOS with 1.23.2 for the Xeon
+  W-3235, whose numbers are indicative only, because that machine was busy
+  (load average 4–16). Latency roughly halves with each doubling up to 4–8
+  threads, then flattens, even with 32 cores. Simultaneous multithreading
+  adds nothing, and more threads than physical cores make it worse (the
+  Xeon at 24). Only a model as large as Qwen3-Embedding keeps gaining past
+  8 threads on a machine with more fast cores (Threadripper: 277 ms at 16
+  threads against 335 at 8).
 - Batching helps little on the CPU: a batch of 8 costs 0.9–1.0× per input
   at 256 tokens and 0.6–0.8× at 16.
 - x86-64 latency hasn't been measured on a quiet machine yet.
