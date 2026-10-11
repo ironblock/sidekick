@@ -14,6 +14,12 @@ below. That is the number to trust; the converter parity in the first table
 is measured on short prose and can flatter a model (it did for LFM2.5 before
 its precision rewrite).
 
+A sortable, filterable view of these results, by model, path, precision,
+chip and runtime, is at
+[ironblock.github.io/sidekick](https://ironblock.github.io/sidekick/),
+built from [docs/data/models.json](data/models.json) by
+`tools/models_table.py`.
+
 Method, for every validated entry:
 - **parity** — worst-case cosine between the Core ML artifact and the fp32
   torch/sentence-transformers reference over the converter's parity set
