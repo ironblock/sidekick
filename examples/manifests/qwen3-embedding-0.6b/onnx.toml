@@ -1,0 +1,8 @@
+# Settings for the ONNX build only, appended to the manifest the ONNX export
+# installs (tools/sidekick_convert/onnx_export.py); the committed manifest
+# beside this file is the Core ML one, where an [onnx] table is refused.
+
+[onnx]
+# Qwen3-0.6B keeps getting faster past 8 threads where the machine has the cores
+# (Threadripper 3970X: 277 ms at 16 vs 335 at 8 for ~290 tokens; Xeon W-3235: 317 vs 337).
+default_intra_op_threads = 16

@@ -368,7 +368,10 @@ backbone, head and gate texts, gated against the same fp32 references
 - **Manifest.** The installed manifest is derived from the committed Core ML
   one (same id, tokenizer, dims, prefixes, Matryoshka), with backend
   `onnx`, artifact `model.onnx`, the pooling, and every extra graph input
-  named in `[io]`. Model ids are the same across backends, so compare the
+  named in `[io]`. Settings for the ONNX build alone (an `[onnx]` table,
+  such as `default_intra_op_threads`, which a Core ML manifest refuses)
+  live in an `onnx.toml` beside the committed manifest and are appended to
+  the installed one. Model ids are the same across backends, so compare the
   two side by side from separate models directories.
 - **`--onnx-weights fp16`** stores the weights in fp16 behind casts to fp32:
   half the file, the same fp32 arithmetic. It saves disk, not memory: ONNX

@@ -225,13 +225,15 @@ def gate(runner, cases, pad_id_range, report=print):
     return result
 
 
-def manifest_text(coreml_text, pooling, output, extra_inputs=()):
+def manifest_text(coreml_text, pooling, output, extra_inputs=(), onnx_extra=""):
     """The installed manifest for the ONNX artifact, from the committed
     Core ML one: the same model (tokenizer, dims, prefixes, Matryoshka,
     max_seq_len, source), with backend, artifact, pooling and [io] set for
     ONNX and no buckets (docs/DECISIONS.md D40). `extra_inputs` are graph
     inputs beyond input_ids and attention_mask (token_type_ids,
-    position_ids), named in [io] so the server feeds them."""
+    position_ids), named in [io] so the server feeds them. `onnx_extra` is
+    the committed onnx.toml beside the Core ML manifest, if any: settings
+    for the ONNX build only (an [onnx] table), appended as they are."""
     out, section, header = [], None, True
     for line in coreml_text.splitlines():
         s = line.strip()
@@ -256,7 +258,11 @@ def manifest_text(coreml_text, pooling, output, extra_inputs=()):
     intro = ("# Exported for ONNX Runtime's CPU backend by the conversion library\n"
              "# (tools/sidekick_convert/onnx_export.py): one fp32 model.onnx with dynamic batch and\n"
              f"# sequence axes; {'the server pools its ' + output + ' (' + pooling + ')' if pooling else 'pooled in the graph'}.\n\n")
-    return intro + "\n".join(out) + "\n"
+    text = intro + "\n".join(out) + "\n"
+    lines = onnx_extra.strip().splitlines()
+    while lines and (lines[0].startswith("#") or not lines[0].strip()):
+        lines.pop(0)                   # the sidecar's own description
+    return text + ("\n" + "\n".join(lines) + "\n" if lines else "")
 
 
 def run(job, install_dir, report=print):
@@ -293,7 +299,9 @@ def run(job, install_dir, report=print):
     extra = [i for i in graph_inputs(install_dir / "model.onnx") if i not in ("input_ids", "attention_mask")]
     for source, name in job.install_files:
         if name == "manifest.toml":
-            (install_dir / name).write_text(manifest_text(Path(source).read_text(), pooling, output, extra))
+            sidecar = Path(source).with_name("onnx.toml")
+            onnx_extra = sidecar.read_text() if sidecar.exists() else ""
+            (install_dir / name).write_text(manifest_text(Path(source).read_text(), pooling, output, extra, onnx_extra))
     (install_dir / "onnx_gates.json").write_text(json.dumps(result, indent=2) + "\n")
     report(f"installed model.onnx and manifest.toml -> {install_dir}")
     return result

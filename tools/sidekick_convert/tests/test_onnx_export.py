@@ -70,6 +70,13 @@ class ManifestTest(unittest.TestCase):
                                                     ["token_type_ids"]))
         self.assertEqual(m["io"]["token_type_ids"], "token_type_ids")
 
+    def test_onnx_only_settings_are_appended(self):
+        extra = "# only for ONNX\n[onnx]\ndefault_intra_op_threads = 16\n"
+        m = tomllib.loads(onnx_export.manifest_text(COREML_MANIFEST, "last_token", onnx_export.TOKEN_OUTPUT,
+                                                    onnx_extra=extra))
+        self.assertEqual(m["onnx"]["default_intra_op_threads"], 16)
+        self.assertEqual(m["prefixes"]["query"], "q: ")
+
     def test_pooled_in_graph(self):
         m = tomllib.loads(onnx_export.manifest_text(COREML_MANIFEST, None, onnx_export.POOLED_OUTPUT))
         self.assertEqual(m["pooling"], "none")
