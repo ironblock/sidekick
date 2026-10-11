@@ -1,0 +1,117 @@
+# What tools/models_table.py needs to know about each graded model beyond
+# its parity reports: the display name, family and task, the checkpoint and
+# revision it was converted from (the committed manifest's `source`, or the
+# parity reference's where the manifest has none), and the path sidekick
+# serves its Core ML build on by default. Hand-kept; one table per model id.
+
+[models."all-minilm-l6-v2"]
+name = "all-MiniLM-L6-v2"
+family = "BERT"
+task = "embed"
+source = "sentence-transformers/all-MiniLM-L6-v2@1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+served = "coreml-ane"
+
+[models."bge-small-en-v1.5"]
+name = "bge-small-en-v1.5"
+family = "BERT"
+task = "embed"
+source = "BAAI/bge-small-en-v1.5@5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"
+served = "coreml-ane"
+
+[models."e5-small-v2"]
+name = "e5-small-v2"
+family = "BERT"
+task = "embed"
+source = "intfloat/e5-small-v2@ffb93f3bd4047442299a41ebb6fa998a38507c52"
+served = "coreml-ane"
+
+[models."gte-modernbert-base"]
+name = "gte-modernbert-base"
+family = "ModernBERT"
+task = "embed"
+source = "Alibaba-NLP/gte-modernbert-base@e7f32e3c00f91d699e8c43b53106206bcc72bb22"
+served = "coreml-ane"
+
+[models."embeddinggemma-300m"]
+name = "embeddinggemma-300m"
+family = "Gemma 3"
+task = "embed"
+source = "google/embeddinggemma-300m@57c266a740f537b4dc058e1b0cda161fd15afa75"
+served = "coreml-ane"
+
+[models."f2llm-v2-160m"]
+name = "F2LLM-v2-160M"
+family = "Qwen3 decoder"
+task = "embed"
+source = "codefuse-ai/F2LLM-v2-160M@4ffe22c31406fc321b65a05b15563d38275ee51f"
+served = "coreml-ane"
+
+[models."lfm2.5-embedding-350m"]
+name = "LFM2.5-Embedding-350M"
+family = "LFM2 hybrid"
+task = "embed"
+source = "LiquidAI/LFM2.5-Embedding-350M@f35ae2c91d687658dbf1f2b449382f0b019b9808"
+served = "coreml-ane"
+
+[models."qwen3-embedding-0.6b"]
+name = "Qwen3-Embedding-0.6B"
+family = "Qwen3 decoder"
+task = "embed"
+source = "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
+served = "onnx-cpu"
+
+[models."nlptown-sentiment"]
+name = "nlptown-sentiment"
+family = "BERT"
+task = "classify"
+source = "nlptown/bert-base-multilingual-uncased-sentiment@8f6f4e3a8f70be4b65d3a4a8762b6d781cda240d"
+served = "coreml-ane"
+
+[models."laya-en"]
+name = "laya-en"
+family = "ModernBERT"
+task = "classify"
+source = "convaiinnovations/laya@55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
+served = "coreml-ane"
+
+[models."laya-typed-decisions"]
+name = "laya-typed-decisions"
+family = "ModernBERT"
+task = "classify"
+source = "convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3"
+served = "coreml-ane"
+
+[models."julia-1"]
+name = "julia-1"
+family = "ModernBERT"
+task = "classify"
+source = "SupersonicLabs/Julia-1@a85b127321d580d65176c89ced8273f305745d85"
+served = "coreml-ane"
+
+[models."gliner2.5-decide"]
+name = "gliner2.5-decide"
+family = "DeBERTa-v3"
+task = "classify"
+source = "fastino/GLiNER2.5-Decide@5a7adf72a23b4d311abae6ce050d7f0012bb3416"
+served = "coreml-gpu"
+
+[models."lumma-fev-0.1b"]
+name = "lumma-fev-0.1b"
+family = "Nandi decoder"
+task = "classify"
+source = "FrontiersMind/Lumma-fev-0.1b@085f4705aa860a6404d6cc3ff17de8a2969ac0f4"
+served = "coreml-ane"
+
+[models."agent-jev"]
+name = "agent-jev"
+family = "Qwen3 decoder"
+task = "classify"
+source = "aimeigaoshou/agent-jev@0e2593e6e6c0eade0700712ac13c4389aa7654cc"
+served = "coreml-gpu"
+
+[models."ms-marco-minilm-l6-v2"]
+name = "ms-marco-minilm-l6-v2"
+family = "BERT"
+task = "rerank"
+source = "cross-encoder/ms-marco-MiniLM-L6-v2@233902d25c440f23af6f7d6e94d2946bac0bee0a"
+served = "coreml-ane"

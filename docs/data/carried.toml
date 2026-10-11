@@ -1,0 +1,367 @@
+# Core ML results that exist only as tables in docs/MODELS.md, carried into
+# docs/data/models.json by tools/models_table.py until their parity reports
+# are regenerated. Each row copies a published table cell; a field the table
+# doesn't give is left out, and the generator writes it as null.
+#
+# `worst` is the worst-case cosine (embedders) or the worst |Δp|
+# (classifiers and rerankers, `error = "dp"`). `ms` is the table's median per
+# input from the grading run.
+
+[defaults]
+chip = "Apple M1 Max"
+os = "macOS 27.0"
+runtime = "Core ML"
+date = "2026-09"
+precision = "fp16"
+source = "docs/MODELS.md table (M1 Max, Sept 2026)"
+
+# Size on disk of a Core ML install: every bucket's .mlmodelc, shared by the
+# three paths, measured on the installed directory (M1 Max, October 2026).
+# Models with a benchmark run get theirs from it instead.
+[disk]
+"lfm2.5-embedding-350m" = 2029
+"laya-typed-decisions" = 3233
+
+# Embedders: "Confidence grades" table. Drift and rank flips are given for
+# the ANE only; ms is ANE (CPU).
+
+[[row]]
+model = "bge-small-en-v1.5"
+path = "coreml-ane"
+grade = "A"
+worst = 0.99997
+worst_case = "empty input"
+drift = 0.002
+rank_flips = 0
+ms = 1.9
+[[row]]
+model = "bge-small-en-v1.5"
+path = "coreml-gpu"
+grade = "A"
+worst = 0.999999
+[[row]]
+model = "bge-small-en-v1.5"
+path = "coreml-cpu"
+grade = "A"
+worst = 0.99993
+ms = 7.0
+
+[[row]]
+model = "gte-modernbert-base"
+path = "coreml-ane"
+grade = "A"
+worst = 0.99992
+worst_case = "a delimiter flood"
+drift = 0.003
+rank_flips = 0
+ms = 6.4
+[[row]]
+model = "gte-modernbert-base"
+path = "coreml-gpu"
+grade = "A"
+worst = 0.99999
+[[row]]
+model = "gte-modernbert-base"
+path = "coreml-cpu"
+grade = "B"
+worst = 0.99951
+ms = 18.3
+
+[[row]]
+model = "f2llm-v2-160m"
+path = "coreml-ane"
+grade = "A"
+worst = 0.99999
+worst_case = "a run of digits"
+drift = 0.001
+rank_flips = 0
+ms = 5.3
+[[row]]
+model = "f2llm-v2-160m"
+path = "coreml-gpu"
+grade = "A"
+worst = 0.999999
+[[row]]
+model = "f2llm-v2-160m"
+path = "coreml-cpu"
+grade = "B"
+worst = 0.99986
+ms = 13.0
+note = "CPU timing predates the StableSilu rewrite"
+
+[[row]]
+model = "embeddinggemma-300m"
+path = "coreml-ane"
+grade = "A"
+worst = 0.99999
+worst_case = "an over-length query"
+drift = 0.001
+rank_flips = 0
+ms = 8.1
+note = "Matryoshka 512, 256 and 128 also 0.99999"
+[[row]]
+model = "embeddinggemma-300m"
+path = "coreml-gpu"
+grade = "A"
+worst = 0.999998
+[[row]]
+model = "embeddinggemma-300m"
+path = "coreml-cpu"
+grade = "B"
+worst = 0.99989
+ms = 20.3
+
+[[row]]
+model = "lfm2.5-embedding-350m"
+path = "coreml-ane"
+grade = "A"
+worst = 0.99999
+worst_case = "a delimiter flood"
+drift = 0.003
+rank_flips = 0
+ms = 14.9
+[[row]]
+model = "lfm2.5-embedding-350m"
+path = "coreml-gpu"
+grade = "A"
+worst = 0.999999
+[[row]]
+model = "lfm2.5-embedding-350m"
+path = "coreml-cpu"
+grade = "B"
+worst = 0.99986
+ms = 33.8
+
+[[row]]
+model = "all-minilm-l6-v2"
+path = "coreml-ane"
+grade = "A"
+worst = 0.99992
+worst_case = "empty input"
+drift = 0.003
+rank_flips = 0
+[[row]]
+model = "all-minilm-l6-v2"
+path = "coreml-gpu"
+grade = "A"
+worst = 0.999998
+[[row]]
+model = "all-minilm-l6-v2"
+path = "coreml-cpu"
+grade = "A"
+worst = 0.99992
+
+[[row]]
+model = "e5-small-v2"
+path = "coreml-ane"
+grade = "A"
+worst = 0.99995
+worst_case = "a 255-token boundary case"
+drift = 0.002
+rank_flips = 0
+[[row]]
+model = "e5-small-v2"
+path = "coreml-gpu"
+grade = "A"
+worst = 0.999997
+[[row]]
+model = "e5-small-v2"
+path = "coreml-cpu"
+grade = "A"
+worst = 0.99995
+
+# Classifiers: the Classifiers table. Flips are decision flips; ms is the
+# ANE's.
+
+[[row]]
+model = "nlptown-sentiment"
+path = "coreml-ane"
+grade = "B"
+error = "dp"
+worst = 2.6e-3
+ms = 4.2
+note = "5-label sentiment"
+[[row]]
+model = "nlptown-sentiment"
+path = "coreml-gpu"
+grade = "A"
+error = "dp"
+worst = 6.6e-4
+[[row]]
+model = "nlptown-sentiment"
+path = "coreml-cpu"
+grade = "B"
+error = "dp"
+worst = 3.4e-3
+
+[[row]]
+model = "julia-1"
+path = "coreml-ane"
+grade = "C"
+error = "dp"
+worst = 0.116
+rank_flips = 7
+ms = 9.0
+note = "Preview; 7 flips cap it at C (1.84× its fp16 ceiling, B level)"
+[[row]]
+model = "julia-1"
+path = "coreml-gpu"
+grade = "C"
+error = "dp"
+worst = 0.053
+rank_flips = 2
+note = "Preview; 2 flips cap it at C (1.07× its fp16 ceiling, A level)"
+[[row]]
+model = "julia-1"
+path = "coreml-cpu"
+grade = "D"
+error = "dp"
+worst = 0.39
+rank_flips = 39
+note = "Preview; 5.3× its fp16 ceiling"
+
+[[row]]
+model = "laya-en"
+path = "coreml-ane"
+grade = "C"
+error = "dp"
+worst = 0.043
+rank_flips = 1
+ms = 40
+note = "One flip caps it at C (1.93× its fp16 ceiling, B level)"
+[[row]]
+model = "laya-en"
+path = "coreml-gpu"
+grade = "A"
+error = "dp"
+worst = 0.037
+note = "0.93× its fp16 ceiling"
+[[row]]
+model = "laya-en"
+path = "coreml-cpu"
+grade = "D"
+error = "dp"
+worst = 0.16
+rank_flips = 13
+note = "6.1× its fp16 ceiling"
+
+[[row]]
+model = "laya-typed-decisions"
+path = "coreml-ane"
+grade = "C"
+error = "dp"
+worst = 0.025
+ms = 40
+note = "2.14× its fp16 ceiling; 1,024 tokens"
+[[row]]
+model = "laya-typed-decisions"
+path = "coreml-gpu"
+grade = "A"
+error = "dp"
+worst = 0.034
+note = "1.02× its fp16 ceiling"
+[[row]]
+model = "laya-typed-decisions"
+path = "coreml-cpu"
+grade = "D"
+error = "dp"
+worst = 0.099
+rank_flips = 1
+note = "5.4× its fp16 ceiling"
+
+[[row]]
+model = "gliner2.5-decide"
+path = "coreml-gpu"
+grade = "A"
+error = "dp"
+worst = 3.7e-3
+note = "Served on the GPU"
+[[row]]
+model = "gliner2.5-decide"
+path = "coreml-ane"
+grade = "C"
+error = "dp"
+worst = 0.019
+ms = 1280
+ms_tokens = 512
+note = "512 bucket only"
+[[row]]
+model = "gliner2.5-decide"
+path = "coreml-cpu"
+grade = "D"
+error = "dp"
+worst = 0.024
+
+[[row]]
+model = "lumma-fev-0.1b"
+path = "coreml-ane"
+grade = "B"
+error = "dp"
+worst = 5.7e-3
+ms = 37
+note = "1.43× its fp16 ceiling; 2,048 tokens"
+[[row]]
+model = "lumma-fev-0.1b"
+path = "coreml-gpu"
+grade = "A"
+error = "dp"
+worst = 4.3e-3
+note = "0.92× its fp16 ceiling"
+[[row]]
+model = "lumma-fev-0.1b"
+path = "coreml-cpu"
+grade = "D"
+error = "dp"
+worst = 0.030
+rank_flips = 1
+note = "5.7× its fp16 ceiling; served on the CPU only up to 1,024 tokens (D33)"
+
+[[row]]
+model = "agent-jev"
+path = "coreml-gpu"
+grade = "A"
+error = "dp"
+worst = 3.7e-3
+note = "Served on the GPU; 0.84× its fp16 ceiling"
+[[row]]
+model = "agent-jev"
+path = "coreml-ane"
+grade = "B"
+error = "dp"
+worst = 5.6e-3
+rank_flips = 0
+ms = 152
+note = "Chunked (D37), an operator's option (D38); 1.44× its fp16 ceiling"
+[[row]]
+model = "agent-jev"
+path = "coreml-cpu"
+grade = "D"
+error = "dp"
+worst = 0.021
+rank_flips = 1
+note = "5.9× its fp16 ceiling; served on the CPU only up to 1,024 tokens (D33)"
+
+# Reranker: the Rerankers table. Score fidelity as |Δ sigmoid(logit)|; no
+# rank flips on any path.
+
+[[row]]
+model = "ms-marco-minilm-l6-v2"
+path = "coreml-ane"
+grade = "B"
+error = "dp"
+worst = 3.4e-3
+rank_flips = 0
+[[row]]
+model = "ms-marco-minilm-l6-v2"
+path = "coreml-gpu"
+grade = "B"
+error = "dp"
+worst = 1.3e-3
+rank_flips = 0
+[[row]]
+model = "ms-marco-minilm-l6-v2"
+path = "coreml-cpu"
+grade = "B"
+error = "dp"
+worst = 3.2e-3
+rank_flips = 0

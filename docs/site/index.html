@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidekick Model Scores</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a calibration sheet. Header with the unit legend, a filter rail, then one dense, sortable table. */
+:root {
+  --bg: #f6f7f5;
+  --surface: #ffffff;
+  --ink: #1b2321;
+  --muted: #5d6b67;
+  --rule: #dfe4e1;
+  --accent: #0f6b5c;
+  --accent-soft: #e2f0ec;
+  --bar: #0f6b5c;
+  --bar-track: #e7ecea;
+  --g-a: #1d7a4a; --g-a-bg: #e1f3e8;
+  --g-b: #2b5f9e; --g-b-bg: #e3ecf8;
+  --g-c: #9a6a00; --g-c-bg: #fbf0d4;
+  --g-d: #b24a1d; --g-d-bg: #fbe5da;
+  --g-f: #a32035; --g-f-bg: #f8dde2;
+  --font-display: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121816; --surface: #18201e; --ink: #e6ece9; --muted: #95a49f; --rule: #2a3431;
+    --accent: #5cc7b1; --accent-soft: #1d332e; --bar: #5cc7b1; --bar-track: #26302d;
+    --g-a: #7fd8a4; --g-a-bg: #18352a; --g-b: #8fb6ee; --g-b-bg: #1c2b40;
+    --g-c: #e6c068; --g-c-bg: #3a3018; --g-d: #f0a07c; --g-d-bg: #3e261b;
+    --g-f: #f28b9c; --g-f-bg: #3f1d25;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121816; --surface: #18201e; --ink: #e6ece9; --muted: #95a49f; --rule: #2a3431;
+  --accent: #5cc7b1; --accent-soft: #1d332e; --bar: #5cc7b1; --bar-track: #26302d;
+  --g-a: #7fd8a4; --g-a-bg: #18352a; --g-b: #8fb6ee; --g-b-bg: #1c2b40;
+  --g-c: #e6c068; --g-c-bg: #3a3018; --g-d: #f0a07c; --g-d-bg: #3e261b;
+  --g-f: #f28b9c; --g-f-bg: #3f1d25;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 48px; display: grid; gap: 22px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--font-data); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-family: var(--font-display); font-size: clamp(26px, 4vw, 34px); line-height: 1.15; margin: 0; font-weight: 700; text-wrap: balance; }
+.lede { margin: 0; color: var(--muted); max-width: 68ch; }
+.asof { font-family: var(--font-data); font-size: 13px; color: var(--muted); }
+.err { padding: 14px 16px; border-radius: 8px; background: var(--g-d-bg); color: var(--g-d); }
+
+.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 28px; padding-block: 14px; border-block: 1px solid var(--rule); }
+.legend div { min-width: 0; }
+.legend h2 { font-size: 12px; letter-spacing: 0.07em; text-transform: uppercase; margin: 0 0 4px; color: var(--muted); font-weight: 600; }
+.legend p { margin: 0; font-size: 14px; }
+.legend code { font-family: var(--font-data); font-size: 13px; }
+
+.controls { display: grid; gap: 12px; }
+.search { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.search input[type="search"] { flex: 1 1 260px; min-width: 0; font: inherit; padding: 9px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.search input:focus-visible, button:focus-visible, label.chip:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toggle { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; color: var(--muted); }
+.count { font-family: var(--font-data); font-size: 13px; color: var(--muted); margin-left: auto; }
+.facets { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+.facet { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.facet > span { font-size: 12px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); margin-right: 2px; font-weight: 600; }
+label.chip { position: relative; display: inline-flex; align-items: center; font-size: 13px; padding: 4px 10px; border: 1px solid var(--rule); border-radius: 999px; cursor: pointer; background: var(--surface); color: var(--muted); user-select: none; }
+label.chip input { position: absolute; opacity: 0; pointer-events: none; }
+label.chip:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+.best { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 12px; background: var(--accent-soft); border-radius: 8px; }
+.best > label[for="best"] { font-size: 12px; letter-spacing: 0.07em; text-transform: uppercase; font-weight: 600; color: var(--accent); }
+.best select { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.best select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bestnote { flex: 1 1 100%; margin: 0; font-size: 13px; color: var(--ink); min-width: 0; }
+button.reset { font: inherit; font-size: 13px; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 4px 2px; text-decoration: underline; text-underline-offset: 3px; }
+
+.table-box { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 1140px; font-size: 14px; }
+thead th { position: sticky; top: 0; background: var(--surface); text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+thead th button { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+thead th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+thead th[aria-sort="ascending"] button::after { content: "↑"; color: var(--accent); }
+thead th[aria-sort="descending"] button::after { content: "↓"; color: var(--accent); }
+tbody td { padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--accent-soft); }
+td.model { font-weight: 600; white-space: nowrap; }
+td.model small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dim { color: var(--muted); }
+.grade { display: inline-block; min-width: 26px; text-align: center; font-weight: 700; font-size: 13px; padding: 2px 7px; border-radius: 4px; }
+.g-A { color: var(--g-a); background: var(--g-a-bg); }
+.g-B { color: var(--g-b); background: var(--g-b-bg); }
+.g-C { color: var(--g-c); background: var(--g-c-bg); }
+.g-D { color: var(--g-d); background: var(--g-d-bg); }
+.g-F { color: var(--g-f); background: var(--g-f-bg); }
+.nines { display: grid; grid-template-columns: 112px auto; gap: 8px; align-items: center; }
+.bar { height: 8px; border-radius: 4px; background: var(--bar-track); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--bar); border-radius: 4px; }
+.served { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
+.prov { border-bottom: 1px dotted var(--muted); cursor: help; }
+td.note { color: var(--muted); font-size: 13px; min-width: 220px; }
+.empty { padding: 28px; text-align: center; color: var(--muted); }
+footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-width: 80ch; }
+@media (max-width: 640px) {
+  .wrap { padding-inline: 16px; }
+  .count { margin-left: 0; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bar i { transition: width 0.25s ease; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">sidekick · parity suite results</div>
+    <h1>Model scores by path, chip and runtime</h1>
+    <p class="lede">Every model sidekick has graded, on every compute path it was graded on. Accuracy compares sidekick's output with the original fp32 model on the parity suite's 51 test inputs (embedders) or its classification cases.</p>
+    <span class="asof" id="asof">Loading results…</span>
+  </header>
+
+  <section class="legend" aria-label="How to read this table">
+    <div>
+      <h2>Grade</h2>
+      <p>A to F, the parity suite's letter. Embedders: the worst cosine against fp32 (A ≥ 0.9999, B ≥ 0.999, C ≥ 0.985). Classifiers and rerankers: Core ML paths against what ideal fp16 achieves on that model, with a flipped decision capping the grade at C. F is a failed hard gate. Compare letters within a task.</p>
+    </div>
+    <div>
+      <h2>Nines</h2>
+      <p>−log₁₀ of the worst error: <code>1 − cosine</code> for embedders, the largest probability change (Δp) for classifiers and rerankers. 4 nines means 0.9999. Higher is better.</p>
+    </div>
+    <div>
+      <h2>ms / input</h2>
+      <p>Median per input from the grading run, one input at a time. Dotted values come from a machine that wasn't idle, or whose load wasn't recorded. Fixed-length benchmark timings, where they exist, are in the value's tooltip.</p>
+    </div>
+    <div>
+      <h2>Memory</h2>
+      <p>The process's own footprint once loaded, where benchmarked; hover or tap a value for how it was measured. On Apple silicon a process's count misses Neural Engine memory held by the system, so those rows also give the whole machine's change where it stood clear of noise.</p>
+    </div>
+  </section>
+
+  <section class="controls" aria-label="Filters">
+    <div class="search">
+      <input id="q" type="search" placeholder="Search models, families, notes…" aria-label="Search">
+      <label class="toggle"><input id="served" type="checkbox"> Served path only</label>
+      <button class="reset" id="reset" type="button">Clear filters</button>
+      <span class="count" id="count" aria-live="polite"></span>
+    </div>
+    <div class="best">
+      <label for="best">Best path</label>
+      <select id="best">
+        <option value="">Off: show every path</option>
+        <option value="accuracy">Most accurate</option>
+        <option value="speed">Fastest</option>
+        <option value="memory">Smallest</option>
+      </select>
+      <label class="toggle"><input id="offgpu" type="checkbox"> Keep off the GPU</label>
+      <p class="bestnote" id="bestnote" hidden></p>
+    </div>
+    <div class="facets" id="facets"></div>
+  </section>
+
+  <div class="table-box">
+    <table id="tbl">
+      <thead><tr id="head"></tr></thead>
+      <tbody id="body"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>No results match these filters.</div>
+    <div class="err" id="loaderr" hidden></div>
+  </div>
+
+  <footer>
+    <div id="sources"></div>
+    <div>Generated by <code>tools/models_table.py</code> into <code>docs/data/models.json</code> from the parity suite's reports, the benchmarks, and the Core ML tables in <code>docs/MODELS.md</code>. A value nobody measured is blank.</div>
+  </footer>
+</div>
+<script>
+(function () {
+  "use strict";
+  var rows = [], data = null;
+  var cols = [
+    { key:"name", label:"Model" },
+    { key:"task", label:"Task" },
+    { key:"path", label:"Path" },
+    { key:"precision", label:"Precision" },
+    { key:"chip", label:"Chip" },
+    { key:"runtime", label:"Runtime" },
+    { key:"grade", label:"Grade" },
+    { key:"nines", label:"Nines" },
+    { key:"err", label:"Worst error" },
+    { key:"flips", label:"Flips" },
+    { key:"ms", label:"ms / input" },
+    { key:"mem", label:"Memory" },
+    { key:"disk", label:"On disk" },
+    { key:"note", label:"Notes", nosort:true }
+  ];
+  var facetDefs = [
+    { key:"task", label:"Task" },
+    { key:"path", label:"Path" },
+    { key:"precision", label:"Precision" },
+    { key:"chip", label:"Chip" },
+    { key:"grade", label:"Grade" }
+  ];
+  var state = { q:"", served:false, best:"", offGpu:false, sort:{ key:"nines", dir:-1 }, facets:{} };
+
+  function el(tag, attrs, text) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function uniq(key) {
+    var seen = {}, out = [];
+    rows.forEach(function (r) { if (r[key] != null && !seen[r[key]]) { seen[r[key]] = 1; out.push(r[key]); } });
+    return key === "grade" ? out.sort() : out;
+  }
+
+  // One record of docs/data/models.json, shaped for the table.
+  function toRow(r) {
+    var notes = [];
+    if (r.worst_case) notes.push("Worst case: " + r.worst_case);
+    if (r.note) notes.push(r.note);
+    return {
+      model:r.model, name:r.name, family:r.family, task:r.task, path:r.path, precision:r.precision, chip:r.chip,
+      runtime:[r.runtime, r.os].filter(Boolean).join(" · "), grade:r.grade, err:r.error, errKind:r.error_kind,
+      flips:r.rank_flips, ms:r.ms, prov:r.ms != null && r.ms_idle !== true, msIdle:r.ms_idle, msSource:r.ms_source, latency:r.latency || [],
+      served:r.served, note:notes.join(". "), nines:r.error == null ? null : -Math.log10(Math.max(r.error, 1e-15)),
+      mem:r.footprint_mb, memWhy:r.footprint_measured, peak:r.peak_mb, peakWhy:r.peak_measured,
+      machine:r.machine_mb, machineWhy:r.machine_measured, disk:r.disk_mb, diskWhy:r.disk_measured,
+      date:r.date, source:r.source, matryoshka:r.matryoshka, threads:r.threads, sidekick:r.sidekick
+    };
+  }
+
+  function build() {
+    var facetsBox = document.getElementById("facets");
+    facetDefs.forEach(function (f) {
+      state.facets[f.key] = {};
+      var wrap = el("div", { "class":"facet", role:"group", "aria-label":f.label });
+      wrap.appendChild(el("span", null, f.label));
+      uniq(f.key).forEach(function (v, i) {
+        var id = "f-" + f.key + "-" + i;
+        var lab = el("label", { "class":"chip", "for":id });
+        var cb = el("input", { type:"checkbox", id:id });
+        cb.addEventListener("change", function () { state.facets[f.key][v] = cb.checked; render(); });
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(v));
+        wrap.appendChild(lab);
+      });
+      facetsBox.appendChild(wrap);
+    });
+    var head = document.getElementById("head");
+    cols.forEach(function (c) {
+      var th = el("th", { scope:"col", "data-key":c.key });
+      if (c.nosort) { th.textContent = c.label; }
+      else {
+        var b = el("button", { type:"button" }, c.label);
+        b.addEventListener("click", function () {
+          if (state.sort.key === c.key) state.sort.dir *= -1;
+          else state.sort = { key:c.key, dir:(c.key === "nines" ? -1 : 1) };
+          render();
+        });
+        th.appendChild(b);
+      }
+      head.appendChild(th);
+    });
+    document.getElementById("q").addEventListener("input", function (e) { state.q = e.target.value.trim().toLowerCase(); render(); });
+    document.getElementById("served").addEventListener("change", function (e) { state.served = e.target.checked; render(); });
+    document.getElementById("best").addEventListener("change", function (e) { state.best = e.target.value; render(); });
+    document.getElementById("offgpu").addEventListener("change", function (e) { state.offGpu = e.target.checked; render(); });
+    document.getElementById("reset").addEventListener("click", function () {
+      document.querySelectorAll("#facets input, #served, #offgpu").forEach(function (i) { i.checked = false; });
+      document.getElementById("q").value = "";
+      document.getElementById("best").value = "";
+      state.q = ""; state.served = false; state.best = ""; state.offGpu = false;
+      Object.keys(state.facets).forEach(function (k) { state.facets[k] = {}; });
+      render();
+    });
+  }
+
+  // Best path: for each model (and chip, since a path is only an option on
+  // the chip it was measured on), keep the one row that wins the chosen
+  // objective among the rows the filters leave. Missing values lose; ties
+  // go to accuracy, then speed, then size.
+  function nullLast(x, y) { if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return x - y; }
+  var objectives = {
+    speed: function (a, b) { return nullLast(a.ms, b.ms); },
+    memory: function (a, b) { return nullLast(a.disk, b.disk) || nullLast(a.mem, b.mem); }
+  };
+  objectives.accuracy = function (a, b) {
+    if (a.nines == null && b.nines == null) return 0;
+    if (a.nines == null) return 1;
+    if (b.nines == null) return -1;
+    return b.nines - a.nines;
+  };
+  function pickBest(list) {
+    var order = [state.best].concat(["accuracy", "speed", "memory"].filter(function (o) { return o !== state.best; }));
+    var groups = {};
+    list.forEach(function (r) { var k = r.model + "|" + r.chip; (groups[k] = groups[k] || []).push(r); });
+    // A D or F path is never "best" unless the grade filter asks for it.
+    var gradeChosen = Object.keys(state.facets.grade).some(function (g) { return state.facets.grade[g]; });
+    var out = [];
+    Object.keys(groups).forEach(function (k) {
+      var usable = gradeChosen ? groups[k] : groups[k].filter(function (r) { return "ABC".indexOf(r.grade) >= 0; });
+      if (!usable.length) return;
+      out.push(usable.slice().sort(function (a, b) {
+        for (var i = 0; i < order.length; i++) { var c = objectives[order[i]](a, b); if (c) return c; }
+        return 0;
+      })[0]);
+    });
+    return out;
+  }
+
+  function passes(r) {
+    if (state.served && !r.served) return false;
+    if (state.offGpu && r.path === "coreml-gpu") return false;
+    for (var k in state.facets) {
+      var on = Object.keys(state.facets[k]).filter(function (v) { return state.facets[k][v]; });
+      if (on.length && on.indexOf(String(r[k])) < 0) return false;
+    }
+    if (state.q) {
+      var hay = [r.name, r.model, r.family, r.task, r.path, r.precision, r.chip, r.runtime, r.note].join(" ").toLowerCase();
+      if (hay.indexOf(state.q) < 0) return false;
+    }
+    return true;
+  }
+  function cmp(a, b) {
+    var k = state.sort.key, d = state.sort.dir, x = a[k], y = b[k];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    if (typeof x === "number") return (x - y) * d;
+    return String(x).localeCompare(String(y)) * d;
+  }
+  function fmtErr(r) {
+    if (r.err == null) return "–";
+    var e = r.err;
+    var s = e === 0 ? "0" : e < 1e-3 ? e.toExponential(2).replace("e-", "e−") : e.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+    return (r.errKind === "1-cos" ? "1−cos " : "Δp ") + s;
+  }
+  function fmtMB(mb) {
+    if (Math.abs(mb) < 1) return "<1 MB";
+    if (mb < 0) return "~0 MB";
+    return mb >= 1000 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb) + " MB";
+  }
+  function numCell(text, title) {
+    var td = el("td", { "class":"num" });
+    if (text == null) { td.textContent = "–"; td.classList.add("dim"); return td; }
+    td.appendChild(el("span", title ? { "class":"prov", title:title } : null, text));
+    return td;
+  }
+  function memTitle(r) {
+    var parts = [];
+    if (r.mem != null) parts.push("Footprint " + fmtMB(r.mem) + " (" + r.mem + " MB): " + r.memWhy + ".");
+    if (r.peak != null) parts.push("Peak " + fmtMB(r.peak) + ": " + r.peakWhy + ".");
+    if (r.machine != null) parts.push("Whole machine " + fmtMB(r.machine) + ": " + r.machineWhy + ".");
+    return parts.join(" ");
+  }
+  function msTitle(r) {
+    var parts = [];
+    var load = r.msIdle === false ? "Measured while other work ran, so not a benchmark. " :
+      r.msIdle == null ? "The machine's load wasn't recorded, so not a benchmark. " : "Measured on an idle machine. ";
+    if (r.ms != null) parts.push(load + r.msSource +
+      (r.threads ? ", " + r.threads + " threads" : "") + ".");
+    var lat = r.latency.filter(function (e) { return e.batch === 1; });
+    if (lat.length) {
+      parts.push("Benchmarked, one input at a time: " + lat.map(function (e) {
+        return e.tokens + " tokens" + (e.threads ? " × " + e.threads + " threads" : "") + " " + e.ms + " ms (" + e.how + ")";
+      }).join("; ") + ".");
+    }
+    return parts.join(" ");
+  }
+
+  var body = document.getElementById("body"), empty = document.getElementById("empty"), count = document.getElementById("count");
+  function render() {
+    document.querySelectorAll("#head th").forEach(function (th) {
+      var k = th.getAttribute("data-key");
+      if (k === state.sort.key) th.setAttribute("aria-sort", state.sort.dir > 0 ? "ascending" : "descending");
+      else th.removeAttribute("aria-sort");
+    });
+    var list = rows.filter(passes);
+    if (state.best) list = pickBest(list);
+    list.sort(cmp);
+    var note = document.getElementById("bestnote");
+    note.hidden = !state.best;
+    var anyProv = list.some(function (r) { return r.prov; });
+    note.textContent = !state.best ? "" :
+      "Showing one path per model and chip: the " + { accuracy:"most accurate", speed:"fastest", memory:"smallest" }[state.best] +
+      " among the rows your filters allow" + (state.offGpu ? ", off the GPU" : "") + ". Paths graded D or F are left out unless you pick them in the Grade filter." +
+      (state.best === "speed" ? " Speeds are grading-run medians" + (anyProv ? ", and dotted ones were measured while other work ran, so treat this pick as provisional." : ".") : "") +
+      (state.best === "memory" ? " Uses the artifact's size on disk, then the measured footprint." : "");
+    body.textContent = "";
+    list.forEach(function (r) {
+      var tr = el("tr");
+      var tdm = el("td", { "class":"model" }, r.name);
+      if (r.served) tdm.appendChild(el("span", { "class":"served", title:"The path this build is served on by default" }, "served"));
+      tdm.appendChild(el("small", null, r.family));
+      tr.appendChild(tdm);
+      tr.appendChild(el("td", null, r.task));
+      tr.appendChild(el("td", { "class":"num" }, r.path));
+      tr.appendChild(el("td", null, r.precision));
+      tr.appendChild(el("td", null, r.chip));
+      tr.appendChild(el("td", { "class":"dim" }, r.runtime));
+      var tdg = el("td"); tdg.appendChild(el("span", { "class":"grade g-" + r.grade }, r.grade)); tr.appendChild(tdg);
+      var tdn = el("td");
+      if (r.nines == null) { tdn.textContent = "–"; tdn.className = "dim"; }
+      else {
+        var wrap = el("div", { "class":"nines" }), bar = el("div", { "class":"bar", role:"img", "aria-label":r.nines.toFixed(1) + " nines" }), fill = el("i");
+        fill.style.width = Math.min(100, r.nines / 12 * 100).toFixed(1) + "%";
+        bar.appendChild(fill); wrap.appendChild(bar); wrap.appendChild(el("span", { "class":"num" }, r.nines.toFixed(1)));
+        tdn.appendChild(wrap);
+      }
+      tr.appendChild(tdn);
+      tr.appendChild(el("td", { "class":"num dim" }, fmtErr(r)));
+      tr.appendChild(el("td", { "class":"num" }, r.flips == null ? "–" : r.flips.toLocaleString()));
+      var tdms = el("td", { "class":"num" });
+      var title = msTitle(r);
+      if (r.ms == null && !title) { tdms.textContent = "–"; tdms.classList.add("dim"); }
+      else {
+        var txt = r.ms == null ? "bench" : r.ms.toLocaleString(undefined, { maximumFractionDigits:1 });
+        tdms.appendChild(el("span", { "class":(r.prov || r.ms == null) ? "prov" : "", title:title }, txt));
+      }
+      tr.appendChild(tdms);
+      tr.appendChild(numCell(r.mem == null ? null : fmtMB(r.mem), memTitle(r)));
+      tr.appendChild(numCell(r.disk == null ? null : fmtMB(r.disk), r.diskWhy));
+      tr.appendChild(el("td", { "class":"note" }, r.note));
+      body.appendChild(tr);
+    });
+    empty.hidden = list.length > 0;
+    count.textContent = list.length + " of " + rows.length + " results";
+  }
+
+  function sources(d) {
+    var chips = {}, runtimes = {};
+    d.rows.forEach(function (r) { chips[r.chip] = 1; if (r.runtime) runtimes[r.runtime + (r.os ? " (" + r.os + ")" : "")] = 1; });
+    return "Chips: " + Object.keys(chips).sort().join(", ") + ". Runtimes: " + Object.keys(runtimes).sort().join("; ") +
+      ". Each row names its source file in the data. Timings from idle machines are plain; the others are dotted.";
+  }
+
+  fetch("data/models.json").then(function (res) {
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }).then(function (d) {
+    data = d;
+    rows = d.rows.map(toRow);
+    document.getElementById("asof").textContent = "Data as of " + d.as_of + ", sidekick " + d.sidekick + ".";
+    document.getElementById("sources").textContent = sources(d);
+    build();
+    render();
+  }).catch(function (e) {
+    document.getElementById("asof").textContent = "";
+    var box = document.getElementById("loaderr");
+    box.hidden = false;
+    box.textContent = "Couldn't load data/models.json (" + e.message + "). The page reads its results file from beside it.";
+  });
+})();
+</script>
+</body>
+</html>
