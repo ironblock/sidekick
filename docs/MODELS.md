@@ -420,20 +420,21 @@ fp32 references. The parity suite grades it as the `onnx-cpu` path.
 
 ### Accuracy
 
-Graded natively on the shipped runtimes: ONNX Runtime 1.28.3 on an Apple
-M1 Max (arm64) and 1.23.2 on an Intel Xeon W-3235 (x86-64), 51-case corpus.
-The Core ML columns are the Apple paths from the table above.
+Graded natively on the shipped runtimes, 51-case corpus: ONNX Runtime
+1.28.3 on an Apple M1 Max (macOS, arm64) and an AMD Ryzen 7 5800X (Linux,
+x86-64), and 1.23.2 on an Intel Xeon W-3235 (macOS, x86-64). The Core ML
+columns are the Apple paths from the table above.
 
-| model | onnx-cpu, M1 Max | onnx-cpu, Xeon W-3235 | Core ML CPU | Core ML GPU | Core ML ANE |
-|---|---|---|---|---|---|
-| all-MiniLM-L6-v2 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99992 | A 0.999998 | A 0.99992 |
-| bge-small-en-v1.5 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99993 | A 0.999999 | A 0.99997 |
-| gte-modernbert-base | **A** 1 − 2e-11 | **A** 1 − 2e-11 | B 0.99951 | A 0.99999 | A 0.99992 |
-| embeddinggemma-300m | **A** 1 − 3e-12 | **A** 1 − 3e-12 | B 0.99989 | A 0.999998 | A 0.99999 |
-| F2LLM-v2-160M | **A** 1 − 5e-12 | **A** 1 − 4e-12 | B 0.99986 | A 0.999999 | A 0.99999 |
-| Qwen3-Embedding-0.6B | **A** 1 − 2e-11 | **A** 1 − 2e-11 | not converted | not converted | not converted |
-| Qwen3-Embedding-0.6B, fp16 weights | **A** 1 − 2e-11 | **A** 1 − 2e-11 | | | |
-| Qwen3-Embedding-0.6B, int8 | **D** 0.406 | **D** 0.404 | | | |
+| model | onnx-cpu, M1 Max | onnx-cpu, Ryzen 7 5800X | onnx-cpu, Xeon W-3235 | Core ML CPU | Core ML GPU | Core ML ANE |
+|---|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99992 | A 0.999998 | A 0.99992 |
+| bge-small-en-v1.5 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99993 | A 0.999999 | A 0.99997 |
+| gte-modernbert-base | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | B 0.99951 | A 0.99999 | A 0.99992 |
+| embeddinggemma-300m | **A** 1 − 3e-12 | **A** 1 − 3e-12 | **A** 1 − 3e-12 | B 0.99989 | A 0.999998 | A 0.99999 |
+| F2LLM-v2-160M | **A** 1 − 5e-12 | **A** 1 − 4e-12 | **A** 1 − 4e-12 | B 0.99986 | A 0.999999 | A 0.99999 |
+| Qwen3-Embedding-0.6B | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | not converted | not converted | not converted |
+| Qwen3-Embedding-0.6B, fp16 weights | **A** 1 − 2e-11 | | **A** 1 − 2e-11 | | | |
+| Qwen3-Embedding-0.6B, int8 | **D** 0.406 | | **D** 0.404 | | | |
 
 - onnx-cpu is fp32, so it reproduces the reference to rounding: no rank
   flips and similarity drift under 3e-6 on every model. It is the most
@@ -450,7 +451,7 @@ The Core ML columns are the Apple paths from the table above.
   both grade D one input at a time (median cosine 0.86, worst 0.41 on the
   empty input; 7,500–8,700 rank flips), and batched they also fail the batch
   and pad gates, because an input's vector depends on what it is batched
-  with. The same holds on x86-64 (0.404). The backend runs any quantized
+  with. The same holds on x86-64 (0.404 on the Xeon). The backend runs any quantized
   graph one input at a time.
 
 Published ONNX exports, graded the same way: bge-small-en-v1.5's and
@@ -567,7 +568,8 @@ length, and the artifact's size on disk. Footprints repeated to within
   Core ML CPU's B on gte-modernbert, EmbeddingGemma and F2LLM, at 3–5× its
   latency on long inputs.
 - **On x86-64 macOS and Linux,** onnx-cpu is the path, at the same grades as
-  on arm64 (shipped runtime 1.23.2 on Intel macOS, 1.28.3 elsewhere).
+  on arm64 (shipped runtime 1.23.2 on Intel macOS, 1.28.3 elsewhere;
+  graded on a Xeon W-3235 and a Ryzen 7 5800X).
 - **Threads:** set `intra_op_threads` to the performance-core count (8 on an
   M1 Max), or lower to leave cores to a primary model; latency scales
   almost linearly with threads.
