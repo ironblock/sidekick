@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(
     name = "sidekickd",
-    about = "OpenAI-compatible server over Apple on-device inference (Foundation Models + ANE encoders)"
+    about = "OpenAI-compatible server for on-device embeddings, classification and chat (Apple Foundation Models, Core ML, and ONNX Runtime on the CPU)"
 )]
 struct Args {
     /// Config file (default: ~/.config/sidekick/config.toml if present)

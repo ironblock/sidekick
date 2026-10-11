@@ -1,12 +1,14 @@
 //! Core traits and types for sidekick.
 //!
 //! Sidekick runs "very small" asynchronous inference tasks (titles, tags,
-//! embeddings, extraction) on Apple Silicon, preferring the Apple Neural
-//! Engine and Apple's Foundation Models where available, with graceful
-//! degradation elsewhere. This crate holds the backend-neutral vocabulary:
-//! chat, embedding and classification traits, availability states, and the on-disk model
-//! manifest format. It is deliberately free of any Apple dependency so that
-//! consumers (and CI) can build it anywhere.
+//! embeddings, extraction) on device. On Apple silicon it prefers the
+//! Apple Neural Engine and Apple's Foundation Models; on Intel Macs and
+//! Linux it embeds on the CPU through ONNX Runtime (and, on Intel Macs,
+//! Core ML on the CPU and GPU). This crate holds the backend-neutral
+//! vocabulary: chat, embedding and classification traits, availability
+//! states, and the on-disk model manifest format. It is deliberately free
+//! of any Apple dependency so that consumers (and CI) can build it
+//! anywhere.
 
 pub mod chat;
 pub mod classify;

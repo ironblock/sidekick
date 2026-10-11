@@ -40,9 +40,9 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 
 ## ONNX Runtime
 
-- **Source:** [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime), release v1.28.3, the prebuilt `onnxruntime-<platform>-1.28.3.tgz` archives
+- **Source:** [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime), the prebuilt `onnxruntime-<platform>-<version>.tgz` archives: release v1.28.3 (`osx-arm64`, `linux-x64` and `linux-aarch64`) in the `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` release archives, and release v1.23.2 (`osx-x86_64`, the last Intel macOS build Microsoft published) in the `x86_64-apple-darwin` release archive
 - **License:** MIT License. The archive's `LICENSE` and `ThirdPartyNotices.txt` ship in each release archive as `ONNXRUNTIME_LICENSE` and `ONNXRUNTIME_THIRD_PARTY_NOTICES.txt`.
-- **What sidekick uses:** release archives include the unmodified shared library (`libonnxruntime.dylib` or `.so`) beside `sidekickd`, which loads it at startup to serve `onnx` embedding models (D40). `tools/fetch_onnxruntime.sh` fetches it and checks it against a pinned sha256. Nothing from ONNX Runtime is compiled into sidekick.
+- **What sidekick uses:** release archives include the unmodified shared library (`libonnxruntime.dylib` or `.so`) beside `sidekickd`, which loads it at startup only when an `onnx` embedding model is installed, to serve those models (D40). `tools/fetch_onnxruntime.sh` fetches it and checks it against a pinned sha256. Nothing from ONNX Runtime is compiled into sidekick.
 
 ## fast-decisions
 
