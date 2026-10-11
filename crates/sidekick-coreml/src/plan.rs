@@ -143,6 +143,7 @@ fn walk(plan: &MLComputePlan, block: &Retained<MLModelStructureProgramBlock>, su
 #[cfg(test)]
 mod tests {
     /// Whether this process runs in a virtual machine (`kern.hv_vmm_present`).
+    #[cfg(target_arch = "aarch64")]
     fn virtualized() -> bool {
         std::process::Command::new("sysctl")
             .args(["-n", "kern.hv_vmm_present"])
