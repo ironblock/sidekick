@@ -9,7 +9,7 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObjectProtocol;
 use objc2::{available, ClassType};
 use objc2_core_ml::{
-    MLComputePlan, MLGPUComputeDevice, MLModelConfiguration, MLModelStructureProgramBlock,
+    MLAllComputeDevices, MLComputePlan, MLGPUComputeDevice, MLModelConfiguration, MLModelStructureProgramBlock,
     MLNeuralEngineComputeDevice,
 };
 use objc2_foundation::{NSError, NSString, NSURL};
@@ -77,6 +77,19 @@ pub fn compute_plan(path: &Path, units: ComputeUnits) -> Result<PlanSummary> {
     rx.recv_timeout(PLAN_TIMEOUT).map_err(|_| {
         Error::Inference(format!("no compute plan for {} within {PLAN_TIMEOUT:?}", path.display()))
     })?
+}
+
+/// Whether this Mac has a Neural Engine, as Core ML lists its compute
+/// devices (macOS 14+; before that, whether it's Apple silicon). An Intel
+/// Mac has none: every plan puts every operation on the CPU or GPU there,
+/// and `cpu_and_ne` runs on the CPU.
+pub fn has_neural_engine() -> bool {
+    if !available!(macos = 14.0) {
+        return cfg!(target_arch = "aarch64");
+    }
+    unsafe { MLAllComputeDevices() }
+        .iter()
+        .any(|device| device.isKindOfClass(MLNeuralEngineComputeDevice::class()))
 }
 
 fn summarize(plan: &MLComputePlan) -> Result<PlanSummary> {

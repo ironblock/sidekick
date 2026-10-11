@@ -257,7 +257,7 @@ pub fn grade_model(
     let refs_dir = reference_dir(model, o.refs.as_deref());
     println!("\n=== {id} ({})", serde_json::to_value(m.task).ok()?.as_str()?);
     // A classifier is Core ML's: cpu, gpu and ane.
-    let worker_paths = paths_for(o, Runtime::CoreMl);
+    let worker_paths = paths_for(o, Runtime::CoreMl { ane: super::has_ane() });
     if worker_paths.is_empty() {
         println!("  SKIPPED: none of --paths runs on this model");
         return None;

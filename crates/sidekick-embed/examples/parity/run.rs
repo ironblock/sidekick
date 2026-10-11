@@ -631,11 +631,22 @@ fn default_paths() -> Vec<Path3> {
     }
 }
 
+/// Whether this Mac has a Neural Engine (an Intel Mac doesn't): without
+/// one, there's no ane path, and no ANE eligibility to gate on.
+fn has_ane() -> bool {
+    static ANE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    #[cfg(all(target_os = "macos", feature = "coreml"))]
+    return *ANE.get_or_init(sidekick_coreml::has_neural_engine);
+    #[cfg(not(all(target_os = "macos", feature = "coreml")))]
+    return *ANE.get_or_init(|| false);
+}
+
 /// What a model runs on, which decides its paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Runtime {
-    /// A Core ML embedder or classifier: cpu, gpu and ane.
-    CoreMl,
+    /// A Core ML embedder or classifier: cpu, gpu, and ane where this Mac
+    /// has a Neural Engine (`ane`).
+    CoreMl { ane: bool },
     /// An onnx model (D40): onnx-cpu, in a worker when this build has the
     /// backend (`native`), and from any `--external` results either way.
     Onnx { native: bool },
@@ -648,8 +659,9 @@ fn model_paths(asked: &[Path3], runtime: Runtime) -> (Vec<Path3>, Vec<(Path3, &'
     let (mut run, mut skip) = (Vec::new(), Vec::new());
     for &path in asked {
         match (runtime, path) {
-            (Runtime::CoreMl, Path3::OnnxCpu) => skip.push((path, "a Core ML model doesn't run on ONNX Runtime")),
-            (Runtime::CoreMl, _) => run.push(path),
+            (Runtime::CoreMl { .. }, Path3::OnnxCpu) => skip.push((path, "a Core ML model doesn't run on ONNX Runtime")),
+            (Runtime::CoreMl { ane: false }, Path3::Ane) => skip.push((path, NO_ANE)),
+            (Runtime::CoreMl { .. }, _) => run.push(path),
             (Runtime::Onnx { native: true }, Path3::OnnxCpu) => run.push(path),
             (Runtime::Onnx { native: false }, Path3::OnnxCpu) => {}
             (Runtime::Onnx { .. }, _) => skip.push((path, "an onnx model runs on onnx-cpu, not Core ML")),
@@ -658,15 +670,28 @@ fn model_paths(asked: &[Path3], runtime: Runtime) -> (Vec<Path3>, Vec<(Path3, &'
     (run, skip)
 }
 
-/// A model's worker paths, printing each `--paths` named that it can't run.
+/// Why a Core ML model's ane path is skipped on an Intel Mac.
+const NO_ANE: &str = "this Mac has no Neural Engine";
+
+/// A model's worker paths, printing each `--paths` named that it can't run,
+/// and, named or not, an ane path skipped for want of a Neural Engine.
 fn paths_for(o: &Options, runtime: Runtime) -> Vec<Path3> {
     let (run, skip) = model_paths(&o.paths, runtime);
-    if o.paths_named {
-        for (path, why) in skip {
+    for (path, why) in skip {
+        if o.paths_named || why == NO_ANE {
             println!("  {}: skipped ({why})", path.name());
         }
     }
     run
+}
+
+/// Whether a model's compute plans gate its run: only where it's served on
+/// the ANE (`cpu_and_ne` or `all`) and this Mac has one. On an Intel Mac
+/// every plan is off the ANE, and Core ML runs `cpu_and_ne` on the CPU, so
+/// a plan there says nothing about whether the model runs.
+#[cfg_attr(not(all(target_os = "macos", feature = "coreml")), allow(dead_code))]
+fn plans_gate(served_on_ane: bool, has_ane: bool) -> bool {
+    served_on_ane && has_ane
 }
 
 /// The chip, as floors name it, and the OS. On macOS, the CPU's brand
@@ -803,7 +828,8 @@ fn check_plans(
     failures: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> Plans {
-    let gated = matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All);
+    let ane_here = has_ane();
+    let gated = plans_gate(matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All), ane_here);
     let mut plans = Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() };
     for &b in buckets {
         let arts = artifacts_for(b);
@@ -822,6 +848,9 @@ fn check_plans(
                 }
                 (_, Ok(())) => format!("ANE ops {ane}/{assigned} eligible"),
                 (_, Err(e)) if gated => format!("ANE ops {ane}/{assigned} NOT ELIGIBLE: {e}"),
+                (_, Err(_)) if !ane_here => {
+                    format!("ANE ops {ane}/{assigned} (no Neural Engine on this Mac: reported, not gated)")
+                }
                 (_, Err(e)) => format!(
                     "ANE ops {ane}/{assigned} not ANE-eligible ({e}); served on {}, so reported, not gated",
                     units.name()
@@ -857,6 +886,7 @@ fn check_plans(
                 plans.ok = false;
                 failures.push(format!("bucket {b}: compute plan: {e}"));
             }
+            Err(_) if !ane_here => {}
             Err(e) => warnings.push(format!(
                 "bucket {b}: not ANE-eligible ({e}); the model is served on {}, so its plan isn't gated",
                 units.name()
@@ -1006,7 +1036,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             println!("  SKIPPED: an onnx model needs a parity build with --features onnx, or --external results");
             continue;
         }
-        let worker_paths = paths_for(&o, if onnx { Runtime::Onnx { native: native_onnx } } else { Runtime::CoreMl });
+        let worker_paths = paths_for(&o, if onnx { Runtime::Onnx { native: native_onnx } } else { Runtime::CoreMl { ane: has_ane() } });
         if worker_paths.is_empty() && external.is_empty() {
             println!("  SKIPPED: none of --paths runs on this model");
             unrunnable += 1;
@@ -1255,7 +1285,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
 
     #[cfg(all(target_os = "macos", feature = "coreml"))]
     for (models_dir, model) in &classifiers {
-        unrunnable += usize::from(model_paths(&o.paths, Runtime::CoreMl).0.is_empty());
+        unrunnable += usize::from(model_paths(&o.paths, Runtime::CoreMl { ane: has_ane() }).0.is_empty());
         if let Some((mr, pass)) = classify::grade_model(model, models_dir, &o, &expectations, &scratch) {
             graded += 1;
             ok &= pass;
@@ -1433,11 +1463,12 @@ mod tests {
     use super::*;
 
     const ONNX: Runtime = Runtime::Onnx { native: true };
+    const CORE_ML_ANE: Runtime = Runtime::CoreMl { ane: true };
 
     #[test]
     fn by_default_each_model_runs_its_own_backends_paths() {
         let paths = default_paths();
-        let (core_ml, skipped) = model_paths(&paths, Runtime::CoreMl);
+        let (core_ml, skipped) = model_paths(&paths, CORE_ML_ANE);
         let (onnx, _) = model_paths(&paths, ONNX);
         if CORE_ML {
             // Both backends in one build: a Core ML embedder or classifier
@@ -1454,16 +1485,28 @@ mod tests {
 
     #[test]
     fn a_path_a_model_cant_run_is_skipped_with_why() {
-        let (run, skip) = model_paths(&[Path3::OnnxCpu, Path3::Ane], Runtime::CoreMl);
+        let (run, skip) = model_paths(&[Path3::OnnxCpu, Path3::Ane], CORE_ML_ANE);
         assert_eq!(run, [Path3::Ane]);
         assert_eq!(skip, [(Path3::OnnxCpu, "a Core ML model doesn't run on ONNX Runtime")]);
         let (run, skip) = model_paths(&[Path3::Cpu, Path3::OnnxCpu], ONNX);
         assert_eq!(run, [Path3::OnnxCpu]);
         assert_eq!(skip, [(Path3::Cpu, "an onnx model runs on onnx-cpu, not Core ML")]);
         // Nothing it can run: no worker at all.
-        assert!(model_paths(&[Path3::OnnxCpu], Runtime::CoreMl).0.is_empty());
+        assert!(model_paths(&[Path3::OnnxCpu], CORE_ML_ANE).0.is_empty());
         // Without the backend, onnx-cpu comes from --external results only:
         // no worker, and not a skip.
         assert_eq!(model_paths(&[Path3::OnnxCpu], Runtime::Onnx { native: false }), (vec![], vec![]));
+    }
+
+    #[test]
+    fn without_a_neural_engine_a_core_ml_model_runs_cpu_and_gpu_ungated() {
+        // An Intel Mac: ane is skipped, cpu and gpu run.
+        let (run, skip) = model_paths(&[Path3::Cpu, Path3::Gpu, Path3::Ane], Runtime::CoreMl { ane: false });
+        assert_eq!(run, [Path3::Cpu, Path3::Gpu]);
+        assert_eq!(skip, [(Path3::Ane, NO_ANE)]);
+        // Plans gate only a model served on the ANE, on a Mac that has one.
+        assert!(plans_gate(true, true));
+        assert!(!plans_gate(true, false), "no Neural Engine: no ANE eligibility to gate on");
+        assert!(!plans_gate(false, true));
     }
 }
