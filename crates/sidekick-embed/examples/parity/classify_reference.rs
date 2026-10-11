@@ -147,7 +147,7 @@ impl ClassifyCase {
 /// parity corpus for fixed-label models, `fixtures/classify/<id>.corpus.toml`
 /// for zero-shot ones.
 pub fn corpus_path(manifest: &ClassifierManifest) -> PathBuf {
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let fixtures = crate::fixtures::dir();
     match manifest.task {
         ClassifyTask::TextClassification => fixtures.join("parity/corpus.toml"),
         ClassifyTask::ZeroShotClassification => {

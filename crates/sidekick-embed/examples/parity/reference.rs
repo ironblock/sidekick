@@ -59,7 +59,7 @@ pub struct Case {
 
 /// The committed corpus the references were generated from.
 pub fn corpus_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/parity/corpus.toml")
+    crate::fixtures::dir().join("parity/corpus.toml")
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -80,8 +80,9 @@ pub fn corpus_hash(text: &str) -> String {
     sha256_hex(lines.join("\n").as_bytes())
 }
 
-pub fn corpus_sha256() -> String {
-    corpus_hash(&std::fs::read_to_string(corpus_path()).expect("read fixtures/parity/corpus.toml"))
+pub fn corpus_sha256() -> Result<String, String> {
+    let path = corpus_path();
+    std::fs::read_to_string(&path).map(|text| corpus_hash(&text)).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 impl Reference {

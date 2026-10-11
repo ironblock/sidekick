@@ -94,8 +94,9 @@ pub struct Expectations {
 }
 
 impl Expectations {
+    /// `parity/expectations.toml` in the fixtures directory.
     pub fn default_path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/parity/expectations.toml")
+        crate::fixtures::dir().join("parity/expectations.toml")
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {

@@ -50,6 +50,7 @@
 mod classify_grade;
 mod classify_reference;
 mod expect;
+mod fixtures;
 mod grade;
 mod metrics;
 mod reference;

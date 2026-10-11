@@ -33,7 +33,10 @@ usage: parity [options]
   --paths LIST         compute paths, comma-separated: cpu,gpu,ane (Core ML)
                        and onnx-cpu (default: all this build can run;
                        onnx-cpu alone without Core ML)
-  --expectations FILE  default: fixtures/parity/expectations.toml
+  --fixtures DIR       the repository's fixtures/ directory (corpora,
+                       expectations); default: $SIDEKICK_FIXTURES, else
+                       ./fixtures, else the checkout this was built from
+  --expectations FILE  default: parity/expectations.toml in the fixtures
   --json FILE          also write the full report as JSON
   --suggest-floors     print [[floor]] entries for this chip from this run
   --allow-unverified-plans
@@ -508,7 +511,10 @@ struct Options {
     refs: Option<PathBuf>,
     models: Vec<String>,
     paths: Vec<Path3>,
-    expectations: PathBuf,
+    /// `--expectations`; `parity/expectations.toml` in the fixtures by default.
+    expectations: Option<PathBuf>,
+    /// `--fixtures`.
+    fixtures: Option<PathBuf>,
     json: Option<PathBuf>,
     suggest: bool,
     allow_unverified: bool,
@@ -550,7 +556,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
         // Core ML's three paths and onnx-cpu; onnx-cpu alone in a build
         // without Core ML.
         paths: if CORE_ML { Path3::ALL.into_iter().chain([Path3::OnnxCpu]).collect() } else { vec![Path3::OnnxCpu] },
-        expectations: Expectations::default_path(),
+        expectations: None,
+        fixtures: None,
         json: None,
         suggest: false,
         allow_unverified: false,
@@ -581,7 +588,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     .collect::<Result<_, _>>()?
             }
             "--external" => o.externals.push(val()?.into()),
-            "--expectations" => o.expectations = val()?.into(),
+            "--expectations" => o.expectations = Some(val()?.into()),
+            "--fixtures" => o.fixtures = Some(val()?.into()),
             "--json" => o.json = Some(val()?.into()),
             "--suggest-floors" => o.suggest = true,
             "--allow-unverified-plans" => o.allow_unverified = true,
@@ -850,9 +858,11 @@ fn spawn_worker<T: serde::de::DeserializeOwned>(
 
 fn parent(args: &[String]) -> Result<bool, String> {
     let o = parse(args)?;
-    let expectations = Expectations::load(&o.expectations)?;
+    // Before anything reads a fixture; workers inherit it.
+    crate::fixtures::init(o.fixtures.as_deref())?;
+    let expectations = Expectations::load(&o.expectations.clone().unwrap_or_else(Expectations::default_path))?;
     let (chip, macos) = machine();
-    let corpus = corpus_sha256();
+    let corpus = corpus_sha256()?;
     let scratch = std::env::temp_dir().join(format!("sidekick-parity-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
 
