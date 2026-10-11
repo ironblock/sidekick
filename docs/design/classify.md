@@ -146,11 +146,13 @@ Where sidekick deliberately differs from vLLM:
   in the background and cached; until it's known, the chat model's id.
 - `sidekick-compute-units`: the configuration the serving instance was
   loaded with: a Core ML model's `compute_units` (`cpu_and_ne` unless its
-  manifest says otherwise; see "Compute units"), `cpu` for static models.
+  manifest says otherwise; see "Compute units"), `cpu` for static and ONNX
+  models (D40).
   Chat omits it. It reports configuration, not the executing device, which
   Core ML doesn't expose.
 - `sidekick-buckets`: the sequence-length bucket each input ran in, in
   input order and comma-separated (`256,256,512`; one input gives `256`).
+  ONNX models have no buckets and don't send it.
   Each bucket is its own compiled program (D15), so this names the
   program that answered each input, the one whose placement `/v1/models`
   reports per bucket (see "Where Core ML places operations"). On

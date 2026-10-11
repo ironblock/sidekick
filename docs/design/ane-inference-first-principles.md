@@ -1,6 +1,10 @@
 # Rust + Apple Neural Engine inference — a first-principles design review
 
-*Status: research/design, July 2026. No code in this repo depends on it yet.*
+*Status: research/design, July 2026, kept as written. It predates the
+implementation: the crates that exist are listed in the README, and the
+decisions that followed are in docs/DECISIONS.md. Since v0.8.0, embedding
+models also run on ONNX Runtime's CPU backend on Intel Macs and Linux (D40),
+so sidekick is no longer Apple-silicon-only.*
 
 This document reconsiders, from scratch, the idea of a Rust-based system for running
 "very small" asynchronous inference tasks (session-title generation, tagging, embeddings,

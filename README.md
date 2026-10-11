@@ -1,23 +1,26 @@
 # sidekick
 
-On-device inference for very small, asynchronous tasks on Apple Silicon —
-session titles, tags, embeddings, classification, structured extraction —
-using every part of the silicon: Apple's Foundation Models (ANE, via Apple
-Intelligence) for generation, Core ML encoders on the Apple Neural Engine for
-embeddings and classification, and a pure-CPU static-embedding floor tier
-that works anywhere.
+On-device inference for very small, asynchronous tasks — session titles,
+tags, embeddings, classification, structured extraction. On Apple silicon it
+uses every part of the silicon: Apple's Foundation Models (via Apple
+Intelligence) for generation, and Core ML encoders on the Apple Neural Engine
+for embeddings and classification. On Intel Macs and Linux, and as a CPU
+cross-check on Apple silicon, embedding models run on ONNX Runtime's CPU
+backend under the same API (D40). A pure-CPU static-embedding floor tier
+works anywhere.
 
 The daemon, **`sidekickd`**, speaks the OpenAI API, so anything that can point
 at an OpenAI-compatible base URL (OpenCode, editors, scripts) can use it:
 
 ```
-POST /v1/chat/completions   Apple Foundation Models (macOS 26+, Apple Intelligence)
-POST /v1/embeddings         Core ML / ANE encoders + static floor models
-POST /v1/classify           Core ML / ANE classifiers (vLLM's /classify contract)
-POST /v1/rerank, /rerank    Core ML / ANE cross-encoder rerankers (vLLM's / Jina's shape)
+POST /v1/chat/completions   Apple Foundation Models (Apple silicon, macOS 26+, Apple Intelligence)
+POST /v1/embeddings         Core ML encoders (ANE on Apple silicon), ONNX Runtime CPU encoders,
+                            and static floor models
+POST /v1/classify           Core ML classifiers, on macOS (vLLM's /classify contract)
+POST /v1/rerank, /rerank    Core ML cross-encoder rerankers, on macOS (vLLM's / Jina's shape)
 POST /v2/rerank             the same, in Cohere's v2 shape
 POST /v2/embed              the embedders, in Cohere's v2 embed shape
-GET  /v1/models             what this machine can serve
+GET  /v1/models             what this machine can serve, and each model's backend
 GET  /health                availability per tier, and why when unavailable
 ```
 
@@ -27,8 +30,7 @@ autonomous implementation decisions are logged in [docs/DECISIONS.md](docs/DECIS
 
 ## Status
 
-All three inference paths are hardware-verified on Apple Silicon
-(macOS 26.5.1): the Foundation Models Swift shim (including constrained
+The Apple silicon inference paths are hardware-verified (macOS 26.5.1): the Foundation Models Swift shim (including constrained
 decoding), the static embedding tier, and the Core ML encoder tier with a
 locally converted bge-small running ANE-resident (3.4x over CPU at seq 128,
 verified via `cargo run -p sidekick-coreml --example ane_check`, which judges
@@ -52,16 +54,20 @@ and which don't, and why — is tracked with measured numbers in
 checklist. Validated so far: bge-small-en-v1.5, EmbeddingGemma-300m,
 LFM2.5-Embedding-350M, F2LLM-v2-160M, gte-modernbert-base.
 `tools/probe_activations.py` triages a candidate in minutes before any
-conversion. A parity suite (D26) grades every model on the CPU, GPU and ANE
-paths through sidekick's own code, on inputs chosen to break it. On the
-ANE, all five validated models grade A. See the confidence grades in
-[docs/MODELS.md](docs/MODELS.md).
+conversion. A parity suite (D26) grades every model through sidekick's own
+code, on inputs chosen to break it: Core ML models on the CPU, GPU and ANE
+paths, ONNX models on `onnx-cpu`. On the ANE, all five validated models
+grade A. Six embedding models' ONNX exports grade A on `onnx-cpu` on an
+M1 Max, an Intel Xeon W-3235 (macOS) and two x86-64 Linux machines. See the
+confidence grades in [docs/MODELS.md](docs/MODELS.md).
 
 Embeddings are also available in-process via `libsidekick.dylib`
 (`cargo build --release -p sidekick-embed-ffi`) for hosts that can't or
 don't want to run the daemon — see
 [docs/INTEGRATING.md](docs/INTEGRATING.md) for the daemon → dylib →
-fallback probe chain.
+fallback probe chain. It serves Core ML and static models; it's built
+without ONNX Runtime, so it skips ONNX models, and it ships in the Apple
+silicon archive.
 
 ## Supported platforms
 
@@ -80,13 +86,20 @@ same model the same way on every platform.
 ## Quickstart
 
 ```sh
-cargo build --release -p sidekick-server --features coreml   # on a Mac
+cargo build --release -p sidekick-server --features coreml,onnx   # on a Mac
 ./target/release/sidekickd --models-dir ~/Library/Application\ Support/sidekick/models
 curl -s localhost:8790/health | jq
 ```
 
-Chat requires macOS 26+ with Apple Intelligence enabled; `/health` tells you
-where you stand. Embeddings require at least one model in the models
+On Linux, build with `--features onnx` only. A source build serving ONNX
+models needs the pinned ONNX Runtime: `tools/fetch_onnxruntime.sh <dir>`
+fetches and checks it, and `onnx_runtime` in the config (or
+`ORT_DYLIB_PATH`) points at it. Release archives ship `sidekickd` with the
+runtime beside it, for all four targets.
+
+Chat requires an Apple silicon Mac on macOS 26+ with Apple Intelligence
+enabled; Intel Macs and Linux get a 503 from `/v1/chat/completions`.
+`/health` tells you where you stand. Embeddings require at least one model in the models
 directory (see below). Requests degrade honestly: a missing tier is a 503
 with a reason, never a hang.
 
@@ -112,6 +125,10 @@ path), then `launchctl load ~/Library/LaunchAgents/dev.sidekick.sidekickd.plist`
 
 Foundation Models requires a logged-in user session (it is Apple
 Intelligence), so a LaunchAgent — not a LaunchDaemon — is the right unit.
+To serve ONNX models, keep `libonnxruntime.dylib` beside the binary (copy
+both from the release archive) or set `onnx_runtime` in the config:
+launchd doesn't pass a shell's `ORT_DYLIB_PATH`. On Linux, run `sidekickd`
+under your service manager.
 
 ### Example: OpenCode session titles
 
@@ -225,7 +242,8 @@ Inference responses (every route above) carry provenance headers:
 `sidekick-version`, `sidekick-model` (`<id>@<revision>` when the manifest
 records the source revision; for chat, the Foundation Models variant) and
 `sidekick-compute-units` (a Core ML model's configured compute units,
-`cpu_and_ne` by default; `cpu` for static ones). Core ML responses also
+`cpu_and_ne` by default; `cpu` for static and ONNX models). Core ML
+responses also
 carry `sidekick-buckets`: the sequence-length bucket, so the compiled
 program, each input ran in, in input order (`256,256,512`; a rerank pair
 is one input). Each bucket's placement on the ANE, GPU and CPU is in the
@@ -249,7 +267,8 @@ See [examples/manifests/](examples/manifests/) for annotated manifests
 that matter: Core ML models must declare enumerated sequence-length `buckets`
 (fixed shapes are what keep the model on the ANE), and `matryoshka` declares
 which `dimensions` values the OpenAI API may request. A Core ML model loads
-for the ANE (`.cpuAndNeuralEngine`) unless its manifest names other
+for the ANE (`.cpuAndNeuralEngine`; on an Intel Mac, which has none, Core ML
+runs it on the CPU) unless its manifest names other
 `compute_units` (`cpu_and_gpu`, `cpu_only` or `all`), for a model the ANE
 runs badly; `/v1/models` lists each model's (see "Compute units" in
 [docs/design/classify.md](docs/design/classify.md)). A manifest that doesn't
@@ -258,15 +277,18 @@ parse or validate is skipped with a warning, and listed with the reason under
 
 **ONNX models on the CPU.** An embedder may instead be an ONNX graph run by
 ONNX Runtime on the CPU (`backend = "onnx"`, D40), on any platform sidekick
-builds for. It's sidekick's own export with pooling inside the graph, or a
-published export whose `last_hidden_state` sidekick pools (`mean`, `cls`
-or `last_token`). An ONNX build keeps the model's id, so clients address
+builds for. Whether it's sidekick's own export (`--format onnx`) or a
+published one, the graph outputs token-level `last_hidden_state`, which
+sidekick pools (`mean`, `cls` or `last_token`); a head that does more than
+pooling, such as EmbeddingGemma's, stays in the graph, and its manifest says
+`pooling = "none"`. An ONNX build keeps the model's id, so clients address
 the same model everywhere. The daemon needs the `onnx` cargo feature and
 ONNX Runtime (1.28.3, or 1.23.2 on Intel macOS). Release archives ship
 `libonnxruntime` beside `sidekickd`. To use an existing install, name
 the library with `onnx_runtime` in the config (the way under launchd),
-or `ORT_DYLIB_PATH`. The daemon looks there first, then beside itself,
-and nowhere else. The runtime loads at startup only when there's an
+or `ORT_DYLIB_PATH`. The daemon checks `onnx_runtime`, then
+`ORT_DYLIB_PATH`, then the library beside itself, and never searches system
+paths. The runtime loads at startup only when there's an
 onnx model. If it's missing, the onnx models are skipped with the reason
 and everything else serves. Each manifest's
 graph is checked against its `[io]` when the directory is scanned.
@@ -339,7 +361,8 @@ macOS 27.0 (numbers are approximate: system-wide counters move with
 everything else the machine runs):
 
 - **Models load lazily.** A model loads on its first request, and each of
-  its sequence-length buckets, its own compiled program, loads the first
+  a Core ML model's sequence-length buckets, its own compiled program, loads
+  the first
   time an input needs it. Loading the model checks every bucket's artifact
   from its description, and keeps none of them resident. A short-input
   workload never loads the large buckets, and a long-input one never loads
@@ -381,6 +404,12 @@ everything else the machine runs):
   (seconds, from the compiled cache) the next time the model is used.
   sidekickd's footprint shrinks over the following seconds rather than at
   once, as Core ML releases what it held.
+- **ONNX models hold their weights in sidekickd's own memory.** They have
+  no buckets, and where Core ML maps weights from the file, ONNX Runtime
+  loads them: about +0.9 GB for gte-modernbert and +1.7 GB for
+  Qwen3-Embedding-0.6B in fp32. An fp16-weight export halves the file but
+  not the memory, since its weights are upcast when loaded. See the
+  `onnx-cpu` section of [docs/MODELS.md](docs/MODELS.md).
 
 ## Workspace layout
 
@@ -389,9 +418,9 @@ everything else the machine runs):
 | `sidekick-core` | Backend-neutral traits and types: `ChatBackend`, `Embedder`, `Classifier`, availability states, model manifests and registry. No Apple dependencies. |
 | `sidekick-coreml` | Small safe wrapper over `objc2-core-ml`: load, compute units, int32-in/float-out predictions. macOS only; empty stub elsewhere. |
 | `sidekick-fm` | Foundation Models backend: Swift C-ABI shim built by `build.rs` (macOS 26.4+ SDK; 27 SDK for the macOS 27 features), guided generation from JSON Schema, TTL'd session reuse keyed by conversation prefix. Stub elsewhere. |
-| `sidekick-embed` | Encoder pipelines: Core ML/ANE embedders and classifiers (feature `coreml`), laya's input format, and the static floor tier. |
+| `sidekick-embed` | Encoder pipelines: Core ML/ANE embedders and classifiers (feature `coreml`), ONNX Runtime CPU embedders (feature `onnx`), laya's input format, and the static floor tier. |
 | `sidekick-server` | `sidekickd`, the OpenAI-compatible daemon. |
-| `sidekick-embed-ffi` | `libsidekick.dylib`, the C ABI for in-process embeddings. |
+| `sidekick-embed-ffi` | `libsidekick.dylib`, the C ABI for in-process embeddings (Core ML and static models; built without ONNX support). |
 
 ## Development
 
@@ -399,7 +428,9 @@ everything else the machine runs):
 cargo test --workspace                 # runs anywhere, including Linux
 cargo check --workspace --target aarch64-apple-darwin --features sidekick-embed/coreml
 # On a Mac with converted models and references (docs/MODELS.md):
-cargo run --release -p sidekick-embed --features coreml --example parity
+cargo run --release -p sidekick-embed --features coreml,onnx --example parity
+# ONNX models only, on any OS (needs ORT_DYLIB_PATH):
+cargo run --release -p sidekick-embed --features onnx --example parity
 ```
 
 The second command is the cross-check CI uses to keep the macOS-only code
