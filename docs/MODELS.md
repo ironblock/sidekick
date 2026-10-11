@@ -18,7 +18,10 @@ A sortable, filterable view of these results, by model, path, precision,
 chip and runtime, is at
 [ironblock.github.io/sidekick](https://ironblock.github.io/sidekick/),
 built from [docs/data/models.json](data/models.json) by
-`tools/models_table.py`.
+`tools/models_table.py`. The same script writes this document's data
+tables (marked `generated` in the source) from that file, and CI checks
+that the two agree: to correct a number, correct its input in docs/data
+and rerun the script.
 
 Method, for every validated entry:
 - **parity** — worst-case cosine between the Core ML artifact and the fp32
@@ -278,15 +281,17 @@ delimiter lists.
 M1 Max, macOS 27.0, September 2026. sidekick serves the ANE column; ms is
 the median per input, ANE (CPU).
 
+<!-- generated: coreml-grades -->
 | model | CPU | GPU | ANE: worst case | ANE: similarity drift (bias) | ANE: rank flips | ms |
 |---|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | A 0.99992 | A 0.999998 | **A** 0.99992 (empty input) | 0.003 (0.000) | 0 | not measured |
 | bge-small-en-v1.5 | A 0.99993 | A 0.999999 | **A** 0.99997 (empty input) | 0.002 (+0.001) | 0 | 1.9 (7.0) |
-| gte-modernbert-base | B 0.99951 | A 0.99999 | **A** 0.99992 (a delimiter flood) | 0.003 (0.000) | 0 | 6.4 (18.3) |
-| F2LLM-v2-160M | B 0.99986 | A 0.999999 | **A** 0.99999 (a run of digits) | 0.001 (0.000) | 0 | 5.3 (13.0) |
-| embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.1 (20.3) |
-| LFM2.5-Embedding-350M | B 0.99986 | A 0.999999 | **A** 0.99999 (a delimiter flood) | 0.003 (0.000) | 0 | 14.9 (33.8) |
-| all-MiniLM-L6-v2 | A 0.99992 | A 0.999998 | **A** 0.99992 (empty input) | 0.003 (+0.000) | 0 | not measured |
 | e5-small-v2 | A 0.99995 | A 0.999997 | **A** 0.99995 (a 255-token boundary case) | 0.002 (−0.001) | 0 | not measured |
+| gte-modernbert-base | B 0.99951 | A 0.99999 | **A** 0.99992 (a delimiter flood) | 0.003 (0.000) | 0 | 6.4 (18.3) |
+| embeddinggemma-300m | B 0.99989 | A 0.999998 | **A** 0.99999 (an over-length query) | 0.001 (0.000) | 0 | 8.1 (20.3) |
+| F2LLM-v2-160M | B 0.99986 | A 0.999999 | **A** 0.99999 (a run of digits) | 0.001 (0.000) | 0 | 5.3 (13.0) |
+| LFM2.5-Embedding-350M | B 0.99986 | A 0.999999 | **A** 0.99999 (a delimiter flood) | 0.003 (0.000) | 0 | 14.9 (33.8) |
+<!-- /generated -->
 
 - **Similarity drift** is the largest change in any pairwise similarity
   score against fp32. **Bias** is the mean signed change: LFM2.5's ANE
@@ -452,6 +457,7 @@ Threadripper 3970X (Linux, x86-64), and 1.23.2 on an Intel Xeon W-3235
 Threadripper's grades match the Ryzen's bit for bit, so they share a
 column. The Core ML columns are the Apple paths from the table above.
 
+<!-- generated: onnx-accuracy -->
 | model | onnx-cpu, M1 Max | onnx-cpu, Ryzen 7 5800X and Threadripper 3970X | onnx-cpu, Xeon W-3235 | Core ML CPU | Core ML GPU | Core ML ANE |
 |---|---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99992 | A 0.999998 | A 0.99992 |
@@ -462,6 +468,7 @@ column. The Core ML columns are the Apple paths from the table above.
 | Qwen3-Embedding-0.6B | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | not converted | not converted | not converted |
 | Qwen3-Embedding-0.6B, fp16 weights | **A** 1 − 2e-11 | | **A** 1 − 2e-11 | | | |
 | Qwen3-Embedding-0.6B, int8 | **D** 0.406 | | **D** 0.404 | | | |
+<!-- /generated -->
 
 - onnx-cpu is fp32, so it reproduces the reference to rounding: no rank
   flips on any model or machine, and similarity drift at most 2.3e-6
@@ -505,6 +512,7 @@ with the load average recorded per run: 5–10 at rest, rising to about 20
 during the longest onnx-cpu runs from their own threads. Core ML runs a
 length in the smallest bucket that fits it, padded. ms per input:
 
+<!-- generated: latency -->
 | model | tokens | onnx-cpu (fp32) | Core ML CPU (fp16) | Core ML GPU | Core ML ANE |
 |---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | 16 / 64 / 256 | 2.0 / 5.4 / 19.3 | 1.4 / 1.4 / 5.3 | 2.0 / 2.0 / 2.7 | 0.8 / 0.9 / 2.9 |
@@ -512,8 +520,10 @@ length in the smallest bucket that fits it, padded. ms per input:
 | gte-modernbert-base | 16 / 64 / 256 | 15.2 / 45.4 / 178 | 18.7 / 18.1 / 32.7 | 9.7 / 9.6 / 13.6 | 6.7 / 7.9 / 17.0 |
 | embeddinggemma-300m | 16 / 64 / 256 | 16.1 / 43.7 / 161 | 19.2 / 18.7 / 36.8 | 12.0 / 11.9 / 16.1 | 7.2 / 7.2 / 15.2 |
 | F2LLM-v2-160M | 16 / 64 / 256 | 8.9 / 25.3 / 103 | 13.5 / 13.8 / 24.7 | 5.6 / 5.7 / 8.3 | 5.9 / 5.9 / 13.0 |
-| Qwen3-Embedding-0.6B | 16 / 64 / 256 | 48 / 158 / 620 | | | |
-| Qwen3-Embedding-0.6B, int8 (graded D) | 16 / 64 / 256 | 22 / 63 / 255 | | | |
+| Qwen3-Embedding-0.6B | 16 / 64 / 256 | 48.4 / 158 / 620 | | | |
+| Qwen3-Embedding-0.6B, fp16 weights | 16 / 64 / 256 | 53.5 / 179 / 617 | | | |
+| Qwen3-Embedding-0.6B, int8 (graded D) | 16 / 64 / 256 | 22.1 / 62.5 / 255 | | | |
+<!-- /generated -->
 
 - On Apple Silicon, onnx-cpu is the accurate CPU path, not the fast one.
   Core ML's fp16 CPU path is 3–5× faster at 256 tokens. At 16 tokens
@@ -533,20 +543,22 @@ length in the smallest bucket that fits it, padded. ms per input:
   cost. Median ms for one long input by intra-op threads, on four
   machines:
 
+  <!-- generated: threads -->
   | machine, model | 1 | 2 | 4 | 6 | 8 | 10 | 12 | 16 | 24 | 32 |
   |---|---|---|---|---|---|---|---|---|---|---|
   | M1 Max (8P + 2E), gte-modernbert-base | 580 | 320 | 169 | 119 | 103 | 239 | | | | |
   | M1 Max, embeddinggemma-300m | 547 | 291 | 158 | 113 | 104 | 235 | | | | |
-  | M1 Max, Qwen3-Embedding-0.6B | 2,125 | 1,114 | 583 | 427 | 358 | 638 | | | | |
-  | Ryzen 7 5800X (8 cores, 16 threads), gte-modernbert-base | 514 | 267 | 143 | 104 | 85 | | 101 | 87 | | |
+  | M1 Max, Qwen3-Embedding-0.6B | 2,125 | 1,114 | 584 | 427 | 358 | 638 | | | | |
+  | Ryzen 7 5800X (8 cores, 16 threads), gte-modernbert-base | 514 | 267 | 144 | 104 | 85 | | 101 | 87 | | |
   | Ryzen 7 5800X, embeddinggemma-300m | 476 | 256 | 140 | 99 | 83 | | 100 | 86 | | |
   | Ryzen 7 5800X, Qwen3-Embedding-0.6B | 1,861 | 947 | 501 | 358 | 277 | | 370 | 298 | | |
   | Threadripper 3970X (32 cores), gte-modernbert-base | 451 | 236 | 133 | | 117 | | 103 | 104 | 103 | 118 |
-  | Threadripper 3970X, embeddinggemma-300m | 417 | 223 | 129 | | 113 | | 120 | 112 | 106 | 137 |
+  | Threadripper 3970X, embeddinggemma-300m | 417 | 223 | 129 | | 114 | | 120 | 112 | 106 | 137 |
   | Threadripper 3970X, Qwen3-Embedding-0.6B | 1,627 | 833 | 460 | | 335 | | 303 | 277 | 294 | 339 |
   | Xeon W-3235 (12 cores, 24 threads), gte-modernbert-base | 573 | 292 | 161 | 116 | 98 | | 119 | 99 | 241 | |
   | Xeon W-3235, embeddinggemma-300m | 564 | 292 | 161 | 115 | 97 | | 112 | 108 | 187 | |
-  | Xeon W-3235, Qwen3-Embedding-0.6B | 2,132 | 1,091 | 572 | 409 | 337 | | 385 | 316 | 451 | |
+  | Xeon W-3235, Qwen3-Embedding-0.6B | 2,132 | 1,090 | 572 | 409 | 337 | | 385 | 316 | 451 | |
+  <!-- /generated -->
 
   Every row is sidekickd's onnx-cpu path through the HTTP API
   (`/v1/embeddings`, one request at a time, the median of 15) at about 290
@@ -575,19 +587,23 @@ length in the smallest bucket that fits it, padded. ms per input:
 Measured per run in a fresh process (`tools/bench_memory.py`): the
 process's own footprint (`phys_footprint`, what `footprint` and Activity
 Monitor report) before loading, after loading and after one prediction per
-length, and the artifact's size on disk. Footprints repeated to within
-1 MB across runs.
+length, and the artifact's size on disk. Where a model was measured more
+than once, footprints repeated to within 7 MB across three runs, except
+EmbeddingGemma's on onnx-cpu (2.7–3.4 GB), which the table gives as a
+range.
 
+<!-- generated: memory -->
 | model | onnx-cpu: disk | onnx-cpu: footprint | Core ML: disk (all buckets) | Core ML CPU | Core ML GPU | Core ML ANE (process) |
 |---|---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | 86 MB | +170 MB | 129 MB | +6 MB | +45 MB | +9 MB |
 | bge-small-en-v1.5 | 127 MB | +221 MB | 191 MB | +8 MB | +52 MB | +22 MB |
 | gte-modernbert-base | 569 MB | +893 MB | 856 MB | +17 MB | +150 MB | +22 MB |
-| embeddinggemma-300m | 1,174 MB | +3.0–3.5 GB | 1,764 MB | +0 MB | +470 MB | +0 MB |
+| embeddinggemma-300m | 1,174 MB | +2.7–3.4 GB | 1,764 MB | +0 MB | +471 MB | +0 MB |
 | F2LLM-v2-160M | 608 MB | +1,337 MB | 913 MB | +13 MB | +36 MB | +16 MB |
 | Qwen3-Embedding-0.6B | 2,274 MB | +1,724 MB | | | | |
 | Qwen3-Embedding-0.6B, fp16 weights | 1,138 MB | +2,685 MB | | | | |
 | Qwen3-Embedding-0.6B, int8 | 570 MB | +472 MB | | | | |
+<!-- /generated -->
 
 - onnx-cpu holds its weights in the process's own memory, often more than
   their size on disk (EmbeddingGemma's 262k-token vocabulary in fp32, plus
