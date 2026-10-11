@@ -2224,17 +2224,45 @@ threads. It is the operator's choice, like D38's compute units, not the
 converter's:
 
 ```toml
-onnx_intra_op_threads = 4          # daemon default
+onnx_intra_op_threads = 8          # daemon default: detected (below)
 
 [models."bge-small-en-v1.5"]
 intra_op_threads = 2
 ```
 
-- The default is 4, at most one less than the machine's logical CPUs.
-  `inter_op_threads` is 1: the graphs are sequential. The benchmarks
-  (#64) measure 1, 2, 4 and 8 threads for latency, and against a
-  co-located model where they can. The default may be revised from those
-  numbers.
+- The default is one thread per physical core of the machine's fastest
+  tier, so the threads never share a core (SMT) or wait on an efficiency
+  core:
+  - on macOS, `hw.perflevel0.physicalcpu` (Apple silicon's P-cores), or
+    `hw.physicalcpu` on an Intel Mac, which has no performance levels;
+  - on Linux, a hybrid Intel CPU's P-cores (`/sys/devices/cpu_core/cpus`),
+    else every physical core: unique (package, core) pairs in sysfs
+    topology, so SMT siblings count once;
+  - if neither can be read, 4, or one less than the logical CPUs if that's
+    fewer.
+
+  It is never the logical CPU count. `MAX_DEFAULT_INTRA_OP_THREADS` can
+  cap it for many-core machines, and is unset. `/health` reports the
+  default and what it was detected from (`detected: {source, cores}`).
+  The config overrides it, for every model or for one.
+  `inter_op_threads` is 1: the graphs are sequential.
+- Measured (benchmarks, #64):
+  - On an M1 Max (8 P-cores, 2 E-cores, ONNX Runtime 1.28.3, 256-token
+    inputs), 8 threads beat ONNX Runtime's own default of every core by
+    16–27%. Latency scaled almost linearly from 1 to 8 threads, so the
+    earlier default of 4 was about twice as slow as 8.
+  - On an Intel Xeon W-3235 (12 cores, 24 threads, ONNX Runtime 1.23.2,
+    290-token inputs, under a background load of 4–16, so indicative
+    only), per-input latency in ms by threads:
+
+    | threads | 4 | 8 | 12 | 16 | 24 |
+    |---|---|---|---|---|---|
+    | Qwen3-Embedding-0.6B | 572 | 337 | 385 | 317 | 451 |
+    | gte-modernbert-base | 161 | 98 | 119 | 99 | 241 |
+    | bge-small-en-v1.5 | 37 | 24 | 30 | 28 | 69 |
+
+    The 24 logical CPUs ran 1.4–2.9× slower than 8 threads. The
+    detected default there is 12.
 - Each model has one session. Concurrent requests to it take turns,
   since ONNX Runtime's `Run` holds the session (in ort 2.0.0-rc.13), and
   each uses all of the model's threads, so a model never uses more than

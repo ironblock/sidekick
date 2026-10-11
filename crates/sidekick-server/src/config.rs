@@ -56,8 +56,9 @@ pub struct Config {
     /// conversion time is reported, when the manifest has one.
     pub report_compute_plans: bool,
     /// Inference threads for each `onnx` model, unless its
-    /// `[models."<id>"]` says otherwise (D40). Default: 4, or one less than
-    /// the machine's logical CPUs if that's fewer.
+    /// `[models."<id>"]` says otherwise (D40). Default: the physical cores
+    /// of the machine's fastest tier (an Apple silicon Mac's P-cores), or
+    /// 4 if they can't be detected.
     pub onnx_intra_op_threads: Option<usize>,
     /// The ONNX Runtime library to load (`libonnxruntime.dylib` or `.so`),
     /// when the daemon has an onnx model: before `ORT_DYLIB_PATH` and the
@@ -200,8 +201,12 @@ mod tests {
         let t = c.onnx_threads().unwrap();
         assert_eq!((t.default, t.for_model("e"), t.for_model("other")), (3, 1, 3));
         let t = Config::default().onnx_threads().unwrap();
-        assert_eq!(t.default, sidekick_embed::onnx::default_intra_op_threads());
-        assert!((1..=4).contains(&t.default));
+        let detected = sidekick_embed::onnx::detected_cores();
+        assert_eq!(t.default, detected.cores, "the detected fast cores ({})", detected.source);
+        assert!(t.default >= 1);
+        if cfg!(target_os = "macos") {
+            assert_ne!(detected.source, "fallback", "a Mac reports its cores");
+        }
         // Zero would mean "all cores" to ONNX Runtime: refused.
         assert!(toml::from_str::<Config>("onnx_intra_op_threads = 0").unwrap().onnx_threads().is_err());
         assert!(toml::from_str::<Config>("[models.e]\nintra_op_threads = 0").unwrap().onnx_threads().is_err());

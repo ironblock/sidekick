@@ -309,7 +309,7 @@ load_timeout_secs = 900        # how long a request waits on its model's and buc
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
 report_compute_plans = false   # read each loaded bucket's Core ML placement live (costs a second compile)
-# onnx_intra_op_threads = 4    # inference threads per onnx model (default: 4, or logical CPUs - 1 if fewer)
+# onnx_intra_op_threads = 8    # inference threads per onnx model (default: the fastest tier's physical cores)
 # onnx_runtime = "..."         # libonnxruntime to load instead of the bundled one (before ORT_DYLIB_PATH)
 
 # Per model, by id: serve it on other compute units than its manifest names,

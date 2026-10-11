@@ -100,6 +100,8 @@ async fn the_routes_serve_an_onnx_model_on_the_cpu() {
     assert_eq!(onnx["runtime"]["source"], "ORT_DYLIB_PATH");
     assert!(onnx["runtime"]["file"].as_str().unwrap().starts_with("libonnxruntime"));
     assert_eq!(onnx["default_intra_op_threads"], 3);
+    let detected = sidekick_embed::onnx::detected_cores();
+    assert_eq!(onnx["detected"], json!({"source": detected.source, "cores": detected.cores}));
     assert_eq!(onnx["models"], json!({"tiny": {"intra_op_threads": 2, "quantized": false}}));
     assert_eq!(onnx["unmatched_thread_overrides"], json!(["ghost"]));
 }

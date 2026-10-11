@@ -200,6 +200,11 @@ fn onnx_health(state: &AppState) -> Value {
         "pinned_version": sidekick_embed::onnx::PINNED_VERSION,
         "runtime": runtime,
         "default_intra_op_threads": state.onnx_threads.default,
+        // What the built-in default is based on (D40).
+        "detected": {
+            "source": sidekick_embed::onnx::detected_cores().source,
+            "cores": sidekick_embed::onnx::detected_cores().cores,
+        },
         "models": models,
         // Thread settings that named no onnx model.
         "unmatched_thread_overrides": unmatched,
