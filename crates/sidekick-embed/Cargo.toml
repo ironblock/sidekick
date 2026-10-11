@@ -11,7 +11,8 @@ default = []
 # Core ML encoder backend (only meaningful on macOS; elsewhere it is a stub
 # that reports Unavailable).
 coreml = ["dep:sidekick-coreml"]
-# The ONNX Runtime CPU backend (D40): libonnxruntime loads at startup.
+# The ONNX Runtime CPU backend (D40). libonnxruntime isn't linked: it
+# loads at run time, and only when an onnx model is installed.
 onnx = ["sidekick-onnx/runtime"]
 
 [dependencies]
