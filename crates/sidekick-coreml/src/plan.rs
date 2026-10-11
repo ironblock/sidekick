@@ -9,7 +9,7 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObjectProtocol;
 use objc2::{available, ClassType};
 use objc2_core_ml::{
-    MLAllComputeDevices, MLComputePlan, MLGPUComputeDevice, MLModelConfiguration, MLModelStructureProgramBlock,
+    MLComputePlan, MLGPUComputeDevice, MLModel, MLModelConfiguration, MLModelStructureProgramBlock,
     MLNeuralEngineComputeDevice,
 };
 use objc2_foundation::{NSError, NSString, NSURL};
@@ -79,15 +79,19 @@ pub fn compute_plan(path: &Path, units: ComputeUnits) -> Result<PlanSummary> {
     })?
 }
 
-/// Whether this Mac has a Neural Engine, as Core ML lists its compute
-/// devices (macOS 14+; before that, whether it's Apple silicon). An Intel
-/// Mac has none: every plan puts every operation on the CPU or GPU there,
-/// and `cpu_and_ne` runs on the CPU.
+/// Whether this Mac has a Neural Engine, as Core ML lists the devices its
+/// predictions can use (macOS 14+; before that, whether it's Apple
+/// silicon). An Intel Mac has none: every plan puts every operation on the
+/// CPU or GPU there, and `cpu_and_ne` runs on the CPU.
+///
+/// A class method, sent at run time, rather than the C function
+/// `MLAllComputeDevices`: Rust links that strongly, and the Intel build
+/// declares macOS 13.4, where it doesn't exist.
 pub fn has_neural_engine() -> bool {
     if !available!(macos = 14.0) {
         return cfg!(target_arch = "aarch64");
     }
-    unsafe { MLAllComputeDevices() }
+    unsafe { MLModel::availableComputeDevices() }
         .iter()
         .any(|device| device.isKindOfClass(MLNeuralEngineComputeDevice::class()))
 }
@@ -133,5 +137,14 @@ fn walk(plan: &MLComputePlan, block: &Retained<MLModelStructureProgramBlock>, su
         for nested in unsafe { op.blocks() }.iter() {
             walk(plan, &nested, summary);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn apple_silicon_has_a_neural_engine() {
+        assert!(super::has_neural_engine());
     }
 }
