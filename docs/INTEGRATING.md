@@ -52,18 +52,19 @@ same API. What else it serves depends on the platform:
 - **The dylib** ships only in the Apple silicon archive.
 
 So the same client code runs everywhere, as long as it checks what's
-there: `/v1/models` lists each embedder's `backend` (`coreml`, `static`
-or `onnx`), and `sidekick-compute-units` reads `cpu` for ONNX models. An
-ONNX model's vectors come from a different runtime than its Core ML
-build's. Both are graded against the same fp32 reference, but don't mix
-vectors stored from the two in one index without checking their
+there: `/health`'s `backends` lists the model backends the build serves
+(`coreml`, `onnx`, `static`; `static` always), `/v1/models` lists each
+embedder's `backend`, and `sidekick-compute-units` reads `cpu` for ONNX
+models. An ONNX model's vectors come from a different runtime than its
+Core ML build's. Both are graded against the same fp32 reference, but
+don't mix vectors stored from the two in one index without checking their
 agreement in docs/MODELS.md. The daemon loads ONNX Runtime only when it
-has an onnx model. It uses the library bundled beside `sidekickd`, or
-one the config's `onnx_runtime` or `ORT_DYLIB_PATH` names, and
-`/health`'s `onnx.runtime` says which loaded, or why none did. Intel
-Macs run ONNX Runtime 1.23.2, the last release Microsoft built for them,
-where every other platform runs 1.28.3. Each platform's results are
-graded on that platform.
+has an onnx model. It uses the library bundled beside `sidekickd`, or one
+the config's `onnx_runtime` or `ORT_DYLIB_PATH` names, and `/health`'s
+`onnx.runtime` says which loaded, or why none did. Intel Macs run ONNX
+Runtime 1.23.2, the last release Microsoft built for them, where every
+other platform runs 1.28.3. Each platform's results are graded on that
+platform.
 
 How far ONNX vectors are reproducible: at a given thread count, re-runs
 are bit-identical, and so were two Linux x86-64 machines with different
