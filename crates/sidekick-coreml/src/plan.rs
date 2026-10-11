@@ -142,9 +142,23 @@ fn walk(plan: &MLComputePlan, block: &Retained<MLModelStructureProgramBlock>, su
 
 #[cfg(test)]
 mod tests {
+    /// Whether this process runs in a virtual machine (`kern.hv_vmm_present`).
+    fn virtualized() -> bool {
+        std::process::Command::new("sysctl")
+            .args(["-n", "kern.hv_vmm_present"])
+            .output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
+    }
+
     #[test]
     #[cfg(target_arch = "aarch64")]
     fn apple_silicon_has_a_neural_engine() {
-        assert!(super::has_neural_engine());
+        let ane = super::has_neural_engine();
+        // macOS VMs (CI's arm64 runners among them) don't expose the ANE to Core ML.
+        if virtualized() {
+            eprintln!("skipping: in a virtual machine, where Core ML lists no Neural Engine (found one: {ane})");
+            return;
+        }
+        assert!(ane);
     }
 }
