@@ -59,7 +59,9 @@ code, on inputs chosen to break it: Core ML models on the CPU, GPU and ANE
 paths, ONNX models on `onnx-cpu`. On the ANE, all five validated models
 grade A. Six embedding models' ONNX exports grade A on `onnx-cpu` on an
 M1 Max, an Intel Xeon W-3235 (macOS) and two x86-64 Linux machines. See the
-confidence grades in [docs/MODELS.md](docs/MODELS.md).
+confidence grades in [docs/MODELS.md](docs/MODELS.md), or browse every graded
+result, by model, path, chip and runtime, at
+[ironblock.github.io/sidekick](https://ironblock.github.io/sidekick/).
 
 Embeddings are also available in-process via `libsidekick.dylib`
 (`cargo build --release -p sidekick-embed-ffi`) for hosts that can't or
