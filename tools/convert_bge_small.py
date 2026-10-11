@@ -49,7 +49,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import coremltools as ct
 
 from sidekick_convert import cli, core, recipes, tokenizer
 from sidekick_convert.backbones import bert
@@ -90,6 +89,7 @@ class FlexibleClsWrapper(torch.nn.Module):
 
 def convert_enumerated_negative_control(model, dims, out_path):
     """One flexible-shape artifact: the configuration D15 forbids."""
+    import coremltools as ct   # here, so --format onnx runs without coremltools
     ids = torch.zeros((1, 128), dtype=torch.int32)
     ids[0, 0], ids[0, 1] = 101, 102  # [CLS] [SEP]
     mask = torch.zeros((1, 128), dtype=torch.int32)
