@@ -1,6 +1,6 @@
 [package]
 name = "sidekick-server"
-description = "sidekickd: an OpenAI-compatible server over Apple on-device inference (Foundation Models + ANE encoders)"
+description = "sidekickd: an OpenAI-compatible server for on-device embeddings, classification and chat (Apple Foundation Models, Core ML, and ONNX Runtime on the CPU)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -4,6 +4,8 @@
 //!   runs anywhere, microsecond lookups. The unconditional floor tier.
 //! - [`CoremlEmbedder`] (feature `coreml`, macOS): a Core ML encoder
 //!   (EmbeddingGemma-300m, bge-small, MiniLM, …) targeted at the ANE.
+//! - [`onnx::OnnxEmbedder`] (feature `onnx`, macOS and Linux): an ONNX
+//!   encoder run by ONNX Runtime on the CPU, one input at a time (D40).
 //! - [`CoremlClassifier`] (feature `coreml`, macOS): a Core ML classifier,
 //!   text-classification, a reranker, or zero-shot in laya's or GLiNER2's
 //!   format. Its tokenization ([`InputBuilder`], [`laya`], [`gliner2`]) is

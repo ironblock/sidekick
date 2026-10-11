@@ -1,6 +1,6 @@
 [package]
 name = "sidekick-embed"
-description = "Embedding backends for sidekick: Core ML/ANE encoders and a static CPU floor tier"
+description = "Embedding backends for sidekick: Core ML/ANE encoders, ONNX Runtime CPU encoders, and a static CPU floor tier"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
