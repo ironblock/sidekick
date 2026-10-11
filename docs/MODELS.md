@@ -608,7 +608,10 @@ length, and the artifact's size on disk. Footprints repeated to within
   on arm64 (shipped runtime 1.23.2 on Intel macOS, 1.28.3 elsewhere;
   graded on a Xeon W-3235, a Ryzen 7 5800X and a Threadripper 3970X). On
   Linux it is the only path. Intel Macs also have Core ML's CPU and GPU
-  paths, not yet graded there.
+  paths: bge-small-en-v1.5's Core ML build grades A on both on the Xeon
+  W-3235 (worst cosine 0.999998 and 0.999999); the parity suite skips the
+  ANE path on a Mac without one. Other Core ML models aren't graded there
+  yet.
 - **Threads:** the default, the fastest physical cores capped at 8, needs no
   setting. To leave cores to a primary model, lower it with `[models."<id>"]
   intra_op_threads` or, for every model, `onnx_intra_op_threads` in the
