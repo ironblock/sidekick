@@ -1,0 +1,20 @@
+[package]
+name = "sidekick-onnx"
+description = "ONNX Runtime on the CPU for sidekick: runtime lookup and lazy load, sessions, and the inference-thread rule"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# ONNX Runtime itself (D40): without it the crate is the pinned version and
+# the thread rule only, and loading the runtime reports that this build has
+# none. ort loads libonnxruntime at run time; nothing links at build time.
+runtime = ["dep:ort", "dep:libloading"]
+
+[dependencies]
+sidekick-core = { workspace = true }
+tracing = { workspace = true }
+ort = { workspace = true, optional = true }
+libloading = { workspace = true, optional = true }

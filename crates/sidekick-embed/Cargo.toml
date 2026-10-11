@@ -12,13 +12,14 @@ default = []
 # that reports Unavailable).
 coreml = ["dep:sidekick-coreml"]
 # The ONNX Runtime CPU backend (D40): libonnxruntime loads at startup.
-onnx = ["dep:ort", "dep:libloading"]
+onnx = ["sidekick-onnx/runtime"]
 
 [dependencies]
 sidekick-core = { workspace = true }
 sidekick-coreml = { workspace = true, optional = true }
-ort = { workspace = true, optional = true }
-libloading = { workspace = true, optional = true }
+# Always present: the pinned version and the thread rule, which the daemon
+# reports in every build. ort comes in only with the `onnx` feature.
+sidekick-onnx = { workspace = true }
 tokenizers = { workspace = true }
 regex = { workspace = true }
 safetensors = { workspace = true }
