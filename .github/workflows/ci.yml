@@ -41,6 +41,19 @@ jobs:
         run: cargo test --workspace --features sidekick-server/onnx
       - name: Clippy with the onnx backend
         run: cargo clippy --workspace --all-targets --features sidekick-server/onnx -- -D warnings
+      - name: The Linux onnx build pulls in no Core ML
+        run: |
+          if cargo tree -p sidekick-server --features onnx -e normal | grep -E 'sidekick-coreml|objc2'; then
+            echo "::error::the Linux onnx build depends on Core ML crates"
+            exit 1
+          fi
+      - name: The parity suite grades onnx-cpu here
+        # A build with the onnx feature alone grades onnx models on any OS.
+        # tiny-onnx's parity model has a committed reference over the whole
+        # corpus, so this needs no downloads; no floors exist for CI chips.
+        run: |
+          cargo build --release -p sidekick-embed --features onnx --example parity
+          ./target/release/examples/parity --models-dir crates/sidekick-embed/tests/fixtures/tiny-onnx
       - name: Cross-check macOS-only code compiles
         if: matrix.runner == 'ubuntu-24.04'
         run: cargo check --workspace --target aarch64-apple-darwin --features sidekick-embed/coreml

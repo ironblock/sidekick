@@ -12,6 +12,11 @@ Writes crates/sidekick-embed/tests/fixtures/tiny-onnx/:
   [batch, 8], pooled in the graph.
 - `tokenizer.json`: a word-level tokenizer over the 12 ids, splitting on
   spaces only, for tools/smoke_launch.sh's test model;
+- `parity-model/`: `hidden.onnx` as an onnx model the parity suite can
+  grade, with a tokenizer that wraps each input in [CLS] ... [SEP], and
+  its reference over the parity corpus in `parity/` (the format
+  tools/parity_reference.py writes, numpy as the oracle). CI runs the
+  suite on it on Linux, where no Core ML model exists;
 - `expected.json`: for fixed id sequences, numpy's unit-normalized
   vectors for each pooling the Rust side applies (mean, cls, last_token)
   to `hidden`, and for `pooled`. numpy computes the same function
@@ -21,6 +26,7 @@ Built with the onnx package alone (onnx 1.18), from seeded weights, so the
 bytes are reproducible: `python tools/make_onnx_test_models.py [out_dir]`.
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -178,7 +184,99 @@ def main():
     with open(os.path.join(out, "expected.json"), "w") as f:
         json.dump({"cases": expected}, f, indent=1)
         f.write("\n")
-    print(f"wrote {out}: hidden.onnx, pooled.onnx, expected.json ({len(expected)} cases)")
+    parity_model(out, w)
+    print(f"wrote {out}: hidden.onnx, pooled.onnx, expected.json ({len(expected)} cases), parity-model/")
+
+
+PARITY_MAX_SEQ_LEN = 64
+
+
+def parity_model(out, w):
+    """`hidden.onnx` as a gradable onnx model, and its parity reference.
+
+    Each case is materialized as tools/parity_reference.py does, and its ids
+    are what the tokenizer below gives, truncated to the model's 64 tokens
+    keeping [SEP], as sentence-transformers truncates. The vectors are
+    numpy's encoder (CLS pooling, unit-normalized)."""
+    import struct
+    import tomllib
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from parity_reference import FORMAT, corpus_hash, materialize, target_length
+
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    model_dir = os.path.join(out, "parity-model")
+    os.makedirs(os.path.join(model_dir, "parity"), exist_ok=True)
+    words = ["[UNK]", "[CLS]", "[SEP]", "a", "b", "c", "d", "e", "f", "g", "h", "i"]
+    vocab = {w: i for i, w in enumerate(words)}
+    special = lambda t: {"id": t, "ids": [vocab[t]], "tokens": [t]}  # noqa: E731
+    template = [{"SpecialToken": {"id": "[CLS]", "type_id": 0}}, {"Sequence": {"id": "A", "type_id": 0}},
+                {"SpecialToken": {"id": "[SEP]", "type_id": 0}}]
+    tokenizer = {
+        "version": "1.0", "truncation": None, "padding": None, "added_tokens": [], "normalizer": None,
+        "pre_tokenizer": {"type": "WhitespaceSplit"},
+        "post_processor": {"type": "TemplateProcessing", "single": template,
+                           "pair": template + [{"Sequence": {"id": "B", "type_id": 1}},
+                                               {"SpecialToken": {"id": "[SEP]", "type_id": 1}}],
+                           "special_tokens": {"[CLS]": special("[CLS]"), "[SEP]": special("[SEP]")}},
+        "decoder": None,
+        "model": {"type": "WordLevel", "vocab": vocab, "unk_token": "[UNK]"},
+    }
+    tokenizer_bytes = (json.dumps(tokenizer, indent=1) + "\n").encode()
+    with open(os.path.join(model_dir, "tokenizer.json"), "wb") as f:
+        f.write(tokenizer_bytes)
+    with open(os.path.join(model_dir, "manifest.toml"), "w") as f:
+        f.write(
+            "# hidden.onnx (one directory up) as an onnx model for the parity suite: its\n"
+            "# reference is in parity/. Built by tools/make_onnx_test_models.py.\n\n"
+            'id = "tiny-onnx"\nbackend = "onnx"\nartifact = "../hidden.onnx"\ntokenizer = "tokenizer.json"\n'
+            f'dims = {D}\npooling = "cls"\nmax_seq_len = {PARITY_MAX_SEQ_LEN}\n\n[io]\n'
+            'input_ids = "input_ids"\nattention_mask = "attention_mask"\ntoken_type_ids = "token_type_ids"\n'
+            'position_ids = "position_ids"\noutput = "last_hidden_state"\n'
+        )
+
+    def encode(text):
+        ids = [vocab["[CLS]"]] + [vocab.get(t, vocab["[UNK]"]) for t in text.split()] + [vocab["[SEP]"]]
+        if len(ids) > PARITY_MAX_SEQ_LEN:
+            ids = ids[: PARITY_MAX_SEQ_LEN - 1] + [vocab["[SEP]"]]
+        return ids
+
+    corpus_bytes = open(os.path.join(root, "fixtures", "parity", "corpus.toml"), "rb").read()
+    corpus = tomllib.loads(corpus_bytes.decode())
+    filler = corpus["filler"]["text"].split()
+    buckets = [16, 32, PARITY_MAX_SEQ_LEN]
+    count = lambda text: len(text.split()) + 2  # noqa: E731
+    cases, vectors = [], []
+    for case in corpus["case"]:
+        purpose = case.get("purpose", "document")
+        text = materialize(filler, "", target_length(case["length"], buckets), count) if "length" in case else case["text"]
+        ids = encode(text)
+        h = numpy_hidden(w, ids, True)
+        cases.append({"id": case["id"], "purpose": purpose, "tags": case.get("tags", []), "text": text, "ids": ids})
+        vectors.append(np.array(unit(h[0]), np.float32))
+    meta = {
+        "format": FORMAT,
+        "corpus_sha256": corpus_hash(corpus_bytes.decode()),
+        "model": {"id": "tiny-onnx", "dims": D, "buckets": buckets, "max_seq_len": PARITY_MAX_SEQ_LEN,
+                  "prefixes": {"query": "", "document": ""}},
+        "source": {"id": "tools/make_onnx_test_models.py", "revision": None},
+        "tokenizer_sha256": hashlib.sha256(tokenizer_bytes).hexdigest(),
+        "prompt_source": {"query": "manifest", "document": "manifest"},
+        "pooling": "cls",
+        "oracles": ["torch"],
+        "versions": {"numpy": np.__version__, "onnx": onnx.__version__},
+        "cases": cases,
+    }
+    with open(os.path.join(model_dir, "parity", "reference.json"), "w") as f:
+        json.dump(meta, f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    # safetensors, one F32 tensor "torch" [cases, dims]: numpy is the oracle
+    # here; the suite names its reference oracle "torch".
+    data = np.stack(vectors).astype("<f4").tobytes()
+    header = json.dumps({"torch": {"dtype": "F32", "shape": [len(cases), D], "data_offsets": [0, len(data)]}})
+    header += " " * (-len(header) % 8)
+    with open(os.path.join(model_dir, "parity", "reference.safetensors"), "wb") as f:
+        f.write(struct.pack("<Q", len(header)) + header.encode() + data)
 
 
 if __name__ == "__main__":

@@ -28,7 +28,9 @@
 //! An `onnx` model (D40) is graded on ONNX Runtime's CPU instead, as the
 //! `onnx-cpu` path: natively when the suite is built with `--features
 //! onnx` (and ORT_DYLIB_PATH names the runtime), and from results written
-//! by tools/onnx_parity.py through `--external`, as a cross-check.
+//! by tools/onnx_parity.py through `--external`, as a cross-check. A build
+//! with `--features onnx` alone runs on any OS, Linux included: it grades
+//! onnx models and lists Core ML models as skipped.
 //!
 //! ```sh
 //! cargo run --release -p sidekick-embed --features coreml[,onnx] --example parity -- \
@@ -40,29 +42,31 @@
 //! The pure logic (metrics, grading, reference and expectation parsing) is
 //! unit-tested on every platform by `cargo test`.
 
-// The live runner exists only on macOS with the coreml feature; elsewhere,
-// and under the test harness, the grading code is exercised by unit tests.
-#![cfg_attr(
-    any(test, not(all(target_os = "macos", feature = "coreml"))),
-    allow(dead_code)
-)]
+// The live runner needs Core ML (macOS, the coreml feature) or ONNX
+// Runtime (the onnx feature, any OS). The grading code is exercised by unit
+// tests everywhere; without Core ML its classifier half has no runner.
+#![cfg_attr(any(test, not(all(target_os = "macos", feature = "coreml"))), allow(dead_code))]
 
 mod classify_grade;
 mod classify_reference;
 mod expect;
+mod fixtures;
 mod grade;
 mod metrics;
 mod reference;
-#[cfg(all(target_os = "macos", feature = "coreml"))]
+#[cfg(any(all(target_os = "macos", feature = "coreml"), feature = "onnx"))]
 mod run;
 
-#[cfg(all(target_os = "macos", feature = "coreml"))]
+#[cfg(any(all(target_os = "macos", feature = "coreml"), feature = "onnx"))]
 fn main() {
     std::process::exit(run::main());
 }
 
-#[cfg(not(all(target_os = "macos", feature = "coreml")))]
+#[cfg(not(any(all(target_os = "macos", feature = "coreml"), feature = "onnx")))]
 fn main() {
-    eprintln!("the parity suite runs Core ML models: build it on macOS with --features coreml");
+    eprintln!(
+        "the parity suite runs Core ML models (on macOS, --features coreml) or ONNX models (--features onnx): \
+         build it with one"
+    );
     std::process::exit(2);
 }

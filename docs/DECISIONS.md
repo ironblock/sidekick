@@ -2431,7 +2431,13 @@ result. Each input runs alone and unpadded, as the daemon runs it, so
 there are no bucket or pad comparisons. If batching is ever enabled, the
 bucket check becomes a length check, the same input run padded to longer
 lengths. A copy of the references and a parity build grade any machine,
-an Intel Mac included, with no Python or torch there.
+an Intel Mac included, with no Python or torch there. A build with the
+`onnx` feature alone runs on any OS, Linux included. It grades onnx
+models on `onnx-cpu`, which is then its only path, lists Core ML models
+as skipped, and names the chip by `/proc/cpuinfo`'s model name, as floors
+do. CI grades the tiny test graph that way on x86-64 and arm64 Linux,
+against a reference over the whole corpus that is built with numpy and
+committed beside it.
 
 `tools/onnx_parity.py` (the ONNX export work) writes the same result from
 Python's onnxruntime, and `parity --external FILE` grades it beside the

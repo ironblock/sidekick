@@ -5,6 +5,7 @@
 //! or a stuck ANE compile then costs one cell of the report, not the whole
 //! run.
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 mod classify;
 
 use crate::expect::{Expectations, Path3};
@@ -14,7 +15,9 @@ use crate::reference::{corpus_sha256, sha256_hex, Reference};
 use serde::Serialize;
 use sidekick_core::manifest::{ModelRegistry, ResolvedClassifier, ResolvedModel};
 use sidekick_core::{EmbedPurpose, Embedder, EmbeddingBackendKind};
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 use sidekick_coreml::{compute_plan, ComputeUnits, PlanSummary};
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 use sidekick_embed::CoremlEmbedder;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -27,8 +30,13 @@ usage: parity [options]
   --refs DIR           references as DIR/<model id>/reference.* (default:
                        <model dir>/parity/)
   --model ID           only this model (repeatable)
-  --paths LIST         compute paths, comma-separated: cpu,gpu,ane (default all)
-  --expectations FILE  default: fixtures/parity/expectations.toml
+  --paths LIST         compute paths, comma-separated: cpu,gpu,ane (Core ML)
+                       and onnx-cpu (default: all this build can run;
+                       onnx-cpu alone without Core ML)
+  --fixtures DIR       the repository's fixtures/ directory (corpora,
+                       expectations); default: $SIDEKICK_FIXTURES, else
+                       ./fixtures, else the checkout this was built from
+  --expectations FILE  default: parity/expectations.toml in the fixtures
   --json FILE          also write the full report as JSON
   --suggest-floors     print [[floor]] entries for this chip from this run
   --allow-unverified-plans
@@ -58,11 +66,16 @@ const MEASURE_ALL: sidekick_core::ScanOptions = sidekick_core::ScanOptions {
     ignore_cpu_seq_cap: true,
 };
 
+/// Why a Core ML path or model can't run in this build.
+#[cfg_attr(all(target_os = "macos", feature = "coreml"), allow(dead_code))]
+const CORE_ML_BUILD: &str = "Core ML runs in a parity build on macOS with --features coreml";
+
 /// Cases re-run in a second ANE process to check determinism across loads.
 const DETERMINISM_CASES: usize = 8;
 
 pub fn main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(all(target_os = "macos", feature = "coreml"))]
     if args.first().map(String::as_str) == Some("--plan") {
         return match plan_child(&args[1..]) {
             Ok(()) => 0,
@@ -91,6 +104,7 @@ pub fn main() -> i32 {
     }
 }
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 fn units(path: Path3) -> ComputeUnits {
     match path {
         Path3::Cpu => ComputeUnits::CpuOnly,
@@ -114,6 +128,7 @@ fn load_model(models_dir: &Path, id: &str) -> Result<ResolvedModel, String> {
 
 // ---- compute plans ---------------------------------------------------------
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 /// `--plan <artifact> <out.json>`: one compute plan, read in its own
 /// process so that a crash inside Core ML can't take the suite down.
 fn plan_child(args: &[String]) -> Result<(), String> {
@@ -132,6 +147,7 @@ fn plan_child(args: &[String]) -> Result<(), String> {
     std::fs::write(out, json.to_string()).map_err(|e| e.to_string())
 }
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 /// Where Core ML caches compiled bundles for this executable.
 fn bundle_cache() -> String {
     let exe = std::env::current_exe()
@@ -141,6 +157,7 @@ fn bundle_cache() -> String {
     format!("~/Library/Caches/{exe}/com.apple.e5rt.e5bundlecache")
 }
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 /// One plan read in a child process. `Ok(None)`: Core ML produced no plan
 /// (every operation unassigned, or "internal failure").
 fn read_plan_once(
@@ -171,6 +188,7 @@ fn read_plan_once(
     Ok((plan.assigned() > 0).then_some(plan))
 }
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 /// The compute plan for `.cpuAndNeuralEngine`, and whether it had to be
 /// read from a copy.
 ///
@@ -353,7 +371,10 @@ fn worker(args: &[String]) -> Result<(), String> {
     let refs = (refs != "-").then(|| PathBuf::from(refs));
     let registry = ModelRegistry::scan_with(Path::new(models_dir), &MEASURE_ALL).map_err(|e| e.to_string())?;
     if let Ok(model) = registry.classifier(id) {
+        #[cfg(all(target_os = "macos", feature = "coreml"))]
         return classify::worker(model, refs.as_deref(), path, out, limit, bucket_mode);
+        #[cfg(not(all(target_os = "macos", feature = "coreml")))]
+        return Err(format!("{} is a Core ML classifier ({}): {CORE_ML_BUILD}", model.manifest.id, bucket_mode.name()));
     }
     let model = load_model(Path::new(models_dir), id)?;
     let reference = Reference::load(&reference_dir(&model, refs.as_deref()))?;
@@ -363,12 +384,30 @@ fn worker(args: &[String]) -> Result<(), String> {
         }
         return onnx_worker(&model, &reference, id, out, limit);
     }
+    coreml_worker(&model, &reference, id, path, out, limit)
+}
+
+#[cfg(not(all(target_os = "macos", feature = "coreml")))]
+fn coreml_worker(model: &ResolvedModel, _: &Reference, _: &str, _: Path3, _: &str, _: Option<usize>) -> Result<(), String> {
+    Err(format!("{} is a Core ML model: {CORE_ML_BUILD}", model.manifest.id))
+}
+
+/// A Core ML embedder on one compute path.
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+fn coreml_worker(
+    model: &ResolvedModel,
+    reference: &Reference,
+    id: &str,
+    path: Path3,
+    out: &str,
+    limit: Option<usize>,
+) -> Result<(), String> {
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
         .map_err(|e| e.to_string())?
         .get_vocab_size(true) as u64;
 
     let t0 = Instant::now();
-    let emb = CoremlEmbedder::load_with(&model, units(path)).map_err(|e| e.to_string())?;
+    let emb = CoremlEmbedder::load_with(model, units(path)).map_err(|e| e.to_string())?;
     let load_ms = t0.elapsed().as_secs_f64() * 1e3;
     let buckets = emb.buckets().to_vec();
     let cases = &reference.cases[..limit
@@ -455,7 +494,7 @@ fn worker(args: &[String]) -> Result<(), String> {
     }
 
     let result = WorkerResult {
-        model: id.clone(),
+        model: id.to_string(),
         path: path.name().into(),
         cases: results,
         repeat_bitwise,
@@ -472,7 +511,10 @@ struct Options {
     refs: Option<PathBuf>,
     models: Vec<String>,
     paths: Vec<Path3>,
-    expectations: PathBuf,
+    /// `--expectations`; `parity/expectations.toml` in the fixtures by default.
+    expectations: Option<PathBuf>,
+    /// `--fixtures`.
+    fixtures: Option<PathBuf>,
     json: Option<PathBuf>,
     suggest: bool,
     allow_unverified: bool,
@@ -511,8 +553,11 @@ fn parse(args: &[String]) -> Result<Options, String> {
         models_dirs: Vec::new(),
         refs: None,
         models: Vec::new(),
-        paths: Path3::ALL.to_vec(),
-        expectations: Expectations::default_path(),
+        // Core ML's three paths and onnx-cpu; onnx-cpu alone in a build
+        // without Core ML.
+        paths: if CORE_ML { Path3::ALL.into_iter().chain([Path3::OnnxCpu]).collect() } else { vec![Path3::OnnxCpu] },
+        expectations: None,
+        fixtures: None,
         json: None,
         suggest: false,
         allow_unverified: false,
@@ -535,14 +580,16 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 o.paths = val()?
                     .split(',')
                     .map(|p| match Path3::parse(p.trim()) {
-                        Some(Path3::OnnxCpu) => Err("onnx-cpu is graded from --external results".to_string()),
+                        Some(Path3::OnnxCpu) => Ok(Path3::OnnxCpu),
+                        Some(path) if !CORE_ML => Err(format!("{} is a Core ML path: {CORE_ML_BUILD}", path.name())),
                         Some(path) => Ok(path),
                         None => Err(format!("unknown path {p:?}")),
                     })
                     .collect::<Result<_, _>>()?
             }
             "--external" => o.externals.push(val()?.into()),
-            "--expectations" => o.expectations = val()?.into(),
+            "--expectations" => o.expectations = Some(val()?.into()),
+            "--fixtures" => o.fixtures = Some(val()?.into()),
             "--json" => o.json = Some(val()?.into()),
             "--suggest-floors" => o.suggest = true,
             "--allow-unverified-plans" => o.allow_unverified = true,
@@ -564,6 +611,31 @@ fn parse(args: &[String]) -> Result<Options, String> {
             .push(Path::new(&home).join("Library/Application Support/sidekick/models"));
     }
     Ok(o)
+}
+
+/// Whether this build runs Core ML paths.
+const CORE_ML: bool = cfg!(all(target_os = "macos", feature = "coreml"));
+
+/// The chip, as floors name it, and the OS. On macOS, the CPU's brand
+/// string (`Apple M1 Max`, or an Intel Mac's `Intel(R) Xeon(R) W-3235 …`)
+/// and `macOS <version> (<build>)`; on Linux, /proc/cpuinfo's model name and
+/// os-release's PRETTY_NAME with the kernel.
+fn machine() -> (String, String) {
+    if cfg!(target_os = "macos") {
+        let os = format!("macOS {} ({})", sh("sw_vers", &["-productVersion"]), sh("sw_vers", &["-buildVersion"]));
+        return (sh("sysctl", &["-n", "machdep.cpu.brand_string"]), os);
+    }
+    let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    let chip = cpuinfo
+        .lines()
+        .find_map(|l| l.strip_prefix("model name")?.split_once(':').map(|(_, v)| v.trim().to_string()))
+        .unwrap_or_else(|| sh("uname", &["-m"]));
+    let release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let name = release
+        .lines()
+        .find_map(|l| l.strip_prefix("PRETTY_NAME=").map(|v| v.trim_matches('"').to_string()))
+        .unwrap_or_else(|| "Linux".into());
+    (chip, format!("{name}, kernel {}", sh("uname", &["-r"])))
 }
 
 fn sh(cmd: &str, args: &[&str]) -> String {
@@ -609,6 +681,7 @@ struct Report {
     chip: String,
     macos: String,
     models: Vec<ModelReport>,
+    #[cfg(all(target_os = "macos", feature = "coreml"))]
     classifiers: Vec<classify::ClassifierReport>,
 }
 
@@ -621,6 +694,7 @@ struct Plans {
     buckets: Vec<BucketInfo>,
 }
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 /// A chained bucket's plan (D37): its chunks' counts summed, read from a
 /// copy if any chunk's was; `None` if any chunk has none.
 fn read_chain_plan(
@@ -648,12 +722,14 @@ fn read_chain_plan(
     Ok(Some((sum, copied)))
 }
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 /// The files' hashes, one per chunk, joined with `+`.
 fn chain_sha(artifacts: &[PathBuf], file: &str) -> Option<String> {
     let shas: Option<Vec<String>> = artifacts.iter().map(|a| file_sha(&a.join(file))).collect();
     shas.map(|s| s.join("+"))
 }
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
 /// Read and print every bucket's compute plan, before anything predicts.
 /// The plan is a gate only for a model served on the ANE (`units`
 /// `cpu_and_ne` or `all`), as the converters gate the served path: there an
@@ -782,14 +858,11 @@ fn spawn_worker<T: serde::de::DeserializeOwned>(
 
 fn parent(args: &[String]) -> Result<bool, String> {
     let o = parse(args)?;
-    let expectations = Expectations::load(&o.expectations)?;
-    let chip = sh("sysctl", &["-n", "machdep.cpu.brand_string"]);
-    let macos = format!(
-        "{} ({})",
-        sh("sw_vers", &["-productVersion"]),
-        sh("sw_vers", &["-buildVersion"])
-    );
-    let corpus = corpus_sha256();
+    // Before anything reads a fixture; workers inherit it.
+    crate::fixtures::init(o.fixtures.as_deref())?;
+    let expectations = Expectations::load(&o.expectations.clone().unwrap_or_else(Expectations::default_path))?;
+    let (chip, macos) = machine();
+    let corpus = corpus_sha256()?;
     let scratch = std::env::temp_dir().join(format!("sidekick-parity-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
 
@@ -802,14 +875,16 @@ fn parent(args: &[String]) -> Result<bool, String> {
     }
 
     let mut models: Vec<(PathBuf, ResolvedModel)> = Vec::new();
+    // Core ML models (and classifiers) this build can't run.
+    let mut skipped_core_ml: Vec<String> = Vec::new();
     for dir in &o.models_dirs {
         let reg = ModelRegistry::scan_with(dir, &MEASURE_ALL).map_err(|e| e.to_string())?;
         for m in reg.iter() {
-            let graded_backend = matches!(m.manifest.backend, EmbeddingBackendKind::Coreml | EmbeddingBackendKind::Onnx);
-            if graded_backend
-                && (o.models.is_empty() || o.models.contains(&m.manifest.id))
-            {
-                models.push((dir.clone(), m.clone()));
+            let wanted = o.models.is_empty() || o.models.contains(&m.manifest.id);
+            match m.manifest.backend {
+                EmbeddingBackendKind::Coreml if wanted && !CORE_ML => skipped_core_ml.push(m.manifest.id.clone()),
+                EmbeddingBackendKind::Coreml | EmbeddingBackendKind::Onnx if wanted => models.push((dir.clone(), m.clone())),
+                _ => {}
             }
         }
     }
@@ -818,7 +893,12 @@ fn parent(args: &[String]) -> Result<bool, String> {
         let reg = ModelRegistry::scan_with(dir, &MEASURE_ALL).map_err(|e| e.to_string())?;
         for c in reg.classifiers() {
             if o.models.is_empty() || o.models.contains(&c.manifest.id) {
-                classifiers.push((dir.clone(), c.clone()));
+                // Classifiers are Core ML models.
+                if CORE_ML {
+                    classifiers.push((dir.clone(), c.clone()));
+                } else {
+                    skipped_core_ml.push(c.manifest.id.clone());
+                }
             }
         }
     }
@@ -830,15 +910,19 @@ fn parent(args: &[String]) -> Result<bool, String> {
     for want in &o.models {
         if !models.iter().any(|(_, m)| &m.manifest.id == want)
             && !classifiers.iter().any(|(_, c)| &c.manifest.id == want)
+            && !skipped_core_ml.contains(want)
         {
             return Err(format!("model {want} not found in any --models-dir"));
         }
     }
     let has_floors = expectations.floor.iter().any(|f| f.chip == chip);
     println!(
-        "parity suite: {chip}, macOS {macos}, {} model(s)",
+        "parity suite: {chip}, {macos}, {} model(s)",
         models.len() + classifiers.len()
     );
+    if !skipped_core_ml.is_empty() {
+        println!("skipped {} Core ML model(s) ({}): {CORE_ML_BUILD}", skipped_core_ml.len(), skipped_core_ml.join(", "));
+    }
     if !has_floors {
         println!("no floors recorded for this chip: enforcing gates only, reporting accuracy");
     }
@@ -847,6 +931,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
         chip: chip.clone(),
         macos,
         models: Vec::new(),
+        #[cfg(all(target_os = "macos", feature = "coreml"))]
         classifiers: Vec::new(),
     };
     let mut ok = true;
@@ -924,8 +1009,10 @@ fn parent(args: &[String]) -> Result<bool, String> {
         // Compute plans first, on every bucket, before anything predicts:
         // an artifact the ANE rejects can abort the process at predict. An
         // onnx model has none.
+        let no_plans = || Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() };
+        #[cfg(all(target_os = "macos", feature = "coreml"))]
         let plans = if onnx {
-            Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() }
+            no_plans()
         } else {
             check_plans(
                 id,
@@ -938,6 +1025,9 @@ fn parent(args: &[String]) -> Result<bool, String> {
                 &mut mr.warnings,
             )
         };
+        // Without Core ML, only onnx models get here.
+        #[cfg(not(all(target_os = "macos", feature = "coreml")))]
+        let plans = no_plans();
         mr.buckets = plans.buckets;
         let (plan_ok, unverified) = (plans.ok, plans.unverified);
         if !plan_ok {
@@ -948,13 +1038,15 @@ fn parent(args: &[String]) -> Result<bool, String> {
         }
 
         let mut results: Vec<(Path3, WorkerResult)> = Vec::new();
-        let onnx_cpu = [Path3::OnnxCpu];
-        let worker_paths: &[Path3] = match (onnx, native_onnx) {
-            (false, _) => &o.paths,
-            (true, true) => &onnx_cpu,
-            (true, false) => &[],
-        };
-        for &path in worker_paths {
+        // A Core ML model runs on the Core ML paths asked for; an onnx model
+        // on onnx-cpu, natively when this build has the backend.
+        let worker_paths: Vec<Path3> = o
+            .paths
+            .iter()
+            .copied()
+            .filter(|&p| if onnx { native_onnx && p == Path3::OnnxCpu } else { p != Path3::OnnxCpu })
+            .collect();
+        for &path in &worker_paths {
             match spawn_worker::<WorkerResult>(id, models_dir, path, None, &scratch, &o) {
                 Ok(r) => results.push((path, r)),
                 Err(e) => {
@@ -1108,6 +1200,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
         report.models.push(mr);
     }
 
+    #[cfg(all(target_os = "macos", feature = "coreml"))]
     for (models_dir, model) in &classifiers {
         if let Some((mr, pass)) = classify::grade_model(model, models_dir, &o, &expectations, &scratch) {
             graded += 1;
@@ -1130,7 +1223,11 @@ fn parent(args: &[String]) -> Result<bool, String> {
         .map_err(|e| format!("{}: {e}", json.display()))?;
     }
     if graded == 0 {
-        println!("\nFAIL: nothing was graded (no model had a reference)");
+        if models.is_empty() && classifiers.is_empty() && !skipped_core_ml.is_empty() {
+            println!("\nFAIL: nothing was graded (every model needs Core ML)");
+        } else {
+            println!("\nFAIL: nothing was graded (no model had a reference)");
+        }
         ok = false;
     }
     let _ = std::fs::remove_dir_all(&scratch);
