@@ -9,6 +9,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  models-md:
+    # docs/MODELS.md's data tables are generated from docs/data/models.json
+    # by tools/models_table.py, and its classifier and reranker tables are
+    # checked against it. Fail if the two have drifted apart.
+    name: MODELS.md matches the results file
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check docs/MODELS.md against docs/data/models.json
+        run: python3 tools/models_table.py --docs --check
+
   linux:
     # x86-64 and arm64 Linux. The onnx backend (D40) runs against the pinned
     # ONNX Runtime there, and SIDEKICK_REQUIRE_ONNX turns its tests' skip

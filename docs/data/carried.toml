@@ -1,7 +1,9 @@
-# Core ML results that exist only as tables in docs/MODELS.md, carried into
-# docs/data/models.json by tools/models_table.py until their parity reports
-# are regenerated. Each row copies a published table cell; a field the table
-# doesn't give is left out, and the generator writes it as null.
+# Core ML results from grading runs whose parity reports weren't kept,
+# carried into docs/data/models.json by tools/models_table.py until the
+# reports are regenerated. These rows are now the source: docs/MODELS.md's
+# embedder grade table is generated from them, and its classifier and
+# reranker tables are checked against them. A field nobody recorded is left
+# out, and the generator writes it as null.
 #
 # `worst` is the worst-case cosine (embedders) or the worst |Δp|
 # (classifiers and rerankers, `error = "dp"`). `ms` is the table's median per
@@ -22,8 +24,9 @@ source = "docs/MODELS.md table (M1 Max, Sept 2026)"
 "lfm2.5-embedding-350m" = 2029
 "laya-typed-decisions" = 3233
 
-# Embedders: "Confidence grades" table. Drift and rank flips are given for
-# the ANE only; ms is ANE (CPU).
+# Embedders: "Confidence grades" table. Drift (the largest change in any
+# pairwise similarity), bias (its mean signed change) and rank flips are
+# given for the ANE only; ms is ANE (CPU).
 
 [[row]]
 model = "bge-small-en-v1.5"
@@ -32,6 +35,7 @@ grade = "A"
 worst = 0.99997
 worst_case = "empty input"
 drift = 0.002
+bias = 0.001
 rank_flips = 0
 ms = 1.9
 [[row]]
@@ -53,6 +57,7 @@ grade = "A"
 worst = 0.99992
 worst_case = "a delimiter flood"
 drift = 0.003
+bias = 0.0
 rank_flips = 0
 ms = 6.4
 [[row]]
@@ -74,6 +79,7 @@ grade = "A"
 worst = 0.99999
 worst_case = "a run of digits"
 drift = 0.001
+bias = 0.0
 rank_flips = 0
 ms = 5.3
 [[row]]
@@ -96,6 +102,7 @@ grade = "A"
 worst = 0.99999
 worst_case = "an over-length query"
 drift = 0.001
+bias = 0.0
 rank_flips = 0
 ms = 8.1
 note = "Matryoshka 512, 256 and 128 also 0.99999"
@@ -118,6 +125,7 @@ grade = "A"
 worst = 0.99999
 worst_case = "a delimiter flood"
 drift = 0.003
+bias = 0.0
 rank_flips = 0
 ms = 14.9
 [[row]]
@@ -139,6 +147,7 @@ grade = "A"
 worst = 0.99992
 worst_case = "empty input"
 drift = 0.003
+bias = 0.0
 rank_flips = 0
 [[row]]
 model = "all-minilm-l6-v2"
@@ -158,6 +167,7 @@ grade = "A"
 worst = 0.99995
 worst_case = "a 255-token boundary case"
 drift = 0.002
+bias = -0.001
 rank_flips = 0
 [[row]]
 model = "e5-small-v2"
