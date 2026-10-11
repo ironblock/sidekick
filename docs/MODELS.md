@@ -391,6 +391,8 @@ cargo run --release -p sidekick-embed --features coreml --example parity
   own ANE and will measure differently.
 - Re-run after every macOS update, because the ANE's numerics come with the
   OS.
+- The suite builds with `--features onnx` alone on Linux, where it grades
+  onnx models on `onnx-cpu` and names the chip by its CPU model.
 - `onnx-cpu` (D40) has floors per chip and per ONNX Runtime version (1.28.3
   on Apple silicon, 1.23.2 on Intel macOS), set from sidekick's own fp32
   exports. An int8 graph of a model with fp32 floors fails them by design:

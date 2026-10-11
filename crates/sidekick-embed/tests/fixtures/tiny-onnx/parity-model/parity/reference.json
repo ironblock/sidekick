@@ -1,0 +1,1507 @@
+{
+ "format": 1,
+ "corpus_sha256": "701e085b0c4018d71586fb5e8a2c03b3dcc6784938fea58ba1d9958319e92240",
+ "model": {
+  "id": "tiny-onnx",
+  "dims": 8,
+  "buckets": [
+   16,
+   32,
+   64
+  ],
+  "max_seq_len": 64,
+  "prefixes": {
+   "query": "",
+   "document": ""
+  }
+ },
+ "source": {
+  "id": "tools/make_onnx_test_models.py",
+  "revision": null
+ },
+ "tokenizer_sha256": "7cd8f2942780cefa2a27fb530045907df9d0d0a020eac80c32add04ecb6db24b",
+ "prompt_source": {
+  "query": "manifest",
+  "document": "manifest"
+ },
+ "pooling": "cls",
+ "oracles": [
+  "torch"
+ ],
+ "versions": {
+  "numpy": "2.5.4",
+  "onnx": "1.18.0"
+ },
+ "cases": [
+  {
+   "id": "doc-cat",
+   "purpose": "document",
+   "tags": [
+    "similarity",
+    "tiny"
+   ],
+   "text": "A cat sat on the mat.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "doc-cat-paraphrase",
+   "purpose": "document",
+   "tags": [
+    "similarity"
+   ],
+   "text": "A kitten was resting on the rug.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "doc-earnings",
+   "purpose": "document",
+   "tags": [
+    "similarity"
+   ],
+   "text": "Quarterly earnings exceeded analyst expectations, lifting the stock.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "doc-earnings-paraphrase",
+   "purpose": "document",
+   "tags": [
+    "similarity"
+   ],
+   "text": "The company's profits for the quarter beat forecasts, and its shares rose.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "doc-rain",
+   "purpose": "document",
+   "tags": [
+    "similarity"
+   ],
+   "text": "Heavy rain is expected across the region tomorrow afternoon.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "doc-sauce",
+   "purpose": "document",
+   "tags": [
+    "similarity"
+   ],
+   "text": "Simmer the tomatoes with garlic and olive oil for twenty minutes, then season with salt.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "doc-ane",
+   "purpose": "document",
+   "tags": [
+    "similarity"
+   ],
+   "text": "The Neural Engine runs matrix multiplications in half precision to save power.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "doc-match",
+   "purpose": "document",
+   "tags": [
+    "similarity"
+   ],
+   "text": "The goalkeeper saved a penalty in the final minute to win the match.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "query-cat",
+   "purpose": "query",
+   "tags": [
+    "similarity",
+    "query"
+   ],
+   "text": "where do cats like to sleep",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "query-earnings",
+   "purpose": "query",
+   "tags": [
+    "similarity",
+    "query"
+   ],
+   "text": "how did the company do financially last quarter",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "query-rain",
+   "purpose": "query",
+   "tags": [
+    "similarity",
+    "query"
+   ],
+   "text": "will it rain tomorrow",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "query-sauce",
+   "purpose": "query",
+   "tags": [
+    "similarity",
+    "query"
+   ],
+   "text": "how do I make tomato sauce",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "query-ane",
+   "purpose": "query",
+   "tags": [
+    "similarity",
+    "query"
+   ],
+   "text": "what numeric precision does Apple's neural accelerator use",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "query-doc-cat",
+   "purpose": "query",
+   "tags": [
+    "query",
+    "tiny"
+   ],
+   "text": "A cat sat on the mat.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "tiny-empty",
+   "purpose": "document",
+   "tags": [
+    "tiny",
+    "pad-heavy"
+   ],
+   "text": "",
+   "ids": [
+    1,
+    2
+   ]
+  },
+  {
+   "id": "tiny-letter",
+   "purpose": "document",
+   "tags": [
+    "tiny",
+    "pad-heavy"
+   ],
+   "text": "a",
+   "ids": [
+    1,
+    3,
+    2
+   ]
+  },
+  {
+   "id": "tiny-greeting",
+   "purpose": "document",
+   "tags": [
+    "tiny",
+    "pad-heavy"
+   ],
+   "text": "Hi.",
+   "ids": [
+    1,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "tiny-emoji",
+   "purpose": "document",
+   "tags": [
+    "tiny",
+    "pad-heavy",
+    "multilingual"
+   ],
+   "text": "🙂",
+   "ids": [
+    1,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "tiny-cjk",
+   "purpose": "document",
+   "tags": [
+    "tiny",
+    "pad-heavy",
+    "multilingual"
+   ],
+   "text": "猫",
+   "ids": [
+    1,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "tiny-number",
+   "purpose": "document",
+   "tags": [
+    "tiny",
+    "pad-heavy",
+    "numbers"
+   ],
+   "text": "42",
+   "ids": [
+    1,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "short-sentence",
+   "purpose": "document",
+   "tags": [
+    "pad-heavy"
+   ],
+   "text": "The meeting moved to Thursday at noon.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "delim-punctuation",
+   "purpose": "document",
+   "tags": [
+    "delimiters",
+    "pad-heavy"
+   ],
+   "text": "Wait... what?! (No, really: \"that\" isn't it.) [1] {2} <3>",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "delim-bert-specials",
+   "purpose": "document",
+   "tags": [
+    "delimiters"
+   ],
+   "text": "Question: what is it? [SEP] Answer: nothing at all. [CLS] [MASK] [PAD]",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    2,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "delim-decoder-specials",
+   "purpose": "document",
+   "tags": [
+    "delimiters"
+   ],
+   "text": "first part </s> second part <eos> third part <|endoftext|> the end",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "delim-newlines",
+   "purpose": "document",
+   "tags": [
+    "delimiters"
+   ],
+   "text": "line one\n\n\n\nline two\n\n\n\n\n\nline three\n",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "delim-flood",
+   "purpose": "document",
+   "tags": [
+    "delimiters"
+   ],
+   "text": "!!!!!!!!!!!!!!!!!!!!!!!! ???????????????????????? ........................ ;;;;;;;;;;;;",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "delim-list",
+   "purpose": "document",
+   "tags": [
+    "delimiters"
+   ],
+   "text": "- item one\n- item two\n  * nested item\n1. first\n2. second\n\n> quoted line",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "degenerate-word",
+   "purpose": "document",
+   "tags": [
+    "degenerate",
+    "beyond-window"
+   ],
+   "text": "the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the the",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "degenerate-subword",
+   "purpose": "document",
+   "tags": [
+    "degenerate"
+   ],
+   "text": "hahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahahaha",
+   "ids": [
+    1,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "code-python",
+   "purpose": "document",
+   "tags": [
+    "code"
+   ],
+   "text": "def add(a, b):\n    \"\"\"Return the sum.\"\"\"\n    return a + b  # simple helper\n\nprint(add(2, 3))\n",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    4,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "code-sql",
+   "purpose": "document",
+   "tags": [
+    "code"
+   ],
+   "text": "SELECT name, COUNT(*) FROM users WHERE active = 1 GROUP BY name ORDER BY 2 DESC LIMIT 10;",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "code-json",
+   "purpose": "document",
+   "tags": [
+    "code",
+    "delimiters"
+   ],
+   "text": "{\"id\": 48213, \"tags\": [\"a\", \"b\"], \"nested\": {\"ok\": true, \"value\": null, \"ratio\": 0.25}}",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "numbers-order",
+   "purpose": "document",
+   "tags": [
+    "numbers"
+   ],
+   "text": "Order #48213 shipped 2026-09-14 to 1600 Amphitheatre Pkwy; track it at https://example.com/track?id=48213.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "numbers-digits",
+   "purpose": "document",
+   "tags": [
+    "numbers"
+   ],
+   "text": "3.14159265358979323846264338327950288419716939937510582097494459",
+   "ids": [
+    1,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "numbers-url",
+   "purpose": "document",
+   "tags": [
+    "numbers",
+    "delimiters"
+   ],
+   "text": "https://example.com/a/very/long/path/with/segments?query=string&and=more&session=abcdef0123456789#fragment",
+   "ids": [
+    1,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "ml-german",
+   "purpose": "document",
+   "tags": [
+    "multilingual"
+   ],
+   "text": "Der schnelle braune Fuchs springt über den faulen Hund.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "ml-japanese",
+   "purpose": "document",
+   "tags": [
+    "multilingual"
+   ],
+   "text": "東京は日本の首都であり、世界最大級の都市圏を形成している。",
+   "ids": [
+    1,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "ml-spanish",
+   "purpose": "document",
+   "tags": [
+    "multilingual"
+   ],
+   "text": "El modelo convierte texto en vectores para la búsqueda semántica.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "ml-arabic",
+   "purpose": "document",
+   "tags": [
+    "multilingual"
+   ],
+   "text": "يعمل النموذج على تحويل النص إلى متجهات للبحث الدلالي.",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "ml-mixed",
+   "purpose": "document",
+   "tags": [
+    "multilingual",
+    "delimiters"
+   ],
+   "text": "Launch day 🚀🔥, ¡vamos! 日本語もOK. Ça marche ✅",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "len-64",
+   "purpose": "document",
+   "tags": [
+    "pad-heavy"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for most of the year the only visitors were gulls and the occasional surveyor. Its keeper kept a log of the weather, the ships that passed, and the small repairs that a building exposed to salt and wind always needs. In winter the storms came from the north and",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "boundary-small-minus-1",
+   "purpose": "document",
+   "tags": [
+    "boundary"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "boundary-small",
+   "purpose": "document",
+   "tags": [
+    "boundary",
+    "beyond-window"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "boundary-small-plus-1",
+   "purpose": "document",
+   "tags": [
+    "boundary",
+    "pad-heavy",
+    "beyond-window"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for most",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "len-200",
+   "purpose": "document",
+   "tags": [
+    "beyond-window"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for most of the year the only visitors were gulls and the occasional surveyor. Its keeper kept a log of the weather, the ships that passed, and the small repairs that a building exposed to salt and wind always needs. In winter the storms came from the north and the waves broke over the lower gallery; in summer the fog rolled in each evening and the horn sounded every thirty seconds until dawn. Over the decades the log filled dozens of volumes. Historians later used it to reconstruct shipping patterns along the coast, because the keeper had noted not only the names of vessels but their cargo, their direction, and how heavily they sat in the water. A bakery in the nearby town still sells a bread named after the lighthouse, although few of its customers know why. The recipe calls for rye flour, caraway seeds, a little molasses, and a long, slow rise in a cool kitchen. Engineers who studied the tower found that its foundation had shifted by less than a centimeter in a hundred years, a result they attributed to the careful",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "boundary-middle-minus-1",
+   "purpose": "document",
+   "tags": [
+    "boundary",
+    "beyond-window"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for most of the year the only visitors were gulls and the occasional surveyor. Its keeper",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "boundary-middle-plus-1",
+   "purpose": "document",
+   "tags": [
+    "boundary",
+    "pad-heavy",
+    "beyond-window",
+    "long"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for most of the year the only visitors were gulls and the occasional surveyor. Its keeper kept a",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    2
+   ]
+  },
+  {
+   "id": "len-400",
+   "purpose": "document",
+   "tags": [
+    "long",
+    "beyond-window"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for most of the year the only visitors were gulls and the occasional surveyor. Its keeper kept a log of the weather, the ships that passed, and the small repairs that a building exposed to salt and wind always needs. In winter the storms came from the north and the waves broke over the lower gallery; in summer the fog rolled in each evening and the horn sounded every thirty seconds until dawn. Over the decades the log filled dozens of volumes. Historians later used it to reconstruct shipping patterns along the coast, because the keeper had noted not only the names of vessels but their cargo, their direction, and how heavily they sat in the water. A bakery in the nearby town still sells a bread named after the lighthouse, although few of its customers know why. The recipe calls for rye flour, caraway seeds, a little molasses, and a long, slow rise in a cool kitchen. Engineers who studied the tower found that its foundation had shifted by less than a centimeter in a hundred years, a result they attributed to the careful choice of granite and to drainage channels cut into the rock by the original builders. Modern instruments now measure wind speed, pressure, and visibility automatically, and the data flows to a regional forecasting center where models combine it with satellite images and reports from buoys offshore. The keeper retired long ago, but volunteers still climb the spiral staircase on weekends to polish the brass, wind the old clock, and show children how the great lens concentrates a small flame into a beam visible for twenty nautical miles. Visitors often ask how the lens works. Rings of glass prisms bend the light toward the horizon, so that almost none of it is wasted on the sky or the sea at the foot of the tower. The design was a breakthrough in its day, and variations of it are still used in theater spotlights, overhead projectors, and the headlights of some cars. When the museum opened, the town held a festival with music, a market, and a race along the beach path. The race has become an annual tradition. Runners start at the harbor, follow the shoreline past the dunes, and finish at the foot of the lighthouse, where a table of",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "boundary-largest",
+   "purpose": "document",
+   "tags": [
+    "boundary",
+    "long",
+    "beyond-window"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for most of the year the only visitors were gulls and the occasional surveyor. Its keeper kept a log of the weather, the ships that passed, and the small repairs that a building exposed to salt and wind always needs. In winter the storms came from the north and",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "over-length",
+   "purpose": "document",
+   "tags": [
+    "over-length",
+    "long"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for most of the year the only visitors were gulls and the occasional surveyor. Its keeper kept a log of the weather, the ships that passed, and the small repairs that a building exposed to salt and wind always needs. In winter the storms came from the north and the waves broke over the lower gallery; in summer the fog rolled in each evening and the horn sounded every thirty seconds until dawn. Over the decades the log filled dozens of volumes. Historians later used it to reconstruct shipping patterns along the coast, because the keeper had noted not only the names of vessels but their cargo, their direction, and how heavily they sat in the water. A bakery in the nearby town still sells a bread named after the lighthouse, although few of its customers know why. The recipe calls for rye flour, caraway seeds, a little molasses, and a long, slow rise in a cool kitchen. Engineers who studied the tower found that its foundation had shifted by less than a centimeter in a hundred years, a result they attributed to the careful choice of granite and to drainage channels cut into the rock by the original builders. Modern instruments now measure wind speed, pressure, and visibility automatically, and the data flows to a regional forecasting center where models combine it with satellite images and reports from buoys offshore. The keeper retired long ago, but",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  },
+  {
+   "id": "over-length-query",
+   "purpose": "query",
+   "tags": [
+    "over-length",
+    "query",
+    "long"
+   ],
+   "text": "The lighthouse stood at the end of a narrow spit of land, and for most of the year the only visitors were gulls and the occasional surveyor. Its keeper kept a log of the weather, the ships that passed, and the small repairs that a building exposed to salt and wind always needs. In winter the storms came from the north and the waves broke over the lower gallery; in summer the fog rolled in each evening and the horn sounded every thirty seconds until dawn. Over the decades the log filled dozens of volumes. Historians later used it to reconstruct shipping patterns along the coast, because the keeper had noted not only the names of vessels but their cargo, their direction, and how heavily they sat in the water. A bakery in the nearby town still sells a bread named after the lighthouse, although few of its customers know why. The recipe calls for rye flour, caraway seeds, a little molasses, and a long, slow rise in a cool kitchen. Engineers who studied the tower found that its foundation had shifted by less than a centimeter in a hundred years, a result they attributed to the careful choice of granite and to drainage channels cut into the rock by the original builders. Modern instruments now measure wind speed, pressure, and visibility automatically, and the data flows to a regional forecasting center where models combine it with satellite images and reports from buoys offshore. The keeper retired long ago, but",
+   "ids": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2
+   ]
+  }
+ ]
+}

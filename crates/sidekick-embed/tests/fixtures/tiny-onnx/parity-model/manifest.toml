@@ -1,0 +1,17 @@
+# hidden.onnx (one directory up) as an onnx model for the parity suite: its
+# reference is in parity/. Built by tools/make_onnx_test_models.py.
+
+id = "tiny-onnx"
+backend = "onnx"
+artifact = "../hidden.onnx"
+tokenizer = "tokenizer.json"
+dims = 8
+pooling = "cls"
+max_seq_len = 64
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+token_type_ids = "token_type_ids"
+position_ids = "position_ids"
+output = "last_hidden_state"
