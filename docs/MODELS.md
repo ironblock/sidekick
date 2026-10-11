@@ -412,6 +412,180 @@ its grade as a starting expectation, not a promise, and run the suite.
 | Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
 | LFM2 hybrid (conv + attention) | LFM2.5-Embedding-350M | A | convolutions read pad states unless they're zeroed; without the precision rewrite, up to 4.6% ANE loss on URLs and delimiters (graded D) | pad invariance; delimiters, numbers |
 
+## ONNX Runtime on the CPU (`onnx-cpu`)
+
+sidekick's `onnx` backend (D40) serves the same embedders through ONNX
+Runtime on the CPU of any supported platform: one fp32 `model.onnx` per
+model, exported by the conversion library (`--format onnx`, see
+docs/CONVERTING.md) from the same checkpoint and gated against the same
+fp32 references. The parity suite grades it as the `onnx-cpu` path.
+
+### Accuracy
+
+Graded natively on the shipped runtimes, 51-case corpus: ONNX Runtime
+1.28.3 on an Apple M1 Max (macOS, arm64) and an AMD Ryzen 7 5800X (Linux,
+x86-64), and 1.23.2 on an Intel Xeon W-3235 (macOS, x86-64). The Core ML
+columns are the Apple paths from the table above.
+
+| model | onnx-cpu, M1 Max | onnx-cpu, Ryzen 7 5800X | onnx-cpu, Xeon W-3235 | Core ML CPU | Core ML GPU | Core ML ANE |
+|---|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99992 | A 0.999998 | A 0.99992 |
+| bge-small-en-v1.5 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99993 | A 0.999999 | A 0.99997 |
+| gte-modernbert-base | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | B 0.99951 | A 0.99999 | A 0.99992 |
+| embeddinggemma-300m | **A** 1 − 3e-12 | **A** 1 − 3e-12 | **A** 1 − 3e-12 | B 0.99989 | A 0.999998 | A 0.99999 |
+| F2LLM-v2-160M | **A** 1 − 5e-12 | **A** 1 − 4e-12 | **A** 1 − 4e-12 | B 0.99986 | A 0.999999 | A 0.99999 |
+| Qwen3-Embedding-0.6B | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | not converted | not converted | not converted |
+| Qwen3-Embedding-0.6B, fp16 weights | **A** 1 − 2e-11 | | **A** 1 − 2e-11 | | | |
+| Qwen3-Embedding-0.6B, int8 | **D** 0.406 | | **D** 0.404 | | | |
+
+- onnx-cpu is fp32, so it reproduces the reference to rounding: no rank
+  flips and similarity drift under 3e-6 on every model. It is the most
+  accurate CPU path on Apple Silicon, where Core ML's CPU path computes in
+  fp16 and grades B for three of these five models.
+- Results are bit-identical across thread counts (1, 2, 4 and 8), and
+  padding or batching moves them by at most 2e-7 per component (cosine
+  1.000000000).
+- fp16 weights (`--onnx-weights fp16`) are lossless for a bf16 checkpoint
+  such as Qwen3-Embedding: fp16 represents its weights exactly.
+- **int8 isn't offered.** ONNX Runtime's int8 kernels quantize activations
+  with one scale per tensor, computed over the whole batch. On
+  Qwen3-Embedding a dynamic int8 export and onnx-community's published one
+  both grade D one input at a time (median cosine 0.86, worst 0.41 on the
+  empty input; 7,500–8,700 rank flips), and batched they also fail the batch
+  and pad gates, because an input's vector depends on what it is batched
+  with. The same holds on x86-64 (0.404 on the Xeon). The backend runs any quantized
+  graph one input at a time.
+
+Published ONNX exports, graded the same way: bge-small-en-v1.5's and
+gte-modernbert-base's fp32 exports match their checkpoints exactly
+(gte's fp16 export: 0.999994, and ONNX Runtime loads it only with graph
+optimizations off; its int8 export: 0.892). onnx-community's
+embeddinggemma-300m export is wrong on inputs longer than about 257
+tokens (0.9936 worst at 512): it applies the configuration's 512-token
+sliding window where transformers halves it to 257 for this bidirectional
+model. Running the checkpoint with a 512 window reproduces the export to
+0.99998. sidekick's own export is exact at every length.
+
+### Latency
+
+M1 Max (8 performance and 2 efficiency cores), macOS 27.0, from Python
+(ONNX Runtime 1.27, coremltools 9): the median of 20 forward passes after
+warm-up, one input at a time, real tokens cut to each length, with the load
+average recorded per run: 5–10 at rest, rising to about 20 during the
+longest onnx-cpu runs from their own threads. Core ML runs a length in the
+smallest bucket that fits it, padded. ms per input:
+
+| model | tokens | onnx-cpu (fp32) | Core ML CPU (fp16) | Core ML GPU | Core ML ANE |
+|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | 16 / 64 / 256 | 2.0 / 5.4 / 19.3 | 1.4 / 1.4 / 5.3 | 2.0 / 2.0 / 2.7 | 0.8 / 0.9 / 2.9 |
+| bge-small-en-v1.5 | 16 / 64 / 256 | 4.2 / 10.5 / 37.8 | 5.4 / 5.3 / 12.8 | 3.5 / 3.5 / 4.4 | 2.8 / 2.5 / 6.5 |
+| gte-modernbert-base | 16 / 64 / 256 | 15.2 / 45.4 / 178 | 18.7 / 18.1 / 32.7 | 9.7 / 9.6 / 13.6 | 6.7 / 7.9 / 17.0 |
+| embeddinggemma-300m | 16 / 64 / 256 | 16.1 / 43.7 / 161 | 19.2 / 18.7 / 36.8 | 12.0 / 11.9 / 16.1 | 7.2 / 7.2 / 15.2 |
+| F2LLM-v2-160M | 16 / 64 / 256 | 8.9 / 25.3 / 103 | 13.5 / 13.8 / 24.7 | 5.6 / 5.7 / 8.3 | 5.9 / 5.9 / 13.0 |
+| Qwen3-Embedding-0.6B | 16 / 64 / 256 | 48 / 158 / 620 | | | |
+| Qwen3-Embedding-0.6B, int8 (graded D) | 16 / 64 / 256 | 22 / 63 / 255 | | | |
+
+- On Apple Silicon, onnx-cpu is the accurate CPU path, not the fast one.
+  Core ML's fp16 CPU path is 3–5× faster at 256 tokens. At 16 tokens
+  onnx-cpu is faster for four of the five models, because Core ML pads a
+  short input to its smallest bucket (64 or 128 tokens). The ANE and GPU
+  are faster than either.
+- **Threads.** ONNX Runtime's own default, one thread per core, is the
+  wrong one on Apple Silicon: the efficiency cores hold back threads that
+  must finish together. Through sidekickd on the M1 Max, 10 threads are
+  about twice as slow as 8 (Qwen3-Embedding 638 against 358 ms at ~290
+  tokens); from Python in the latency runs above, 8 threads beat the
+  default by 16–27% at 256 tokens. sidekickd defaults to the
+  performance-core count, capped at 8 unless a model asks for more (D40).
+  Fewer threads leave room for a primary model on the same machine, at a
+  cost. Median ms for one long input by intra-op threads, on four
+  machines:
+
+  | machine, model | 1 | 2 | 4 | 6 | 8 | 10 | 12 | 16 | 24 | 32 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | M1 Max (8P + 2E), gte-modernbert-base | 580 | 320 | 169 | 119 | 103 | 239 | | | | |
+  | M1 Max, embeddinggemma-300m | 547 | 291 | 158 | 113 | 104 | 235 | | | | |
+  | M1 Max, Qwen3-Embedding-0.6B | 2,125 | 1,114 | 583 | 427 | 358 | 638 | | | | |
+  | Ryzen 7 5800X (8 cores, 16 threads), gte-modernbert-base | 514 | 267 | 143 | 104 | 85 | | 101 | 87 | | |
+  | Ryzen 7 5800X, embeddinggemma-300m | 476 | 256 | 140 | 99 | 83 | | 100 | 86 | | |
+  | Ryzen 7 5800X, Qwen3-Embedding-0.6B | 1,861 | 947 | 501 | 358 | 277 | | 370 | 298 | | |
+  | Threadripper 3970X (32 cores), gte-modernbert-base | 451 | 236 | 133 | | 117 | | 103 | 104 | 103 | 118 |
+  | Threadripper 3970X, embeddinggemma-300m | 417 | 223 | 129 | | 113 | | 120 | 112 | 106 | 137 |
+  | Threadripper 3970X, Qwen3-Embedding-0.6B | 1,627 | 833 | 460 | | 335 | | 303 | 277 | 294 | 339 |
+  | Xeon W-3235 (12 cores, 24 threads), gte-modernbert-base | 573 | 292 | 161 | 116 | 98 | | 119 | 99 | 241 | |
+  | Xeon W-3235, embeddinggemma-300m | 564 | 292 | 161 | 115 | 97 | | 112 | 108 | 187 | |
+  | Xeon W-3235, Qwen3-Embedding-0.6B | 2,132 | 1,091 | 572 | 409 | 337 | | 385 | 316 | 451 | |
+
+  Every row is sidekickd's onnx-cpu path through the HTTP API
+  (`/v1/embeddings`, one request at a time, the median of 15) at about 290
+  tokens. The M1 Max (macOS 27.0) and the Ryzen 5800X and Threadripper
+  3970X (Linux, load average under 6) ran ONNX Runtime 1.28.3; the Xeon
+  W-3235 (macOS) ran 1.23.2, and its numbers are indicative only, because
+  that machine was busy (load average 4–16). On the M1 Max the load average
+  read 20–70 throughout, inflated by another user session's waiting threads
+  while the CPU stayed about 80% idle; re-running 6, 8 and 10 threads
+  reproduced the numbers to within 7%.
+
+  Latency roughly halves with each doubling up to 4–8 threads, then
+  flattens, even with 32 cores. Simultaneous multithreading adds nothing,
+  and more threads than fast cores make it worse: on the M1 Max, 10 threads
+  (adding its two efficiency cores, ONNX Runtime's own default) is twice as
+  slow as 8, and the Xeon at 24 threads is too. Only a model as large as
+  Qwen3-Embedding keeps gaining past 8 threads on a machine with more fast
+  cores (Threadripper: 277 ms at 16 threads against 335 at 8).
+- Batching helps little on the CPU: a batch of 8 costs 0.9–1.0× per input
+  at 256 tokens and 0.6–0.8× at 16.
+- x86-64 latency hasn't been measured on a quiet machine yet.
+
+### Memory
+
+Measured per run in a fresh process (`tools/bench_memory.py`): the
+process's own footprint (`phys_footprint`, what `footprint` and Activity
+Monitor report) before loading, after loading and after one prediction per
+length, and the artifact's size on disk. Footprints repeated to within
+1 MB across runs.
+
+| model | onnx-cpu: disk | onnx-cpu: footprint | Core ML: disk (all buckets) | Core ML CPU | Core ML GPU | Core ML ANE (process) |
+|---|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | 86 MB | +170 MB | 129 MB | +6 MB | +45 MB | +9 MB |
+| bge-small-en-v1.5 | 127 MB | +221 MB | 191 MB | +8 MB | +52 MB | +22 MB |
+| gte-modernbert-base | 569 MB | +893 MB | 856 MB | +17 MB | +150 MB | +22 MB |
+| embeddinggemma-300m | 1,174 MB | +3.0–3.5 GB | 1,764 MB | +0 MB | +470 MB | +0 MB |
+| F2LLM-v2-160M | 608 MB | +1,337 MB | 913 MB | +13 MB | +36 MB | +16 MB |
+| Qwen3-Embedding-0.6B | 2,274 MB | +1,724 MB | | | | |
+| Qwen3-Embedding-0.6B, fp16 weights | 1,138 MB | +2,685 MB | | | | |
+| Qwen3-Embedding-0.6B, int8 | 570 MB | +472 MB | | | | |
+
+- onnx-cpu holds its weights in the process's own memory, often more than
+  their size on disk (EmbeddingGemma's 262k-token vocabulary in fp32, plus
+  ONNX Runtime's prepacked copies). Its footprint is what it costs.
+- Core ML maps its weights from the file, so the process's footprint
+  undercounts it on every path. On the ANE the compiled program also lives
+  in system services: the whole machine's memory in use rose by about
+  1.0–1.3 GB for EmbeddingGemma (three runs) and 1.0 GB for F2LLM (one run) while
+  sidekick's process grew by under 40 MB. The machine-wide count swings
+  by several hundred MB between runs on a desktop with other applications,
+  so only those two are clear of the noise.
+- fp16 weights halve the file, not the memory: ONNX Runtime upcasts them
+  at load, so Qwen3-Embedding's fp16-weight build holds more (+2.7 GB) than
+  its fp32 one.
+
+### Recommendations
+
+- **On Apple Silicon,** keep the ANE (or the GPU) for throughput, and use
+  onnx-cpu where fp32 accuracy matters more than speed or the ANE and GPU
+  are busy. It is the most accurate CPU path: fp32, A on every model, against
+  Core ML CPU's B on gte-modernbert, EmbeddingGemma and F2LLM, at 3–5× its
+  latency on long inputs.
+- **On x86-64 macOS and Linux,** onnx-cpu is the path, at the same grades as
+  on arm64 (shipped runtime 1.23.2 on Intel macOS, 1.28.3 elsewhere;
+  graded on a Xeon W-3235 and a Ryzen 7 5800X).
+- **Threads:** set `intra_op_threads` to the performance-core count (8 on an
+  M1 Max), or lower to leave cores to a primary model; latency scales
+  almost linearly with threads.
+- **Qwen3-Embedding-0.6B:** serve fp32 (or fp16 weights to halve the disk).
+  Don't use int8 on ONNX Runtime.
+
 ## Classifiers (`/v1/classify`)
 
 Classifiers are served by `POST /v1/classify` (D28), from a

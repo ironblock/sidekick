@@ -15,7 +15,7 @@ Usage:
     --threads: intra-op threads; 0 is ONNX Runtime's default (one per core)
 
 Record the machine with every number: the output carries the CPU model and
-core counts.
+core counts, and each configuration's load average before and after.
 """
 
 import argparse
@@ -64,6 +64,7 @@ def child(args):
     load_ms = (time.perf_counter() - t) * 1000
     loaded = rss_mb(__import__("os").getpid())
     out = {"ort": ort.__version__, "threads": args.threads, "load_ms": load_ms,
+           "load_avg_before": __import__("os").getloadavg(),
            "rss_before_mb": before, "rss_loaded_mb": loaded, "runs": []}
     for length in args.lengths:
         ids = longest[:length - 1] + longest[-1:] if len(longest) >= length else longest
@@ -80,6 +81,7 @@ def child(args):
                                 "p90_ms": float(np.percentile(ms, 90)),
                                 "ms_per_input": float(np.median(ms)) / batch})
     out["rss_after_mb"] = rss_mb(__import__("os").getpid())
+    out["load_avg_after"] = __import__("os").getloadavg()
     print(json.dumps(out))
 
 
@@ -110,7 +112,8 @@ def main():
         res = json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1])
         report["configs"].append(res)
         print(f"threads {threads or 'default'}: load {res['load_ms']:.0f} ms, RSS {res['rss_loaded_mb']:.0f} MB "
-              f"loaded / {res['rss_after_mb']:.0f} MB after runs")
+              f"loaded / {res['rss_after_mb']:.0f} MB after runs; load average "
+              f"{res['load_avg_before'][0]:.1f} -> {res['load_avg_after'][0]:.1f}")
         for r in res["runs"]:
             print(f"  {r['tokens']:4d} tokens x {r['batch']}: median {r['median_ms']:.1f} ms "
                   f"(p90 {r['p90_ms']:.1f}), {r['ms_per_input']:.1f} ms/input")
