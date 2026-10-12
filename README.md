@@ -51,14 +51,17 @@ prompts are a proper 400. See D21 in [docs/DECISIONS.md](docs/DECISIONS.md).
 Which encoders are known to convert cleanly and achieve full ANE offload —
 and which don't, and why — is tracked with measured numbers in
 [docs/MODELS.md](docs/MODELS.md), along with a "will a new model convert?"
-checklist. Validated so far: bge-small-en-v1.5, EmbeddingGemma-300m,
-LFM2.5-Embedding-350M, F2LLM-v2-160M, gte-modernbert-base.
+checklist. Validated so far: bge-small-en-v1.5, all-MiniLM-L6-v2,
+e5-small-v2, EmbeddingGemma-300m, EmbeddingGemma 2, LFM2.5-Embedding-350M,
+F2LLM-v2-160M, gte-modernbert-base.
 `tools/probe_activations.py` triages a candidate in minutes before any
 conversion. A parity suite (D26) grades every model through sidekick's own
 code, on inputs chosen to break it: Core ML models on the CPU, GPU and ANE
-paths, ONNX models on `onnx-cpu`. On the ANE, all five validated models
-grade A. Six embedding models' ONNX exports grade A on `onnx-cpu` on an
-M1 Max, an Intel Xeon W-3235 (macOS) and two x86-64 Linux machines. See the
+paths, ONNX models on `onnx-cpu`. On the ANE, all eight validated
+embedders grade A. Seven embedding models' ONNX exports grade A on
+`onnx-cpu` on an M1 Max; six of them also on an Intel Xeon W-3235 (macOS)
+and two x86-64 Linux machines, with EmbeddingGemma 2's x86-64 grades to
+follow. See the
 confidence grades in [docs/MODELS.md](docs/MODELS.md), or browse every graded
 result, by model, path, chip and runtime, at
 [ironblock.github.io/sidekick](https://ironblock.github.io/sidekick/).
