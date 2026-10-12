@@ -22,9 +22,8 @@ pub use chat::{
     Usage,
 };
 pub use classify::{
-    activate, ClassifyParams, ClassifyTask, Classifier, PairParams, Prepared, ProblemType, QuestionType,
-    Source,
-    TruncationSide,
+    activate, check_hypothesis_template, nli_value, ClassifyParams, ClassifyTask, Classifier, NliPair, NliPairs, PairParams,
+    Prepared, ProblemType, QuestionType, Source, TruncationSide,
 };
 pub use embed::{truncate_normalized, EmbedLimits, EmbedPurpose, Embedder, Truncate};
 pub use error::{Error, Result};

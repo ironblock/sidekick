@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat};
 use sidekick_core::{
     Availability, ChatBackend, ChatRequest, ChatResponse, Classifier, ClassifyParams,
-    ClassifyTask, DeltaSink, Error, FinishReason, ModelInfo, ModelRegistry, PairParams, Prepared,
+    ClassifyTask, DeltaSink, Error, FinishReason, ModelInfo, ModelRegistry, NliPair, NliPairs, PairParams, Prepared,
     ProblemType, Result, Source, Usage,
 };
 use sidekick_server::{build_router, AppState, ClassifierPool, EmbedderPool};
@@ -387,6 +387,31 @@ marker_pos = "cand_end"
 output = "logits"
 "#;
 
+/// `classifier.toml` for an NLI cross-encoder in the nli format (D41).
+pub const NLI_ZERO_SHOT: &str = r#"
+id = "nli-decider"
+task = "zero-shot-classification"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [64, 128]
+max_seq_len = 128
+max_batch = 4
+
+[classify]
+format = "nli"
+max_labels = 4
+
+[classify.nli]
+entailment = 2
+contradiction = 0
+n_classes = 3
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
+"#;
+
 /// `classifier.toml` for a reranker that reports raw logits (the ms-marco
 /// cross-encoders' `Identity` activation).
 pub const RERANKER: &str = r#"
@@ -438,6 +463,9 @@ output = "logits"
 ///   contains it, else 0;
 /// - an input containing "nan" returns NaN logits; "fail" fails the run;
 ///   "reject" fails `prepare` with a client error.
+///
+/// In the nli format, each label's pair is the bytes of `text|hypothesis`,
+/// and its value is 3 if the text contains the label, else 0.
 ///
 /// As a reranker (`text-ranking`), a pair's ids are the bytes of
 /// `query|document` and its logit is the number of the query's words the
@@ -519,6 +547,33 @@ impl Classifier for MockClassifier {
                 sidekick_embed::agentjev::render_candidates(qt, &params.candidate_labels)?;
                 (vec![0; params.candidate_labels.len()], params.candidate_labels.clone())
             }
+            Some(ClassifyFormat::Nli) => {
+                assert!(params.question_type.is_none() && params.instructions.is_none());
+                let section = self.manifest.classify.nli.as_ref().unwrap();
+                let template = params.hypothesis_template.as_deref().unwrap_or(&section.hypothesis_template);
+                let pairs: Vec<NliPair> = params
+                    .candidate_labels
+                    .iter()
+                    .map(|label| {
+                        let ids: Vec<i32> =
+                            format!("{input}|{}", template.replacen("{}", label, 1)).bytes().map(i32::from).collect();
+                        NliPair { bucket: self.bucket(ids.len()), ids, type_ids: vec![] }
+                    })
+                    .collect();
+                LABELS.with(|l| *l.borrow_mut() = params.candidate_labels.clone());
+                let k = pairs.len();
+                return Ok(Prepared {
+                    bucket: pairs.iter().map(|p| p.bucket).max().unwrap(),
+                    nli: Some(NliPairs { pairs, per_label: params.multi_label || k == 1 }),
+                    ids: vec![],
+                    type_ids: vec![],
+                    markers: vec![],
+                    qtype: None,
+                    decide_pos: None,
+                    seg: vec![],
+                    position_ids: vec![],
+                });
+            }
             None => (vec![], vec![]),
         };
         LABELS.with(|l| *l.borrow_mut() = labels);
@@ -527,6 +582,7 @@ impl Classifier for MockClassifier {
         let tree = |f: fn(usize) -> i32| if agentjev { (0..ids.len()).map(f).collect() } else { vec![] };
         let (seg, position_ids) = (tree(|_| 0), tree(|i| i as i32));
         Ok(Prepared {
+            nli: None,
             bucket: self.bucket(ids.len()),
             type_ids: vec![],
             markers,
@@ -546,6 +602,7 @@ impl Classifier for MockClassifier {
         }
         let ids: Vec<i32> = format!("{query}|{document}").bytes().map(i32::from).collect();
         Ok(Prepared {
+            nli: None,
             type_ids: vec![0; ids.len()],
             bucket: self.bucket(ids.len()),
             ids,
@@ -559,6 +616,22 @@ impl Classifier for MockClassifier {
 
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {
         self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(nli) = &prepared.nli {
+            let labels = LABELS.with(|l| l.borrow().clone());
+            return nli
+                .pairs
+                .iter()
+                .zip(&labels)
+                .map(|(pair, label)| {
+                    let text: String = pair.ids.iter().map(|&b| b as u8 as char).collect();
+                    let (text, _) = text.split_once('|').unwrap();
+                    if text.contains("fail") {
+                        return Err(Error::Inference("mock failure".into()));
+                    }
+                    Ok(if text.contains(label.as_str()) { 3.0 } else { 0.0 })
+                })
+                .collect();
+        }
         let text: String = prepared.ids.iter().map(|&b| b as u8 as char).collect();
         if self.manifest.task == ClassifyTask::TextRanking {
             let (query, document) = text.split_once('|').unwrap();
@@ -657,6 +730,7 @@ pub fn test_state_scanned(chat_available: bool, api_key: Option<&str>, options: 
         ("cpu-capped", capped.as_str()),
         ("fev-decider", FEV_ZERO_SHOT),
         ("jev-decider", AGENTJEV_ZERO_SHOT),
+        ("nli-decider", NLI_ZERO_SHOT),
         ("julia", julia.as_str()),
         ("reranker", RERANKER),
         ("sigmoid-reranker", SIGMOID_RERANKER),

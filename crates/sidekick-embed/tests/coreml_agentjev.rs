@@ -99,6 +99,7 @@ fn expected() -> Expected {
 
 fn prepared(case: &ExpectedCase, bucket: usize) -> Prepared {
     Prepared {
+        nli: None,
         ids: case.ids.clone(),
         type_ids: vec![],
         markers: case.markers.clone(),
@@ -157,10 +158,10 @@ fn agentjev_reads_its_tree_inputs() {
         got.iter().zip(&case.logits).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max)
     };
     // Every branch merged into the prefix: siblings now see each other.
-    let merged = Prepared { seg: vec![0; case.ids.len()], ..prepared(case, 16) };
+    let merged = Prepared { nli: None, seg: vec![0; case.ids.len()], ..prepared(case, 16) };
     assert!(moved(&merged) > 0.1, "seg ignored: {}", moved(&merged));
     // Positions that run on through the branches instead of restarting.
-    let running = Prepared { position_ids: (0..case.ids.len() as i32).collect(), ..prepared(case, 16) };
+    let running = Prepared { nli: None, position_ids: (0..case.ids.len() as i32).collect(), ..prepared(case, 16) };
     assert!(moved(&running) > 0.1, "position_ids ignored: {}", moved(&running));
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -174,16 +175,16 @@ fn agentjev_inputs_outside_the_real_tokens_are_refused() {
     let used = case.ids.len() as i32;
     // A candidate end in the padding, or negative.
     for markers in [vec![case.markers[0], used], vec![-1, case.markers[1]]] {
-        let p = Prepared { markers, ..prepared(case, 16) };
+        let p = Prepared { nli: None, markers, ..prepared(case, 16) };
         let e = clf.run(&p).unwrap_err();
         assert!(e.to_string().contains("real tokens"), "{e}");
     }
     // Segments or positions that don't cover exactly the real tokens.
     let short = |v: &Vec<i32>| v[..v.len() - 1].to_vec();
     for p in [
-        Prepared { seg: short(&case.seg), ..prepared(case, 16) },
-        Prepared { position_ids: short(&case.position_ids), ..prepared(case, 16) },
-        Prepared { seg: vec![], ..prepared(case, 16) },
+        Prepared { nli: None, seg: short(&case.seg), ..prepared(case, 16) },
+        Prepared { nli: None, position_ids: short(&case.position_ids), ..prepared(case, 16) },
+        Prepared { nli: None, seg: vec![], ..prepared(case, 16) },
     ] {
         let e = clf.run(&p).unwrap_err();
         assert!(e.to_string().contains("segments"), "{e}");

@@ -55,6 +55,19 @@ AgentJev head (the library tests' tiny checkpoint), split after layer 2.
 - `model_{16,32}.mlmodelc`: the same model unchunked, for comparison;
 - `expected.json`: fp32 torch logits for fixed trees.
 
+tiny-nli/: the nli format (D41), two NLI cross-encoders: a mean of the
+real tokens' embeddings, then a linear layer to the classes.
+- `bert_16.mlmodelc`, `bert_32.mlmodelc`: BERT-style, `input_ids`/
+  `attention_mask`/`token_type_ids` [1, S] → `logits` [1, 3]
+  (contradiction, neutral, entailment);
+- `roberta_16.mlmodelc`, `roberta_32.mlmodelc`: RoBERTa-style, no
+  segment ids, `input_ids`/`attention_mask` [1, S] → `logits` [1, 2]
+  (entailment, not_entailment);
+- `expected.json`: per model and case, each label's (text, hypothesis)
+  pair as the test tokenizer lays it out, its fp32 torch logits, and the
+  scores Hugging Face's zero-shot pipeline computes from them, with and
+  without `multi_label`.
+
 tiny-multishape/: one artifact, `model.mlmodelc`, whose `input_ids` and
 `attention_mask` each accept two enumerated shapes, [1, 16] and [1, 32],
 and whose `logits` are [1, 1]. Its layout is the one macOS 27 can abort
@@ -64,7 +77,7 @@ Usage:
     python tools/make_classifier_test_models.py crates/sidekick-embed/tests/fixtures [name ...]
 
     name    tiny-laya, tiny-reranker, tiny-gliner2, tiny-fev, tiny-multishape,
-            tiny-agentjev, tiny-agentjev-chunked (default: all but the
+            tiny-nli, tiny-agentjev, tiny-agentjev-chunked (default: all but the
             agentjev ones, which are built only when named). Building
             only the one you changed keeps the others' committed bytes.
 
@@ -107,6 +120,26 @@ class TinyLaya(nn.Module):
         onehot = (marker_pos[:, :, None] == pos[None, None, :]).float()
         logits = self.w(torch.matmul(onehot, h)).squeeze(-1)
         return torch.where(marker_pos < 0, torch.full_like(logits, -1e4), logits)
+
+
+class TinyNli(nn.Module):
+    """An NLI cross-encoder: the mean of the real tokens' embeddings (plus
+    segment embeddings, BERT-style), then the classes. Each label's
+    hypothesis changes the mean, so labels score differently."""
+
+    def __init__(self, classes, segments):
+        super().__init__()
+        self.emb = nn.Embedding(VOCAB, D)
+        self.types = nn.Embedding(2, D) if segments else None
+        self.w = nn.Linear(D, classes)
+
+    def forward(self, input_ids, attention_mask, token_type_ids=None):
+        m = attention_mask.float()[..., None]
+        h = self.emb(input_ids.long())
+        if self.types is not None:
+            h = h + self.types(token_type_ids.long())
+        h = torch.tanh(h) * m
+        return self.w(h.sum(1) / m.sum(1))
 
 
 class TinyReranker(nn.Module):
@@ -245,7 +278,7 @@ def convert(model, shapes, out_dir, name):
 
 def main():
     root = sys.argv[1]
-    names = sys.argv[2:] or ["tiny-laya", "tiny-reranker", "tiny-gliner2", "tiny-fev", "tiny-multishape"]
+    names = sys.argv[2:] or ["tiny-laya", "tiny-reranker", "tiny-gliner2", "tiny-fev", "tiny-multishape", "tiny-nli"]
     if "tiny-laya" in names:
         laya(root)
     if "tiny-reranker" in names:
@@ -256,6 +289,8 @@ def main():
         fev(root)
     if "tiny-multishape" in names:
         multishape(root)
+    if "tiny-nli" in names:
+        nli(root)
     if "tiny-agentjev" in names:
         agentjev(root)
     if "tiny-agentjev-chunked" in names:
@@ -447,6 +482,73 @@ def reranker(root):
         expected.append({"ids": ids, "type_ids": types, "score": float(score)})
     with open(os.path.join(out, "expected.json"), "w") as f:
         json.dump({"cases": expected}, f, indent=1)
+        f.write("\n")
+
+
+def pipeline_scores(pair_logits, entailment, multi_label):
+    """Hugging Face's ZeroShotClassificationPipeline.postprocess for one
+    sequence: `pair_logits` [k, classes], one row per candidate label."""
+    reshaped = np.asarray(pair_logits, dtype=np.float32).reshape((1, len(pair_logits), -1))
+    if multi_label or len(pair_logits) == 1:
+        contradiction = -1 if entailment == 0 else 0
+        entail_contr = reshaped[..., [contradiction, entailment]]
+        scores = np.exp(entail_contr) / np.exp(entail_contr).sum(-1, keepdims=True)
+        scores = scores[..., 1]
+    else:
+        entail = reshaped[..., entailment]
+        scores = np.exp(entail) / np.exp(entail).sum(-1, keepdims=True)
+    return [float(s) for s in scores[0]]
+
+
+def nli(root):
+    out = os.path.join(root, "tiny-nli")
+    os.makedirs(out, exist_ok=True)
+    # The test tokenizers' ids (crates/sidekick-embed/tests/coreml_nli.rs):
+    # [CLS] or <s> is 1, [SEP] or </s> is 2.
+    word = {w: i for i, w in enumerate(["[UNK]", "[CLS]", "[SEP]", "[MASK]", "[PAD]", "choice", "score", "noul",
+                                        "question", ":", "which", "a", "b", "c", "d", "e", "f", "g", "h"])}
+    cases = [
+        ("a b c", ["d", "e"], False),
+        ("a b c", ["d", "e"], True),
+        ("a b c", ["f"], False),
+        (" ".join(["g", "h"] * 10), ["d", "e", "f"], False),
+    ]
+    template = "which {}"
+    expected = {}
+    for name, classes, segments, entailment, contradiction, seed in [
+        ("bert", 3, True, 2, 0, 5),
+        ("roberta", 2, False, 0, 1, 6),
+    ]:
+        torch.manual_seed(seed)
+        model = TinyNli(classes, segments).eval()
+        inputs = lambda seq: PAIR_INPUTS(seq) if segments else PAIR_INPUTS(seq)[:2]
+        convert(model, inputs(16), out, f"{name}_16")
+        convert(model, inputs(32), out, f"{name}_32")
+        rows = []
+        for text, labels, multi in cases:
+            premise = [word[w] for w in text.split()]
+            pairs = []
+            for label in labels:
+                hypothesis = [word[w] for w in template.replace("{}", label).split()]
+                if segments:  # [CLS] text [SEP] hypothesis [SEP]
+                    ids = [1] + premise + [2] + hypothesis + [2]
+                    types = [0] * (len(premise) + 2) + [1] * (len(hypothesis) + 1)
+                else:  # <s> text </s></s> hypothesis </s>
+                    ids = [1] + premise + [2, 2] + hypothesis + [2]
+                    types = []
+                args = [torch.tensor([ids], dtype=torch.int32), torch.ones(1, len(ids), dtype=torch.int32)]
+                if segments:
+                    args.append(torch.tensor([types], dtype=torch.int32))
+                with torch.no_grad():
+                    logits = model(*args)[0]
+                pairs.append({"ids": ids, "type_ids": types, "logits": [float(x) for x in logits]})
+            rows.append({
+                "text": text, "labels": labels, "template": template, "multi_label": multi, "pairs": pairs,
+                "scores": pipeline_scores([p["logits"] for p in pairs], entailment, multi),
+            })
+        expected[name] = {"entailment": entailment, "contradiction": contradiction, "n_classes": classes, "cases": rows}
+    with open(os.path.join(out, "expected.json"), "w") as f:
+        json.dump(expected, f, indent=1)
         f.write("\n")
 
 
