@@ -257,3 +257,25 @@ class MarkerGates(unittest.TestCase):
         # Softmax keeps the argmax rule; a single output has no decision.
         self.assertEqual(g._decisions(np.array([1.5, 2.0, -1.0, 0.01]), ref, "softmax"), (1, 0))
         self.assertEqual(g._decisions(np.array([-3.0]), np.array([3.0]), "sigmoid"), (0, 0))
+
+
+class StPoolingTest(unittest.TestCase):
+    """sentence-transformers' Pooling config, in both its formats."""
+
+    def _mode(self, cfg):
+        import json, tempfile
+        from pathlib import Path
+        from sidekick_convert import tokenizer
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "1_Pooling").mkdir()
+            (Path(d) / "1_Pooling" / "config.json").write_text(json.dumps(cfg))
+            return tokenizer.st_pooling(d)
+
+    def test_flag_format(self):
+        self.assertEqual(self._mode({"pooling_mode_mean_tokens": True, "pooling_mode_cls_token": False}), "mean")
+        self.assertEqual(self._mode({"pooling_mode_lasttoken": True}), "lasttoken")
+
+    def test_named_mode_format(self):
+        """sentence-transformers 6 (google/embeddinggemma-2) names the mode."""
+        self.assertEqual(self._mode({"embedding_dimension": 768, "pooling_mode": "mean"}), "mean")
+        self.assertEqual(self._mode({"pooling_mode": "cls"}), "cls")

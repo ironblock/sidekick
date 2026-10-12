@@ -39,6 +39,13 @@ task = "embed"
 source = "google/embeddinggemma-300m@57c266a740f537b4dc058e1b0cda161fd15afa75"
 served = "coreml-ane"
 
+[models."embeddinggemma-2"]
+name = "embeddinggemma-2"
+family = "Gemma 4"
+task = "embed"
+source = "google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b"
+served = "coreml-ane"
+
 [models."f2llm-v2-160m"]
 name = "F2LLM-v2-160M"
 family = "Qwen3 decoder"
