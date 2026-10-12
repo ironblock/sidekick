@@ -48,7 +48,11 @@ pub struct ClassifyGates {
 impl Default for ClassifyGates {
     fn default() -> Self {
         Self {
-            bucket_invariance: PerPath { cpu: 1e-5, gpu: 1e-3, ane: 1e-3, onnx_cpu: None },
+            // cpu-x86_64 is PROVISIONAL: Intel's CPU drift was measured on
+            // two classifiers only (nlptown 1.9e-4, ms-marco 0), on one Mac;
+            // the larger ones' CPU paths didn't finish grading (D38
+            // amendment, October 2026).
+            bucket_invariance: PerPath { cpu: 1e-5, gpu: 1e-3, ane: 1e-3, onnx_cpu: None, cpu_x86_64: Some(5e-4) },
             pad_invariance: 1e-4,
             determinism: 1e-5,
             flip_margin: 0.05,

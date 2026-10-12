@@ -404,6 +404,7 @@ mod tests {
                 gpu: 0.9999,
                 ane: 0.995,
                 onnx_cpu: None,
+                cpu_x86_64: None,
             },
             pad_invariance: 0.99999,
             determinism: 0.999999,

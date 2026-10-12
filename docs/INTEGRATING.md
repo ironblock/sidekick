@@ -41,12 +41,14 @@ same API. What else it serves depends on the platform:
 - **Intel macOS:** Core ML models too, embedders and classifiers alike,
   on the CPU and GPU (there is no Neural Engine). Chat answers 503 (no
   Foundation Models). A Core ML model's default units (`cpu_and_ne`) run
-  it on the CPU there. Core ML's CPU path on Intel isn't bucket-invariant
-  for classifiers: an input's probabilities can move by up to about 2e-4
-  between buckets, where Apple silicon's CPU path is exact. The GPU path
-  grades A, so `[models."<id>"] compute_units = "cpu_and_gpu"` in the
-  daemon config is the more consistent choice for a classifier on an
-  Intel Mac.
+  it on the CPU there, and `[models."<id>"] compute_units = "cpu_and_gpu"`
+  in the daemon config selects the GPU. On the one Intel Mac graded (a
+  Xeon W-3235 Mac Pro), the GPU was 6–13× faster on small classifiers and
+  as accurate or better, but no more bucket-invariant than the CPU: an
+  input's probabilities can move by up to about 2e-4 between buckets on
+  the CPU, and by more on the GPU, where Apple silicon's CPU is exact.
+  gliner2.5-decide, laya-typed-decisions, laya-en and julia-1 are
+  unsupported on Intel Macs. docs/MODELS.md lists what was graded there.
 - **Linux:** ONNX embedders only. There is no Core ML, so no
   classification or reranking, and chat answers 503.
 - **The dylib** ships only in the Apple silicon archive.

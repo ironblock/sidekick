@@ -19,7 +19,14 @@
 # Since the rewrites every model measures at least 0.99995 on the ANE (M1
 # Max, macOS 27.0), so the ANE gate matches the GPU's. A dropped attention
 # mask measured 0.40-0.94.
-bucket_invariance = { cpu = 0.999999, gpu = 0.9999, ane = 0.9999 }
+#
+# Except Core ML's CPU on an Intel Mac (cpu-x86_64): it rounds the last,
+# partial output tile of the attention-score matmul differently by bucket,
+# one fp16 ulp in a few scores of inputs that nearly fill their bucket
+# (tools/repro_cpu_matmul_tail.py). bge-small measured 0.99999910 on a Xeon
+# W-3235; the gate there is 0.99999 (D38 amendment, October 2026). The
+# classifier gate's Intel value is in classify_grade.rs.
+bucket_invariance = { cpu = 0.999999, cpu-x86_64 = 0.99999, gpu = 0.9999, ane = 0.9999 }
 # Cosine between pad ids 0 and random pad ids in the same bucket: the mask
 # hides pads, so nothing may change.
 pad_invariance = 0.99999
@@ -304,3 +311,26 @@ path = "onnx-cpu"
 worst = 0.999989
 stress = 0.999989
 drift = 0.000013
+
+# Intel Xeon W-3235 (Mac Pro, AMD GPU), macOS 26.6.2, Core ML (October 2026),
+# from the parity run graded under the 0.8.0 pre-release suite (commit
+# 611207e), by --suggest-floors' rule. Its CPU passes the Intel bucket gate
+# (0.99999910 >= 0.99999; D38 amendment). The suite has no classifier floors,
+# so nlptown's, ms-marco's and Lumma-fev's Intel grades are recorded in
+# docs/data only.
+
+[[floor]]
+chip = "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz"
+model = "bge-small-en-v1.5"
+path = "cpu"
+worst = 0.999988
+stress = 0.999988
+drift = 0.000727
+
+[[floor]]
+chip = "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz"
+model = "bge-small-en-v1.5"
+path = "gpu"
+worst = 0.999988
+stress = 0.999989
+drift = 0.00051

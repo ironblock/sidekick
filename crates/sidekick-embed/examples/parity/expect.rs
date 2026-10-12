@@ -42,11 +42,24 @@ pub struct PerPath {
     /// ONNX Runtime's CPU; Core ML's CPU value when absent.
     #[serde(default, rename = "onnx-cpu")]
     pub onnx_cpu: Option<f64>,
+    /// Core ML's CPU on an Intel Mac; `cpu` when absent. Its CPU rounds the
+    /// last partial tile of the attention-score matmul differently by
+    /// bucket, so the exact gate Apple silicon meets doesn't hold there
+    /// (D38 amendment, October 2026).
+    #[serde(default, rename = "cpu-x86_64")]
+    pub cpu_x86_64: Option<f64>,
 }
 
 impl PerPath {
+    /// The value for `path` on the architecture this suite runs on.
     pub fn get(&self, path: Path3) -> f64 {
+        self.get_on(path, std::env::consts::ARCH)
+    }
+
+    /// The value for `path` on `arch` (`std::env::consts::ARCH` names).
+    pub fn get_on(&self, path: Path3, arch: &str) -> f64 {
         match path {
+            Path3::Cpu if arch == "x86_64" => self.cpu_x86_64.unwrap_or(self.cpu),
             Path3::Cpu => self.cpu,
             Path3::Gpu => self.gpu,
             Path3::Ane => self.ane,
@@ -169,6 +182,14 @@ mod tests {
     fn committed_expectations_parse() {
         let e = Expectations::load(&Expectations::default_path()).unwrap();
         assert!(e.gates.bucket_invariance.cpu >= e.gates.bucket_invariance.ane);
+        // Intel's CPU gate is looser than Apple silicon's, never looser than the GPU's.
+        let b = &e.gates.bucket_invariance;
+        assert!(b.get_on(Path3::Cpu, "x86_64") < b.get_on(Path3::Cpu, "aarch64"));
+        assert!(b.get_on(Path3::Cpu, "x86_64") >= b.gpu);
+        assert_eq!(b.get_on(Path3::Gpu, "x86_64"), b.get_on(Path3::Gpu, "aarch64"));
+        let c = &e.classify_gates.bucket_invariance;
+        assert!(c.get_on(Path3::Cpu, "x86_64") > c.get_on(Path3::Cpu, "aarch64"));
+        assert!(c.get_on(Path3::Cpu, "x86_64") <= c.gpu);
         for f in &e.floor {
             assert!(Path3::parse(&f.path).is_some(), "bad path {}", f.path);
             assert!(f.worst > 0.0 && f.worst <= 1.0 && f.drift >= 0.0);
