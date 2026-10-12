@@ -43,6 +43,18 @@ pub struct RefModel {
     /// references that predate the field, which all used laya's rendering.
     #[serde(default)]
     pub option_rendering: Option<String>,
+    /// nli format: the manifest's `[classify.nli]` the reference used.
+    #[serde(default)]
+    pub nli: Option<RefNli>,
+}
+
+/// An nli reference's `[classify.nli]` (D41).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RefNli {
+    pub entailment: usize,
+    pub contradiction: usize,
+    pub n_classes: usize,
+    pub hypothesis_template: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,11 +101,23 @@ pub struct ClassifyCase {
     pub position_ids: Vec<i32>,
     /// Label count for this case.
     pub k: usize,
-    /// The request asked for multi-label decoding (gliner2's `multi_label`):
-    /// the case is graded with independent sigmoids, not the model's
-    /// activation.
+    /// The request asked for multi-label decoding (gliner2's and nli's
+    /// `multi_label`): the case is graded with independent sigmoids, not
+    /// the model's activation.
     #[serde(default)]
     pub multi_label: Option<bool>,
+    /// nli: the request's hypothesis template; the manifest's when absent.
+    #[serde(default)]
+    pub hypothesis_template: Option<String>,
+    /// nli: each label's (text, hypothesis) pair, in candidate order, with
+    /// its segment ids; `ids` is empty.
+    #[serde(default)]
+    pub pair_ids: Vec<Vec<i32>>,
+    #[serde(default)]
+    pub pair_type_ids: Vec<Vec<i32>>,
+    /// The request's `truncation_side` (`right` when absent).
+    #[serde(default)]
+    pub truncation_side: Option<sidekick_core::TruncationSide>,
     /// Gold labels, when the corpus has them (reported, never graded).
     #[serde(default)]
     pub gold: Option<Vec<String>>,
@@ -125,10 +149,12 @@ impl ClassifyCase {
         ClassifyParams {
             truncate_prompt_tokens: (!self_truncating && self.tags.iter().any(|t| t == TRUNCATED_TAG))
                 .then_some(max_seq_len),
+            truncation_side: self.truncation_side.unwrap_or_default(),
             candidate_labels: self.candidate_labels.clone(),
             question_type: self.question_type,
             instructions: self.instructions.clone(),
-            ..Default::default()
+            multi_label: self.multi_label.unwrap_or(false),
+            hypothesis_template: self.hypothesis_template.clone(),
         }
     }
 
@@ -246,6 +272,7 @@ impl ClassifyReference {
             ClassifyFormat::Gliner2 => "gliner2".to_string(),
             ClassifyFormat::Fev => "fev".to_string(),
             ClassifyFormat::Agentjev => "agentjev".to_string(),
+            ClassifyFormat::Nli => "nli".to_string(),
         });
         if m.format != format {
             why.push("format changed".into());
@@ -267,6 +294,17 @@ impl ClassifyReference {
             let have = m.option_rendering.as_deref().unwrap_or("laya");
             if have != want {
                 why.push(format!("option_rendering {have} != {want}"));
+            }
+        }
+        if let Some(nli) = &manifest.classify.nli {
+            let want = RefNli {
+                entailment: nli.entailment,
+                contradiction: nli.contradiction,
+                n_classes: nli.n_classes,
+                hypothesis_template: nli.hypothesis_template.clone(),
+            };
+            if m.nli.as_ref() != Some(&want) {
+                why.push("[classify.nli] changed".into());
             }
         }
         // The runtime ports one gliner2 release's input layout. A reference
@@ -356,6 +394,33 @@ pub(crate) mod tests {
         let (_, st) = sample();
         let bad = json.replace("\"k\":3", "\"k\":5");
         assert!(ClassifyReference::parse(&bad, &st).unwrap_err().contains("k = 5"));
+    }
+
+    #[test]
+    fn an_nli_reference_carries_pairs_and_its_section() {
+        let manifest = |classes: usize| -> ClassifierManifest {
+            toml::from_str(&format!(
+                "id = \"z\"\ntask = \"zero-shot-classification\"\nartifact = \"m\"\ntokenizer = \"t\"\n\
+                 buckets = [128]\nmax_seq_len = 128\n[classify]\nformat = \"nli\"\nmax_labels = 4\n\
+                 [classify.nli]\nentailment = 1\ncontradiction = 0\nn_classes = {classes}\n"
+            ))
+            .unwrap()
+        };
+        let (json, st) = sample();
+        let nli = json
+            .replace("\"format\":\"laya\"", "\"format\":\"nli\",\"nli\":{\"entailment\":1,\"contradiction\":0,\"n_classes\":3,\"hypothesis_template\":\"This example is {}.\"}")
+            .replacen("\"k\":2", "\"k\":2,\"pair_ids\":[[1,5,2,7,2],[1,5,2,8,2]],\"pair_type_ids\":[[0,0,0,1,1],[0,0,0,1,1]],\"multi_label\":true,\"hypothesis_template\":\"It is {}.\",\"truncation_side\":\"left\"", 1);
+        let r = ClassifyReference::parse(&nli, &st).unwrap();
+        let case = &r.cases[0];
+        assert_eq!(case.pair_ids[1], vec![1, 5, 2, 8, 2]);
+        let params = case.params(128, true);
+        assert!(params.multi_label);
+        assert_eq!(params.hypothesis_template.as_deref(), Some("It is {}."));
+        assert_eq!(params.truncation_side, sidekick_core::TruncationSide::Left);
+        assert_eq!(params.truncate_prompt_tokens, None, "nli truncates by itself");
+        assert_eq!(r.stale(&manifest(3), "c", "t"), None);
+        let why = r.stale(&manifest(2), "c", "t").unwrap();
+        assert!(why.contains("[classify.nli] changed"), "{why}");
     }
 
     #[test]

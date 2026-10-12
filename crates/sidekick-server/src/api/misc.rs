@@ -55,6 +55,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
         data.push(ModelObject {
             labels,
             max_labels,
+            hypothesis_template: m.classify.nli.as_ref().map(|n| n.hypothesis_template.clone()),
             max_batch: Some(m.max_batch),
             extensions: Some(m.extension_fields()),
             required: Some(m.required_fields()),

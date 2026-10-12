@@ -68,7 +68,20 @@ pub fn worker(
         // Segment ids count only where the model takes them: an XLM-R
         // reference may list all-zero ones that sidekick never builds.
         let segments = model.manifest.classify.io.token_type_ids.is_some();
-        let ids_match = prepared.ids == case.ids
+        // nli: every label's pair, and its segment ids where the model
+        // takes them.
+        let pairs_match = match &prepared.nli {
+            Some(nli) => {
+                nli.pairs.len() == case.pair_ids.len()
+                    && nli.pairs.iter().zip(&case.pair_ids).all(|(p, ids)| &p.ids == ids)
+                    && (!segments
+                        || (case.pair_type_ids.len() == nli.pairs.len()
+                            && nli.pairs.iter().zip(&case.pair_type_ids).all(|(p, t)| &p.type_ids == t)))
+            }
+            None => case.pair_ids.is_empty(),
+        };
+        let ids_match = pairs_match
+            && prepared.ids == case.ids
             && (!segments || prepared.type_ids == case.type_ids)
             && prepared.markers == case.markers
             && prepared.qtype == case.qtype
@@ -77,12 +90,34 @@ pub fn worker(
             && prepared.position_ids == case.position_ids;
         let model_only = if ids_match {
             None
+        } else if let Some(ours) = &prepared.nli {
+            // The reference's pairs through the same model.
+            let bucket_for = |n: usize| buckets.iter().copied().find(|&b| b >= n).ok_or("reference ids exceed buckets");
+            let mut pairs = Vec::with_capacity(case.pair_ids.len());
+            for (i, ids) in case.pair_ids.iter().enumerate() {
+                let type_ids = if segments { case.pair_type_ids.get(i).cloned().unwrap_or_default() } else { vec![] };
+                pairs.push(sidekick_core::NliPair { bucket: bucket_for(ids.len())?, ids: ids.clone(), type_ids });
+            }
+            let bucket = pairs.iter().map(|p| p.bucket).max().ok_or("a reference nli case has no pairs")?;
+            let theirs = Prepared {
+                nli: Some(sidekick_core::NliPairs { pairs, per_label: ours.per_label }),
+                ids: vec![],
+                type_ids: vec![],
+                markers: vec![],
+                qtype: None,
+                bucket,
+                decide_pos: None,
+                seg: vec![],
+                position_ids: vec![],
+            };
+            Some(clf.run(&theirs).map_err(e)?)
         } else {
             let bucket = *buckets
                 .iter()
                 .find(|&&b| b >= case.ids.len())
                 .ok_or("reference ids exceed buckets")?;
             let theirs = Prepared {
+                nli: None,
                 ids: case.ids.clone(),
                 type_ids: case.type_ids.clone(),
                 markers: case.markers.clone(),
@@ -105,7 +140,11 @@ pub fn worker(
                 bucket_invariance.add(dp);
                 bucket_pairs.push(BucketPair { from: prepared.bucket, to: b, dp });
             }
-            let pads = prepared.bucket - prepared.ids.len();
+            // nli: each pair pads to its own bucket from the same ids.
+            let used = prepared.nli.as_ref().map_or(prepared.ids.len(), |n| {
+                n.pairs.iter().map(|p| p.ids.len()).min().unwrap_or(0)
+            });
+            let pads = prepared.bucket - used;
             if pads > 0 {
                 let pad_ids: Vec<i32> = (0..pads).map(|_| (rng.next() % vocab) as i32).collect();
                 let other = clf.run_in(&prepared, prepared.bucket, &pad_ids).map_err(e)?;
@@ -629,6 +668,10 @@ mod tests {
             position_ids: vec![],
             k: 2,
             multi_label: None,
+            hypothesis_template: None,
+            pair_ids: vec![],
+            pair_type_ids: vec![],
+            truncation_side: None,
             gold: None,
         };
         // 25 cases: indexes 0, 10 and 20, plus one adversarial at 5.

@@ -282,10 +282,14 @@ pub struct ClassifyRequest {
     pub question_type: Option<String>,
     #[serde(default)]
     pub instructions: Option<String>,
-    /// gliner2 format: score each label independently (sigmoid `probs`).
-    /// The name Hugging Face's zero-shot pipeline uses.
+    /// gliner2 and nli formats: score each label independently (sigmoid
+    /// `probs`). The name Hugging Face's zero-shot pipeline uses.
     #[serde(default)]
     pub multi_label: Option<bool>,
+    /// nli format: the hypothesis each label is put into, with one `{}`
+    /// for the label. The name Hugging Face's zero-shot pipeline uses.
+    #[serde(default)]
+    pub hypothesis_template: Option<String>,
 }
 
 /// vLLM's pooling fields that classify and rerank share
@@ -503,6 +507,10 @@ pub struct ModelObject {
     /// Extension, zero-shot: most `candidate_labels` per request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_labels: Option<usize>,
+    /// Extension, nli format: the hypothesis template a request gets when
+    /// it sends none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hypothesis_template: Option<String>,
     /// Extension, classifiers: most inputs per request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_batch: Option<usize>,
@@ -554,6 +562,7 @@ impl ModelObject {
             backend: None,
             labels: None,
             max_labels: None,
+            hypothesis_template: None,
             max_batch: None,
             extensions: None,
             required: None,

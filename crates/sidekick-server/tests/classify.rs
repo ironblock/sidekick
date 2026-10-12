@@ -362,6 +362,81 @@ async fn gliner2_multi_label_switches_probs_to_per_label_sigmoids() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn nli_scores_labels_as_huggingfaces_zero_shot_pipeline_does() {
+    let request = |labels: Value, multi: Option<bool>| {
+        let mut b = json!({"model": "nli-decider", "input": "a refund for the damaged parcel", "candidate_labels": labels});
+        if let Some(m) = multi {
+            b["multi_label"] = json!(m);
+        }
+        b
+    };
+    // The mock's value per label: 3.0 if the text contains it, else 0.0.
+    // Several labels: a softmax across labels of their entailment logits.
+    let three = json!(["refund", "damaged", "cancel"]);
+    let d = &classify_ok(request(three.clone(), None)).await["data"][0];
+    let softmax = activate(ProblemType::SingleLabel, &[3.0, 3.0, 0.0], None);
+    assert_eq!(probs(d), softmax);
+    assert!((softmax[0] - 0.487_856).abs() < 1e-6, "e^3 / (2e^3 + 1)");
+    assert_eq!(d["label"], "refund");
+    // multi_label: each label alone, the sigmoid of its value (the
+    // classifier's entailment − contradiction).
+    let d = &classify_ok(request(three, Some(true))).await["data"][0];
+    let sigmoid = probs(d);
+    assert!((sigmoid[0] - 0.952_574).abs() < 1e-6 && (sigmoid[2] - 0.5).abs() < 1e-6, "{sigmoid:?}");
+    // One label is scored alone whatever multi_label says, as the pipeline does.
+    for multi in [None, Some(false), Some(true)] {
+        let d = &classify_ok(request(json!(["cancel"]), multi)).await["data"][0];
+        assert_eq!(probs(d), vec![0.5], "{multi:?}");
+        assert_eq!(d["num_classes"], 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nli_reports_every_pairs_tokens_and_its_largest_bucket() {
+    let p = test_state_full(true, None);
+    let body = json!({"model": "nli-decider", "input": "short", "candidate_labels": ["a", "b"],
+                      "hypothesis_template": "It is about {}.", "truncation_side": "left"});
+    let (status, headers, value) = call_with_headers(p.state, classify(body)).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    // Each pair is `short|It is about a.`: 20 bytes, so 40 tokens in all.
+    assert_eq!(value["usage"]["prompt_tokens"], 40);
+    assert_eq!(headers["sidekick-buckets"], "64");
+    let seen = p.seen.lock().unwrap();
+    let params = seen.last().unwrap();
+    assert_eq!(params.hypothesis_template.as_deref(), Some("It is about {}."));
+    assert_eq!(params.truncation_side, sidekick_core::TruncationSide::Left);
+    assert!(!params.multi_label);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nli_requests_are_validated_against_the_format() {
+    let base = || json!({"model": "nli-decider", "input": "x", "candidate_labels": ["a", "b"]});
+    let with = |field: &str, value: Value| {
+        let mut b = base();
+        b[field] = value;
+        b
+    };
+    classify_ok(base()).await;
+    classify_ok(with("multi_label", json!(true))).await;
+    classify_ok(with("truncation_side", json!("left"))).await;
+    classify_ok(with("truncate_prompt_tokens", json!(32))).await;
+    classify_ok(with("hypothesis_template", json!("The agent is {} here."))).await;
+    classify_400(with("question_type", json!("choice")), "nli format").await;
+    classify_400(with("instructions", json!("intent")), "nli format").await;
+    classify_400(with("calibration", json!("model")), "nli format").await;
+    classify_400(with("candidate_labels", json!(["a", "b", "c", "d", "e"])), "maximum of 4").await;
+    for bad in ["no slot", "{} and {}", "{0} positional", "{label}", "a {} with {{braces}}"] {
+        classify_400(with("hypothesis_template", json!(bad)), "exactly one `{}`").await;
+    }
+    // The template is the nli format's alone.
+    classify_400(
+        json!({"model": "schema-decider", "input": "x", "candidate_labels": ["a", "b"], "hypothesis_template": "{}"}),
+        "`hypothesis_template` isn't supported",
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn gliner2_requests_are_validated_against_the_format() {
     let base = || json!({"model": "schema-decider", "input": "x", "candidate_labels": ["a", "b"]});
     let with = |field: &str, value: Value| {
@@ -611,6 +686,12 @@ async fn listings_are_task_aware() {
     assert_eq!(j["extensions"], json!(["candidate_labels", "calibration", "question_type", "instructions"]));
     assert_eq!(j["required"], json!(["candidate_labels", "question_type", "instructions"]));
     assert_eq!(j["compute_units"], "cpu_and_gpu");
+    let n = model("nli-decider");
+    assert_eq!(n["extensions"], json!(["candidate_labels", "hypothesis_template", "multi_label"]));
+    assert_eq!(n["required"], json!(["candidate_labels"]));
+    assert_eq!(n["hypothesis_template"], "This example is {}.");
+    assert_eq!(n["max_labels"], 4);
+    assert!(model("decider").get("hypothesis_template").is_none());
     // Each classifier's configured compute units: the default, or its own.
     assert_eq!(model("sentiment")["compute_units"], "cpu_and_ne");
     assert_eq!(g["compute_units"], "cpu_and_gpu");
@@ -619,7 +700,8 @@ async fn listings_are_task_aware() {
     assert_eq!(
         health["classifiers"]["models"],
         json!([
-            "chunked", "cpu-capped", "decider", "fev-decider", "jev-decider", "julia", "placed", "placed-gpu", "placed-stale",
+            "chunked", "cpu-capped", "decider", "fev-decider", "jev-decider", "julia", "nli-decider", "placed", "placed-gpu",
+            "placed-stale",
             "reranker", "schema-decider", "sentiment", "sigmoid-reranker"
         ])
     );

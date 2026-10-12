@@ -101,6 +101,7 @@ struct ExpectedCase {
 
 fn prepared(case: &ExpectedCase, bucket: usize) -> Prepared {
     Prepared {
+        nli: None,
         ids: case.ids.clone(),
         type_ids: vec![],
         markers: case.markers.clone(),
@@ -158,11 +159,11 @@ fn fev_positions_outside_the_real_tokens_are_refused() {
         (case.markers.clone(), -1),       // negative
         (vec![case.markers[0], used + 2], case.decide), // an option end in the padding
     ] {
-        let p = Prepared { markers, decide_pos: Some(decide), ..prepared(case, 16) };
+        let p = Prepared { nli: None, markers, decide_pos: Some(decide), ..prepared(case, 16) };
         let e = clf.run(&p).unwrap_err();
         assert!(e.to_string().contains("real tokens"), "{e}");
     }
-    let p = Prepared { decide_pos: None, ..prepared(case, 16) };
+    let p = Prepared { nli: None, decide_pos: None, ..prepared(case, 16) };
     assert!(clf.run(&p).unwrap_err().to_string().contains("decide position"));
     std::fs::remove_dir_all(&dir).unwrap();
 }

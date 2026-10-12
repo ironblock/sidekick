@@ -82,6 +82,7 @@ fn main() {
             let mut position_ids: Vec<i32> = (0..p as i32).collect();
             position_ids.extend([p as i32, p as i32 + 1, p as i32, p as i32 + 1]);
             let prepared = Prepared {
+                nli: None,
                 ids,
                 type_ids: vec![],
                 markers: vec![p as i32 + 1, p as i32 + 3],
