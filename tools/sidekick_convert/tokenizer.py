@@ -96,6 +96,10 @@ def st_pooling(src):
     or None without a Pooling module."""
     for p in sorted(Path(src).glob("*Pooling*/config.json")):
         cfg = json.loads(p.read_text())
+        # sentence-transformers 6 names the mode ("pooling_mode": "mean"); earlier releases set one flag
+        mode = cfg.get("pooling_mode")
+        if isinstance(mode, str):
+            return {"lasttoken": "lasttoken", "last_token": "lasttoken"}.get(mode, mode)
         for key, mode in (("pooling_mode_cls_token", "cls"), ("pooling_mode_mean_tokens", "mean"),
                           ("pooling_mode_lasttoken", "lasttoken"), ("pooling_mode_max_tokens", "max")):
             if cfg.get(key):

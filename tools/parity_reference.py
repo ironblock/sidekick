@@ -23,13 +23,15 @@ the reference pipeline used, metadata) and reference.safetensors (one
 
 Usage:
     python tools/parity_reference.py <model-dir> --source <hf-id-or-dir> \\
-        [--onnx <hf-id-or-dir>:<file.onnx>] ... [--trust-remote-code] [--out DIR]
+        [--onnx <hf-id-or-dir>:<file.onnx>] ... [--trust-remote-code] [--text-only] [--out DIR]
 
     <model-dir>   an installed sidekick model directory (manifest.toml,
                   tokenizer.json, artifacts)
     --source      the Hugging Face checkpoint the model was converted from
     --onnx        a published ONNX export, e.g.
                   Alibaba-NLP/gte-modernbert-base:onnx/model_int8.onnx
+    --text-only   load a multimodal checkpoint's text tower alone (e.g.
+                  google/embeddinggemma-2)
     --out         a references directory shared by several models (pass
                   the same directory to the suite as --refs)
 
@@ -187,6 +189,8 @@ def main():
     ap.add_argument("--source", required=True)
     ap.add_argument("--onnx", action="append", default=[])
     ap.add_argument("--trust-remote-code", action="store_true")
+    ap.add_argument("--text-only", action="store_true",
+                    help="load a multimodal checkpoint's text tower alone (vision and audio configs dropped)")
     ap.add_argument("--out", type=Path)
     args = ap.parse_args()
 
@@ -203,6 +207,7 @@ def main():
     model = SentenceTransformer(
         args.source, device="cpu", trust_remote_code=args.trust_remote_code,
         model_kwargs={"dtype": torch.float32},
+        **({"config_kwargs": {"vision_config": None, "audio_config": None}} if args.text_only else {}),
     )
     model.max_seq_length = manifest["max_seq_len"]
     mode, has_dense = st_pooling(model)
