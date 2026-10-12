@@ -46,7 +46,7 @@ import math
 from pathlib import Path
 
 import torch
-from transformers.modeling_outputs import BaseModelOutput
+from transformers.modeling_outputs import BaseModelOutput, SequenceClassifierOutput
 from transformers.models.deberta_v2.modeling_deberta_v2 import make_log_bucket_position
 
 from ..calibrate import all_linears, linear_maxima
@@ -65,16 +65,20 @@ def relative_index(distance, span, max_position, buckets):
 
 
 class DebertaV2Backbone(Backbone):
+    # the sequence-classification pooler's activation, when twice_gelu()
+    # replaced it; None keeps transformers' ContextPooler
+    pooler_act = None
+
     def __init__(self, **kw):
         super().__init__(**kw)
-        att = self.model.encoder.layer[0].attention.self
+        att = self.model.base_model.encoder.layer[0].attention.self
         self.terms = tuple(t for t in ("c2p", "p2c") if t in att.pos_att_type)
         self.heads = att.num_attention_heads
         self.head_size = att.attention_head_size
         self.scale = 1.0 / math.sqrt(self.head_size * (1 + len(self.terms)))
 
     def _relative_rows(self, seq):
-        enc = self.model.encoder
+        enc = self.model.base_model.encoder
         att = enc.layer[0].attention.self
 
         def index(distance):
@@ -92,7 +96,7 @@ class DebertaV2Backbone(Backbone):
         if self.config.type_vocab_size > 0:
             b["token_type_ids"] = torch.zeros((1, seq), dtype=torch.long)
         rows = self._relative_rows(seq)
-        enc = self.model.encoder
+        enc = self.model.base_model.encoder
         with torch.no_grad():
             rel = enc.get_rel_embedding()
             for i, layer in enumerate(enc.layer):
@@ -123,7 +127,8 @@ class DebertaV2Backbone(Backbone):
         return layer.attention.output(ctx, h)
 
     def call(self, w, x):
-        m = getattr(w, self.attr)
+        task = getattr(w, self.attr)
+        m = task.base_model
         seq = w.seq
         mask = x["attention_mask"].long()
         kw = {"input_ids": x["input_ids"].long(), "position_ids": w.position_ids, "mask": mask}
@@ -136,7 +141,13 @@ class DebertaV2Backbone(Backbone):
         for i, layer in enumerate(m.encoder.layer):
             a = self._attention(w, i, layer, h, add, seq)
             h = layer.output(layer.intermediate(a), a)
-        return BaseModelOutput(last_hidden_state=h)
+        if task is m:
+            return BaseModelOutput(last_hidden_state=h)
+        # DebertaV2ForSequenceClassification's head: ContextPooler on the
+        # first token, then the classifier (dropout is off in eval)
+        if self.pooler_act is None:
+            return SequenceClassifierOutput(logits=task.classifier(task.pooler(h)))
+        return SequenceClassifierOutput(logits=task.classifier(self.pooler_act(task.pooler.dense(h[:, 0]))))
 
     def reference(self, ids, token_type_ids=None):
         """transformers' own forward, unpadded."""
@@ -148,12 +159,16 @@ class DebertaV2Backbone(Backbone):
             return self.model(**kw)
 
     def check_linear_range(self, texts, tok):
-        """The ANE linear's 2^15 rule over `texts` (see BertBackbone)."""
-        from ..tokenizer import encode
+        """The ANE linear's 2^15 rule over `texts`, each a string or an
+        (a, b) pair (see BertBackbone)."""
+        from ..tokenizer import encode, encode_pair
 
         def run():
-            for text in texts:
-                self.reference(encode(tok, text))
+            for item in texts:
+                if isinstance(item, tuple):
+                    self.reference(*encode_pair(tok, *item))
+                else:
+                    self.reference(encode(tok, item))
 
         return saturation.check(linear_maxima(run, all_linears(self.model)))
 
@@ -177,13 +192,22 @@ def _gliner2_state(src, prefix):
 
 
 def load(src, tok, *, task=None):
-    """Load a DeBERTa-v2/v3 snapshot, or a GLiNER2 checkpoint's encoder, in fp32.
-    Only the bare encoder (task=None) is handled: pooling and per-token heads."""
-    from transformers import AutoConfig, AutoModel
-    if task is not None:
-        raise SystemExit(f"the DeBERTa-v2 backbone loads the bare encoder only, not task {task!r}")
+    """Load a DeBERTa-v2/v3 snapshot, or a GLiNER2 checkpoint's encoder, in fp32:
+    the bare encoder (task=None), for pooling and per-token heads, or with
+    the checkpoint's own sequence-classification head
+    (task="sequence-classification": ContextPooler and classifier)."""
+    from transformers import AutoConfig, AutoModel, AutoModelForSequenceClassification
+    if task not in (None, "sequence-classification"):
+        raise SystemExit(f"the DeBERTa-v2 backbone loads the bare encoder or sequence classification, not {task!r}")
     src = Path(src)
-    if (src / "encoder_config").is_dir():
+    if task is not None:
+        if (src / "encoder_config").is_dir():
+            raise SystemExit("a GLiNER2 checkpoint has no sequence-classification head")
+        model = AutoModelForSequenceClassification.from_pretrained(src, dtype=torch.float32)
+        config = model.config
+        if getattr(config, "pooler_hidden_act", "gelu") != "gelu":
+            raise SystemExit(f"pooler_hidden_act {config.pooler_hidden_act!r} isn't validated (gelu is)")
+    elif (src / "encoder_config").is_dir():
         config = AutoConfig.from_pretrained(src / "encoder_config")
         model = AutoModel.from_config(config)
         missing, unexpected = model.load_state_dict(_gliner2_state(src, "encoder."), strict=False)
@@ -194,7 +218,7 @@ def load(src, tok, *, task=None):
         model = AutoModel.from_pretrained(src, dtype=torch.float32)
         config = model.config
     model = model.float().eval()
-    _check_supported(config, model)
+    _check_supported(config, model.base_model)
     from ..tokenizer import special_ids
     # The relative shift replaces transformers' gathers; one in the graph
     # means a regression that would put the attention on the CPU.
@@ -218,8 +242,14 @@ def twice_gelu(backbone):
     op is then forbidden. Exact in fp32."""
     if getattr(backbone.config, "hidden_act", None) != "gelu":
         raise SystemExit(f"twice_gelu needs hidden_act 'gelu' (erf), not {backbone.config.hidden_act!r}")
-    for layer in backbone.model.encoder.layer:
+    for layer in backbone.model.base_model.encoder.layer:
         layer.intermediate.intermediate_act_fn = activations.TwiceGelu()
         with torch.no_grad():
             layer.output.dense.weight.mul_(1.0 / activations.TwiceGelu.GAIN)
+    if backbone.model is not backbone.model.base_model:
+        # the sequence-classification pooler's gelu too, its 1/GAIN in the
+        # classifier's weight (the bias is added after)
+        backbone.pooler_act = activations.TwiceGelu()
+        with torch.no_grad():
+            backbone.model.classifier.weight.mul_(1.0 / activations.TwiceGelu.GAIN)
     backbone.forbid_ops.add("gelu")

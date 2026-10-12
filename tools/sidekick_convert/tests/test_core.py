@@ -259,6 +259,29 @@ class MarkerGates(unittest.TestCase):
         self.assertEqual(g._decisions(np.array([-3.0]), np.array([3.0]), "sigmoid"), (0, 0))
 
 
+class NliManifest(unittest.TestCase):
+    """The nli format's indices and template, as transformers' zero-shot
+    pipeline and the server resolve them."""
+
+    def test_indices_follow_the_pipeline(self):
+        cfg = lambda labels: SimpleNamespace(num_labels=len(labels),  # noqa: E731
+                                             label2id={label: i for i, label in enumerate(labels)})
+        # cross-encoder/nli-deberta-v3-*, nli-MiniLM2: contradiction, entailment, neutral
+        self.assertEqual(manifest.nli_indices(cfg(["contradiction", "entailment", "neutral"])), (1, 0))
+        # roberta-large-mnli: CONTRADICTION, NEUTRAL, ENTAILMENT
+        self.assertEqual(manifest.nli_indices(cfg(["CONTRADICTION", "NEUTRAL", "ENTAILMENT"])), (2, 0))
+        # two-way, entailment first: contradiction is the last index (not_entailment)
+        self.assertEqual(manifest.nli_indices(cfg(["entailment", "not_entailment"])), (0, 1))
+        # no label starts with "entail": the pipeline's -1, the last index
+        self.assertEqual(manifest.nli_indices(cfg(["LABEL_0", "LABEL_1", "LABEL_2"])), (2, 0))
+
+    def test_template_rule(self):
+        self.assertTrue(manifest.valid_template("This example is {}."))
+        self.assertTrue(manifest.valid_template("{}"))
+        for bad in ("No placeholder.", "{} and {}", "Braces {x} {}", "{0}", "close } {}", None):
+            self.assertFalse(manifest.valid_template(bad), bad)
+
+
 class StPoolingTest(unittest.TestCase):
     """sentence-transformers' Pooling config, in both its formats."""
 

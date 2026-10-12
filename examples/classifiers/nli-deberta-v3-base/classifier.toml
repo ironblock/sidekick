@@ -1,0 +1,43 @@
+# cross-encoder/nli-deberta-v3-base: a 12-layer DeBERTa-v3-base NLI cross-encoder (184M parameters,
+# Apache-2.0; trained on MultiNLI and SNLI), as a Core ML zero-shot classifier in the
+# nli format: one static-shape artifact per sequence-length bucket ({seq}
+# resolves against `buckets`), each scoring one (premise, hypothesis) pair
+# and returning the model's 3 NLI logits, (1, 3). sidekick builds a
+# hypothesis per candidate label from `hypothesis_template` and scores the
+# labels as transformers' ZeroShotClassificationPipeline does
+# (docs/design/classify.md, "The nli format").
+#
+# Produce the artifacts with tools/convert_nli.py:
+#   python tools/convert_nli.py <checkpoint> <models>/nli-deberta-v3-base
+# [classify.nli]'s indices are the pipeline's own resolution of the
+# checkpoint's label2id; the converter checks them.
+#
+# `compute_units = "cpu_and_gpu"` keeps it off the ANE. On the ANE it grades
+# C and is 5x slower; on the GPU it grades B at 6.7 ms per case
+# (docs/MODELS.md).
+
+id = "nli-deberta-v3-base"
+task = "zero-shot-classification"
+source = { repo = "cross-encoder/nli-deberta-v3-base", revision = "6c749ce3425cd33b46d187e45b92bbf96ee12ec7" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 8
+problem_type = "single_label"
+compute_units = "cpu_and_gpu"
+
+[classify]
+format = "nli"
+max_labels = 16
+
+[classify.nli]
+entailment = 1
+contradiction = 0
+n_classes = 3
+hypothesis_template = "This example is {}."
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
