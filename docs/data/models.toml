@@ -157,3 +157,10 @@ family = "RoBERTa"
 task = "classify"
 source = "FacebookAI/roberta-large-mnli@2a8f12d27941090092df78e4ba6f0928eb5eac98"
 served = "coreml-gpu"
+
+[models."nli-minilm2-l6-h768-ane"]
+name = "nli-MiniLM2-L6-H768 (ANE build)"
+family = "RoBERTa"
+task = "classify"
+source = "cross-encoder/nli-MiniLM2-L6-H768@b95119ce93d3e065de6214e38cd4a97b0f2f2c6d"
+served = "coreml-ane"

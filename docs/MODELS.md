@@ -732,6 +732,7 @@ path.
 | [FrontiersMind/Lumma-fev-0.1b](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b) as `lumma-fev-0.1b` | zero-shot, fev format, 2,048 tokens | [convert_fev.py](../tools/convert_fev.py) | D 0.030 (5.7× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.021) | **A** 4.3e-3 (0.92× ceiling) | **B** 5.7e-3 (1.43× ceiling) | 3858/3875 | 37 |
 | [aimeigaoshou/agent-jev](https://huggingface.co/aimeigaoshou/agent-jev) as `agent-jev` (served on the GPU) | zero-shot, agentjev's format, 2,048 tokens | [convert_agentjev.py](../tools/convert_agentjev.py) | D 0.021 (5.9× ceiling; 1 flip); over 1,024 tokens, the D33 limit (buckets differ by up to 0.009) | **A** 3.7e-3 (0.84× ceiling) | B 5.6e-3 (1.44× ceiling; no flips), chunked (D37), an operator's option (D38) | 2,710–3,742 (of 2,767–3,775) | 152 |
 | [cross-encoder/nli-MiniLM2-L6-H768](https://huggingface.co/cross-encoder/nli-MiniLM2-L6-H768) as `nli-minilm2-l6-h768` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | C 0.0148 | **A** 0.0019 (1.16× ceiling) | F 0.0186: bucket invariance 5.9e-3, over its 2.1e-3 ceiling | 150/160 | 2.4 |
+| [cross-encoder/nli-MiniLM2-L6-H768](https://huggingface.co/cross-encoder/nli-MiniLM2-L6-H768) as `nli-minilm2-l6-h768-ane` (its ANE build) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) with the BERT backbone's ANE rewrites | C 0.0179 | **A** 0.0027 (1.20× ceiling) | **B** 0.0049 (bucket invariance exact) | 233/243 | 2.4 |
 | [cross-encoder/nli-deberta-v3-xsmall](https://huggingface.co/cross-encoder/nli-deberta-v3-xsmall) as `nli-deberta-v3-xsmall` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | C 0.0189 | **B** 0.004 (1.27× ceiling) | F 0.0276: bucket invariance 5.1e-3, over its 4.4e-3 ceiling | 479/488 | 15 |
 | [cross-encoder/nli-deberta-v3-small](https://huggingface.co/cross-encoder/nli-deberta-v3-small) as `nli-deberta-v3-small` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | D 0.0295 | **A** 0.005 (1.03× ceiling) | F 0.0254: bucket invariance 7.4e-3, over its 3.0e-3 ceiling | 245/254 | 16 |
 | [cross-encoder/nli-deberta-v3-base](https://huggingface.co/cross-encoder/nli-deberta-v3-base) as `nli-deberta-v3-base` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | C 0.013 | **B** 0.0037 (1.29× ceiling) | C 0.0101 (4.6× ceiling) | 479/488 | 33 |
@@ -764,6 +765,15 @@ the pipeline's own scores (agreement within 1e-7).
   0.857 / 0.857, base 0.896 / 0.883, RoBERTa-large 0.916 / 0.877), and
   predictions agree with fp32 on 100% of pairs, except MiniLM2's CPU and
   ANE paths (99.7%: one pair each).
+- **An ANE build:** for a companion that should leave the GPU to a
+  primary model, `nli-minilm2-l6-h768-ane` is MiniLM2 converted with the
+  BERT backbone's three ANE rewrites (backbones/bert.py): the softmax
+  denominator from the value matmul makes it exactly bucket-invariant (F
+  to C), the erf GELU and the linear-floor rescale take its worst |Δp|
+  from 0.013 to 4.9e-3 (B), at the same 2.4 ms per request. Its MNLI
+  accuracy is 0.883 / 0.870 (fp32 0.877 / 0.864; 99.4% agreement). The
+  same rewrites make roberta-large-mnli's ANE path exactly bucket-invariant
+  too, but it grades C (p99 2.01× its fp16 ceiling), so it has no ANE build.
 - **roberta-large-mnli's GPU worst case** (|Δp| 0.12) is one MultiNLI pair
   whose entailment and contradiction logits nearly cancel, so its
   one-label score sits on the sigmoid's steep part; an ideal fp16 engine

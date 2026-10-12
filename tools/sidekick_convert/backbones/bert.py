@@ -28,11 +28,20 @@ What conversion needs (docs/DECISIONS.md D15, D25, D28):
 - RANGE. BERT is post-norm: there is no residual stream to rescale, so the
   ANE linear's 2^15 limit (D25 amendment) is only checked, over the gate
   texts, and the conversion fails when it doesn't hold.
+- ANE REWRITES, opt-in, measured on nli-MiniLM2-L6-H768 (an NLI
+  cross-encoder) on an M1 Max: on the ANE it failed bucket invariance
+  (Delta-p 5.9e-3 between buckets) and its worst Delta-p was 0.019.
+  matmul_softmax_rewrite() writes every layer out with the softmax
+  denominator from the value matmul (techniques/attention.py), which made
+  it exactly bucket-invariant (C, 0.013); twice_gelu() then took it to
+  5.4e-3; linear_floor_rewrite() to 4.9e-3 (B), each at the same latency.
+  On roberta-large-mnli the three give an exactly bucket-invariant C
+  (p99 2.01x its fp16 ceiling).
 """
 
 import torch
 
-from ..techniques import activations, masks, saturation
+from ..techniques import activations, attention, masks, precision, saturation
 from ..calibrate import all_linears, linear_maxima
 from . import Backbone
 
@@ -66,6 +75,8 @@ def _verify_finite_mask(model, special_ids):
 
 
 class BertBackbone(Backbone):
+    softmax = "native"     # "matmul" after matmul_softmax_rewrite()
+
     def __init__(self, *, token_types, position_offset, **kw):
         super().__init__(**kw)
         self.token_types = token_types
@@ -81,6 +92,8 @@ class BertBackbone(Backbone):
         return b
 
     def call(self, w, x):
+        if self.softmax == "matmul":
+            return self._call_written_out(w, x)
         kw = {"input_ids": x["input_ids"].long(), "attention_mask": x["attention_mask"].long()}
         if self.token_types == "zeros":
             kw["token_type_ids"] = w.token_type_ids
@@ -88,6 +101,33 @@ class BertBackbone(Backbone):
             kw["token_type_ids"] = x["token_type_ids"].long()
         kw["position_ids"] = w.position_ids
         return getattr(w, self.attr)(**kw)
+
+    def _call_written_out(self, w, x):
+        """The encoder layer by layer, attention by matmul_softmax, then the
+        checkpoint's own head: BERT's pooler and classifier, or RoBERTa's
+        classification head (which reads the first token itself)."""
+        from transformers.modeling_outputs import BaseModelOutput, SequenceClassifierOutput
+        task = getattr(w, self.attr)
+        base, seq = task.base_model, w.seq
+        types = {"zeros": getattr(w, "token_type_ids", None), "none": None}.get(self.token_types)
+        if self.token_types == "input":
+            types = x["token_type_ids"].long()
+        h = base.embeddings(input_ids=x["input_ids"].long(), token_type_ids=types, position_ids=w.position_ids)
+        add = masks.key_padding(x["attention_mask"].long())
+        for layer in base.encoder.layer:
+            att = layer.attention.self
+            heads, hd = att.num_attention_heads, att.attention_head_size
+
+            def split(t):
+                return t.reshape(1, seq, heads, hd).transpose(1, 2)
+            ctx = attention.matmul_softmax(split(att.query(h)), split(att.key(h)), split(att.value(h)), add,
+                                           hd ** -0.5, seq)
+            a = layer.attention.output(ctx.transpose(1, 2).reshape(1, seq, heads * hd), h)
+            h = layer.output(layer.intermediate(a), a)
+        if task is base:
+            return BaseModelOutput(last_hidden_state=h)
+        pooler = getattr(base, "pooler", None)
+        return SequenceClassifierOutput(logits=task.classifier(pooler(h) if pooler is not None else h))
 
     def reference(self, ids, token_type_ids=None):
         t = torch.tensor([ids])
@@ -139,6 +179,66 @@ def load(src, tok, *, task=None, attention="explicit", token_types="zeros", posi
         _verify_finite_mask(model, specials)
     return BertBackbone(family="bert", model=model, config=config, special_ids=specials,
                         token_types=token_types, position_offset=position_offset)
+
+
+def matmul_softmax_rewrite(backbone):
+    """A rewrite: the encoder written out layer by layer, each softmax's
+    denominator computed by the value matmul (techniques/attention.py), which
+    makes the ANE's output bucket-invariant. Exact in fp32; changes the
+    artifact. The key-padding mask never masks a whole row, so no row needs
+    self-attention."""
+    if backbone.config.model_type not in ("bert", *OFFSET_MODEL_TYPES):
+        raise SystemExit(f"matmul_softmax_rewrite: model_type {backbone.config.model_type!r} isn't BERT-family")
+    backbone.softmax = "matmul"
+
+
+class _Scaled(torch.nn.Module):
+    """inner(x) * s, a power-of-two scale on an activation's output."""
+
+    def __init__(self, inner, s):
+        super().__init__()
+        self.inner = inner
+        self.s = float(s)
+
+    def forward(self, x):
+        return self.inner(x) * self.s
+
+
+def linear_floor_rewrite(pairs, tok, report=print):
+    """A rewrite: the ANE linear's small-input floor (techniques/precision.py)
+    for every layer's two output linears. output.dense's input is the
+    activation's output, scaled by a calibrated power of two; the
+    attention's output.dense input is the context, scaled through the value
+    projection; each linear is then descaled, its bias scaled up so the
+    descale leaves it unchanged. Calibrated on `pairs` (a converter's gate
+    pairs, never the graded corpus). Exact in fp32."""
+    from ..calibrate import collect
+    from ..tokenizer import encode_pair
+
+    def rewrite(backbone):
+        base = backbone.model.base_model
+        sites = {}
+        for i, layer in enumerate(base.encoder.layer):
+            for name, lin in (("o", layer.output.dense), ("a", layer.attention.output.dense)):
+                sites[f"{i}.{name}_in"] = (lin, "in")
+                sites[f"{i}.{name}_out"] = (lin, "out")
+        stats = collect(lambda: [backbone.reference(*encode_pair(tok, *p)) for p in pairs], sites)
+        scales = []
+        for i, layer in enumerate(base.encoder.layer):
+            so = precision.input_scale(stats[f"{i}.o_in"], stats[f"{i}.o_out"])
+            sa = precision.input_scale(stats[f"{i}.a_in"], stats[f"{i}.a_out"])
+            layer.intermediate.intermediate_act_fn = _Scaled(layer.intermediate.intermediate_act_fn, so)
+            v = layer.attention.self.value
+            with torch.no_grad():
+                layer.output.dense.bias.mul_(so)
+                v.weight.mul_(sa)
+                v.bias.mul_(sa)
+                layer.attention.output.dense.bias.mul_(sa)
+            layer.output.dense = precision.Descale(layer.output.dense, 1.0 / so)
+            layer.attention.output.dense = precision.Descale(layer.attention.output.dense, 1.0 / sa)
+            scales.append(f"{so:g}/{sa:g}")
+        report(f"linear-floor scales (mlp/attention) per layer: {' '.join(scales)}")
+    return rewrite
 
 
 def twice_gelu(backbone):

@@ -175,5 +175,40 @@ class EmbeddingGemma2Rewrite(unittest.TestCase):
         torch.testing.assert_close(got, h[:, :5].mean(dim=1))
 
 
+class BertAneRewrites(unittest.TestCase):
+    """The BERT backbone's ANE rewrites are exact in fp32: the encoder
+    written out with the matmul softmax, the erf GELU and the linear-floor
+    rescale give a RoBERTa classifier's own logits."""
+
+    def test_written_out_forward_matches(self):
+        from types import SimpleNamespace
+        from transformers import RobertaConfig, RobertaForSequenceClassification
+        from sidekick_convert.backbones import bert
+        torch.manual_seed(0)
+        cfg = RobertaConfig(vocab_size=64, hidden_size=32, num_hidden_layers=2, num_attention_heads=4,
+                            intermediate_size=64, max_position_embeddings=40, num_labels=3,
+                            attn_implementation="eager")
+        model = RobertaForSequenceClassification(cfg).eval()
+        for m in {id(model): model, id(model.base_model): model.base_model}.values():
+            m.get_extended_attention_mask = bert._finite_extended_mask.__get__(m)
+        bb = bert.BertBackbone(family="bert", model=model, config=model.config, special_ids=(0, 2),
+                               token_types="zeros", position_offset=cfg.pad_token_id + 1)
+        tok = SimpleNamespace(encode=lambda a, b, add_special_tokens=True: SimpleNamespace(
+            ids=[0, 5, 6, 7, 2, 2, 9, 10, 2], type_ids=[0] * 9))
+        ids = [0, 5, 6, 7, 2, 2, 9, 10, 2]
+        with torch.no_grad():
+            want = model(input_ids=torch.tensor([ids])).logits
+        bert.twice_gelu(bb)
+        bert.matmul_softmax_rewrite(bb)
+        bert.linear_floor_rewrite([("a", "b")], tok, report=lambda *_: None)(bb)
+        seq = 12
+        w = SimpleNamespace(model=model, seq=seq, **bb.buffers(seq))
+        x = {"input_ids": torch.tensor([ids + [1] * (seq - len(ids))]),
+             "attention_mask": torch.tensor([[1] * len(ids) + [0] * (seq - len(ids))])}
+        with torch.no_grad():
+            got = bb.call(w, x).logits
+        torch.testing.assert_close(got, want, rtol=1e-4, atol=1e-5)
+
+
 if __name__ == "__main__":
     unittest.main()

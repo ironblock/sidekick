@@ -92,6 +92,13 @@ precision = "fp16"
 date = "2026-10-12"
 idle = false
 sidekick = "0.8.0+ with the nli format (commit e42158b)"
+[runs."coreml-arm64-nli-minilm2-l6-h768-ane.json"]
+runtime = "Core ML"
+os = "macOS 27.0"
+precision = "fp16"
+date = "2026-10-12"
+idle = false
+sidekick = "0.8.0+ with the nli format (commit e42158b)"
 [runs."coreml-arm64-roberta-large-mnli.json"]
 runtime = "Core ML"
 os = "macOS 27.0"

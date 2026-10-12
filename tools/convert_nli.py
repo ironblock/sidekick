@@ -24,6 +24,11 @@ The recipe follows the checkpoint's model_type:
 - deberta-v2 (DeBERTa-v3): the DeBERTa backbone, its relative-position
   gathers rewritten as matmuls (techniques/relative_shift.py), with the
   checkpoint's ContextPooler and classifier.
+A BERT-family model whose manifest serves it on the ANE (no compute_units)
+gets the BERT backbone's ANE rewrites: the erf GELU, the matmul softmax
+(bucket invariance) and the linear-floor rescale. Measured on
+nli-MiniLM2-L6-H768, they take its ANE path from F to B, so it ships both
+ways: nli-minilm2-l6-h768 on the GPU, nli-minilm2-l6-h768-ane on the ANE.
 The pair is tokenizer.json's own (premise, hypothesis) encoding. The
 graph takes token_type_ids only when the model reads pair segment ids
 (type_vocab_size > 1 and nonzero second-segment ids): DeBERTa-v3's
@@ -97,12 +102,19 @@ def main():
         raise SystemExit(f"model_type {model_type!r} has no NLI recipe (bert, roberta, xlm-roberta, deberta-v2)")
     template = m["classify"]["nli"].get("hypothesis_template", "This example is {}.")
     gate = gate_pairs(template, tok, max(buckets))
+    rewrites = [twice] if args.twice_gelu else []
+    if manifest.served_path(m) == "CPU_AND_NE":
+        # served on the ANE: the BERT backbone's ANE rewrites (its docstring)
+        if model_type == "deberta-v2":
+            raise SystemExit("DeBERTa-v3 NLI models are served on the GPU (compute_units = \"cpu_and_gpu\"): "
+                             "on the ANE they are slower and fail bucket invariance")
+        rewrites = [bert.twice_gelu, bert.matmul_softmax_rewrite, bert.linear_floor_rewrite(gate, tok)]
     name, value, factor = backbone.check_linear_range(gate, tok)
     print(f"gate set: {len(gate)} pairs; largest linear output {value:.1f} at {name}, "
           f"{factor:.1f}x under the ANE linear's 2^15")
     job = recipes.classifier(
         model_id=model_id, src=args.src, buckets=buckets, backbone=backbone, head=SequenceClassification(),
-        tok=tok, pairs=gate, rewrites=[twice] if args.twice_gelu else (), timing=args.time,
+        tok=tok, pairs=gate, rewrites=rewrites, timing=args.time,
         gate_overrides=ClassifierGates.paths(manifest.served_path(m), report=("CPU_AND_NE", "CPU_ONLY", "CPU_AND_GPU")),
         **cli.job_options(args))
     core.run(job, args.install_dir)
