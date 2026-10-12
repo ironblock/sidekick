@@ -51,6 +51,14 @@ Corpora:
   service does, through its own head modules (agentjev/model.py), both
   sha256-pinned; the backbone is transformers' Qwen3Model. --source is the
   agent-jev snapshot, --agentjev-code a checkout of its code.
+- nli format (NLI cross-encoders): fixtures/classify/nli.corpus.toml, shared
+  by every nli model: MultiNLI validation pairs as one-label requests and
+  written requests. Each label's (premise, hypothesis) pair is tokenized as
+  transformers' ZeroShotClassificationPipeline does (truncation only_first,
+  on the case's side) and checked against tokenizer.json; the oracle values
+  are the entailment logit, or entailment - contradiction for multi-label
+  and one-label requests, and `torch_pairs` keeps every pair's raw logits.
+  The pipeline's own scores check them. --source is the checkpoint.
 - text-classification: the embedding parity corpus
   (fixtures/parity/corpus.toml), materialized with the model's
   tokenizer.json. Inputs longer than the largest bucket are truncated to it
@@ -1163,6 +1171,137 @@ def run_gliner2(args, manifest):
 # --- text-classification -----------------------------------------------------------
 
 
+NLI_CORPUS = REPO / "fixtures" / "classify" / "nli.corpus.toml"
+MNLI_LABELS = ["entailment", "neutral", "contradiction"]   # GLUE's label ids
+
+
+def nli_cases(corpus):
+    """The nli corpus as requests: MultiNLI rows as one-label cases (the
+    hypothesis the only label, template "{}"), then the written cases. An
+    MNLI row's label isn't a candidate label, so it isn't `gold`: it is
+    tagged (mnli-entailment, ...) for the separate 3-way accuracy check."""
+    import pyarrow.parquet as pq
+    from huggingface_hub import snapshot_download
+    mn = corpus["mnli"]
+    root = Path(snapshot_download(mn["repo"], repo_type="dataset", revision=mn["revision"],
+                                  allow_patterns=[f"mnli/{s}-*" for s in mn["splits"]], local_files_only=True))
+    cases = []
+    for split in mn["splits"]:
+        (path,) = sorted((root / "mnli").glob(f"{split}-*.parquet"))
+        for row in pq.read_table(path).to_pylist()[:: mn["stride"]]:
+            cases.append({"id": f"mnli-{split.removeprefix('validation_')}-{row['idx']}",
+                          "tags": ["mnli", split, f"mnli-{MNLI_LABELS[row['label']]}"],
+                          "input": row["premise"], "candidate_labels": [row["hypothesis"]], "multi_label": False,
+                          "hypothesis_template": "{}", "truncation_side": "right", "gold": None})
+    for c in corpus["case"]:
+        cases.append({"id": c["id"], "tags": list(c.get("tags", [])),
+                      "input": "\n".join([c["input"]] * c.get("repeat", 1)),
+                      "candidate_labels": c["candidate_labels"], "multi_label": c.get("multi_label", False),
+                      "hypothesis_template": c.get("hypothesis_template"),
+                      "truncation_side": c.get("truncation_side", "right"), "gold": None})
+    return cases
+
+
+def nli_value(logits, entail, contra, multi_label, k):
+    """A label's oracle value from its pair's class logits: the entailment
+    logit, which softmax across labels turns into the pipeline's scores, or
+    for multi-label and one-label requests entailment - contradiction, whose
+    sigmoid is the pipeline's softmax over [contradiction, entailment]."""
+    if multi_label or k == 1:
+        return logits[entail] - logits[contra]
+    return logits[entail]
+
+
+def run_nli(args, manifest):
+    """nli format: each case's (premise, hypothesis) pairs as transformers'
+    ZeroShotClassificationPipeline tokenizes them (truncation only_first on
+    the case's side, at the tokenizer's model_max_length), checked against
+    tokenizer.json, which the server encodes with; the oracles score each
+    pair with the checkpoint's own sequence-classification model, and the
+    pipeline itself checks the scores they imply."""
+    from tokenizers import Tokenizer
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
+    sys.path.insert(0, str(REPO / "tools"))
+    from sidekick_convert.manifest import nli_indices, valid_template
+    corpus_text = NLI_CORPUS.read_text()
+    corpus = tomllib.loads(corpus_text)
+    nli = manifest["classify"]["nli"]
+    default = nli.get("hypothesis_template", "This example is {}.")
+    max_len, max_labels = manifest["max_seq_len"], manifest["classify"]["max_labels"]
+    hf = AutoTokenizer.from_pretrained(args.source)
+    if hf.model_max_length != max_len:
+        raise SystemExit(f"the pipeline truncates at model_max_length {hf.model_max_length}, the manifest at {max_len}")
+    served = Tokenizer.from_file(str(args.model_dir / "tokenizer.json"))
+    served.no_padding()
+    served.no_truncation()
+    model = AutoModelForSequenceClassification.from_pretrained(args.source, dtype=torch.float32).eval()
+    entail, contra = nli_indices(model.config)
+    if (entail, contra, model.config.num_labels) != (nli["entailment"], nli["contradiction"], nli["n_classes"]):
+        raise SystemExit(f"[classify.nli] doesn't match the checkpoint: {(entail, contra, model.config.num_labels)}")
+    cases = limited(args, nli_cases(corpus))
+    for c in cases:
+        template = c["hypothesis_template"] or default
+        if not valid_template(template):
+            raise SystemExit(f"{c['id']}: template {template!r} needs exactly one {{}} and no other braces")
+        if not 1 <= len(c["candidate_labels"]) <= max_labels:
+            raise SystemExit(f"{c['id']}: {len(c['candidate_labels'])} labels, outside 1..{max_labels}")
+        hf.truncation_side = c["truncation_side"]
+        served.enable_truncation(max_len, strategy="only_first", direction=c["truncation_side"])
+        c["pair_ids"], c["pair_type_ids"], c["feeds"] = [], [], []
+        for label in c["candidate_labels"]:
+            hyp = template.format(label)
+            enc = hf(c["input"], hyp, truncation="only_first")
+            ids = enc["input_ids"]
+            mine = served.encode(c["input"], hyp, add_special_tokens=True)
+            if mine.ids != ids:
+                raise SystemExit(f"{c['id']}: tokenizer.json's pair ids differ from the pipeline's tokenizer")
+            if len(hf(c["input"], hyp)["input_ids"]) > max_len and "truncated" not in c["tags"]:
+                c["tags"].append("truncated")
+            c["pair_ids"].append(ids)
+            c["pair_type_ids"].append(list(mine.type_ids))
+            c["feeds"].append({k: torch.tensor([v]) for k, v in enc.items()})
+        c["k"] = len(c["candidate_labels"])
+        c["ids"] = []
+        if "long" in c["tags"] and "truncated" not in c["tags"]:
+            raise SystemExit(f"{c['id']}: tagged long but fits {max_len} tokens; lengthen it")
+    hf.truncation_side = "right"
+    print(f"{len(cases)} cases, {sum(c['k'] for c in cases)} pairs; "
+          f"{sum('truncated' in c['tags'] for c in cases)} truncated", flush=True)
+    pairs = np.full((len(cases), max_labels, nli["n_classes"]), np.nan, dtype=np.float32)
+
+    def forward(run, c):
+        out = []
+        for j, feed in enumerate(c["feeds"]):
+            lg = run(model, **feed).logits[0].double().numpy()
+            if run is RUNS["torch"]:
+                pairs[cases.index(c), j] = lg
+            out.append(nli_value(lg, entail, contra, c["multi_label"], c["k"]))
+        return np.array(out)
+    logits = oracles(forward, cases, max_labels, log_every=50)
+    logits["torch_pairs"] = pairs
+    # the pipeline's own scores, from the same checkpoint, against the
+    # oracle's: the reference is HF's zero-shot scoring or it is nothing
+    zs = pipeline("zero-shot-classification", model=model, tokenizer=hf, device="cpu")
+    worst = 0.0
+    for i, c in enumerate(cases):
+        if c["tags"][:1] == ["mnli"] and i % 10:
+            continue
+        hf.truncation_side = c["truncation_side"]
+        got = zs(c["input"], c["candidate_labels"], hypothesis_template=c["hypothesis_template"] or default,
+                 multi_label=c["multi_label"])
+        v = logits["torch"][i, : c["k"]].astype(np.float64)
+        want = 1 / (1 + np.exp(-v)) if c["multi_label"] or c["k"] == 1 else np.exp(v - v.max()) / np.exp(v - v.max()).sum()
+        have = dict(zip(got["labels"], got["scores"]))
+        worst = max(worst, max(abs(have[label] - w) for label, w in zip(c["candidate_labels"], want)))
+    hf.truncation_side = "right"
+    print(f"pipeline check: max |score difference| {worst:.2e}", flush=True)
+    if worst > 1e-4:
+        raise SystemExit("the oracle's scores differ from transformers' zero-shot pipeline")
+    for c in cases:
+        del c["feeds"]
+    return cases, [], logits, pr.corpus_hash(corpus_text)
+
+
 def run_text(args, manifest):
     from tokenizers import Tokenizer
     from transformers import AutoModelForSequenceClassification
@@ -1223,9 +1362,10 @@ def main():
     manifest = tomllib.loads((args.model_dir / "classifier.toml").read_text())
     fmt = manifest["classify"].get("format")
     laya, gliner2, fev, agentjev = fmt == "laya", fmt == "gliner2", fmt == "fev", fmt == "agentjev"
+    nli = fmt == "nli"
     julia = laya and manifest["classify"]["laya"].get("option_rendering") == "julia"
     run = (run_julia if julia else run_laya if laya else run_gliner2 if gliner2 else run_fev if fev
-           else run_agentjev if agentjev else run_text)
+           else run_agentjev if agentjev else run_nli if nli else run_text)
     zero_shot = laya or fev or agentjev
     cases, fixture, logits, corpus_sha = run(args, manifest)
     tokenizer_sha = sha256(args.model_dir / "tokenizer.json")
@@ -1261,6 +1401,9 @@ def main():
     max_labels = cls.get("max_labels", len(cls.get("labels", [])))
     tensors = {}
     for name, values in logits.items():
+        if values.ndim == 3:   # nli's torch_pairs: diagnostic, not an oracle
+            tensors[name] = values
+            continue
         tensors[name] = np.full((len(cases), max_labels), np.nan, dtype=np.float32)
         tensors[name][:, : values.shape[1]] = values
     meta = {
@@ -1271,11 +1414,17 @@ def main():
                   "buckets": manifest["buckets"], "max_seq_len": manifest["max_seq_len"],
                   "max_labels": max_labels, "labels": cls.get("labels", [])},
         "source": source,
-        "oracles": list(tensors),
+        "oracles": [name for name in tensors if name != "torch_pairs"],
         "versions": {p: version(p) for p in ("torch", "transformers", "tokenizers", "numpy")
                      + (("gliner2",) if gliner2 else ())},
         "cases": [],
     }
+    if nli:
+        n = cls["nli"]
+        meta["model"]["nli"] = {"entailment": n["entailment"], "contradiction": n["contradiction"],
+                                "n_classes": n["n_classes"],
+                                "hypothesis_template": n.get("hypothesis_template", "This example is {}.")}
+        meta["versions"]["pyarrow"] = version("pyarrow")
     if laya:
         # How labels became option texts: a reference made under one
         # rendering is stale for a manifest that names another.
@@ -1296,6 +1445,10 @@ def main():
             rec["decide"] = c["decide"]
         if agentjev:
             rec.update(seg=c["seg"], position_ids=c["position_ids"])
+        if nli:
+            rec.update(candidate_labels=c["candidate_labels"], multi_label=c["multi_label"],
+                       hypothesis_template=c["hypothesis_template"], truncation_side=c["truncation_side"],
+                       pair_ids=c["pair_ids"], pair_type_ids=c["pair_type_ids"])
         meta["cases"].append(rec)
     out = (args.out or args.model_dir / "parity") / manifest["id"]
     out.mkdir(parents=True, exist_ok=True)

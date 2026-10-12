@@ -1,0 +1,290 @@
+# The classifier corpus every nli-format model is compared on, on every
+# compute path, against transformers' ZeroShotClassificationPipeline run in
+# fp32 (docs/design/classify.md, the nli format).
+#
+# Two parts:
+#
+# 1. [mnli]: MultiNLI validation pairs (nyu-mll/glue at the revision given,
+#    every `stride`-th row of each split), read at generation time and not
+#    committed. Each pair becomes a one-label request: the premise as the
+#    text, the hypothesis as the only candidate label, with the template
+#    "{}" so the hypothesis is used as written. A single label is scored as
+#    the pipeline scores it, entailment against contradiction. The pair's
+#    MNLI label is carried as `gold`; the 3-way accuracy of fp32 and of each
+#    Core ML path on these pairs is reported separately from the parity
+#    grade.
+#
+# 2. [[case]]: requests written for this corpus. They cover zero-shot topic,
+#    sentiment and intent labels with 2 to 16 candidates, agent-like texts
+#    (reasoning that runs into a limitation, compiler errors, stack traces,
+#    failing and passing test runs, clean successes, rate limits and
+#    permission errors), one-label requests with and without multi_label,
+#    the same request single- and multi-label, custom and non-English
+#    templates, labels with punctuation, digits and non-Latin scripts, and
+#    premises past 512 tokens truncated on the right and, for logs and
+#    traces, on the left. None of them comes from a dataset.
+#
+# Fields: `input` is the premise; `candidate_labels` the labels;
+# `multi_label`, default false; `hypothesis_template`, absent meaning the
+# manifest's (every template has exactly one "{}" and no other brace);
+# `truncation_side`, "right" (the default) or "left"; `repeat`, the input
+# repeated that many times joined by newlines, for long premises. A pair
+# longer than the model's max_seq_len is truncated in the premise only, as
+# the pipeline does, and tagged `truncated`.
+#
+# Changing this file invalidates generated references (their corpus_sha256);
+# regenerate them with tools/classifier_reference.py.
+
+[mnli]
+repo = "nyu-mll/glue"
+revision = "bcdcba79d07bc864c1c254ccfcedcce55bcc9a8c"
+splits = ["validation_matched", "validation_mismatched"]
+stride = 64
+
+# --- zero-shot classics ---
+
+[[case]]
+id = "topic-sports"
+input = "The striker scored twice in the second half to send the club into the cup final."
+candidate_labels = ["sports", "politics", "business", "science"]
+
+[[case]]
+id = "topic-business"
+input = "Shares fell 8% after the company cut its full-year revenue forecast and announced layoffs."
+candidate_labels = ["sports", "politics", "business", "science", "entertainment"]
+
+[[case]]
+id = "topic-science-multi"
+input = "Researchers sequenced the genome of a deep-sea microbe that survives without sunlight or oxygen."
+candidate_labels = ["biology", "oceanography", "astronomy", "finance"]
+multi_label = true
+
+[[case]]
+id = "sentiment"
+input = "The battery lasts all day and the screen is gorgeous, but the speakers are tinny."
+candidate_labels = ["positive", "negative", "mixed"]
+
+[[case]]
+id = "sentiment-template"
+input = "Worst customer service I have ever dealt with. Nobody answered for three weeks."
+candidate_labels = ["happy", "angry", "indifferent"]
+hypothesis_template = "The writer is {}."
+
+[[case]]
+id = "intent-two"
+input = "Can you move my appointment from Tuesday to Friday afternoon?"
+candidate_labels = ["reschedule", "cancel"]
+
+[[case]]
+id = "intent-sixteen"
+input = "My card was charged twice for the same order and I'd like one of the payments refunded."
+candidate_labels = ["refund", "cancel order", "track package", "change address", "billing error", "account locked",
+                    "password reset", "product question", "complaint", "compliment", "warranty claim",
+                    "subscription", "gift card", "delivery delay", "price match", "other"]
+
+[[case]]
+id = "intent-sixteen-multi"
+input = "My card was charged twice for the same order and I'd like one of the payments refunded."
+candidate_labels = ["refund", "cancel order", "track package", "change address", "billing error", "account locked",
+                    "password reset", "product question", "complaint", "compliment", "warranty claim",
+                    "subscription", "gift card", "delivery delay", "price match", "other"]
+multi_label = true
+
+[[case]]
+id = "german-template"
+input = "Der Zug nach München fällt heute wegen eines Streiks aus."
+candidate_labels = ["Verkehr", "Wetter", "Sport"]
+hypothesis_template = "In diesem Text geht es um {}."
+
+[[case]]
+id = "label-punctuation"
+input = "The patch bumps the dependency from 2.3.1 to 2.4.0 and fixes CVE-2026-1234."
+candidate_labels = ["security fix (CVE)", "v2.4.0 upgrade", "UI change", "docs-only"]
+multi_label = true
+
+[[case]]
+id = "label-scripts"
+input = "東京の天気は明日、雨のち晴れになる見込みです。"
+candidate_labels = ["天気", "スポーツ", "weather", "Wetter"]
+
+[[case]]
+id = "one-label"
+input = "The package arrived two days late and the box was crushed."
+candidate_labels = ["a delivery problem"]
+
+[[case]]
+id = "one-label-multi"
+input = "The package arrived two days late and the box was crushed."
+candidate_labels = ["a delivery problem"]
+multi_label = true
+
+[[case]]
+id = "one-label-negative"
+input = "Everything arrived on time and in perfect condition."
+candidate_labels = ["a delivery problem"]
+
+# --- agent-like texts ---
+
+[[case]]
+id = "agent-unsupported-flag"
+input = "I tried passing --frozen-lockfile, but it turns out this version of the package manager doesn't support that flag, so the install aborted."
+candidate_labels = ["the step failed", "the step succeeded", "the agent is surprised"]
+hypothesis_template = "In this text, {}."
+multi_label = true
+
+[[case]]
+id = "agent-assumption-wrong"
+input = "I expected the config loader to read YAML, but it only accepts TOML. That explains why my changes had no effect."
+candidate_labels = ["an assumption turned out wrong", "everything went as planned", "a test failed"]
+hypothesis_template = "In this text, {}."
+multi_label = true
+
+[[case]]
+id = "agent-clean-success"
+input = "Applied the migration, restarted the service and verified the health endpoint returns 200. The task is complete."
+candidate_labels = ["the step failed", "the step succeeded", "the agent is surprised"]
+hypothesis_template = "In this text, {}."
+multi_label = true
+
+[[case]]
+id = "agent-compiler-error"
+input = """error[E0308]: mismatched types
+  --> src/main.rs:14:20
+   |
+14 |     let count: u32 = parse_count(&line);
+   |                ---   ^^^^^^^^^^^^^^^^^^ expected `u32`, found `Result<u32, ParseIntError>`
+   |                |
+   |                expected due to this"""
+candidate_labels = ["a compile error", "a runtime crash", "a successful build", "a network error"]
+
+[[case]]
+id = "agent-stack-trace"
+input = """Traceback (most recent call last):
+  File "app/sync.py", line 88, in run
+    batch = client.fetch(cursor)
+  File "app/client.py", line 41, in fetch
+    raise TimeoutError(f"no response after {self.timeout}s")
+TimeoutError: no response after 30s"""
+candidate_labels = ["a timeout", "a permission error", "a syntax error", "success"]
+
+[[case]]
+id = "agent-tests-failing"
+input = "Ran the test suite: 212 passed, 3 failed (test_parse_dates, test_retry_backoff, test_empty_input). Coverage 81%."
+candidate_labels = ["the tests failed", "the tests passed"]
+
+[[case]]
+id = "agent-tests-passing"
+input = "Ran the test suite: 215 passed, 0 failed in 4.81s. Coverage 82%."
+candidate_labels = ["the tests failed", "the tests passed"]
+
+[[case]]
+id = "agent-rate-limit"
+input = "HTTP 429 Too Many Requests: rate limit exceeded for this token. Retry after 60 seconds."
+candidate_labels = ["the request was rate limited", "the request succeeded", "the server crashed"]
+hypothesis_template = "{}"
+
+[[case]]
+id = "agent-permission"
+input = "mkdir: cannot create directory '/opt/tools': Permission denied"
+candidate_labels = ["a permission problem", "a missing file", "a disk that is full"]
+hypothesis_template = "The output shows {}."
+
+[[case]]
+id = "agent-one-label-surprise"
+input = "Interesting, the endpoint returns an empty list instead of a 404 when the user doesn't exist. I did not expect that."
+candidate_labels = ["something unexpected happened"]
+hypothesis_template = "In this text, {}."
+
+[[case]]
+id = "agent-one-label-routine"
+input = "Listing the directory to find the test files before running them."
+candidate_labels = ["something unexpected happened"]
+hypothesis_template = "In this text, {}."
+multi_label = true
+
+# --- long premises: past 512 tokens, the premise truncated ---
+
+[[case]]
+id = "long-log-left"
+input = """2026-10-12T09:14:03Z INFO worker started job=reindex shard=7
+2026-10-12T09:14:05Z WARN retrying request to storage (attempt 2 of 5)"""
+repeat = 14
+truncation_side = "left"
+candidate_labels = ["a warning", "a fatal error", "normal operation"]
+multi_label = true
+tags = ["long"]
+
+[[case]]
+id = "long-log-left-ending-in-failure"
+input = """2026-10-12T09:14:03Z INFO processed batch ok
+2026-10-12T09:14:04Z INFO processed batch ok
+2026-10-12T09:14:05Z INFO processed batch ok
+2026-10-12T09:14:06Z INFO processed batch ok
+2026-10-12T09:14:07Z INFO processed batch ok
+2026-10-12T09:14:08Z INFO processed batch ok
+2026-10-12T09:14:09Z INFO processed batch ok
+2026-10-12T09:14:10Z INFO processed batch ok
+2026-10-12T09:14:11Z INFO processed batch ok
+2026-10-12T09:14:12Z INFO processed batch ok
+2026-10-12T09:14:13Z INFO processed batch ok
+2026-10-12T09:14:14Z INFO processed batch ok
+2026-10-12T09:14:15Z INFO processed batch ok
+2026-10-12T09:14:16Z INFO processed batch ok
+2026-10-12T09:14:17Z INFO processed batch ok
+2026-10-12T09:14:18Z INFO processed batch ok
+2026-10-12T09:14:19Z INFO processed batch ok
+2026-10-12T09:14:20Z INFO processed batch ok
+2026-10-12T09:14:21Z INFO processed batch ok
+2026-10-12T09:14:22Z INFO processed batch ok
+2026-10-12T09:14:23Z INFO processed batch ok
+2026-10-12T09:14:24Z INFO processed batch ok
+2026-10-12T09:14:25Z INFO processed batch ok
+2026-10-12T09:14:26Z INFO processed batch ok
+2026-10-12T09:14:27Z INFO processed batch ok
+2026-10-12T09:14:28Z INFO processed batch ok
+2026-10-12T09:14:29Z INFO processed batch ok
+2026-10-12T09:14:30Z INFO processed batch ok
+2026-10-12T09:14:31Z INFO processed batch ok
+2026-10-12T09:14:32Z INFO processed batch ok
+2026-10-12T09:14:33Z INFO processed batch ok
+2026-10-12T09:14:34Z INFO processed batch ok
+2026-10-12T09:14:35Z INFO processed batch ok
+2026-10-12T09:14:36Z INFO processed batch ok
+2026-10-12T09:14:37Z INFO processed batch ok
+2026-10-12T09:14:38Z INFO processed batch ok
+2026-10-12T09:14:39Z INFO processed batch ok
+2026-10-12T09:14:40Z INFO processed batch ok
+2026-10-12T09:14:41Z INFO processed batch ok
+2026-10-12T09:14:42Z INFO processed batch ok
+2026-10-12T09:14:43Z FATAL disk quota exceeded writing /var/data/index.bin; aborting"""
+truncation_side = "left"
+candidate_labels = ["the job failed", "the job succeeded"]
+tags = ["long"]
+
+[[case]]
+id = "long-trace-left"
+input = """Traceback (most recent call last):
+  File "app/worker.py", line 120, in loop
+    self.handle(message)
+  File "app/worker.py", line 96, in handle
+    result = self.pipeline.run(message.payload)"""
+repeat = 16
+truncation_side = "left"
+candidate_labels = ["an error", "success"]
+tags = ["long"]
+
+[[case]]
+id = "long-report-right"
+input = "The quarterly report covers revenue, hiring and the new office opening. Revenue grew in every region, led by the online store, while hiring slowed as planned."
+repeat = 24
+candidate_labels = ["business", "sports", "weather"]
+tags = ["long"]
+
+[[case]]
+id = "long-reasoning-right"
+input = "First I read the failing test to understand what it checks. It asserts that dates parse in the user's timezone. Then I looked at the parser."
+repeat = 24
+candidate_labels = ["the agent is investigating a bug", "the agent finished the task"]
+hypothesis_template = "In this text, {}."
+multi_label = true
+tags = ["long"]

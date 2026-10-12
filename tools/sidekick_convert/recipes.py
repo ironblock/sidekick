@@ -87,9 +87,15 @@ def classifier(*, model_id, src, buckets, backbone, head, tok, texts=None, pairs
     m = _manifest.load(path)
     head.bind(backbone)
     token_type_input = getattr(backbone, "token_types", None) == "input"
-    _manifest.check_classifier(m, src=src, buckets=buckets, backbone=backbone, head=head, tok=tok,
-                               token_type_input=token_type_input, expected_problem_type=expected_problem_type,
-                               strict_max_seq_len=strict_max_seq_len)
+    if m.get("classify", {}).get("format") == "nli":
+        # an (premise, hypothesis) pair per prediction, gated on the model's
+        # own n-way softmax
+        _manifest.check_nli(m, src=src, buckets=buckets, backbone=backbone, head=head, tok=tok,
+                            token_type_input=token_type_input)
+    else:
+        _manifest.check_classifier(m, src=src, buckets=buckets, backbone=backbone, head=head, tok=tok,
+                                   token_type_input=token_type_input, expected_problem_type=expected_problem_type,
+                                   strict_max_seq_len=strict_max_seq_len)
     activation = {"single_label": "softmax" if head.num_labels > 1 else "sigmoid",
                   "multi_label": "sigmoid", "regression": "identity"}[m.get("problem_type", "single_label")]
     ports = text_ports(token_type_ids=token_type_input)

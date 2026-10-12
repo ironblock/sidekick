@@ -149,6 +149,61 @@ def check_classifier(m, *, src, buckets, backbone, head, tok, token_type_input, 
         raise SystemExit("manifest check failed:\n  " + "\n  ".join(errors))
 
 
+def nli_indices(config):
+    """(entailment, contradiction) output indices as transformers'
+    ZeroShotClassificationPipeline resolves them, made non-negative: the
+    first label2id entry whose label starts with "entail" (case-insensitive),
+    else the last index; contradiction is the last index when entailment is
+    0, else 0."""
+    n = int(config.num_labels)
+    entail = next((int(i) for label, i in config.label2id.items() if label.lower().startswith("entail")), -1)
+    contra = -1 if entail == 0 else 0
+    return entail % n, contra % n
+
+
+def valid_template(t):
+    """A hypothesis template the server accepts: exactly one "{}" and no other
+    brace, so Python's str.format and the server's substitution agree."""
+    return isinstance(t, str) and t.count("{}") == 1 and t.replace("{}", "").count("{") == 0 \
+        and t.replace("{}", "").count("}") == 0
+
+
+def check_nli(m, *, src, buckets, backbone, head, tok, token_type_input):
+    """An nli-format manifest (docs/design/classify.md) vs the checkpoint:
+    zero-shot, [classify.nli]'s indices and class count as transformers'
+    pipeline resolves them, its template, and io naming token_type_ids
+    exactly when the model reads pair segment ids."""
+    errors = []
+    _common(m, errors, src=src, buckets=buckets, backbone=backbone, strict_max_seq_len=True)
+    c = m.get("classify", {})
+    _check(errors, m.get("task") == "zero-shot-classification", f"task {m.get('task')!r} != 'zero-shot-classification'")
+    _check(errors, c.get("format") == "nli", f"classify.format {c.get('format')!r} != 'nli'")
+    _check(errors, not c.get("labels"), "a zero-shot model has no fixed labels")
+    _check(errors, (c.get("max_labels") or 0) >= 1, "classify.max_labels must be >= 1")
+    _check(errors, m.get("problem_type", "single_label") == "single_label",
+           "an nli model's problem_type is single_label (requests opt into multi_label)")
+    nli = c.get("nli") or {}
+    entail, contra = nli_indices(backbone.config)
+    _check(errors, nli.get("entailment") == entail, f"[classify.nli] entailment {nli.get('entailment')} != {entail}")
+    _check(errors, nli.get("contradiction") == contra,
+           f"[classify.nli] contradiction {nli.get('contradiction')} != {contra}")
+    _check(errors, nli.get("n_classes") == head.num_labels,
+           f"[classify.nli] n_classes {nli.get('n_classes')} != the checkpoint's {head.num_labels}")
+    _check(errors, valid_template(nli.get("hypothesis_template", "This example is {}.")),
+           f"hypothesis_template {nli.get('hypothesis_template')!r} needs exactly one {{}} and no other braces")
+    _, types = _tok.encode_pair(tok, "a", "b")
+    reads = int(getattr(backbone.config, "type_vocab_size", 0) or 0) > 1 and any(types)
+    io = c.get("io", {})
+    want = {"input_ids", "attention_mask", "output"} | ({"token_type_ids"} if reads else set())
+    _check(errors, set(io) == want, f"[classify.io] must name {sorted(want)}, not {sorted(io)} (the model "
+                                    f"{'reads' if reads else 'reads no'} pair segment ids)")
+    _check(errors, token_type_input == reads, f"the recipe's token_type_input={token_type_input}, but the "
+                                              f"model {'reads' if reads else 'reads no'} pair segment ids")
+    _check(errors, io.get("output") == head.output, f"io.output {io.get('output')!r} != the head's {head.output!r}")
+    if errors:
+        raise SystemExit("manifest check failed:\n  " + "\n  ".join(errors))
+
+
 def check_gliner2(m, *, src, buckets, backbone, head):
     """A gliner2-format manifest (docs/design/classify.md) vs the checkpoint
     and the per-token head: zero-shot, the format's section and io, and the

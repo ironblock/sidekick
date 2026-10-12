@@ -64,6 +64,41 @@ precision = "fp16"
 date = "2026-10-11"
 idle = false
 sidekick = "0.8.0+ (commit 4e10ad7)"
+[runs."coreml-arm64-nli-minilm2-l6-h768.json"]
+runtime = "Core ML"
+os = "macOS 27.0"
+precision = "fp16"
+date = "2026-10-12"
+idle = false
+sidekick = "0.8.0+ with the nli format (commit e42158b)"
+[runs."coreml-arm64-nli-deberta-v3-xsmall.json"]
+runtime = "Core ML"
+os = "macOS 27.0"
+precision = "fp16"
+date = "2026-10-12"
+idle = false
+sidekick = "0.8.0+ with the nli format (commit e42158b)"
+[runs."coreml-arm64-nli-deberta-v3-small.json"]
+runtime = "Core ML"
+os = "macOS 27.0"
+precision = "fp16"
+date = "2026-10-12"
+idle = false
+sidekick = "0.8.0+ with the nli format (commit e42158b)"
+[runs."coreml-arm64-nli-deberta-v3-base.json"]
+runtime = "Core ML"
+os = "macOS 27.0"
+precision = "fp16"
+date = "2026-10-12"
+idle = false
+sidekick = "0.8.0+ with the nli format (commit e42158b)"
+[runs."coreml-arm64-roberta-large-mnli.json"]
+runtime = "Core ML"
+os = "macOS 27.0"
+precision = "fp16"
+date = "2026-10-12"
+idle = false
+sidekick = "0.8.0+ with the nli format (commit e42158b)"
 [runs."native-arm64-f2llm-v2-160m.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"

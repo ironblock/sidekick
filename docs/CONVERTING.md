@@ -348,6 +348,7 @@ structs don't deny unknown fields.
 | `convert_embeddinggemma.py` | Gemma3, fp16 range rewrite (residual K = 32) and per-layer precision scales | mean pool, the two sentence-transformers dense layers, L2 (`heads/gemma_st.py`) | its calibration keeps one graded-corpus text under a logged legacy exemption, because the graded artifact was calibrated with it |
 | `convert_embeddinggemma2.py` | EmbeddingGemma 2 (Gemma 4 text tower, per-layer inputs), RMSNorm pre-scales, TanhGelu | mean pool, scaled per bucket | needs transformers 5.19; see below |
 | `convert_lfm25_embedding.py` | LFM2 (short convolutions with pad zeroing, attention), per-layer precision scales | CLS pool, L2 in graph | `--no-pad-zeroing` builds the negative control |
+| `convert_nli.py` | BERT/RoBERTa (explicit) or DeBERTa-v3 (relative shift), by model_type | the checkpoint's sequence-classification head, one (premise, hypothesis) pair per prediction | zero-shot `format = "nli"`; gates the manifest's served path, reports the others |
 
 Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
 `--time` and its own flags; the embedder converters also take `--format

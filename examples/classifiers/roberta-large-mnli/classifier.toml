@@ -1,0 +1,43 @@
+# FacebookAI/roberta-large-mnli: RoBERTa-large fine-tuned on MultiNLI (356M parameters, MIT),
+# the original zero-shot NLI classic, as a Core ML zero-shot classifier in the
+# nli format: one static-shape artifact per sequence-length bucket ({seq}
+# resolves against `buckets`), each scoring one (premise, hypothesis) pair
+# and returning the model's 3 NLI logits, (1, 3). sidekick builds a
+# hypothesis per candidate label from `hypothesis_template` and scores the
+# labels as transformers' ZeroShotClassificationPipeline does
+# (docs/design/classify.md, "The nli format").
+#
+# Produce the artifacts with tools/convert_nli.py:
+#   python tools/convert_nli.py <checkpoint> <models>/roberta-large-mnli
+# [classify.nli]'s indices are the pipeline's own resolution of the
+# checkpoint's label2id; the converter checks them.
+#
+# `compute_units = "cpu_and_gpu"` keeps it off the ANE. On the ANE it fails
+# bucket invariance (Δp 1.7e-2 against its 1.2e-2 fp16 ceiling); on the GPU
+# it grades A at 15.6 ms per case (docs/MODELS.md).
+
+id = "roberta-large-mnli"
+task = "zero-shot-classification"
+source = { repo = "FacebookAI/roberta-large-mnli", revision = "2a8f12d27941090092df78e4ba6f0928eb5eac98" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 8
+problem_type = "single_label"
+compute_units = "cpu_and_gpu"
+
+[classify]
+format = "nli"
+max_labels = 16
+
+[classify.nli]
+entailment = 2
+contradiction = 0
+n_classes = 3
+hypothesis_template = "This example is {}."
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
