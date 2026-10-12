@@ -2108,6 +2108,40 @@ listed among the overrides that named no Core ML model. Likewise,
 `intra_op_threads` naming no onnx model is listed in `/health`'s
 `onnx.unmatched_thread_overrides`.
 
+**Amendment (October 2026): Core ML on Intel Macs.** The default compute
+units stay per model on `x86_64-apple-darwin`; there is no
+platform-wide `cpu_and_gpu` default. Measured on one Mac Pro (Xeon W-3235,
+AMD GPU, macOS 26.6.2) with the parity suite:
+- Core ML's CPU there isn't bucket-invariant. Its attention-score matmul
+  rounds the last, partial tile of output columns differently by bucket:
+  one fp16 ulp in a few scores of inputs that nearly fill their bucket.
+  It's deterministic, and it costs no accuracy (`tools/repro_cpu_matmul_tail.py`).
+  nlptown-sentiment's probabilities move by up to 1.9e-4, and
+  bge-small-en-v1.5's cosine by 9e-7. ms-marco-minilm-l6-v2 doesn't move.
+- The GPU there was 6–13× faster on the small classifiers (nlptown 300 →
+  23 ms per case, ms-marco 42 → 7.5 ms) and as accurate or better, but no
+  more bucket-invariant. It moves outputs at every position, logging that
+  MPSGraph doesn't support padded tensors on Intel Macs.
+  gliner2.5-decide's and laya-typed-decisions' GPU drift (Δp 4.7e-3 and
+  2.7e-2) exceeds the gates they pass on Apple silicon's GPU.
+- The larger classifiers' CPU paths didn't finish grading in four hours
+  per path (gliner2.5-decide, laya-typed-decisions, lumma-fev-0.1b,
+  agent-jev; agent-jev's GPU path neither).
+
+So switching an Intel Mac to `cpu_and_gpu` buys speed, not invariance, and
+the models it would matter most for fail on the GPU there. The operator
+chooses with `[models."<id>"] compute_units`, as before.
+gliner2.5-decide and laya-typed-decisions are unsupported on Intel Macs,
+as are laya-en and julia-1, by family.
+
+The parity suite's CPU bucket-invariance gate is per architecture. Apple
+silicon stays exact (cosine 0.999999, Δp 1e-5). On x86_64 macOS it is
+cosine 0.99999 for embedders, and Δp 5e-4 for classifiers and rerankers.
+The classifier value is provisional: only nlptown and ms-marco measure it,
+on one Mac. The GPU gates are unchanged. Under it, nlptown's Intel CPU run
+(worst Δp 7.35e-4, drift 1.9e-4) grades A. The run was graded F under the
+exact gate, and the suite doesn't re-judge a stored report.
+
 ## D39 — The ANE's SiLU, and a cancellation-free form
 Chunked agent-jev (Qwen3-0.6B, D37) graded D on the ANE: p99 |Δp| at 4.23×
 its ideal-fp16 ceiling, worst 0.022, though no decision flipped. Its GPU

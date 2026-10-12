@@ -644,15 +644,38 @@ range.
 - **On x86-64 macOS and Linux,** onnx-cpu is graded at the same grades as
   on arm64 (shipped runtime 1.23.2 on Intel macOS, 1.28.3 elsewhere;
   graded on a Xeon W-3235, a Ryzen 7 5800X and a Threadripper 3970X). On
-  Linux it is the only path. Intel Macs also have Core ML's CPU and GPU
-  paths: bge-small-en-v1.5's Core ML build grades A on both on the Xeon
-  W-3235 (worst cosine 0.999998 and 0.999999); the parity suite skips the
-  ANE path on a Mac without one. nlptown-sentiment's GPU path grades A
-  there (worst Δp 4.78e-4); its CPU path is accurate (worst Δp 7.35e-4)
-  but fails the bucket-invariance gate, moving probabilities by up to
-  1.9e-4 between buckets, where Apple silicon's CPU path is exact. On an
-  Intel Mac, serve a classifier with `compute_units = "cpu_and_gpu"`.
-  Other Core ML models aren't graded there yet.
+  Linux it is the only path.
+- **On an Intel Mac,** Core ML runs on the CPU and GPU (no Neural Engine;
+  the parity suite skips the ANE path). Graded on one Mac Pro (Xeon
+  W-3235, AMD GPU, macOS 26.6.2), with four hours per path:
+
+  | model | Core ML CPU | Core ML GPU |
+  |---|---|---|
+  | bge-small-en-v1.5 | A, worst cosine 0.999998 | A, 0.999999 |
+  | nlptown-sentiment | A, worst Δp 7.35e-4 (bucket drift 1.9e-4, under the Intel gate) | A, 4.78e-4 |
+  | ms-marco-minilm-l6-v2 | B, 1.92e-3 | A, 7.44e-4 |
+  | lumma-fev-0.1b | not graded: didn't finish in four hours | A |
+  | gliner2.5-decide | not graded: didn't finish | F: bucket drift Δp 4.7e-3, over its 3.5e-3 gate |
+  | laya-typed-decisions | not graded: didn't finish | F: bucket drift Δp 2.7e-2, over its 2.5e-2 gate |
+  | agent-jev | not graded: didn't finish | not graded: didn't finish |
+
+  On this Mac the GPU is 6–13× faster than the CPU on the small models
+  (nlptown 300 → 23 ms per case, ms-marco 42 → 7.5 ms) and as accurate or
+  better, but it is no more bucket-invariant. Core ML logs that MPSGraph
+  doesn't support padded tensors on Intel Macs, and the GPU's outputs move
+  between buckets at every position. The CPU's move only in a few
+  attention scores of inputs that nearly fill their bucket
+  (`tools/repro_cpu_matmul_tail.py`). gliner2.5-decide and
+  laya-typed-decisions, which pass bucket invariance on Apple silicon's GPU,
+  fail it on this one, and their CPU paths are impractically slow, so they
+  are **unsupported on Intel Macs**. So are laya-en and julia-1, by family
+  (ModernBERT-large, like laya-typed-decisions; not graded on Intel).
+  agent-jev's paths and Lumma-fev's CPU path are ungraded. Compute units
+  stay per model: the default runs a Core ML model on the CPU on an Intel
+  Mac, and `[models."<id>"] compute_units = "cpu_and_gpu"` selects the
+  faster GPU path. The parity suite's CPU bucket gate is looser on Intel
+  (cosine 0.99999 for embedders, Δp 5e-4 for classifiers, the latter
+  provisional, since two classifiers measure it), D38's amendment.
 - **Threads:** the default, the fastest physical cores capped at 8, needs no
   setting. To leave cores to a primary model, lower it with `[models."<id>"]
   intra_op_threads` or, for every model, `onnx_intra_op_threads` in the
