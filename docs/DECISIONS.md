@@ -2629,6 +2629,87 @@ says which model backends it serves: `sidekickd --version` ends with
 always there; `coreml` needs the `coreml` feature on macOS, and `onnx`
 the `onnx` feature.
 
+## D41 — The nli format: NLI cross-encoders as zero-shot classifiers
+A natural-language-inference cross-encoder reads a (premise, hypothesis)
+pair and says whether the premise entails, contradicts or is neutral
+toward the hypothesis. Hugging Face's `zero-shot-classification` pipeline
+turns one into a zero-shot classifier: each candidate label becomes a
+hypothesis ("This example is {label}."), and the labels are ranked by
+entailment. Small MNLI-trained models (`cross-encoder/nli-deberta-v3-*`,
+`nli-MiniLM2-L6-H768`, `roberta-large-mnli`, and the newer zeroshot-v2.0
+and ModernBERT ones) are the established tool for questions a host asks
+of short texts at high volume, such as whether a step in an agent's
+transcript shows the agent surprised or mistaken. sidekick's zero-shot
+formats so far (D28, D30, D34, D36) each serve one model family's own
+layout; none serves these.
+
+**Decision.** A fifth zero-shot format, `format = "nli"`, reproduces the
+pipeline's scores, so a client written against `pipeline(...)` gets the
+same numbers from `/v1/classify`:
+- The manifest's `[classify.nli]` names the `entailment` and
+  `contradiction` output indices, `n_classes`, and a default
+  `hypothesis_template` (the pipeline's, `This example is {}.`). The
+  indices are the pipeline's own: entailment is the first `label2id`
+  label starting with "entail"; contradiction is index 0, or the last
+  index when entailment is 0. That is the contradiction or not_entailment
+  output of every MNLI and zeroshot model checked.
+- For each label, the tokenizer's pair post-processor lays out (text,
+  template with the label), as the pipeline's fast tokenizer does, so
+  BERT's `[CLS] a [SEP] b [SEP]` and RoBERTa's `<s> a </s></s> b </s>`
+  both come out right. Segment ids are fed exactly when `[classify.io]`
+  names `token_type_ids`. The tokenizer can't decide that: DeBERTa-v3's
+  gives pairs segment ids that its model, without token-type embeddings,
+  never reads. The converter checks the naming against the checkpoint's
+  config instead.
+- Only the text is truncated, on `truncation_side`, until the pair fits:
+  the pipeline's `truncation="only_first"`, which always applies. `left`
+  keeps the end of a long input, which is what tool output and stack
+  traces need. The hypothesis is never cut; one too long for any text is
+  a 400, where the pipeline would retry untruncated and overflow the
+  model's positions.
+- Scores: with several labels, the softmax across labels of their
+  entailment logits. With `multi_label: true`, or a single label (the
+  pipeline's rule), each label's softmax over [contradiction,
+  entailment], taking entailment. The classifier returns the entailment
+  logit, or entailment − contradiction, whose sigmoid is exactly that
+  probability, so the server's existing activations produce the scores
+  and `use_activation: false` returns those values. `probs` keeps
+  `candidate_labels` order, as on every format.
+- A request may send its own `hypothesis_template`, as the pipeline
+  takes one per call. It must hold exactly one `{}` and no other brace,
+  so a plain substitution and Python's `str.format` can't disagree.
+
+**Each pair is its own prediction**, in the smallest bucket that fits it,
+as rerank pairs are (D29). A static `[1, S]` artifact per bucket keeps
+the Core ML interface every other classifier has: `input_ids`,
+`attention_mask`, optional `token_type_ids`, and `logits [1,
+n_classes]`, checked at load against `n_classes`. Batching a request's
+labels into a `[K, S]` artifact was the alternative. It would fix K per
+bucket, pad every request to it, and multiply the variants to convert and
+check; the per-pair cost it saves is launch overhead, small beside the
+encoder. A request therefore costs k predictions per input, which
+`max_labels` and `max_batch` bound. `usage.prompt_tokens` counts every
+pair's tokens, and `sidekick-buckets` reports each input's largest
+bucket. `Prepared` carries the pairs (`Prepared::nli`).
+
+**Compatibility.** A daemon or library before this release can't parse
+`format = "nli"` and skips the manifest with a warning (D28). Nothing else
+changes for existing formats. `multi_label` and `hypothesis_template` are
+400s on formats that don't take them.
+
+**Validation.** Platform-neutral tests check the pair layout for BERT- and
+RoBERTa-style tokenizers, segment ids only when named, truncation on both
+sides, the template rule, and the scores against hand-computed values.
+Two tiny Core ML cross-encoders (`tests/fixtures/tiny-nli`: 3-way with
+segment ids, 2-way without) match their fp32 torch logits in every
+bucket, and their activated values match the pipeline's own
+`postprocess`, run in Python on those logits, with and without
+`multi_label`. The parity suite grades nli models with the classifier
+grader: a reference carries each label's pair and the per-label values
+above, so the existing softmax and multi-label grading apply unchanged.
+The converted models' grades are recorded in docs/MODELS.md as they
+land.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

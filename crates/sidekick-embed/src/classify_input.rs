@@ -6,10 +6,11 @@
 
 use crate::{agentjev, fev, gliner2, laya};
 use sidekick_core::manifest::{
-    ClassifierManifest, ClassifyFormat, FevSection, Gliner2Section, LayaSection, ResolvedClassifier,
+    ClassifierManifest, ClassifyFormat, FevSection, Gliner2Section, LayaSection, NliSection, ResolvedClassifier,
 };
 use sidekick_core::{
-    ClassifyParams, ClassifyTask, Error, PairParams, Prepared, Result, TruncationSide,
+    check_hypothesis_template, ClassifyParams, ClassifyTask, Error, NliPair, NliPairs, PairParams, Prepared, Result,
+    TruncationSide,
 };
 use tokenizers::utils::truncation::{truncate_encodings, TruncationParams, TruncationStrategy};
 use tokenizers::{Tokenizer, TruncationDirection};
@@ -35,6 +36,7 @@ enum Format {
     Gliner2 { section: Gliner2Section, specials: gliner2::Specials },
     Fev { section: FevSection, delimiters: fev::Delimiters },
     Agentjev,
+    Nli { section: NliSection },
 }
 
 fn invalid(message: impl Into<String>) -> Error {
@@ -61,7 +63,10 @@ impl InputBuilder {
         let pair_added_tokens = tokenizer.encode(("", ""), true).map_err(tok_err)?.len();
         let segment_ids = m.classify.io.token_type_ids.is_some();
         // A tokenizer that marks the document with segment ids for a model
-        // whose graph can't take them would score every pair wrong.
+        // whose graph can't take them would score every pair wrong. Not
+        // for nli: DeBERTa-v3's tokenizer gives pairs segment ids its model
+        // never reads (no token-type embeddings), so there `[classify.io]`
+        // decides, and the converter checks it against the checkpoint.
         if m.task == ClassifyTask::TextRanking && !segment_ids {
             let pair = tokenizer.encode(("a", "b"), true).map_err(tok_err)?;
             if pair.get_type_ids().iter().any(|&t| t != 0) {
@@ -92,6 +97,7 @@ impl InputBuilder {
                 Some(Format::Fev { section, delimiters })
             }
             Some(ClassifyFormat::Agentjev) => Some(Format::Agentjev),
+            Some(ClassifyFormat::Nli) => Some(Format::Nli { section: m.classify.nli.clone().ok_or_else(|| missing("nli"))? }),
             None => None,
         };
         Ok(Self {
@@ -141,6 +147,7 @@ impl InputBuilder {
             }
             Some(Format::Fev { section, delimiters }) => self.prepare_fev(input, params, section, delimiters),
             Some(Format::Agentjev) => self.prepare_agentjev(input, params),
+            Some(Format::Nli { section }) => self.prepare_nli(input, params, section),
         }
     }
 
@@ -202,7 +209,7 @@ impl InputBuilder {
         if ids.len() > max {
             return Err(too_long(format!("{} tokens", ids.len()), max));
         }
-        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids: vec![], markers: vec![], qtype: None, decide_pos: None, seg: vec![], position_ids: vec![] })
+        Ok(Prepared { nli: None, bucket: self.bucket_for(ids.len()), ids, type_ids: vec![], markers: vec![], qtype: None, decide_pos: None, seg: vec![], position_ids: vec![] })
     }
 
     /// A text-ranking model's (query, document) pair, as its tokenizer
@@ -308,7 +315,7 @@ impl InputBuilder {
         } else {
             vec![]
         };
-        Ok(Prepared { bucket: self.bucket_for(ids.len()), ids, type_ids, markers: vec![], qtype: None, decide_pos: None, seg: vec![], position_ids: vec![] })
+        Ok(Prepared { nli: None, bucket: self.bucket_for(ids.len()), ids, type_ids, markers: vec![], qtype: None, decide_pos: None, seg: vec![], position_ids: vec![] })
     }
 
     /// The laya format: the state is truncated by design, keeping its
@@ -377,6 +384,7 @@ impl InputBuilder {
         }
         let ids: Vec<i32> = seq.ids.iter().map(|&u| u as i32).collect();
         Ok(Prepared {
+            nli: None,
             bucket: self.bucket_for(ids.len()),
             ids,
             type_ids: vec![],
@@ -440,6 +448,7 @@ impl InputBuilder {
         )?;
         let ids: Vec<i32> = seq.ids.iter().map(|&u| u as i32).collect();
         Ok(Prepared {
+            nli: None,
             bucket: self.bucket_for(ids.len()),
             ids,
             type_ids: vec![],
@@ -491,6 +500,7 @@ impl InputBuilder {
         )?;
         let ids: Vec<i32> = seq.ids.iter().map(|&u| u as i32).collect();
         Ok(Prepared {
+            nli: None,
             bucket: self.bucket_for(ids.len()),
             ids,
             type_ids: vec![],
@@ -528,6 +538,7 @@ impl InputBuilder {
         let tree = agentjev::build_tree(&self.tokenizer, input, instructions, &candidates, self.max_seq_len)?;
         let ids: Vec<i32> = tree.ids.iter().map(|&u| u as i32).collect();
         Ok(Prepared {
+            nli: None,
             bucket: self.bucket_for(ids.len()),
             ids,
             type_ids: vec![],
@@ -536,6 +547,100 @@ impl InputBuilder {
             decide_pos: None,
             seg: tree.seg,
             position_ids: tree.position_ids,
+        })
+    }
+}
+
+impl InputBuilder {
+    /// The nli format (D41), as Hugging Face's zero-shot pipeline builds
+    /// its inputs: for each label, the tokenizer's pair of the text and the
+    /// hypothesis template with the label in it (`[CLS] text [SEP]
+    /// hypothesis [SEP]` for BERT, `<s> text </s></s> hypothesis </s>` for
+    /// RoBERTa), with its segment ids when the graph takes them. Like the
+    /// pipeline (`truncation="only_first"`), only the text is truncated, to
+    /// fit the model, on `truncation_side`; `truncate_prompt_tokens` may
+    /// lower that limit. A hypothesis that leaves no room for the text is a
+    /// 400, never cut. One label always scores against its contradiction,
+    /// as the pipeline does.
+    fn prepare_nli(&self, input: &str, params: &ClassifyParams, section: &NliSection) -> Result<Prepared> {
+        if params.question_type.is_some() || params.instructions.is_some() {
+            return Err(invalid("the nli format takes no question_type or instructions"));
+        }
+        let labels = &params.candidate_labels;
+        check_labels(labels, 1, self.max_labels)?;
+        let template = params.hypothesis_template.as_deref().unwrap_or(&section.hypothesis_template);
+        check_hypothesis_template(template).map_err(invalid)?;
+        let max = self.max_seq_len;
+        let limit = match params.truncate_prompt_tokens {
+            None => max,
+            Some(n) if n > max => {
+                return Err(invalid(format!("truncate_prompt_tokens {n} exceeds the model's maximum of {max} tokens")))
+            }
+            Some(n) if n <= self.pair_added_tokens => {
+                return Err(invalid(format!(
+                    "truncate_prompt_tokens {n} leaves no room for text after the pair's {} special tokens",
+                    self.pair_added_tokens
+                )))
+            }
+            Some(n) => n,
+        };
+        let budget = limit - self.pair_added_tokens;
+        let direction = match params.truncation_side {
+            TruncationSide::Right => TruncationDirection::Right,
+            TruncationSide::Left => TruncationDirection::Left,
+        };
+        // Bound the tokenizer's work on the text (16 bytes per token is
+        // beyond any vocabulary), keeping the end truncation keeps.
+        let text = match params.truncation_side {
+            TruncationSide::Right => crate::byte_cap(input, max),
+            TruncationSide::Left => byte_cap_end(input, max),
+        };
+        let tok_err = |e: tokenizers::Error| Error::Tokenizer(e.to_string());
+        let premise = self.tokenizer.encode(text, false).map_err(tok_err)?;
+        let mut pairs = Vec::with_capacity(labels.len());
+        for label in labels {
+            let hypothesis = template.replacen("{}", label, 1);
+            let h = self.tokenizer.encode(hypothesis.as_str(), false).map_err(tok_err)?;
+            let h_len = h.len();
+            let no_room = || {
+                invalid(format!(
+                    "the hypothesis for label `{label}` ({h_len} tokens) leaves no room for the text in the model's \
+                     {limit}-token input"
+                ))
+            };
+            if h.len() >= budget {
+                return Err(no_room());
+            }
+            let (p, h) = if premise.len() + h.len() > budget {
+                let truncation = TruncationParams {
+                    max_length: budget,
+                    strategy: TruncationStrategy::OnlyFirst,
+                    stride: 0,
+                    direction,
+                };
+                truncate_encodings(premise.clone(), Some(h.clone()), &truncation).map_err(|_| no_room())?
+            } else {
+                (premise.clone(), Some(h))
+            };
+            let pair = self.tokenizer.post_process(p, h, true).map_err(tok_err)?;
+            let ids: Vec<i32> = pair.get_ids().iter().map(|&u| u as i32).collect();
+            if ids.len() > limit {
+                return Err(no_room());
+            }
+            let type_ids = if self.segment_ids { pair.get_type_ids().iter().map(|&u| u as i32).collect() } else { vec![] };
+            pairs.push(NliPair { bucket: self.bucket_for(ids.len()), ids, type_ids });
+        }
+        let bucket = pairs.iter().map(|p| p.bucket).max().expect("at least one label");
+        Ok(Prepared {
+            nli: Some(NliPairs { pairs, per_label: params.multi_label || labels.len() == 1 }),
+            bucket,
+            ids: vec![],
+            type_ids: vec![],
+            markers: vec![],
+            qtype: None,
+            decide_pos: None,
+            seg: vec![],
+            position_ids: vec![],
         })
     }
 }
@@ -609,6 +714,7 @@ mod tests {
             max_batch: 4,
             problem_type: ProblemType::SingleLabel,
             classify: ClassifySection {
+                nli: None,
                 format: laya.then_some(ClassifyFormat::Laya),
                 max_labels: laya.then_some(4),
                 labels: match task {
@@ -925,6 +1031,128 @@ mod tests {
 
     fn pair(truncate: Option<usize>, keep_query: bool) -> PairParams {
         PairParams { truncate_prompt_tokens: truncate, keep_query, ..Default::default() }
+    }
+
+    /// A RoBERTa-style tokenizer: laya's test vocabulary with `<s>` and
+    /// `</s>` as its specials and RobertaProcessing's pair layout,
+    /// `<s> A </s></s> B </s>`, every segment id 0.
+    fn roberta_tokenizer() -> Tokenizer {
+        let bert: serde_json::Value = serde_json::from_str(&crate::laya::tests::tokenizer().to_string(false).unwrap()).unwrap();
+        let mut json = bert.clone();
+        let mut vocab = bert["model"]["vocab"].as_object().unwrap().clone();
+        vocab.remove("[CLS]");
+        vocab.remove("[SEP]");
+        vocab.insert("<s>".into(), 1.into());
+        vocab.insert("</s>".into(), 2.into());
+        json["model"]["vocab"] = vocab.into();
+        let special = |id: u32, content: &str| {
+            serde_json::json!({"id": id, "content": content, "single_word": false, "lstrip": false,
+                               "rstrip": false, "normalized": false, "special": true})
+        };
+        json["added_tokens"] = serde_json::json!([special(0, "[UNK]"), special(1, "<s>"), special(2, "</s>")]);
+        json["post_processor"] = serde_json::json!({
+            "type": "RobertaProcessing", "sep": ["</s>", 2], "cls": ["<s>", 1],
+            "trim_offsets": true, "add_prefix_space": false
+        });
+        Tokenizer::from_bytes(json.to_string()).unwrap()
+    }
+
+    /// An nli model over the test vocabulary: buckets 8, 16, 32.
+    fn nli_builder(tokenizer: Tokenizer, segment_ids: bool) -> InputBuilder {
+        let mut m = manifest(ClassifyTask::TextClassification);
+        m.task = ClassifyTask::ZeroShotClassification;
+        m.classify.labels = vec![];
+        m.classify.format = Some(ClassifyFormat::Nli);
+        m.classify.max_labels = Some(3);
+        m.classify.nli = Some(NliSection {
+            entailment: 2,
+            contradiction: 0,
+            n_classes: 3,
+            hypothesis_template: "{} fits".into(),
+        });
+        m.classify.io.token_type_ids = segment_ids.then(|| "token_type_ids".into());
+        InputBuilder::new(tokenizer, &m).unwrap()
+    }
+
+    fn nli_params(labels: &[&str]) -> ClassifyParams {
+        ClassifyParams { candidate_labels: labels.iter().map(|l| l.to_string()).collect(), ..Default::default() }
+    }
+
+    fn nli(p: &Prepared) -> &NliPairs {
+        p.nli.as_ref().expect("an nli input")
+    }
+
+    #[test]
+    fn nli_pairs_each_label_as_the_tokenizer_pairs_text() {
+        let t = |w| crate::laya::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        // BERT: [CLS] text [SEP] hypothesis [SEP], segments 0 then 1.
+        let b = nli_builder(crate::laya::tests::tokenizer(), true);
+        let p = b.prepare("c d e", &nli_params(&["a", "b"])).unwrap();
+        let pairs = &nli(&p).pairs;
+        assert_eq!(pairs[0].ids, vec![1, t("c"), t("d"), t("e"), 2, t("a"), t("fits"), 2]);
+        assert_eq!(pairs[1].ids[5], t("b"));
+        assert_eq!(pairs[0].type_ids, vec![0, 0, 0, 0, 0, 1, 1, 1]);
+        assert_eq!((pairs[0].bucket, p.bucket), (8, 8));
+        assert!(p.ids.is_empty() && p.markers.is_empty());
+        assert_eq!(p.tokens(), 16);
+        assert_eq!(p.buckets(), vec![8, 8]);
+        assert!(!nli(&p).per_label, "several labels: a softmax across them");
+        // Segment ids only when the graph takes them: DeBERTa-v3's tokenizer
+        // gives pairs segment ids its model never reads.
+        let deberta = nli_builder(crate::laya::tests::tokenizer(), false);
+        assert!(nli(&deberta.prepare("c d e", &nli_params(&["a"])).unwrap()).pairs[0].type_ids.is_empty());
+        // RoBERTa: <s> text </s></s> hypothesis </s>.
+        let r = nli_builder(roberta_tokenizer(), false);
+        let p = r.prepare("c d e", &nli_params(&["a"])).unwrap();
+        assert_eq!(nli(&p).pairs[0].ids, vec![1, t("c"), t("d"), t("e"), 2, 2, t("a"), t("fits"), 2]);
+        assert_eq!(p.bucket, 16);
+        // One label, or multi_label: each label scored on its own.
+        assert!(nli(&p).per_label);
+        let multi = ClassifyParams { multi_label: true, ..nli_params(&["a", "b"]) };
+        assert!(nli(&r.prepare("c", &multi).unwrap()).per_label);
+    }
+
+    #[test]
+    fn nli_truncates_only_the_text_on_the_requested_side() {
+        let b = nli_builder(crate::laya::tests::tokenizer(), true);
+        let t = |w| crate::laya::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        // 40 words of text; the pair fits 32 with 3 specials and the
+        // 2-token hypothesis, so 27 text tokens stay.
+        let text = (0..40).map(|i| ["a", "b", "c", "d", "e"][i % 5]).collect::<Vec<_>>().join(" ");
+        let right = b.prepare(&text, &nli_params(&["f"])).unwrap();
+        let ids = &nli(&right).pairs[0].ids;
+        assert_eq!(ids.len(), 32);
+        assert_eq!(&ids[..3], &[1, t("a"), t("b")], "keeps the start");
+        assert_eq!(&ids[28..], &[2, t("f"), t("fits"), 2], "the hypothesis whole");
+        let left = b.prepare(&text, &ClassifyParams { truncation_side: TruncationSide::Left, ..nli_params(&["f"]) }).unwrap();
+        let ids = &nli(&left).pairs[0].ids;
+        assert_eq!(ids.len(), 32);
+        // Word 39 is "e", and 27 words back from it, word 13, is "d".
+        assert_eq!(&ids[..2], &[1, t("d")], "keeps the end");
+        assert_eq!(&ids[26..], &[t("d"), t("e"), 2, t("f"), t("fits"), 2]);
+        // truncate_prompt_tokens lowers the limit.
+        let capped = b.prepare(&text, &ClassifyParams { truncate_prompt_tokens: Some(16), ..nli_params(&["f"]) }).unwrap();
+        assert_eq!((nli(&capped).pairs[0].ids.len(), capped.bucket), (16, 16));
+        // A hypothesis that leaves no room for the text is a 400, never cut.
+        let long = ClassifyParams { hypothesis_template: Some(format!("{} {{}}", "a ".repeat(29))), ..nli_params(&["f"]) };
+        let e = b.prepare("c", &long).unwrap_err();
+        assert!(matches!(e, Error::InvalidRequest(_)) && e.to_string().contains("leaves no room"), "{e}");
+    }
+
+    #[test]
+    fn nli_templates_have_one_slot() {
+        let b = nli_builder(crate::laya::tests::tokenizer(), true);
+        let t = |w| crate::laya::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        let custom = ClassifyParams { hypothesis_template: Some("which {}".into()), ..nli_params(&["a"]) };
+        assert_eq!(nli(&b.prepare("c", &custom).unwrap()).pairs[0].ids, vec![1, t("c"), 2, t("which"), t("a"), 2]);
+        for bad in ["which", "{} {}", "{0}", "{x} {}"] {
+            let p = ClassifyParams { hypothesis_template: Some(bad.into()), ..nli_params(&["a"]) };
+            assert!(b.prepare("c", &p).unwrap_err().to_string().contains("exactly one `{}`"), "{bad}");
+        }
+        assert!(b.prepare("c", &nli_params(&[])).is_err(), "at least one label");
+        assert!(b.prepare("c", &nli_params(&["a", "b", "c", "d"])).is_err(), "at most max_labels");
+        let q = ClassifyParams { question_type: Some(QuestionType::Choice), ..nli_params(&["a"]) };
+        assert!(b.prepare("c", &q).is_err());
     }
 
     #[test]

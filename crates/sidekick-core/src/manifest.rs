@@ -548,6 +548,10 @@ pub enum ClassifyFormat {
     /// prefix, then each candidate as its own branch of a tree, scored by a
     /// head over the candidate set (docs/design/classify.md).
     Agentjev,
+    /// An NLI cross-encoder, as Hugging Face's zero-shot-classification
+    /// pipeline runs one: each label becomes the hypothesis of a (text,
+    /// hypothesis) pair, scored by its entailment logit (D41).
+    Nli,
 }
 
 /// `[classify]` of a `classifier.toml`.
@@ -569,6 +573,8 @@ pub struct ClassifySection {
     pub gliner2: Option<Gliner2Section>,
     #[serde(default)]
     pub fev: Option<FevSection>,
+    #[serde(default)]
+    pub nli: Option<NliSection>,
     /// Opt-in temperatures, keyed `"<question_type>:<k bucket>"`
     /// ([`calibration_key`]).
     #[serde(default)]
@@ -609,6 +615,34 @@ pub struct FevSection {
     /// The state's tokens at most, its delimiter included (the checkpoint's
     /// own limit); a longer state is truncated, keeping its start.
     pub state_max_len: usize,
+}
+
+/// `[classify.nli]`: which of an NLI model's outputs the zero-shot score
+/// reads, as Hugging Face's pipeline chooses them (D41).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NliSection {
+    /// The entailment output's index: the first label of config.json's
+    /// `label2id` that starts with "entail", ignoring case.
+    pub entailment: usize,
+    /// The index a single label's or a multi-label request's entailment is
+    /// weighed against: the pipeline's `-1 if entailment == 0 else 0`, so
+    /// the contradiction (or not_entailment) output.
+    pub contradiction: usize,
+    /// The output's width: 3 for MNLI models, 2 for entailment vs
+    /// not_entailment.
+    pub n_classes: usize,
+    /// The hypothesis a label is put into when a request sends none:
+    /// exactly one `{}`, which the label replaces.
+    #[serde(default = "default_hypothesis_template")]
+    pub hypothesis_template: String,
+}
+
+/// Hugging Face's zero-shot pipeline default.
+pub const DEFAULT_HYPOTHESIS_TEMPLATE: &str = "This example is {}.";
+
+fn default_hypothesis_template() -> String {
+    DEFAULT_HYPOTHESIS_TEMPLATE.into()
 }
 
 /// fev's delimiters: `<state> text <question> instructions (<option> text
@@ -761,6 +795,7 @@ impl ClassifierManifest {
             Some(ClassifyFormat::Gliner2) => fields.extend(["instructions", "multi_label"]),
             Some(ClassifyFormat::Fev) => fields.extend(["question_type", "instructions"]),
             Some(ClassifyFormat::Agentjev) => fields.extend(["question_type", "instructions"]),
+            Some(ClassifyFormat::Nli) => fields.extend(["hypothesis_template", "multi_label"]),
             None => {}
         }
         fields
@@ -1506,8 +1541,8 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             if matches!(c.max_labels, Some(n) if n != c.labels.len()) {
                 return Err("`max_labels` must equal the number of `labels`".into());
             }
-            if c.laya.is_some() || c.gliner2.is_some() || c.fev.is_some() {
-                return Err("`[classify.laya]`, `[classify.gliner2]` and `[classify.fev]` are for zero-shot formats".into());
+            if c.laya.is_some() || c.gliner2.is_some() || c.fev.is_some() || c.nli.is_some() {
+                return Err("`[classify.laya]`, `[classify.gliner2]`, `[classify.fev]` and `[classify.nli]` are for zero-shot formats".into());
             }
             if io.marker_pos.is_some() || io.qtype.is_some() || io.decide_pos.is_some() || io.seg.is_some()
                 || io.position_ids.is_some()
@@ -1521,7 +1556,7 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
             }
         }
         ClassifyTask::TextRanking => {
-            if c.format.is_some() || c.laya.is_some() || c.gliner2.is_some() || c.fev.is_some() {
+            if c.format.is_some() || c.laya.is_some() || c.gliner2.is_some() || c.fev.is_some() || c.nli.is_some() {
                 return Err("`format` and the format sections are for zero-shot models".into());
             }
             if c.labels.len() != 1 {
@@ -1558,6 +1593,7 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                 ("laya", c.laya.is_some(), ClassifyFormat::Laya),
                 ("gliner2", c.gliner2.is_some(), ClassifyFormat::Gliner2),
                 ("fev", c.fev.is_some(), ClassifyFormat::Fev),
+                ("nli", c.nli.is_some(), ClassifyFormat::Nli),
             ] {
                 if present && format != owner {
                     return Err(format!("`[classify.{section}]` is for the {section} format"));
@@ -1649,6 +1685,33 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                     }
                     if m.problem_type != ProblemType::SingleLabel {
                         return Err("the agentjev format's problem_type is `single_label`".into());
+                    }
+                }
+                ClassifyFormat::Nli => {
+                    let Some(nli) = &c.nli else {
+                        return Err("the nli format needs `[classify.nli]`".into());
+                    };
+                    if nli.n_classes < 2 {
+                        return Err("`[classify.nli] n_classes` must be at least 2".into());
+                    }
+                    if nli.entailment >= nli.n_classes || nli.contradiction >= nli.n_classes {
+                        return Err("`[classify.nli] entailment` and `contradiction` must be output indices below `n_classes`".into());
+                    }
+                    if nli.entailment == nli.contradiction {
+                        return Err("`[classify.nli] entailment` and `contradiction` must differ".into());
+                    }
+                    crate::classify::check_hypothesis_template(&nli.hypothesis_template)
+                        .map_err(|e| format!("`[classify.nli] hypothesis_template`: {e}"))?;
+                    if io.marker_pos.is_some() || io.qtype.is_some() {
+                        return Err("the nli format's [classify.io] has input_ids, attention_mask, token_type_ids and output only".into());
+                    }
+                    // A request makes itself multi-label (`multi_label`).
+                    if m.problem_type != ProblemType::SingleLabel {
+                        return Err("the nli format's problem_type is `single_label`; requests opt into \
+                                    multi-label with `multi_label`".into());
+                    }
+                    if !c.calibration.is_empty() {
+                        return Err("`[classify.calibration]` isn't supported by the nli format".into());
                     }
                 }
             }
@@ -1907,6 +1970,78 @@ output = "logits"
             assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
             std::fs::remove_dir_all(&tmp).unwrap();
         }
+    }
+
+    const NLI: &str = r#"
+id = "nli-deberta-v3-base"
+task = "zero-shot-classification"
+source = { repo = "cross-encoder/nli-deberta-v3-base" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 8
+
+[classify]
+format = "nli"
+max_labels = 16
+
+[classify.nli]
+entailment = 1
+contradiction = 0
+n_classes = 3
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"
+"#;
+
+    #[test]
+    fn nli_classifiers_and_what_they_refuse() {
+        let tmp = tmp_dir("nli");
+        write_classifier(&tmp, "n", NLI);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped());
+        let m = &reg.classifier("nli-deberta-v3-base").unwrap().manifest;
+        assert_eq!(m.classify.format, Some(ClassifyFormat::Nli));
+        let nli = m.classify.nli.as_ref().unwrap();
+        assert_eq!((nli.entailment, nli.contradiction, nli.n_classes), (1, 0, 3));
+        assert_eq!(nli.hypothesis_template, DEFAULT_HYPOTHESIS_TEMPLATE, "Hugging Face's default");
+        assert_eq!(m.extension_fields(), vec!["candidate_labels", "hypothesis_template", "multi_label"]);
+        assert_eq!(m.required_fields(), vec!["candidate_labels"]);
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // A BERT NLI model names token_type_ids; a custom template is fine.
+        let bert = NLI.replace("output = ", "token_type_ids = \"token_type_ids\"\noutput = ")
+            .replace("n_classes = 3\n", "n_classes = 3\nhypothesis_template = \"The text is about {}.\"\n");
+        for (name, body, want) in [
+            ("no-section", NLI.replace("[classify.nli]\nentailment = 1\ncontradiction = 0\nn_classes = 3\n", ""), "needs `[classify.nli]`"),
+            ("index", NLI.replace("entailment = 1", "entailment = 3"), "below `n_classes`"),
+            ("same", NLI.replace("entailment = 1", "entailment = 0"), "must differ"),
+            ("one-class", NLI.replace("n_classes = 3", "n_classes = 1"), "at least 2"),
+            ("template", NLI.replace("n_classes = 3\n", "n_classes = 3\nhypothesis_template = \"{} {}\"\n"), "exactly one `{}`"),
+            ("unknown-key", NLI.replace("n_classes = 3\n", "n_classes = 3\nneutral = 2\n"), "unknown field"),
+            ("marker-io", NLI.replace("output = ", "marker_pos = \"m\"\noutput = "), "token_type_ids and output only"),
+            ("multi-label", NLI.replace("max_batch = 8", "max_batch = 8\nproblem_type = \"multi_label\""), "`multi_label`"),
+            ("calibration", format!("{NLI}\n[classify.calibration]\n\"choice:2\" = 1.0\n"), "isn't supported by the nli"),
+            ("on-gliner2", format!("{GLINER2}\n[classify.nli]\nentailment = 1\ncontradiction = 0\nn_classes = 3\n"), "for the nli format"),
+            ("on-fixed", format!("{SENTIMENT}\n[classify.nli]\nentailment = 1\ncontradiction = 0\nn_classes = 3\n"), "zero-shot formats"),
+        ] {
+            let tmp = tmp_dir(&format!("nli-{name}"));
+            write_classifier(&tmp, name, &body);
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            assert_eq!(reg.skipped().len(), 1, "{name}");
+            assert!(reg.skipped()[0].reason.contains(want), "{name}: {}", reg.skipped()[0].reason);
+            std::fs::remove_dir_all(&tmp).unwrap();
+        }
+        let tmp = tmp_dir("nli-bert");
+        write_classifier(&tmp, "b", &bert);
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped());
+        let m = &reg.classifier("nli-deberta-v3-base").unwrap().manifest;
+        assert_eq!(m.classify.nli.as_ref().unwrap().hypothesis_template, "The text is about {}.");
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     const FEV: &str = r#"

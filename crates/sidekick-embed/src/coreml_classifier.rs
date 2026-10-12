@@ -11,11 +11,14 @@
 //! - laya: those plus `marker_pos [1,KMAX]` (−1 in unused slots) and
 //!   `qtype [1]` → `logits [1,KMAX]`, unused slots at −1e4;
 //! - gliner2: `input_ids [1,S]`, `attention_mask [1,S]` → `logits [1,S]`,
-//!   one per token, read at the `[L]` positions the input builder placed.
+//!   one per token, read at the `[L]` positions the input builder placed;
+//! - nli: `input_ids [1,S]`, `attention_mask [1,S]` and, when the manifest
+//!   names it, `token_type_ids [1,S]` → `logits [1,C]`, C the model's NLI
+//!   classes; one prediction per (text, hypothesis) pair.
 
 use crate::bucket_models::BucketModels;
 use crate::classify_input::InputBuilder;
-use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, ResolvedClassifier};
+use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, NliSection, ResolvedClassifier};
 use sidekick_core::{
     Classifier, ClassifyParams, ClassifyTask, Error, PairParams, Prepared, ProblemType, Result,
     Source,
@@ -44,6 +47,8 @@ struct Io {
     output: String,
     /// gliner2: the output is one logit per token, read at the markers.
     per_token: bool,
+    /// nli: the output is the model's classes, per pair.
+    nli: Option<NliSection>,
 }
 
 /// Check one bucket's artifact against the manifest: `input_ids` and
@@ -123,6 +128,16 @@ fn check_output(
     let labels = m.max_labels();
     match iface.outputs.get(&io.output) {
         None => fail(format!("no multi-array output `{}`", io.output)),
+        Some(shape) if io.nli.is_some() => {
+            let classes = io.nli.as_ref().map_or(0, |n| n.n_classes);
+            match shape.as_slice() {
+                [1, c] if *c == classes => Ok(()),
+                _ => fail(format!(
+                    "output `{}` is {shape:?}, expected [1, {classes}] (`[classify.nli] n_classes`)",
+                    io.output
+                )),
+            }
+        }
         Some(shape) if io.per_token => match shape.as_slice() {
             [1, n] if *n == bucket => Ok(()),
             _ => fail(format!(
@@ -239,6 +254,11 @@ impl CoremlClassifier {
             position_ids: if agentjev { Some(io_name(&io.position_ids, "position_ids")?) } else { None },
             output,
             per_token: m.classify.format == Some(ClassifyFormat::Gliner2),
+            nli: if m.classify.format == Some(ClassifyFormat::Nli) {
+                Some(m.classify.nli.clone().ok_or_else(|| Error::Inference("the nli format needs `[classify.nli]`".into()))?)
+            } else {
+                None
+            },
         };
         // Every bucket is its own artifact: check each one's interface now,
         // from its description (a CPU-only load that never predicts), so a
@@ -312,6 +332,18 @@ impl CoremlClassifier {
     /// bucket and pad invariance checks.
     #[doc(hidden)]
     pub fn run_in(&self, prepared: &Prepared, bucket: usize, pad_ids: &[i32]) -> Result<Vec<f32>> {
+        if let Some(nli) = &prepared.nli {
+            // Each pair in its own bucket, or all in `bucket` when it is
+            // asked for (the parity suite's bucket invariance).
+            return nli
+                .pairs
+                .iter()
+                .map(|pair| {
+                    let at = if bucket == prepared.bucket { pair.bucket } else { bucket };
+                    self.score_nli_pair(pair, at, pad_ids, nli.per_label)
+                })
+                .collect();
+        }
         let ids = &prepared.ids;
         if !self.manifest.buckets.contains(&bucket) || ids.len() > bucket {
             return Err(Error::Inference(format!(
@@ -436,6 +468,57 @@ impl CoremlClassifier {
         let mut logits = out.data;
         logits.truncate(k);
         Ok(logits)
+    }
+}
+
+impl CoremlClassifier {
+    /// The raw logits of one nli (text, hypothesis) pair in `bucket`, one
+    /// per class, with the given ids in the pad positions.
+    #[doc(hidden)]
+    pub fn run_nli_pair(&self, pair: &sidekick_core::NliPair, bucket: usize, pad_ids: &[i32]) -> Result<Vec<f32>> {
+        let Some(nli) = &self.io.nli else {
+            return Err(Error::Inference(format!("model `{}` isn't in the nli format", self.manifest.id)));
+        };
+        let used = pair.ids.len();
+        if !self.manifest.buckets.contains(&bucket) || used > bucket || used == 0 {
+            return Err(Error::Inference(format!(
+                "{used} tokens can't run in bucket {bucket} (buckets {:?})",
+                self.manifest.buckets
+            )));
+        }
+        let mut input_ids = pair.ids.clone();
+        input_ids.extend(pad_ids.iter().take(bucket - used));
+        input_ids.resize(bucket, 0);
+        let mut mask = vec![1i32; used];
+        mask.resize(bucket, 0);
+        let mut inputs = vec![
+            Int32Input { name: &self.io.input_ids, shape: vec![1, bucket], data: input_ids },
+            Int32Input { name: &self.io.attention_mask, shape: vec![1, bucket], data: mask },
+        ];
+        if let Some(name) = &self.io.token_type_ids {
+            let mut types = pair.type_ids.clone();
+            types.resize(used, 0);
+            types.resize(bucket, 0);
+            inputs.push(Int32Input { name, shape: vec![1, bucket], data: types });
+        }
+        let out = self.models.get(bucket)?.predict_int32(&inputs, &self.io.output)?;
+        if out.data.len() != nli.n_classes || out.shape.last() != Some(&nli.n_classes) {
+            return Err(Error::Inference(format!(
+                "output `{}` has shape {:?}, expected [1, {}]",
+                self.io.output, out.shape, nli.n_classes
+            )));
+        }
+        Ok(out.data)
+    }
+
+    /// One label's value from its pair's logits, as Hugging Face's pipeline
+    /// scores it: the entailment logit (softmaxed across labels by the
+    /// server), or, scoring the label on its own, entailment −
+    /// contradiction, whose sigmoid is the softmax over the two.
+    fn score_nli_pair(&self, pair: &sidekick_core::NliPair, bucket: usize, pad_ids: &[i32], per_label: bool) -> Result<f32> {
+        let logits = self.run_nli_pair(pair, bucket, pad_ids)?;
+        let nli = self.io.nli.as_ref().expect("checked by run_nli_pair");
+        Ok(sidekick_core::nli_value(&logits, nli.entailment, nli.contradiction, per_label))
     }
 }
 

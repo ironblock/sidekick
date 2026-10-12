@@ -101,6 +101,54 @@ pub struct ClassifyParams {
     pub question_type: Option<QuestionType>,
     /// laya format only; the manifest's per-type default when absent.
     pub instructions: Option<String>,
+    /// nli format: score each label on its own (gliner2's `multi_label` is
+    /// applied by the server; nli's changes what the classifier returns).
+    pub multi_label: bool,
+    /// nli format: the hypothesis each label is put into; the manifest's
+    /// when absent.
+    pub hypothesis_template: Option<String>,
+}
+
+/// An nli hypothesis template: exactly one `{}`, which a label replaces,
+/// and no other brace, so Python's `str.format` (Hugging Face's pipeline)
+/// and a plain substitution agree.
+pub fn check_hypothesis_template(template: &str) -> std::result::Result<(), String> {
+    let opens = template.matches('{').count();
+    let closes = template.matches('}').count();
+    if opens == 1 && closes == 1 && template.contains("{}") {
+        Ok(())
+    } else {
+        Err(format!(
+            "the hypothesis template must contain exactly one `{{}}`, where the label goes, and no other \
+             brace (got {template:?})"
+        ))
+    }
+}
+
+/// One (text, hypothesis) sequence of an nli input: what one prediction
+/// runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NliPair {
+    /// Real token ids, specials included, before padding.
+    pub ids: Vec<i32>,
+    /// Segment ids parallel to `ids` for models whose graph takes
+    /// `token_type_ids`; empty otherwise.
+    pub type_ids: Vec<i32>,
+    /// The smallest bucket that fits `ids`.
+    pub bucket: usize,
+}
+
+/// An nli input: one pair per candidate label, each its own prediction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NliPairs {
+    /// In label order.
+    pub pairs: Vec<NliPair>,
+    /// Score each label against its contradiction (Hugging Face's
+    /// `multi_label`, and its rule for a single label): the classifier
+    /// returns entailment − contradiction, whose sigmoid is the pipeline's
+    /// score. Otherwise it returns the entailment logits, whose softmax
+    /// across labels is.
+    pub per_label: bool,
 }
 
 /// How a (query, document) pair is truncated (rerank; see
@@ -142,8 +190,30 @@ pub struct Prepared {
     /// agentjev format: each token's position, parallel to `ids`; every
     /// candidate's positions continue from the prefix's end. Empty otherwise.
     pub position_ids: Vec<i32>,
-    /// The smallest bucket that fits `ids`.
+    /// nli format: the input's pairs, which run instead of `ids` (empty).
+    /// `None` otherwise.
+    pub nli: Option<NliPairs>,
+    /// The smallest bucket that fits `ids`; for nli, the largest any pair
+    /// runs in.
     pub bucket: usize,
+}
+
+impl Prepared {
+    /// Tokens the model reads for this input: every pair's, for nli.
+    pub fn tokens(&self) -> usize {
+        match &self.nli {
+            Some(nli) => nli.pairs.iter().map(|p| p.ids.len()).sum(),
+            None => self.ids.len(),
+        }
+    }
+
+    /// Every bucket this input runs in.
+    pub fn buckets(&self) -> Vec<usize> {
+        match &self.nli {
+            Some(nli) => nli.pairs.iter().map(|p| p.bucket).collect(),
+            None => vec![self.bucket],
+        }
+    }
 }
 
 /// Where a model came from, for provenance (`sidekick-model: id@revision`).
@@ -208,6 +278,19 @@ pub trait Classifier: Send + Sync {
     }
 }
 
+/// One nli label's value from its pair's class logits, as Hugging Face's
+/// zero-shot pipeline scores it once activated: the entailment logit,
+/// softmaxed across labels; or, scoring the label on its own (`per_label`),
+/// entailment − contradiction, whose sigmoid is the pipeline's softmax over
+/// [contradiction, entailment].
+pub fn nli_value(logits: &[f32], entailment: usize, contradiction: usize, per_label: bool) -> f32 {
+    if per_label {
+        logits[entailment] - logits[contradiction]
+    } else {
+        logits[entailment]
+    }
+}
+
 /// transformers' activation for a problem type and label count.
 pub fn activate(problem: ProblemType, logits: &[f32], temperature: Option<f32>) -> Vec<f32> {
     let t = temperature.unwrap_or(1.0);
@@ -244,6 +327,31 @@ mod tests {
         assert!((activate(ProblemType::SingleLabel, &[0.0], None)[0] - 0.5).abs() < 1e-6);
         assert!((activate(ProblemType::MultiLabel, &[0.0, 0.0], None)[1] - 0.5).abs() < 1e-6);
         assert_eq!(activate(ProblemType::Regression, &[3.5], None), vec![3.5]);
+    }
+
+    #[test]
+    fn nli_values_activate_to_the_pipelines_scores() {
+        // Two labels' [contradiction, neutral, entailment] logits.
+        let (a, b) = ([0.5f32, 0.1, 2.0], [1.5f32, 0.3, -0.5]);
+        // Several labels: softmax over the entailment logits.
+        let probs = activate(ProblemType::SingleLabel, &[nli_value(&a, 2, 0, false), nli_value(&b, 2, 0, false)], None);
+        let want = (2.0f32).exp() / ((2.0f32).exp() + (-0.5f32).exp());
+        assert!((probs[0] - want).abs() < 1e-6 && (probs[0] - 0.924_142).abs() < 1e-6);
+        // Per label: softmax over [contradiction, entailment], P(entailment).
+        let p = activate(ProblemType::MultiLabel, &[nli_value(&a, 2, 0, true), nli_value(&b, 2, 0, true)], None);
+        let hf = |l: [f32; 3]| l[2].exp() / (l[0].exp() + l[2].exp());
+        assert!((p[0] - hf(a)).abs() < 1e-6 && (p[0] - 0.817_574).abs() < 1e-6, "{p:?}");
+        assert!((p[1] - hf(b)).abs() < 1e-6 && (p[1] - 0.119_203).abs() < 1e-6, "{p:?}");
+    }
+
+    #[test]
+    fn hypothesis_templates_need_exactly_one_slot() {
+        for ok in ["This example is {}.", "{}", "The agent {} here"] {
+            assert!(check_hypothesis_template(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "no slot", "{} {}", "{0}", "{label}", "{} }", "{{}}"] {
+            assert!(check_hypothesis_template(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

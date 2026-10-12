@@ -102,7 +102,10 @@ pub fn graded_problem(manifest: &ClassifierManifest) -> ProblemType {
 /// request asked for multi-label decoding, the model's graded problem
 /// otherwise.
 pub fn case_problem(manifest: &ClassifierManifest, case: &crate::classify_reference::ClassifyCase) -> ProblemType {
-    if case.multi_label == Some(true) {
+    // nli scores a lone label against its contradiction, as Hugging Face's
+    // pipeline does, whatever `multi_label` says.
+    let nli_single = manifest.classify.format == Some(sidekick_core::manifest::ClassifyFormat::Nli) && case.k == 1;
+    if case.multi_label == Some(true) || nli_single {
         ProblemType::MultiLabel
     } else {
         graded_problem(manifest)

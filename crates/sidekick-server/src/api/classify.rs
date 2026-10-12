@@ -19,8 +19,8 @@ use axum::Json;
 use serde_json::Value;
 use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat};
 use sidekick_core::{
-    activate, ClassifyParams, ClassifyTask, Error, ProblemType, QuestionType, TruncationSide,
-    UnavailableReason,
+    activate, check_hypothesis_template, ClassifyParams, ClassifyTask, Error, ProblemType, QuestionType,
+    TruncationSide, UnavailableReason,
 };
 
 pub async fn classify(
@@ -75,11 +75,13 @@ pub async fn classify(
                     })
                 })
                 .collect::<Result<Vec<_>, Error>>()?;
-            let buckets: Vec<usize> = prepared.iter().map(|p| p.bucket).collect();
+            let mut buckets: Vec<usize> = prepared.iter().flat_map(|p| p.buckets()).collect();
+            buckets.sort_unstable();
+            buckets.dedup();
             let _ = loaded_tx.send(classifier.load_buckets(&buckets)?);
             prepared
                 .iter()
-                .map(|p| Ok((p.ids.len(), p.bucket, classifier.run(p)?)))
+                .map(|p| Ok((p.tokens(), p.bucket, classifier.run(p)?)))
                 .collect::<Result<Vec<_>, Error>>()
         })
     };
@@ -100,8 +102,8 @@ pub async fn classify(
             ))
             .into());
         }
-        // `multi_label` (gliner2) makes this request multi-label; the
-        // manifest's problem type is the default.
+        // `multi_label` (gliner2, nli, and nli's single label) makes this
+        // request multi-label; the manifest's problem type is the default.
         let problem = if multi_label { ProblemType::MultiLabel } else { classifier.problem_type() };
         let probs = if use_activation {
             activate(problem, &logits, temperature)
@@ -180,7 +182,8 @@ struct Parsed {
     /// The calibration temperature, when `calibration: "model"` applies one.
     temperature: Option<f32>,
     use_activation: bool,
-    /// gliner2: sigmoid per label instead of the model's softmax.
+    /// gliner2 and nli: sigmoid per label instead of the model's softmax.
+    /// For nli, also a request with one label, as Hugging Face scores it.
     multi_label: bool,
 }
 
@@ -193,12 +196,15 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
     // agentjev never truncates: an over-long tree is a 400, as AgentJev
     // refuses an over-long path.
     let agentjev = m.classify.format == Some(ClassifyFormat::Agentjev);
+    // nli truncates the text itself, as Hugging Face's pipeline does, but
+    // on either side and to a lower limit when asked.
+    let nli = m.classify.format == Some(ClassifyFormat::Nli);
     // Formats that truncate the text themselves, keeping its start.
     let self_truncating = match m.classify.format {
         Some(ClassifyFormat::Laya) => Some("laya"),
         Some(ClassifyFormat::Gliner2) => Some("gliner2"),
         Some(ClassifyFormat::Fev) => Some("fev"),
-        Some(ClassifyFormat::Agentjev) | None => None,
+        Some(ClassifyFormat::Agentjev | ClassifyFormat::Nli) | None => None,
     };
     let zero_shot = m.task == ClassifyTask::ZeroShotClassification;
     let unsupported = |field: &str| {
@@ -211,6 +217,7 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
                 (_, Some(ClassifyFormat::Gliner2)) => "a zero-shot model in the gliner2 format",
                 (_, Some(ClassifyFormat::Fev)) => "a zero-shot model in the fev format",
                 (_, Some(ClassifyFormat::Agentjev)) => "a zero-shot model in the agentjev format",
+                (_, Some(ClassifyFormat::Nli)) => "a zero-shot model in the nli format",
                 _ => "a zero-shot model",
             }
         ))
@@ -260,16 +267,26 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
     };
 
     // `multi_label: false` is the default, so every model takes it, as
-    // Hugging Face clients send it; `true` is the gliner2 format's alone.
-    let multi_label = match (req.multi_label, gliner2) {
+    // Hugging Face clients send it; `true` is the gliner2 and nli formats'.
+    let multi_label = match (req.multi_label, gliner2 || nli) {
         (Some(true), false) => return Err(unsupported("multi_label")),
         (value, _) => value.unwrap_or(false),
+    };
+    let hypothesis_template = match (&req.hypothesis_template, nli) {
+        (Some(t), true) => {
+            check_hypothesis_template(t).map_err(ApiError::invalid)?;
+            Some(t.clone())
+        }
+        (Some(_), false) => return Err(unsupported("hypothesis_template")),
+        (None, _) => None,
     };
     let candidate_labels = match (&req.candidate_labels, zero_shot) {
         (Some(labels), true) => {
             // A multi-label request scores each label alone, so one label
             // is a yes/no question, as gliner2 allows; a softmax needs two.
-            let min = if multi_label { 1 } else { 2 };
+            // nli takes one label either way: Hugging Face's pipeline
+            // scores a lone label against its contradiction.
+            let min = if multi_label || nli { 1 } else { 2 };
             sidekick_embed::classify_input::check_labels(labels, min, m.max_labels())?;
             labels.clone()
         }
@@ -353,12 +370,16 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         }
     };
 
+    // nli scores a lone label on its own, whatever `multi_label` says.
+    let per_label = multi_label || (nli && candidate_labels.len() == 1);
     let params = ClassifyParams {
         truncate_prompt_tokens,
         truncation_side,
         candidate_labels,
         question_type,
         instructions: req.instructions.clone(),
+        multi_label,
+        hypothesis_template,
     };
-    Ok(Parsed { params, temperature, use_activation, multi_label })
+    Ok(Parsed { params, temperature, use_activation, multi_label: per_label })
 }

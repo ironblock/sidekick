@@ -115,6 +115,7 @@ fn expected() -> Vec<ExpectedCase> {
 
 fn prepared(case: &ExpectedCase, bucket: usize) -> Prepared {
     Prepared {
+        nli: None,
         ids: case.ids.clone(),
         type_ids: vec![],
         markers: case.markers.clone(),
