@@ -15,7 +15,7 @@ MODES = ("cls", "mean", "last_token")
 class Pool:
     mode: str = "cls"
     l2: bool = False                 # normalize in-graph (LFM2.5); the server normalizes anyway
-    prescale: float = pooling.PRESCALE
+    prescale: float = pooling.PRESCALE   # or a function of the bucket length
     output: str = "embedding"
     task: str = None
     dims: int = None
@@ -33,17 +33,18 @@ class Pool:
 
     def forward(self, w, x, backbone):
         hidden = backbone.call(w, x).last_hidden_state
+        prescale = self.prescale(w.seq) if callable(self.prescale) else self.prescale
         if self.mode == "cls" and self.l2:
             # as LFM2.5's converter wrote it, whose locals name the converted values
-            cls = pooling.cls(hidden, self.dims) * self.prescale
+            cls = pooling.cls(hidden, self.dims) * prescale
             return cls / torch.linalg.vector_norm(cls, dim=-1, keepdim=True)
         if self.mode == "cls":
             y = pooling.cls(hidden, self.dims)
         elif self.mode == "mean":
-            y = pooling.masked_mean(hidden, x["attention_mask"], self.dims, self.prescale)
+            y = pooling.masked_mean(hidden, x["attention_mask"], self.dims, prescale)
         else:
             y = pooling.last_token(hidden, x["attention_mask"], self.dims)
-        return pooling.l2(y, self.prescale) if self.l2 else y
+        return pooling.l2(y, prescale) if self.l2 else y
 
     def reference(self, outputs):
         """fp32 from an unpadded forward: every position is real."""

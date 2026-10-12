@@ -5,9 +5,11 @@
 # projection inside the model; sentence-transformers mean-pools its output
 # and normalizes.
 #
-# Produce the artifacts with tools/convert_embeddinggemma2.py; `--format
-# onnx` exports one fp32 model.onnx for ONNX Runtime's CPU backend, from
-# which the installed ONNX manifest is derived (docs/DECISIONS.md D40).
+# Produce the artifacts with tools/convert_embeddinggemma2.py: one Core ML
+# program per bucket, with the fp16 range rewrite the model needs (its
+# docstring); `--format onnx` exports one fp32 model.onnx for ONNX Runtime's
+# CPU backend, from which the installed ONNX manifest is derived
+# (docs/DECISIONS.md D40).
 #
 # Sliding layers attend where |q - k| <= 512 (transformers 5.19's
 # bidirectional window, unhalved), so inputs up to 513 tokens see full

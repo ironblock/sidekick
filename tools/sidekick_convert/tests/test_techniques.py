@@ -144,5 +144,36 @@ class Saturation(unittest.TestCase):
             saturation.check({"a": 0.9 * saturation.ANE_LINEAR_MAX})
 
 
+class EmbeddingGemma2Rewrite(unittest.TestCase):
+    """The fp16 range rewrite's pieces, exact in fp32."""
+
+    def test_safe_rmsnorm_matches_the_original(self):
+        from types import SimpleNamespace
+        from sidekick_convert.backbones.embedding_gemma2 import SafeRMSNorm
+        torch.manual_seed(0)
+        x = torch.randn(3, 64, dtype=torch.float64) * 900.0
+        eps, s, gain = 1e-6, 1.0 / 32.0, 2.0
+        for weight in (torch.rand(64, dtype=torch.float64) + 0.5, None):
+            orig = SimpleNamespace(with_scale=weight is not None, weight=weight)
+            want = x * torch.pow(x.pow(2).mean(-1, keepdim=True) + eps, -0.5)
+            if weight is not None:
+                want = want * weight
+            got = SafeRMSNorm(orig, s / gain, eps * s * s)(x * gain)
+            torch.testing.assert_close(got, want, rtol=1e-12, atol=1e-12)
+            self.assertLess(float((x * gain * s / gain).abs().max()) ** 2, 65504.0)
+
+    def test_pool_prescale_by_bucket(self):
+        from sidekick_convert.heads.pool import Pool
+        from types import SimpleNamespace
+        h = torch.randn(1, 8, 6)
+        am = torch.tensor([[1, 1, 1, 1, 1, 0, 0, 0]])
+        seen = []
+        backbone = SimpleNamespace(call=lambda w, x: SimpleNamespace(last_hidden_state=h), hidden_size=6)
+        pool = Pool("mean", prescale=lambda seq: seen.append(seq) or 2.0 ** -seq).bind(backbone)
+        got = pool.forward(SimpleNamespace(seq=8), {"attention_mask": am}, backbone)
+        self.assertEqual(seen, [8])
+        torch.testing.assert_close(got, h[:, :5].mean(dim=1))
+
+
 if __name__ == "__main__":
     unittest.main()

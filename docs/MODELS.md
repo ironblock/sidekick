@@ -69,6 +69,7 @@ Method, for every validated entry:
 |---|---|---|---|---|---|---|---|
 | [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | 384 | CLS | [convert_bge_small.py](../tools/convert_bge_small.py) | 0.999972 | 0.999984 | 229/245 (93.5%) | 3.4x / 2.4x / 1.75x |
 | [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma.py](../tools/convert_embeddinggemma.py) | 0.99993 | 0.99999 | 2161/2170 (99.6%) | 3.4x / 3.1x / 2.9x (before the MLP rewrite) |
+| [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) | 768 (MRL 512/256/128) | mean | [convert_embeddinggemma2.py](../tools/convert_embeddinggemma2.py) | 0.99993 | 0.999995 | 2756/2765 (99.7%) | not measured yet (buckets 128 to 2048) |
 | [LiquidAI/LFM2.5-Embedding-350M](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M) | 1024 | CLS | [convert_lfm25_embedding.py](../tools/convert_lfm25_embedding.py) | 0.99991 | 0.99999 | 773/778 (99.4%) | 2.49x / 1.91x / 1.66x (before the precision rewrite) |
 | [codefuse-ai/F2LLM-v2-160M](https://huggingface.co/codefuse-ai/F2LLM-v2-160M) | 640 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py) | 0.99992 | 0.99998 | 648/653 (99.2%) | 2.02x / 1.77x / 1.59x (before the precision rewrite) |
 | [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | 768 | CLS | [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py) | 0.99992 | 0.99998 | 794/805 (98.6%) | validated on macOS 27 (below) |
@@ -123,6 +124,17 @@ Notes per model:
   inputs, including a 527-token document truncated to 512. The parity
   suite grades it A on the ANE (below; it was D before the rewrite).
   ~590 MB per bucket.
+- **embeddinggemma-2** — the text tower of a Gemma 4 based embedder, with
+  per-layer inputs and buckets to 2,048 tokens. Its residual stream stays
+  under ~200, but a written-out RMSNorm squares its input, and several
+  norm inputs pass 256 (the per-layer-input norm reaches ~1,600). Converted
+  straight, the GPU and ANE paths were unharmed (0.999999 and 0.99994) and
+  Core ML's CPU lost 5% (0.947). Power-of-two pre-scales on every RMSNorm,
+  GELU from tanh, and a per-bucket pooling scale fix it: the parity suite
+  grades the ANE and GPU A. The CPU path is as accurate (0.99993) but fails
+  bucket invariance, because Core ML's CPU softmax rounds differently past
+  512 keys; the matmul softmax that fixes it broke the ANE at bucket 256.
+  Converted with transformers 5.19 (docs/CONVERTING.md). ~540 MB per bucket.
 - **LFM2.5-Embedding-350M** — the first hybrid (10 short-conv + 6
   full-attention blocks) and the model that motivated conversion
   constraint D: symmetric convs mix neighbors regardless of attention
@@ -433,6 +445,7 @@ suite.
 | ModernBERT | gte-modernbert-base; laya-en (ModernBERT-large classifier) | A (gte); C (laya: one flip caps it; p99 1.93× its fp16 ceiling) | fused attention drops the mask on the ANE (convert eager); the massive activation's output projection crosses the ANE linear's 2^15 limit without the range rewrite (graded B); the vectors of delimiter tokens are a little less accurate, and laya's head reads single-token vectors, where that loss isn't averaged away | pad and bucket invariance; delimiters |
 | Qwen3 decoder, last-token pooling | F2LLM-v2-160M | A | truncation must keep the final token; without the precision rewrite, the native SiLU costs ~0.03% on the ANE (graded B) | over-length; the ids gate; numbers |
 | Gemma3, bidirectional | embeddinggemma-300m | A | fp16 overflow without the range rewrite; without the MLP precision rewrite, 1–2.5% ANE loss on digits, long and repeated-token inputs (graded D) | numbers, long, degenerate |
+| Gemma 4 text tower, bidirectional | embeddinggemma-2 | A | fp16 overflow in RMSNorm's squares (Core ML CPU 0.947 without the pre-scales); Core ML's CPU softmax isn't bucket-invariant past 512 keys | long, over-length |
 | LFM2 hybrid (conv + attention) | LFM2.5-Embedding-350M | A | convolutions read pad states unless they're zeroed; without the precision rewrite, up to 4.6% ANE loss on URLs and delimiters (graded D) | pad invariance; delimiters, numbers |
 
 ## ONNX Runtime on the CPU (`onnx-cpu`)
@@ -1186,6 +1199,11 @@ Most rejections are visible long before a conversion. Cheapest first:
    | embeddinggemma-300m | RMSNorm | 152,485 (731) | 313× | range rewrite | 0.99999 after range + MLP rewrites |
    | gte-modernbert-base | LayerNorm | 47,973 (251) | 502× | no range issue | 0.99998 (explicit attention + 2^15 range rewrite) |
    | laya (ModernBERT-large) | LayerNorm | 27,296 (379) | 556× | no range issue | CLS ≥ 0.997 (explicit attention) |
+
+   The verdict is about the residual stream. A written-out RMSNorm squares
+   its input, so any norm input past 256 overflows in fp16:
+   EmbeddingGemma 2's peak at ~1,600 cost Core ML's CPU path 5% until the
+   norms were pre-scaled.
 
    Massive activations, one dimension hundreds of times the rest on a few
    tokens, are common, and they are not by themselves an ANE problem. The
