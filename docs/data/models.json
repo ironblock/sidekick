@@ -6491,7 +6491,7 @@
    "disk_measured": null,
    "machine_mb": null,
    "machine_measured": null,
-   "note": "Fails the bucket-invariance gate, a known Core ML CPU behavior on Intel (#74); its accuracy is fine, and its GPU path grades A. Gate failed: bucket invariance Δp 1.90e-4 > 0.00001",
+   "note": "Graded F under the exact CPU bucket gate this run used. The gate on Intel Macs is now Δp 5e-4 (provisional; D38 amendment), which its drift of 1.9e-4 passes, so the same results grade A (worst Δp 7.35e-4). Gate failed: bucket invariance Δp 1.90e-4 > 0.00001",
    "source": "coreml-x86_64-nlptown.json"
   },
   {

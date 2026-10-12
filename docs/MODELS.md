@@ -668,8 +668,9 @@ range.
   (`tools/repro_cpu_matmul_tail.py`). gliner2.5-decide and
   laya-typed-decisions, which pass bucket invariance on Apple silicon's GPU,
   fail it on this one, and their CPU paths are impractically slow, so they
-  are **unsupported on Intel Macs**. So are laya-en and julia-1, by family
-  (ModernBERT-large, like laya-typed-decisions; not graded on Intel).
+  are **unsupported on Intel Macs**. So, by family and not graded on
+  Intel, are laya-en (ModernBERT-large, like laya-typed-decisions) and
+  julia-1 (mmBERT-small, a ModernBERT, with laya's head).
   agent-jev's paths and Lumma-fev's CPU path are ungraded. Compute units
   stay per model: the default runs a Core ML model on the CPU on an Intel
   Mac, and `[models."<id>"] compute_units = "cpu_and_gpu"` selects the
