@@ -420,8 +420,9 @@ everything else the machine runs):
 |---|---|
 | `sidekick-core` | Backend-neutral traits and types: `ChatBackend`, `Embedder`, `Classifier`, availability states, model manifests and registry. No Apple dependencies. |
 | `sidekick-coreml` | Small safe wrapper over `objc2-core-ml`: load, compute units, int32-in/float-out predictions. macOS only; empty stub elsewhere. |
+| `sidekick-onnx` | ONNX Runtime on the CPU: finds and loads `libonnxruntime` at run time, runs a graph in a session, and sets inference threads from the machine's fast cores. `ort` comes in only with its `runtime` feature, which `sidekick-embed`'s `onnx` feature turns on. |
 | `sidekick-fm` | Foundation Models backend: Swift C-ABI shim built by `build.rs` (macOS 26.4+ SDK; 27 SDK for the macOS 27 features), guided generation from JSON Schema, TTL'd session reuse keyed by conversation prefix. Stub elsewhere. |
-| `sidekick-embed` | Encoder pipelines: Core ML/ANE embedders and classifiers (feature `coreml`), ONNX Runtime CPU embedders (feature `onnx`), laya's input format, and the static floor tier. |
+| `sidekick-embed` | Encoder pipelines: Core ML/ANE embedders and classifiers (feature `coreml`, over `sidekick-coreml`), ONNX Runtime CPU embedders (feature `onnx`, over `sidekick-onnx`), laya's input format, and the static floor tier. |
 | `sidekick-server` | `sidekickd`, the OpenAI-compatible daemon. |
 | `sidekick-embed-ffi` | `libsidekick.dylib`, the C ABI for in-process embeddings (Core ML and static models; built without ONNX support). |
 

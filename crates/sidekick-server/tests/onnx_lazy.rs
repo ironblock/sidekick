@@ -18,5 +18,10 @@ async fn without_an_onnx_model_the_runtime_never_loads() {
     let health: serde_json::Value = serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(health["onnx"]["runtime"], serde_json::json!({"state": "not loaded", "reason": "no onnx models"}));
     assert_eq!(health["onnx"]["supported"], sidekick_embed::onnx::SUPPORTED);
+    // The backends compiled in: static always, onnx with the feature.
+    let backends: Vec<&str> = health["backends"].as_array().unwrap().iter().map(|b| b.as_str().unwrap()).collect();
+    assert_eq!(backends, sidekick_embed::compiled_backends());
+    assert!(backends.contains(&"static"));
+    assert_eq!(backends.contains(&"onnx"), sidekick_embed::onnx::SUPPORTED);
     std::fs::remove_dir_all(&dir).unwrap();
 }

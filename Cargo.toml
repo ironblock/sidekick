@@ -6,6 +6,7 @@ members = [
     "crates/sidekick-fm",
     "crates/sidekick-embed",
     "crates/sidekick-embed-ffi",
+    "crates/sidekick-onnx",
     "crates/sidekick-server",
 ]
 
@@ -20,6 +21,7 @@ sidekick-core = { path = "crates/sidekick-core" }
 sidekick-coreml = { path = "crates/sidekick-coreml" }
 sidekick-fm = { path = "crates/sidekick-fm" }
 sidekick-embed = { path = "crates/sidekick-embed" }
+sidekick-onnx = { path = "crates/sidekick-onnx" }
 
 anyhow = "1"
 thiserror = "2"

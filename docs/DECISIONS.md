@@ -2567,6 +2567,34 @@ bge-small-en-v1.5 and all-MiniLM-L6-v2 A, at 1 − cos 1.91e-12 and 1.97e-12
 worst against fp32 torch. Token ids match the reference pipeline's, and
 re-runs are bit-identical.
 
+**Amendment (October 2026): ONNX Runtime in its own crate, and the
+backends a build serves.** The ONNX Runtime code moved out of
+`sidekick-embed` into `sidekick-onnx`, beside `sidekick-coreml`, so the
+two backends are laid out the same way:
+- `sidekick-onnx` finds and loads `libonnxruntime`, checks its version,
+  runs a graph in a session (`OnnxModel`, fed the integer types its
+  inputs declare), and holds the thread rule and core detection. `ort`
+  and `libloading` are its dependencies alone, behind its `runtime`
+  feature. Without that feature the crate is the pinned version and the
+  thread rule only, which the daemon reports in every build, so
+  `sidekick-embed` depends on it unconditionally and its `onnx` feature
+  turns `runtime` on. CI checks that a build without `onnx` has no `ort`
+  in its tree, for `sidekickd` and for `libsidekick.dylib`.
+- `OnnxEmbedder` stays in `sidekick-embed`, as `CoremlEmbedder` does: it
+  tokenizes and pools with the code the Core ML embedder shares, so
+  moving it would mean moving that code too, or a dependency cycle.
+- The scan-time checks (interface, quantization, external data) stay in
+  `sidekick_core::onnx_graph`: the registry runs them without a runtime,
+  in builds without `onnx` too.
+
+`sidekick_embed::onnx` re-exports what moved, so the Rust API, the C ABI,
+the config keys and `/health`'s `onnx` object are unchanged. A build now
+says which model backends it serves: `sidekickd --version` ends with
+`(backends: coreml, onnx, static)`, or the subset compiled in, and
+`/health` has the same list as a top-level `backends` array. `static` is
+always there; `coreml` needs the `coreml` feature on macOS, and `onnx`
+the `onnx` feature.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

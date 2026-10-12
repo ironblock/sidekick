@@ -49,6 +49,21 @@ date = "2026-10-10"
 idle = false
 sidekick = "0.8.0 pre-release (commit 571c7d3)"
 threads = 4
+[runs."native-arm64-embeddinggemma-2.json"]
+runtime = "ONNX Runtime 1.28.3"
+os = "macOS 27.0"
+precision = "fp32"
+date = "2026-10-11"
+idle = false
+sidekick = "0.8.0+ (commit 4e10ad7)"
+threads = 4
+[runs."coreml-arm64-embeddinggemma-2.json"]
+runtime = "Core ML"
+os = "macOS 27.0"
+precision = "fp16"
+date = "2026-10-11"
+idle = false
+sidekick = "0.8.0+ (commit 4e10ad7)"
 [runs."native-arm64-f2llm-v2-160m.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
@@ -226,6 +241,7 @@ threads = 8
 # Notes for a row, by "<report file>:<model id>:<path>", added to what the
 # report says (its gate failures).
 [notes]
+"coreml-arm64-embeddinggemma-2.json:embeddinggemma-2:coreml-cpu" = "Fails the bucket-invariance gate only: Core ML's CPU softmax rounds differently past 512 keys, moving an embedding by 1 - cos ~6e-5 between buckets; its accuracy is 0.99993, and its ANE and GPU paths grade A"
 "coreml-x86_64-gliner2.5-decide.json:gliner2.5-decide:coreml-gpu" = "Fails the bucket-invariance gate on this Intel Mac's GPU (Core ML logs that MPSGraph doesn't support padded tensors on Intel Macs); it passes on Apple silicon"
 "coreml-x86_64-laya-typed-decisions.json:laya-typed-decisions:coreml-gpu" = "Fails the bucket-invariance gate on this Intel Mac's GPU (Core ML logs that MPSGraph doesn't support padded tensors on Intel Macs); it passes on Apple silicon"
 "coreml-x86_64-nlptown.json:nlptown-sentiment:coreml-cpu" = "Fails the bucket-invariance gate, a known Core ML CPU behavior on Intel (#74); its accuracy is fine, and its GPU path grades A"

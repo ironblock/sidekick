@@ -1,0 +1,42 @@
+# google/embeddinggemma-2: the text tower of a Gemma 4 based embedder (271M
+# parameters; Apache-2.0). 24 bidirectional layers at hidden size 512 with
+# per-layer inputs (a projection of the token embeddings), local layers at
+# head_dim 256 and global ones (5, 11, 17, 23) at 512, and a 512 -> 768
+# projection inside the model; sentence-transformers mean-pools its output
+# and normalizes.
+#
+# Produce the artifacts with tools/convert_embeddinggemma2.py: one Core ML
+# program per bucket, with the fp16 range rewrite the model needs (its
+# docstring); `--format onnx` exports one fp32 model.onnx for ONNX Runtime's
+# CPU backend, from which the installed ONNX manifest is derived
+# (docs/DECISIONS.md D40).
+#
+# Sliding layers attend where |q - k| <= 512 (transformers 5.19's
+# bidirectional window, unhalved), so inputs up to 513 tokens see full
+# attention everywhere. The buckets reach 2,048 so the parity corpus's
+# boundary and over-length cases exercise the band; the model itself takes
+# 8,192 tokens.
+#
+# Matryoshka: the model card documents 768, 512, 256 and 128.
+#
+# Prefixes are the model's own prompts (config_sentence_transformers.json).
+
+id = "embeddinggemma-2"
+backend = "coreml"
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+dims = 768
+matryoshka = [768, 512, 256, 128]
+pooling = "none"          # mean pooling lives inside the Core ML model
+buckets = [128, 256, 512, 1024, 2048]
+max_seq_len = 2048
+source = { repo = "google/embeddinggemma-2", revision = "914f7f89142e33e77833254d9c9b90c3cef7303b" }
+
+[io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "embedding"
+
+[prefixes]
+query = "task: search result | query: "
+document = "title: none | text: "

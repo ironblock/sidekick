@@ -346,6 +346,7 @@ structs don't deny unknown fields.
 | `convert_qwen3_embedding.py` | Qwen3 decoder, precision rewrite | last-token pool | F2LLM; any Qwen3 last-token embedder (manifest by install-dir name) |
 | `convert_laya.py` | ModernBERT, explicit, residual K pinned (2), TwiceGelu | laya's marker head (`heads/laya.py`) | the decision model's own forward is the fp32 reference; gated on CPU_AND_NE, CPU_ONLY reported |
 | `convert_embeddinggemma.py` | Gemma3, fp16 range rewrite (residual K = 32) and per-layer precision scales | mean pool, the two sentence-transformers dense layers, L2 (`heads/gemma_st.py`) | its calibration keeps one graded-corpus text under a logged legacy exemption, because the graded artifact was calibrated with it |
+| `convert_embeddinggemma2.py` | EmbeddingGemma 2 (Gemma 4 text tower, per-layer inputs), RMSNorm pre-scales, TanhGelu | mean pool, scaled per bucket | needs transformers 5.19; see below |
 | `convert_lfm25_embedding.py` | LFM2 (short convolutions with pad zeroing, attention), per-layer precision scales | CLS pool, L2 in graph | `--no-pad-zeroing` builds the negative control |
 
 Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
@@ -353,7 +354,12 @@ Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
 onnx`. Requirements:
 - every converter: Python with torch, transformers 4.x (the BERT backbone
   proves at load that its finite mask is on the forward path), tokenizers
-  and numpy;
+  and numpy. The library is validated on transformers 4.57.6;
+- except `convert_embeddinggemma2.py`, whose model code first shipped in
+  transformers 5.19. Run it from a separate environment with transformers
+  >= 5.19 and sentence-transformers >= 6.1 (for its references, which
+  also need Pillow and torchvision: the checkpoint's processor loads them
+  even text-only), and keep the other converters on 4.57.6;
 - the Core ML path (the default): arm64-native Python on macOS, coremltools,
   and Xcode for `xcrun coremlcompiler`;
 - `--format onnx`: `onnx` and `onnxruntime` instead, with neither

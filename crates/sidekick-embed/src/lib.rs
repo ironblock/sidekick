@@ -58,6 +58,21 @@ pub(crate) fn byte_cap(text: &str, max_tokens: usize) -> &str {
     &text[..end]
 }
 
+/// The model backends this build can serve, as manifests and `/v1/models`
+/// name them: `coreml` (feature `coreml`, macOS), `onnx` (feature `onnx`)
+/// and `static`, always.
+pub fn compiled_backends() -> Vec<&'static str> {
+    let mut backends = Vec::new();
+    if cfg!(all(feature = "coreml", target_os = "macos")) {
+        backends.push(EmbeddingBackendKind::Coreml.name());
+    }
+    if onnx::SUPPORTED {
+        backends.push(EmbeddingBackendKind::Onnx.name());
+    }
+    backends.push(EmbeddingBackendKind::Static.name());
+    backends
+}
+
 /// Load the right embedder for a registry entry, with default options.
 pub fn load_embedder(model: &ResolvedModel) -> Result<Box<dyn sidekick_core::Embedder>> {
     load_embedder_with(model, &LoadOptions::default())
@@ -138,5 +153,16 @@ mod byte_cap_tests {
         let capped = byte_cap(&long, 4);
         assert!(capped.len() <= 64);
         assert!(capped.chars().all(|c| c == '日'), "cut lands on a boundary");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_compiled_backends_follow_the_features() {
+        let backends = super::compiled_backends();
+        assert_eq!(backends.contains(&"coreml"), cfg!(all(feature = "coreml", target_os = "macos")));
+        assert_eq!(backends.contains(&"onnx"), cfg!(feature = "onnx"));
+        assert_eq!(backends.last(), Some(&"static"), "always, and last");
     }
 }
