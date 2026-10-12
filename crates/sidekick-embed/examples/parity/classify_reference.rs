@@ -171,11 +171,19 @@ impl ClassifyCase {
 
 /// The corpus a classifier's reference was generated from: the embedding
 /// parity corpus for fixed-label models, `fixtures/classify/<id>.corpus.toml`
-/// for zero-shot ones.
+/// for zero-shot ones, except that every nli model shares
+/// `fixtures/classify/nli.corpus.toml`: the format is the same for every
+/// NLI cross-encoder, so one corpus grades them all alike.
 pub fn corpus_path(manifest: &ClassifierManifest) -> PathBuf {
-    let fixtures = crate::fixtures::dir();
+    corpus_path_in(&crate::fixtures::dir(), manifest)
+}
+
+fn corpus_path_in(fixtures: &Path, manifest: &ClassifierManifest) -> PathBuf {
     match manifest.task {
         ClassifyTask::TextClassification => fixtures.join("parity/corpus.toml"),
+        ClassifyTask::ZeroShotClassification if manifest.classify.format == Some(ClassifyFormat::Nli) => {
+            fixtures.join("classify/nli.corpus.toml")
+        }
         ClassifyTask::ZeroShotClassification => {
             fixtures.join(format!("classify/{}.corpus.toml", manifest.id))
         }
@@ -410,6 +418,16 @@ pub(crate) mod tests {
         let nli = json
             .replace("\"format\":\"laya\"", "\"format\":\"nli\",\"nli\":{\"entailment\":1,\"contradiction\":0,\"n_classes\":3,\"hypothesis_template\":\"This example is {}.\"}")
             .replacen("\"k\":2", "\"k\":2,\"pair_ids\":[[1,5,2,7,2],[1,5,2,8,2]],\"pair_type_ids\":[[0,0,0,1,1],[0,0,0,1,1]],\"multi_label\":true,\"hypothesis_template\":\"It is {}.\",\"truncation_side\":\"left\"", 1);
+        // Every nli model shares one corpus; other zero-shot models have
+        // their own.
+        let fixtures = Path::new("fx");
+        assert_eq!(corpus_path_in(fixtures, &manifest(3)), Path::new("fx/classify/nli.corpus.toml"));
+        let gliner2: ClassifierManifest = toml::from_str(
+            "id = \"g\"\ntask = \"zero-shot-classification\"\nartifact = \"m\"\ntokenizer = \"t\"\nbuckets = [128]\n\
+             max_seq_len = 128\n[classify]\nformat = \"gliner2\"\nmax_labels = 4\n",
+        )
+        .unwrap();
+        assert_eq!(corpus_path_in(fixtures, &gliner2), Path::new("fx/classify/g.corpus.toml"));
         let r = ClassifyReference::parse(&nli, &st).unwrap();
         let case = &r.cases[0];
         assert_eq!(case.pair_ids[1], vec![1, 5, 2, 8, 2]);

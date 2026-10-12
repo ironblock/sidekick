@@ -1017,6 +1017,15 @@ Corpora:
   and 32 short options; states truncated at 1,408 tokens; and rows that end
   exactly at the 2,048-token window and just under it. Lumma-fev's training
   data isn't published, so it measures conversion parity only.
+- **nli** (`fixtures/classify/nli.corpus.toml`, shared by every nli
+  model, so they are graded alike): MNLI validation pairs (matched and
+  mismatched, a fixed stride of rows, read from the dataset when the
+  reference is generated) as one-label cases whose hypothesis is the
+  label itself (template `{}`), plus written zero-shot cases: topics,
+  sentiment and intents with 2 to 16 labels; agent transcripts (failures,
+  stack traces, test runs, discovered limitations); one-label and
+  multi-label versions of the same request; custom and non-English
+  templates; and premises over 512 tokens truncated on either side.
 - **gliner2:** fastino/fast-decisions at revision `1a33070`, each task
   sent as its own request, with multi-label tasks as `multi_label: true`.
   It is fastino's own benchmark, so it grades parity only; gold accuracy
