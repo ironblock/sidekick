@@ -163,6 +163,34 @@ precision = "fp16"
 date = "2026-10-10"
 idle = false
 sidekick = "0.8.0 pre-release (commit 611207e)"
+[runs."coreml-x86_64-gliner2.5-decide.json"]
+runtime = "Core ML"
+os = "macOS 26.6.2"
+precision = "fp16"
+date = "2026-10-11"
+idle = false
+sidekick = "0.8.0 pre-release (commit 611207e)"
+[runs."coreml-x86_64-laya-typed-decisions.json"]
+runtime = "Core ML"
+os = "macOS 26.6.2"
+precision = "fp16"
+date = "2026-10-11"
+idle = false
+sidekick = "0.8.0 pre-release (commit 611207e)"
+[runs."coreml-x86_64-lumma-fev-0.1b.json"]
+runtime = "Core ML"
+os = "macOS 26.6.2"
+precision = "fp16"
+date = "2026-10-11"
+idle = false
+sidekick = "0.8.0 pre-release (commit 611207e)"
+[runs."coreml-x86_64-ms-marco-minilm-l6-v2.json"]
+runtime = "Core ML"
+os = "macOS 26.6.2"
+precision = "fp16"
+date = "2026-10-11"
+idle = false
+sidekick = "0.8.0 pre-release (commit 611207e)"
 [runs."coreml-x86_64-nlptown.json"]
 runtime = "Core ML"
 os = "macOS 26.6.2"
@@ -198,4 +226,6 @@ threads = 8
 # Notes for a row, by "<report file>:<model id>:<path>", added to what the
 # report says (its gate failures).
 [notes]
+"coreml-x86_64-gliner2.5-decide.json:gliner2.5-decide:coreml-gpu" = "Fails the bucket-invariance gate on this Intel Mac's GPU (Core ML logs that MPSGraph doesn't support padded tensors on Intel Macs); it passes on Apple silicon"
+"coreml-x86_64-laya-typed-decisions.json:laya-typed-decisions:coreml-gpu" = "Fails the bucket-invariance gate on this Intel Mac's GPU (Core ML logs that MPSGraph doesn't support padded tensors on Intel Macs); it passes on Apple silicon"
 "coreml-x86_64-nlptown.json:nlptown-sentiment:coreml-cpu" = "Fails the bucket-invariance gate, a known Core ML CPU behavior on Intel (#74); its accuracy is fine, and its GPU path grades A"
