@@ -190,11 +190,20 @@ or SGLang works unchanged. What a host needs to know beyond that:
   neither, accepts at most 20 labels, and needs `instructions` on every
   request when its listing's `required` says so. The response's `label` is
   always your label as sent.
-- **Multi-label (gliner2 models).** `multi_label: true` scores each label
-  on its own: `probs` are independent sigmoids, not a distribution, so
-  threshold them rather than reading `label` (still the argmax). One label
-  is then allowed, as a yes/no question. Other models answer `true` with a
-  400 and accept `false`, the default.
+- **Multi-label (gliner2 and nli models).** `multi_label: true` scores
+  each label on its own: `probs` are independent sigmoids, not a
+  distribution, so threshold them rather than reading `label` (still the
+  argmax). One label is then allowed, as a yes/no question. Other models
+  answer `true` with a 400 and accept `false`, the default.
+- **NLI models** (those whose `extensions` include `hypothesis_template`)
+  are NLI cross-encoders scored as Hugging Face's zero-shot pipeline
+  scores them (D41): each label goes into a hypothesis (the listing's
+  `hypothesis_template`, or your own with one `{}`), and each (text,
+  hypothesis) pair is its own prediction, so latency grows with the
+  number of labels. One label is a yes/no question, scored against
+  contradiction, with or without `multi_label`. The text is truncated to
+  fit; send `truncation_side: left` to keep its end, as tool output and
+  stack traces want.
 - **Over-length input.** A text-classification input longer than the
   model's maximum is a 400 unless you send `truncate_prompt_tokens` (`-1`
   truncates to the model's maximum). laya-format models (laya, Julia-1),
@@ -208,7 +217,9 @@ or SGLang works unchanged. What a host needs to know beyond that:
   agentjev models (AgentJev) never truncate, as AgentJev's own service
   doesn't: a request whose input, instructions and labels don't fit the
   model together is a 400, and so are `truncate_prompt_tokens` and
-  `truncation_side: left`. Send a shorter input.
+  `truncation_side: left`. Send a shorter input. nli models truncate only
+  the text, on either side, and never the hypothesis: one too long to
+  leave room for any text is a 400.
 - **Errors are data.** Every error, malformed JSON included, is the
   OpenAI shape `{"error": {"message", "type", "code"}}`. A 400 names the
   field it rejected. Sending a classifier to `/v1/embeddings`, or an

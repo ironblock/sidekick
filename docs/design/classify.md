@@ -25,7 +25,7 @@ POST /v1/classify
 | `model`, `input` (string or array) | vLLM, SGLang | required; the batch is capped by the model's `max_batch` |
 | `use_activation` (bool, default true) | vLLM | `false` returns pre-activation values in `probs` |
 | `truncate_prompt_tokens` (int) | vLLM | truncate to this many tokens |
-| `truncation_side` (`right` \| `left`) | vLLM | honored for text-classification; `left` is a 400 on the laya format |
+| `truncation_side` (`right` \| `left`) | vLLM | honored for text-classification and the nli format; `left` is a 400 on the laya, gliner2, fev and agentjev formats |
 | `add_special_tokens` | vLLM | `true` is accepted; `false` is a 400 |
 | `messages` (chat-form input) | vLLM | 400 |
 | `request_id` (str) | vLLM | the response `id` is `classify-<request_id>`; an `X-Request-Id` header takes precedence, as in vLLM |
@@ -40,7 +40,8 @@ POST /v1/classify
 | `calibration` (`none` \| `model`) | extension | only on models that declare temperatures (every value, `none` included, is a 400 elsewhere); default `none`; `model` applies the manifest's temperature, and with `use_activation: false` needs none |
 | `question_type` (`choice` \| `score` \| `noul`) | extension, laya, fev and agentjev formats | required on all three |
 | `instructions` (str) | extension, laya, gliner2, fev and agentjev formats | laya: the question text, with the manifest's per-type default when absent; required by a model whose manifest has none (Julia-1). gliner2: the task prompt (below), with the manifest's default when absent. fev: the question text; absent, the question is empty, as fev's own API sends it. agentjev: the question text, required and nonempty, as AgentJev's API requires |
-| `multi_label` (bool, default false) | extension (HF zero-shot's name), gliner2 format | `true` (gliner2 only; a 400 elsewhere) scores each label independently: `probs` are per-label sigmoids instead of a softmax, and one candidate label is allowed. `false`, the default, is accepted on every model, as Hugging Face clients send it |
+| `multi_label` (bool, default false) | extension (HF zero-shot's name), gliner2 and nli formats | `true` (gliner2 and nli only; a 400 elsewhere) scores each label independently: `probs` are per-label sigmoids instead of a softmax, and one candidate label is allowed. `false`, the default, is accepted on every model, as Hugging Face clients send it |
+| `hypothesis_template` (str) | extension (HF zero-shot's name), nli format | the hypothesis each label is put into, with exactly one `{}` for the label and no other brace; the manifest's when absent (Hugging Face's default, `This example is {}.`, unless the manifest says otherwise) |
 
 Any other top-level field is ignored, as D22 already does. Extension fields
 unsupported by the model's task are a 400.
@@ -68,11 +69,15 @@ Over-length input:
   over-long path: a tree longer than the largest bucket is a 400 naming
   its token count, and so are `truncate_prompt_tokens` and
   `truncation_side: left`.
+- **nli format:** as Hugging Face's pipeline does (`only_first`), only
+  the text is truncated, on `truncation_side`, until each label's pair
+  fits `max_seq_len`, or `truncate_prompt_tokens` when it's lower. The
+  hypothesis is never cut: one that leaves no room for the text is a 400.
 
 Other 400s:
 - an empty batch, or more inputs than `max_batch`;
-- fewer than 2 candidate labels (1 with gliner2's `multi_label: true`),
-  or more than `max_labels`;
+- fewer than 2 candidate labels (1 with gliner2's `multi_label: true`,
+  and always 1 on the nli format), or more than `max_labels`;
 - duplicate labels, including labels identical at the token level after
   laya's option shrinking;
 - a laya `noul` question whose labels aren't `false` / `true` in that order,
@@ -88,7 +93,9 @@ Other 400s:
   the same candidate text (`"x: b"` and `"b"`), or one that gives an empty
   one;
 - no `instructions` for a model whose manifest has no default;
-- `multi_label: true` on any format but gliner2;
+- `multi_label: true` on any format but gliner2 and nli;
+- a `hypothesis_template` on any format but nli, or one without exactly
+  one `{}` or with any other brace;
 - `calibration: model` where the model declares no temperature for that
   question type and label count;
 - malformed JSON, on every route, in the API's usual error shape (D22
@@ -180,7 +187,7 @@ problem_type = "single_label"             # single_label | multi_label | regress
 compute_units = "cpu_and_ne"              # cpu_and_ne (default) | cpu_and_gpu | cpu_only | all
 
 [classify]
-format = "laya"                           # zero-shot formats: "laya", "gliner2", "fev", "agentjev"
+format = "laya"                           # zero-shot formats: "laya", "gliner2", "fev", "agentjev", "nli"
 max_labels = 32                           # laya: must equal the artifact's marker_pos width (checked at load)
 labels = []                               # text-classification: output order (id2label)
 
@@ -239,6 +246,38 @@ attention_mask = "attention_mask"
 output = "logits"                         # one logit per token, [1, bucket]
 ```
 
+An nli manifest is zero-shot with `format = "nli"` and an `[classify.nli]`
+section (see [The nli format](#the-nli-format)). Its `max_labels` is a
+policy cap, since each label is its own prediction. `[classify.io]` names
+`token_type_ids` exactly when the model reads segment ids:
+
+```toml
+id = "nli-deberta-v3-base"
+task = "zero-shot-classification"
+source = { repo = "cross-encoder/nli-deberta-v3-base" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 8
+problem_type = "single_label"
+
+[classify]
+format = "nli"
+max_labels = 16
+
+[classify.nli]
+entailment = 1                            # output indices, as Hugging Face's pipeline resolves them
+contradiction = 0
+n_classes = 3
+hypothesis_template = "This example is {}."   # optional; this is the default
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"                         # [1, n_classes] per pair
+```
+
 Registry validation rejects:
 - `labels` on a zero-shot model, or `format` on a fixed-label model;
 - a missing `[classify.io]` feature for the format.
@@ -256,7 +295,7 @@ Task-aware listings:
   extension fields (`extensions`), the ones every request must send
   (`required`: `candidate_labels` on zero-shot models, `question_type` on
   laya-format ones, and `instructions` where the manifest has no default),
-  and the calibration table.
+  the calibration table, and an nli model's default `hypothesis_template`.
 - `/health` lists classifiers separately, with `classifiers.supported`,
   and the manifests the registry skipped, with paths relative to the
   models directory.
@@ -279,6 +318,7 @@ Every input is int32, which is what the runtime's `predict_int32` feeds.
 | gliner2 | `input_ids [1,S]`, `attention_mask [1,S]` | `logits [1,S]`, one per token |
 | fev | `input_ids [1,S]`, `attention_mask [1,S]`, `marker_pos [1,KMAX]` (each option's `<option_end>` position, −1 pads unused slots), `decide_pos [1]` (rank 1) | `logits [1,KMAX]`, padded slots at −1e4 |
 | agentjev | `input_ids [1,S]`, `attention_mask [1,S]`, `seg [1,S]` (−1 for pads), `position_ids [1,S]` (0 for pads), `marker_pos [1,KMAX]` (each candidate's last token, −1 pads unused slots) | `logits [1,KMAX]`, padded slots at −1e4 |
+| nli | `input_ids [1,S]`, `attention_mask [1,S]`, and `token_type_ids [1,S]` when the manifest names it; one (text, hypothesis) pair per prediction | `logits [1,n_classes]` |
 
 laya's graph builds the one-hot marker selection and the question-type
 embedding from these inputs itself. It pins the residual range rewrite at
@@ -860,6 +900,46 @@ Validation for `format = "agentjev"`: `marker_pos`, `seg` and
 `seg` and `position_ids` on no other format; `single_label`. Loading
 checks `seg` and `position_ids` are `[1, bucket]`, like `input_ids`.
 
+## The nli format
+
+An NLI cross-encoder (MNLI-style: `cross-encoder/nli-deberta-v3-*`,
+`roberta-large-mnli`, the zeroshot-v2.0 family) classifies the way
+Hugging Face's `zero-shot-classification` pipeline uses it (D41). For an
+input and its k candidate labels:
+- **One pair per label.** The pair is (text, the hypothesis template with
+  the label in place of `{}`), laid out by tokenizer.json's pair
+  post-processor exactly as the pipeline's fast tokenizer does: `[CLS]
+  text [SEP] hypothesis [SEP]` for BERT and DeBERTa, `<s> text </s></s>
+  hypothesis </s>` for RoBERTa. Segment ids are fed when `[classify.io]`
+  names `token_type_ids`. The manifest decides, not the tokenizer:
+  DeBERTa-v3's tokenizer gives pairs segment ids that its model, with no
+  token-type embeddings, never reads.
+- **Truncation:** the pipeline's `only_first`. Only the text is cut, on
+  `truncation_side`, so every pair fits the model; the hypothesis never is.
+- **Each pair is its own prediction,** in the smallest bucket that fits
+  it, as a reranker's pairs are. A request costs k predictions per input,
+  which `max_labels` and `max_batch` bound. `usage.prompt_tokens` counts
+  every pair's tokens, and `sidekick-buckets` names each input's largest
+  bucket.
+- **Scoring**, from each pair's logits, with the manifest's `entailment`
+  and `contradiction` indices:
+  - several labels, `multi_label: false`: a softmax across the labels of
+    their entailment logits;
+  - `multi_label: true`, or a single label (the pipeline's rule): per
+    label, the softmax over [contradiction, entailment], taking
+    entailment. The classifier returns entailment − contradiction, whose
+    sigmoid is that probability, so the server's per-label sigmoid gives
+    it, and `use_activation: false` returns those differences.
+
+The indices are the pipeline's, which the converter resolves from
+config.json: `entailment` is the first label in `label2id` that starts
+with "entail" (ignoring case), and `contradiction` is index 0, or the last
+index when entailment is 0. For every MNLI and zeroshot model those are
+the contradiction (or not_entailment) output.
+
+`probs` follows `candidate_labels`, and `label` is the argmax, as on every
+format; the pipeline instead sorts labels by score.
+
 ## Fixtures and references (frozen formats)
 
 - **Token-id fixture**, `fixtures/classify/<model id>.tokens.json`,
@@ -886,7 +966,12 @@ checks `seg` and `position_ids` are `[1, bucket]`, like `input_ids`.
   keys. It also records the option rendering of a laya-format model and the
   gliner2 release of a gliner2 one: a reference whose rendering differs
   from the manifest's, or whose gliner2 release isn't the one the runtime
-  ports, is stale. Schema: `fixtures/classify/reference.schema.json`.
+  ports, is stale. An nli reference records the manifest's `[classify.nli]`
+  (stale if it changes) and, per case, each label's pair (`pair_ids`,
+  `pair_type_ids`), the request's template and `truncation_side`. Its
+  per-label values are the entailment logits, or entailment −
+  contradiction for a multi-label or single-label case, so the usual
+  grading applies. Schema: `fixtures/classify/reference.schema.json`.
 
 ## Validation
 
