@@ -1,0 +1,42 @@
+# MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c: a 24-layer DeBERTa-v3-large zero-shot NLI
+# classifier (MIT), one of the zeroshot-v2.0 "-c" models, trained only on
+# commercially-friendly data: synthetic data generated with
+# Mixtral-8x7B-Instruct, plus MultiNLI and FEVER-NLI (no ANLI). Two classes,
+# entailment and not_entailment. As a Core ML zero-shot classifier in the nli
+# format: one static-shape artifact per sequence-length bucket ({seq}
+# resolves against `buckets`), each scoring one (premise, hypothesis) pair
+# and returning the model's 2 logits, (1, 2). sidekick builds a hypothesis
+# per candidate label from `hypothesis_template` and scores the labels as
+# transformers' ZeroShotClassificationPipeline does (docs/design/classify.md,
+# "The nli format"). Served on the GPU.
+#
+# Produce the artifacts with tools/convert_nli.py:
+#   python tools/convert_nli.py <checkpoint> <models>/deberta-v3-large-zeroshot-v2.0-c
+# [classify.nli]'s indices are the pipeline's own resolution of the
+# checkpoint's label2id; the converter checks them.
+
+id = "deberta-v3-large-zeroshot-v2.0-c"
+task = "zero-shot-classification"
+source = { repo = "MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c", revision = "b2730f16019076bb0009481121efbe4705e0e378" }
+artifact = "model_{seq}.mlmodelc"
+tokenizer = "tokenizer.json"
+buckets = [128, 256, 512]
+max_seq_len = 512
+max_batch = 8
+problem_type = "single_label"
+compute_units = "cpu_and_gpu"
+
+[classify]
+format = "nli"
+max_labels = 16
+
+[classify.nli]
+entailment = 0
+contradiction = 1
+n_classes = 2
+hypothesis_template = "This example is {}."
+
+[classify.io]
+input_ids = "input_ids"
+attention_mask = "attention_mask"
+output = "logits"

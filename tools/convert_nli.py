@@ -66,6 +66,8 @@ GATE_PREMISES = [
     "Der Zug nach Berlin hatte heute Morgen zwei Stunden Verspätung.",
     _LOG * 4,      # 190-220 tokens with a hypothesis: bucket 256
     _LOG * 8,      # 380-430: bucket 512
+    _LOG * 16,     # 750-860: bucket 1024, for models that take longer inputs
+    _LOG * 36,     # 1,700-1,950: bucket 2048
 ]
 GATE_LABELS = ["music", "travel", "error", "success", "a delay"]
 

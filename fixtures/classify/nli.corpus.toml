@@ -22,7 +22,8 @@
 #    the same request single- and multi-label, custom and non-English
 #    templates, labels with punctuation, digits and non-Latin scripts, and
 #    premises past 512 tokens truncated on the right and, for logs and
-#    traces, on the left. None of them comes from a dataset.
+#    traces, on the left, one of them past 2,048 tokens for models that take
+#    long inputs. None of them comes from a dataset.
 #
 # Fields: `input` is the premise; `candidate_labels` the labels;
 # `multi_label`, default false; `hypothesis_template`, absent meaning the
@@ -287,4 +288,13 @@ repeat = 24
 candidate_labels = ["the agent is investigating a bug", "the agent finished the task"]
 hypothesis_template = "In this text, {}."
 multi_label = true
+tags = ["long"]
+
+[[case]]
+id = "very-long-log-left"
+input = """2026-10-12T09:14:03Z INFO worker started job=reindex shard=7
+2026-10-12T09:14:05Z WARN retrying request to storage (attempt 2 of 5)"""
+repeat = 60
+truncation_side = "left"
+candidate_labels = ["a warning", "a fatal error", "normal operation"]
 tags = ["long"]

@@ -658,6 +658,9 @@ range.
   | gliner2.5-decide | not graded: didn't finish | F: bucket drift Δp 4.7e-3, over its 3.5e-3 gate |
   | laya-typed-decisions | not graded: didn't finish | F: bucket drift Δp 2.7e-2, over its 2.5e-2 gate |
   | agent-jev | not graded: didn't finish | not graded: didn't finish |
+  | nli-minilm2-l6-h768 | not run (GPU only) | F: bucket drift Δp 2.3e-3, over its 2.1e-3 ceiling; worst Δp 1.7e-3 (A level), 11.5 ms; MultiNLI predictions match fp32 on every pair |
+  | nli-deberta-v3-small | not run | F: bucket drift Δp 1.1e-2, over its 3.0e-3 ceiling; worst Δp 6.1e-3 (A level), 33 ms; MultiNLI predictions match fp32 on every pair |
+  | nli-minilm2-l6-h768-ane (its ANE build) | not run | F: bucket drift Δp 2.7e-3; worst Δp 3.6e-3 (B level), 18 ms |
 
   On this Mac the GPU is 6–13× faster than the CPU on the small models
   (nlptown 300 → 23 ms per case, ms-marco 42 → 7.5 ms) and as accurate or
@@ -737,6 +740,10 @@ path.
 | [cross-encoder/nli-deberta-v3-small](https://huggingface.co/cross-encoder/nli-deberta-v3-small) as `nli-deberta-v3-small` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | D 0.0295 | **A** 0.005 (1.03× ceiling) | F 0.0254: bucket invariance 7.4e-3, over its 3.0e-3 ceiling | 245/254 | 16 |
 | [cross-encoder/nli-deberta-v3-base](https://huggingface.co/cross-encoder/nli-deberta-v3-base) as `nli-deberta-v3-base` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | C 0.013 | **B** 0.0037 (1.29× ceiling) | C 0.0101 (4.6× ceiling) | 479/488 | 33 |
 | [FacebookAI/roberta-large-mnli](https://huggingface.co/FacebookAI/roberta-large-mnli) as `roberta-large-mnli` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | D 0.1629 | **A** 0.1191 (0.92× ceiling; one fp16-sensitive MultiNLI pair) | F 0.0428: bucket invariance 1.7e-2, over its 1.2e-2 ceiling | 582/591 | 14 |
+| [MoritzLaurer/deberta-v3-base-zeroshot-v2.0-c](https://huggingface.co/MoritzLaurer/deberta-v3-base-zeroshot-v2.0-c) as `deberta-v3-base-zeroshot-v2.0-c` (served on the GPU) | zero-shot, nli format, two-way | [convert_nli.py](../tools/convert_nli.py) | D 0.0281 | **A** 0.0024 (1.15× ceiling) | F 0.0178: bucket invariance 3.9e-3, over its 2.7e-3 ceiling | 479/488 | 33 |
+| [MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c](https://huggingface.co/MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c) as `deberta-v3-large-zeroshot-v2.0-c` (served on the GPU) | zero-shot, nli format, two-way | [convert_nli.py](../tools/convert_nli.py) | C 0.0167 | **A** 0.0038 (1.19× ceiling) | F 0.0131: bucket invariance 3.7e-3, over its 2.1e-3 ceiling | 947/956 | 100 |
+| [MoritzLaurer/roberta-large-zeroshot-v2.0-c](https://huggingface.co/MoritzLaurer/roberta-large-zeroshot-v2.0-c) as `roberta-large-zeroshot-v2.0-c` (served on the GPU) | zero-shot, nli format, two-way | [convert_nli.py](../tools/convert_nli.py) | D 0.033 | **B** 0.0033 (1.63× ceiling) | F 0.0179: bucket invariance 3.9e-3, over its 2.4e-3 ceiling | 582/592 | 15 |
+| [MoritzLaurer/bge-m3-zeroshot-v2.0-c](https://huggingface.co/MoritzLaurer/bge-m3-zeroshot-v2.0-c) as `bge-m3-zeroshot-v2.0-c` (served on the GPU) | zero-shot, nli format, two-way, multilingual, 2,048 tokens | [convert_nli.py](../tools/convert_nli.py) | F 0.0667 (bucket invariance; past 1,024 tokens the D33 limit) | **A** 0.0026 (0.93× ceiling) | F 0.0667: not served on the ANE (1.04 GiB of weights, past the 1 GiB limit, D32) | 0/592 | 41 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -747,13 +754,14 @@ mask, since the SDPA path emits the fused op that drops masks on the ANE
 **The NLI cross-encoders** (nli format, D41) serve zero-shot classification
 as transformers' zero-shot pipeline does: one (premise, hypothesis) pair
 per candidate label, scored by the model's entailment logits. They share
-one corpus (fixtures/classify/nli.corpus.toml), 338 requests and 416 pairs:
+one corpus (fixtures/classify/nli.corpus.toml), 339 requests and 419 pairs:
 308 MultiNLI validation pairs as one-label requests (half matched, half
 mismatched), zero-shot topic, sentiment and intent requests with 1 to 16
 labels, agent-like texts (errors, stack traces, test runs, reasoning that
 runs into a limitation), and premises past 512 tokens truncated on the right
-and, for logs and traces, on the left. Each reference is checked against
-the pipeline's own scores (agreement within 1e-7).
+and, for logs and traces, on the left (one past 2,048 tokens). Each
+reference is checked against the pipeline's own scores (agreement within
+1e-7).
 - **Grades:** every model grades A or B on the GPU, where all five are
   served, at 4.0 (MiniLM2), 4.2 (DeBERTa-v3-xsmall), 4.0 (small), 6.7
   (base) and 15.6 ms (RoBERTa-large) per request. On the ANE four of the
@@ -774,6 +782,20 @@ the pipeline's own scores (agreement within 1e-7).
   accuracy is 0.883 / 0.870 (fp32 0.877 / 0.864; 99.4% agreement). The
   same rewrites make roberta-large-mnli's ANE path exactly bucket-invariant
   too, but it grades C (p99 2.01× its fp16 ceiling), so it has no ANE build.
+- **Modern equivalents, the zeroshot-v2.0 "-c" line:** two-way
+  (entailment, not_entailment) models trained only on commercially-friendly
+  data: Mixtral-generated synthetic data plus MultiNLI and FEVER-NLI, no
+  ANLI. All four grade A or B on the GPU, where they are served: DeBERTa-v3
+  base 6.7 ms and large 17 ms, RoBERTa-large 15.6 ms, and bge-m3 15.5 ms
+  per request on this corpus, whose requests are mostly short (bge-m3 takes
+  208 ms per pair at 2,048 tokens). bge-m3 is the long-context option: it
+  is multilingual, and its 2,048-token buckets keep the end of a long log
+  or trace where the 512-token models drop it. Its tokenizer config says
+  512, so transformers' pipeline would truncate there by default; the
+  reference truncates at the manifest's 2,048. MultiNLI accuracy,
+  entailment against not, is the same on every Core ML path as in fp32:
+  DeBERTa-v3-base 0.942 matched / 0.916 mismatched, large 0.948 / 0.935,
+  RoBERTa-large 0.942 / 0.942, bge-m3 0.942 / 0.922.
 - **roberta-large-mnli's GPU worst case** (|Δp| 0.12) is one MultiNLI pair
   whose entailment and contradiction logits nearly cancel, so its
   one-label score sits on the sigmoid's steep part; an ideal fp16 engine
