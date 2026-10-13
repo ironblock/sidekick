@@ -164,3 +164,31 @@ family = "RoBERTa"
 task = "classify"
 source = "cross-encoder/nli-MiniLM2-L6-H768@b95119ce93d3e065de6214e38cd4a97b0f2f2c6d"
 served = "coreml-ane"
+
+[models."deberta-v3-base-zeroshot-v2.0-c"]
+name = "deberta-v3-base-zeroshot-v2.0-c"
+family = "DeBERTa-v3"
+task = "classify"
+source = "MoritzLaurer/deberta-v3-base-zeroshot-v2.0-c@bddf8c5411c34ac3565e16e04384fd68b2618dda"
+served = "coreml-gpu"
+
+[models."deberta-v3-large-zeroshot-v2.0-c"]
+name = "deberta-v3-large-zeroshot-v2.0-c"
+family = "DeBERTa-v3"
+task = "classify"
+source = "MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c@b2730f16019076bb0009481121efbe4705e0e378"
+served = "coreml-gpu"
+
+[models."roberta-large-zeroshot-v2.0-c"]
+name = "roberta-large-zeroshot-v2.0-c"
+family = "RoBERTa"
+task = "classify"
+source = "MoritzLaurer/roberta-large-zeroshot-v2.0-c@4c24ed4bba5af8d3162604abc2a141b9d2183ecc"
+served = "coreml-gpu"
+
+[models."bge-m3-zeroshot-v2.0-c"]
+name = "bge-m3-zeroshot-v2.0-c"
+family = "XLM-RoBERTa"
+task = "classify"
+source = "MoritzLaurer/bge-m3-zeroshot-v2.0-c@705510dfe0f35d223a4bf6f5d2695ec5fd162341"
+served = "coreml-gpu"

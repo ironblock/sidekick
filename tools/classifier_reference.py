@@ -1230,7 +1230,18 @@ def run_nli(args, manifest):
     max_len, max_labels = manifest["max_seq_len"], manifest["classify"]["max_labels"]
     hf = AutoTokenizer.from_pretrained(args.source)
     if hf.model_max_length != max_len:
-        raise SystemExit(f"the pipeline truncates at model_max_length {hf.model_max_length}, the manifest at {max_len}")
+        # the pipeline truncates at the tokenizer's model_max_length, the
+        # server at the manifest's max_seq_len: the reference is the pipeline
+        # with the tokenizer's limit set to the manifest's, which the model's
+        # position table must allow (bge-m3-zeroshot-v2.0-c's tokenizer says
+        # 512; the model takes 8,192)
+        cfg = json.loads((args.source / "config.json").read_text())
+        offset = cfg["pad_token_id"] + 1 if cfg["model_type"] in ("roberta", "xlm-roberta", "camembert") else 0
+        if max_len + offset > cfg.get("max_position_embeddings", max_len):
+            raise SystemExit(f"max_seq_len {max_len} exceeds the model's position embeddings")
+        print(f"NOTE: the tokenizer's model_max_length is {hf.model_max_length}; the reference truncates at "
+              f"the manifest's max_seq_len {max_len}", flush=True)
+        hf.model_max_length = max_len
     served = Tokenizer.from_file(str(args.model_dir / "tokenizer.json"))
     served.no_padding()
     served.no_truncation()
@@ -1262,9 +1273,11 @@ def run_nli(args, manifest):
             c["feeds"].append({k: torch.tensor([v]) for k, v in enc.items()})
         c["k"] = len(c["candidate_labels"])
         c["ids"] = []
-        if "long" in c["tags"] and "truncated" not in c["tags"]:
-            raise SystemExit(f"{c['id']}: tagged long but fits {max_len} tokens; lengthen it")
+        if "long" in c["tags"] and len(hf(c["input"], add_special_tokens=False)["input_ids"]) <= 512:
+            raise SystemExit(f"{c['id']}: tagged long but its premise is under 512 tokens; lengthen it")
     hf.truncation_side = "right"
+    if not any("truncated" in c["tags"] for c in cases):
+        raise SystemExit(f"no case is longer than max_seq_len {max_len}: truncation would go untested")
     print(f"{len(cases)} cases, {sum(c['k'] for c in cases)} pairs; "
           f"{sum('truncated' in c['tags'] for c in cases)} truncated", flush=True)
     pairs = np.full((len(cases), max_labels, nli["n_classes"]), np.nan, dtype=np.float32)
