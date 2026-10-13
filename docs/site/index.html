@@ -104,7 +104,8 @@ td.model small { display: block; font-weight: 400; color: var(--muted); font-siz
 .nines { display: grid; grid-template-columns: 112px auto; gap: 8px; align-items: center; }
 .bar { height: 8px; border-radius: 4px; background: var(--bar-track); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--bar); border-radius: 4px; }
-.served { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
+.served, .licence { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
+.licence { color: var(--g-d); border-color: var(--g-d); cursor: help; }
 .prov { border-bottom: 1px dotted var(--muted); cursor: help; }
 td.note { color: var(--muted); font-size: 13px; min-width: 220px; }
 .empty { padding: 28px; text-align: center; color: var(--muted); }
@@ -232,7 +233,7 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
       model:r.model, name:r.name, family:r.family, task:r.task, path:r.path, precision:r.precision, chip:r.chip,
       runtime:[r.runtime, r.os].filter(Boolean).join(" · "), grade:r.grade, err:r.error, errKind:r.error_kind,
       flips:r.rank_flips, ms:r.ms, prov:r.ms != null && r.ms_idle !== true, msIdle:r.ms_idle, msSource:r.ms_source, latency:r.latency || [],
-      served:r.served, note:notes.join(". "), nines:r.error == null ? null : -Math.log10(Math.max(r.error, 1e-15)),
+      served:r.served, licence:r.license_note, note:notes.join(". "), nines:r.error == null ? null : -Math.log10(Math.max(r.error, 1e-15)),
       mem:r.footprint_mb, memWhy:r.footprint_measured, peak:r.peak_mb, peakWhy:r.peak_measured,
       machine:r.machine_mb, machineWhy:r.machine_measured, disk:r.disk_mb, diskWhy:r.disk_measured,
       date:r.date, source:r.source, matryoshka:r.matryoshka, threads:r.threads, sidekick:r.sidekick
@@ -326,7 +327,7 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
       if (on.length && on.indexOf(String(r[k])) < 0) return false;
     }
     if (state.q) {
-      var hay = [r.name, r.model, r.family, r.task, r.path, r.precision, r.chip, r.runtime, r.note].join(" ").toLowerCase();
+      var hay = [r.name, r.model, r.family, r.task, r.path, r.precision, r.chip, r.runtime, r.note, r.licence].join(" ").toLowerCase();
       if (hay.indexOf(state.q) < 0) return false;
     }
     return true;
@@ -401,6 +402,8 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
       var tr = el("tr");
       var tdm = el("td", { "class":"model" }, r.name);
       if (r.served) tdm.appendChild(el("span", { "class":"served", title:"The path this build is served on by default" }, "served"));
+      // A model whose training data carries a non-commercial licence.
+      if (r.licence) tdm.appendChild(el("span", { "class":"licence", title:"Licence: " + r.licence }, "non-commercial?"));
       tdm.appendChild(el("small", null, r.family));
       tr.appendChild(tdm);
       tr.appendChild(el("td", null, r.task));

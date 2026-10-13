@@ -86,12 +86,24 @@ def install_patches(self_attending_pads=False):
 
 
 class ModernBertBackbone(Backbone):
+    # the sequence-classification head's mean pool as a matmul, after
+    # matmul_mean_pool(); None keeps transformers' sum / count
+    pool = None
+
     @property
     def encoder(self):
         return self.model.base_model
 
     def call(self, w, x):
-        return getattr(w, self.attr)(
+        task = getattr(w, self.attr)
+        if self.pool == "matmul":
+            from transformers.modeling_outputs import SequenceClassifierOutput
+            h = task.model(input_ids=x["input_ids"].long(), attention_mask=x["attention_mask"].long(),
+                           position_ids=w.position_ids).last_hidden_state
+            m = x["attention_mask"].to(torch.float32).reshape(1, 1, w.seq)
+            pooled = torch.matmul(m / m.sum(dim=-1, keepdim=True), h)        # (1, 1, hidden)
+            return SequenceClassifierOutput(logits=task.classifier(task.drop(task.head(pooled))))
+        return task(
             input_ids=x["input_ids"].long(),
             attention_mask=x["attention_mask"].long(),
             position_ids=w.position_ids,
@@ -238,8 +250,13 @@ def residual_k(calibration, tok, k="auto", report=print):
         raise TypeError("residual_k calibrates on a core.Calibration, never on evaluation cases")
 
     def rewrite(backbone):
+        from ..tokenizer import encode_pair
+
         def run():
             for text in calibration.texts:
+                if isinstance(text, tuple):   # an NLI (premise, hypothesis) pair, within the buckets
+                    backbone.reference(encode_pair(tok, *text)[0])
+                    continue
                 ids = encode(tok, text)
                 backbone.reference(ids if len(ids) <= 512 else ids[:511] + ids[-1:])  # as the server truncates
 
@@ -270,7 +287,26 @@ def twice_gelu(backbone):
             layer.mlp.Wi.weight[ff:].mul_(1.0 / activations.TwiceGelu.GAIN)
             if layer.mlp.Wi.bias is not None:
                 layer.mlp.Wi.bias[ff:].mul_(1.0 / activations.TwiceGelu.GAIN)
+    head = getattr(backbone.model, "head", None)
+    if head is not None:
+        # the sequence-classification head, norm(act(dense(x))): its gelu too,
+        # the 2x absorbed by the scale-invariant LayerNorm (eps x GAIN^2)
+        if getattr(backbone.config, "classifier_activation", "gelu") != "gelu":
+            raise SystemExit(f"twice_gelu needs classifier_activation 'gelu', not {backbone.config.classifier_activation!r}")
+        head.act = activations.TwiceGelu()
+        head.norm.eps *= activations.TwiceGelu.GAIN ** 2
     backbone.forbid_ops.add("gelu")
+
+
+def matmul_mean_pool(backbone):
+    """Opt-in rewrite for a mean-pooled sequence classifier: the pool as one
+    matmul of the attention mask's weights (mask / count) against the hidden
+    states, kept 3-D, instead of transformers' sum and divide. Core ML runs
+    a reduce_sum on the CPU, and the head after it follows; written as a
+    matmul the pool and the head stay on the ANE. Exact in fp32."""
+    if getattr(backbone.config, "classifier_pooling", None) != "mean" or backbone.model is backbone.encoder:
+        raise SystemExit("matmul_mean_pool is for a mean-pooled ModernBERT sequence classifier")
+    backbone.pool = "matmul"
 
 
 def _matmul_softmax_attention(module, qkv, attention_mask, sliding_window_mask, position_ids, local_attention,

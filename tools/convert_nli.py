@@ -21,6 +21,11 @@ The recipe follows the checkpoint's model_type:
 - bert, roberta, xlm-roberta: the BERT backbone with the checkpoint's own
   classification head (explicit attention, finite mask, static positions;
   RoBERTa's offset by padding_idx + 1);
+- modernbert: the ModernBERT backbone (explicit attention, finite masks,
+  traceable RoPE) with the checkpoint's own head (mean or CLS pooling,
+  dense, gelu, LayerNorm, classifier) and its residual stream at a
+  calibrated 1/K for the ANE linear's 2^15 limit; served on the ANE, the
+  matmul softmax and its mean pool as a matmul (C on the ANE, measured);
 - deberta-v2 (DeBERTa-v3): the DeBERTa backbone, its relative-position
   gathers rewritten as matmuls (techniques/relative_shift.py), with the
   checkpoint's ContextPooler and classifier.
@@ -45,7 +50,7 @@ other Core ML paths are reported.
 import json
 
 from sidekick_convert import cli, core, manifest, recipes, tokenizer
-from sidekick_convert.backbones import bert, deberta_v2
+from sidekick_convert.backbones import bert, deberta_v2, modernbert
 from sidekick_convert.gates import ClassifierGates
 from sidekick_convert.heads.sequence import SequenceClassification
 
@@ -100,20 +105,44 @@ def main():
         backbone = bert.load(args.src, tok, task="sequence-classification", attention="explicit",
                              token_types="input" if reads else "zeros")
         twice = bert.twice_gelu
+    elif model_type == "modernbert":
+        ane = manifest.served_path(m) == "CPU_AND_NE"
+        # served on the ANE: self-attending pads, which the matmul softmax needs
+        backbone = modernbert.load(args.src, tok, task="sequence-classification", self_attending_pads=ane)
+        twice = modernbert.twice_gelu
     else:
-        raise SystemExit(f"model_type {model_type!r} has no NLI recipe (bert, roberta, xlm-roberta, deberta-v2)")
+        raise SystemExit(f"model_type {model_type!r} has no NLI recipe (bert, roberta, xlm-roberta, deberta-v2, "
+                         "modernbert)")
     template = m["classify"]["nli"].get("hypothesis_template", "This example is {}.")
     gate = gate_pairs(template, tok, max(buckets))
     rewrites = [twice] if args.twice_gelu else []
-    if manifest.served_path(m) == "CPU_AND_NE":
+    if model_type == "modernbert":
+        # the ANE linear's 2^15 limit: the residual stream at a calibrated 1/K
+        rewrites.append(modernbert.residual_k(core.Calibration(gate), tok))
+        if manifest.served_path(m) == "CPU_AND_NE":
+            # the matmul softmax for bucket invariance; the mean pool as a
+            # matmul keeps the pool and head on the ANE (Core ML runs a
+            # reduce_sum, and what follows it, on the CPU). Measured on
+            # ModernBERT-large-zeroshot-v2.0 (docs/MODELS.md): with both, the
+            # ANE path is exactly bucket-invariant to 1,024 tokens but grades
+            # C; without the softmax it is more accurate per bucket and fails
+            # bucket invariance; the erf GELU cost it precision. So no
+            # ModernBERT NLI model ships an ANE build.
+            rewrites.append(modernbert.matmul_softmax)
+            if backbone.config.classifier_pooling == "mean":
+                rewrites.append(modernbert.matmul_mean_pool)
+    elif manifest.served_path(m) == "CPU_AND_NE":
         # served on the ANE: the BERT backbone's ANE rewrites (its docstring)
         if model_type == "deberta-v2":
             raise SystemExit("DeBERTa-v3 NLI models are served on the GPU (compute_units = \"cpu_and_gpu\"): "
                              "on the ANE they are slower and fail bucket invariance")
         rewrites = [bert.twice_gelu, bert.matmul_softmax_rewrite, bert.linear_floor_rewrite(gate, tok)]
-    name, value, factor = backbone.check_linear_range(gate, tok)
-    print(f"gate set: {len(gate)} pairs; largest linear output {value:.1f} at {name}, "
-          f"{factor:.1f}x under the ANE linear's 2^15")
+    if model_type == "modernbert":
+        print(f"gate set: {len(gate)} pairs (the 2^15 limit is handled by the residual rewrite)")
+    else:
+        name, value, factor = backbone.check_linear_range(gate, tok)
+        print(f"gate set: {len(gate)} pairs; largest linear output {value:.1f} at {name}, "
+              f"{factor:.1f}x under the ANE linear's 2^15")
     job = recipes.classifier(
         model_id=model_id, src=args.src, buckets=buckets, backbone=backbone, head=SequenceClassification(),
         tok=tok, pairs=gate, rewrites=rewrites, timing=args.time,
