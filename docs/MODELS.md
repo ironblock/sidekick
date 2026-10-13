@@ -661,6 +661,23 @@ range.
   | nli-minilm2-l6-h768 | not run (GPU only) | F: bucket drift Δp 2.3e-3, over its 2.1e-3 ceiling; worst Δp 1.7e-3 (A level), 11.5 ms; MultiNLI predictions match fp32 on every pair |
   | nli-deberta-v3-small | not run | F: bucket drift Δp 1.1e-2, over its 3.0e-3 ceiling; worst Δp 6.1e-3 (A level), 33 ms; MultiNLI predictions match fp32 on every pair |
   | nli-minilm2-l6-h768-ane (its ANE build) | not run | F: bucket drift Δp 2.7e-3; worst Δp 3.6e-3 (B level), 18 ms |
+  | deberta-v3-base-zeroshot-v2.0-c | not run | F: bucket drift Δp 4.1e-3, over its 2.7e-3 ceiling; worst Δp 2.7e-3 (B level), 64 ms; MultiNLI predictions match fp32 on every pair |
+  | bge-m3-zeroshot-v2.0-c | not run | **B**, passes every gate: worst Δp 1.3e-2 (p99 1.40× its ceiling), bucket drift 5.6e-3 within its 8.0e-3 ceiling; 65 ms; 234 ms per pair at 1,024 tokens and 425 ms at 2,048; MultiNLI predictions match fp32 on every pair |
+  | roberta-large-mnli | not run | F: **bucket drift Δp 0.08**, over its 0.012 ceiling; worst Δp 2.1e-2 within a bucket (B level), 66 ms; MultiNLI predictions match fp32 on every pair |
+  | nli-deberta-v3-base | not run | F: bucket drift Δp 3.3e-3, over its 3.0e-3 ceiling; worst Δp 2.3e-3 (A level), 64 ms; MultiNLI predictions match fp32 on every pair |
+  | modernbert-large-zeroshot-v2.0 (licence note above) | not run | F: bucket drift Δp 6.0e-3, over its 4.7e-3 ceiling; worst Δp 6.2e-3 (B level), 48 ms; MultiNLI predictions match fp32 on every pair |
+
+  The NLI models, graded on its GPU only (ms per hypothesis, the median
+  one-label request), run 2.5–10× slower than on an M1 Max's GPU, at 11–66
+  ms, so a 16-label request takes about 0.2–1 s. Their accuracy within a
+  bucket is at their fp16 ceilings, and MultiNLI predictions match fp32 on
+  every pair. Every one but bge-m3-zeroshot-v2.0-c fails bucket
+  invariance, most by a little. **roberta-large-mnli by a lot: a request's
+  probabilities can move by up to 0.08 between buckets, so its scores
+  depend on input length there; prefer another NLI model on an Intel
+  Mac.** bge-m3-zeroshot-v2.0-c passes every gate and is the long-input
+  option: 234 ms per pair at 1,024 tokens and 425 ms at 2,048 (208 ms at
+  2,048 on an M1 Max), each bucket's first load about 10 s.
 
   On this Mac the GPU is 6–13× faster than the CPU on the small models
   (nlptown 300 → 23 ms per case, ms-marco 42 → 7.5 ms) and as accurate or

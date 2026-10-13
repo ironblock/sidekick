@@ -108,14 +108,23 @@ def served(row, models):
 
 
 def from_reports(dirs, runs, models):
-    rows, used = [], []
+    rows, used, seen = [], [], {}
     for d in dirs:
         for f in sorted(Path(d).rglob("*.json")):
             meta = runs["runs"].get(f.name)
             if meta is None:
                 continue
+            # runs.toml keys reports by file name, so a copy of one in two
+            # places is read once; two different reports by one name are an
+            # error.
+            text = f.read_text()
+            if f.name in seen:
+                if seen[f.name] != text:
+                    raise SystemExit(f"two different reports named {f.name}")
+                continue
+            seen[f.name] = text
             used.append(f.name)
-            report = json.loads(f.read_text())
+            report = json.loads(text)
             chip = runs["chips"].get(report.get("chip"))
             if chip is None:
                 raise SystemExit(f"{f.name}: chip {report.get('chip')!r} isn't in runs.toml [chips]")
