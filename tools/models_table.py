@@ -59,7 +59,7 @@ PRECISIONS = ["fp32", "fp16", "fp16 weights", "int8"]
 REPORT_PATH = {"ane": "coreml-ane", "gpu": "coreml-gpu", "cpu": "coreml-cpu", "onnx-cpu": "onnx-cpu"}
 
 FIELDS = [
-    "model", "name", "family", "task", "checkpoint", "path", "precision", "chip", "os", "runtime",
+    "model", "name", "family", "task", "checkpoint", "license_note", "path", "precision", "chip", "os", "runtime",
     "sidekick", "threads", "date", "served", "grade", "error_kind", "error", "worst_case", "stress", "mean",
     "drift", "bias", "rank_flips", "matryoshka", "ms", "ms_source", "ms_idle", "ms_tokens", "latency",
     "footprint_mb", "footprint_range_mb", "footprint_measured", "peak_mb", "peak_measured", "disk_mb", "disk_measured",
@@ -92,7 +92,8 @@ def blank(model, models, **kw):
     if m is None:
         raise SystemExit(f"model {model!r} isn't in docs/data/models.toml")
     row = {f: None for f in FIELDS}
-    row.update(model=model, name=m["name"], family=m["family"], task=m["task"], checkpoint=m.get("source"))
+    row.update(model=model, name=m["name"], family=m["family"], task=m["task"], checkpoint=m.get("source"),
+               license_note=m.get("license_note"))
     row.update(kw)
     return row
 
