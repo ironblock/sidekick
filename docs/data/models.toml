@@ -192,3 +192,11 @@ family = "XLM-RoBERTa"
 task = "classify"
 source = "MoritzLaurer/bge-m3-zeroshot-v2.0-c@705510dfe0f35d223a4bf6f5d2695ec5fd162341"
 served = "coreml-gpu"
+
+[models."modernbert-large-zeroshot-v2.0"]
+name = "ModernBERT-large-zeroshot-v2.0"
+family = "ModernBERT"
+task = "classify"
+source = "MoritzLaurer/ModernBERT-large-zeroshot-v2.0@a51e07b524299e309dd2b88d48b0cfa2bd9ec598"
+served = "coreml-gpu"
+license_note = "trained partly on ANLI (CC BY-NC 4.0); whether that restriction applies to the weights is unsettled; treat as non-commercial unless you've cleared it"

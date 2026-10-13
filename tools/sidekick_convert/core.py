@@ -136,12 +136,17 @@ def _parity_corpus_texts():
 
 
 def _graded(texts):
-    """Texts that are, or end with, a graded parity-corpus text: a model's
+    """Texts (or text pairs) that are, or end with, a graded parity-corpus text: a model's
     prompt prefix followed by a corpus text is still the corpus text. Short
     corpus texts (under 12 characters: "a", "42") only match exactly."""
     corpus = _parity_corpus_texts()
     long = [c for c in corpus if len(c) >= 12]
-    return [t for t in texts if t in corpus or any(t.endswith(c) for c in long)]
+
+    def graded(t):
+        if isinstance(t, tuple):   # a (premise, hypothesis) pair: either side
+            return any(graded(x) for x in t)
+        return t in corpus or any(t.endswith(c) for c in long)
+    return [t for t in texts if graded(t)]
 
 
 @dataclasses.dataclass(frozen=True)

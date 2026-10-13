@@ -41,6 +41,13 @@ class CalibrationGuard(unittest.TestCase):
         cal = core.Calibration([corpus_text()], legacy_graded="kept for byte identity")
         self.assertEqual(cal.texts, (corpus_text(),))
 
+    def test_pairs_are_checked_on_both_sides(self):
+        core.Calibration([("an unrelated premise", "This example is unrelated.")])
+        with self.assertRaises(ValueError):
+            core.Calibration([(corpus_text(), "This example is unrelated.")])
+        with self.assertRaises(ValueError):
+            core.Calibration([("an unrelated premise", corpus_text())])
+
     def test_accepts_other_texts(self):
         cal = core.Calibration(["an unrelated calibration text"])
         self.assertEqual(cal.texts, ("an unrelated calibration text",))

@@ -744,6 +744,7 @@ path.
 | [MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c](https://huggingface.co/MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c) as `deberta-v3-large-zeroshot-v2.0-c` (served on the GPU) | zero-shot, nli format, two-way | [convert_nli.py](../tools/convert_nli.py) | C 0.0167 | **A** 0.0038 (1.19× ceiling) | F 0.0131: bucket invariance 3.7e-3, over its 2.1e-3 ceiling | 947/956 | 100 |
 | [MoritzLaurer/roberta-large-zeroshot-v2.0-c](https://huggingface.co/MoritzLaurer/roberta-large-zeroshot-v2.0-c) as `roberta-large-zeroshot-v2.0-c` (served on the GPU) | zero-shot, nli format, two-way | [convert_nli.py](../tools/convert_nli.py) | D 0.033 | **B** 0.0033 (1.63× ceiling) | F 0.0179: bucket invariance 3.9e-3, over its 2.4e-3 ceiling | 582/592 | 15 |
 | [MoritzLaurer/bge-m3-zeroshot-v2.0-c](https://huggingface.co/MoritzLaurer/bge-m3-zeroshot-v2.0-c) as `bge-m3-zeroshot-v2.0-c` (served on the GPU) | zero-shot, nli format, two-way, multilingual, 2,048 tokens | [convert_nli.py](../tools/convert_nli.py) | F 0.0667 (bucket invariance; past 1,024 tokens the D33 limit) | **A** 0.0026 (0.93× ceiling) | F 0.0667: not served on the ANE (1.04 GiB of weights, past the 1 GiB limit, D32) | 0/592 | 41 |
+| [MoritzLaurer/ModernBERT-large-zeroshot-v2.0](https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0) as `modernbert-large-zeroshot-v2.0` (served on the GPU; **licence note**: trained partly on ANLI, see below) | zero-shot, nli format, two-way, 2,048 tokens | [convert_nli.py](../tools/convert_nli.py) | F 0.05 (bucket invariance; past 1,024 tokens the D33 limit) | **B** 0.01 (1.92× ceiling) | F 0.0171: bucket invariance 7.9e-3, over its 4.7e-3 ceiling; the head runs on the CPU | 1009/1031 | 20 |
 
 **nlptown-sentiment** passes every gate on every path, on D26's 51-input
 corpus: no decision changes, pad invariance exact, bucket invariance
@@ -796,6 +797,28 @@ reference is checked against the pipeline's own scores (agreement within
   entailment against not, is the same on every Core ML path as in fp32:
   DeBERTa-v3-base 0.942 matched / 0.916 mismatched, large 0.948 / 0.935,
   RoBERTa-large 0.942 / 0.942, bge-m3 0.942 / 0.922.
+- **ModernBERT-large-zeroshot-v2.0** is supported but not recommended
+  by default. **Licence note: trained partly on ANLI (CC BY-NC 4.0);
+  whether that restriction applies to the weights is unsettled; treat as
+  non-commercial unless you've cleared it.** The "-c" models above are the
+  recommended set. It is the most accurate on MultiNLI of any model here
+  (entailment against not: 0.961 matched / 0.955 mismatched, unchanged on
+  every Core ML path) and grades B on the GPU, to 2,048 tokens, at 19 ms
+  per request (249 ms per pair at 2,048). On the ANE, tried with each of
+  ModernBERT's rewrites (measured at buckets 128 to 1,024):
+  - as converted for the GPU, Core ML runs the classification head on the
+    CPU, after the mean pool's reduce_sum; written as a matmul, the pool
+    and head stay on the ANE (98.9% of operations) at the GPU's accuracy
+    up to 256 tokens (|Δp| 1.8e-3), but bucket invariance fails (7.3e-3,
+    over its 4.7e-3 ceiling), and at 2,048 tokens its error passes the
+    converter's gate (0.024);
+  - laya's matmul softmax makes it exactly bucket-invariant, and every
+    gate passes, but it grades C (|Δp| 0.015, 5× its ceiling), and the GPU
+    path drops to C too;
+  - laya's erf GELU costs it precision (|Δp| 0.031 at 128).
+
+  So it has no ANE build; tools/convert_nli.py builds the invariant C
+  variant for a manifest that serves it on the ANE.
 - **roberta-large-mnli's GPU worst case** (|Δp| 0.12) is one MultiNLI pair
   whose entailment and contradiction logits nearly cancel, so its
   one-label score sits on the sigmoid's steep part; an ideal fp16 engine
