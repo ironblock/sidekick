@@ -94,6 +94,8 @@ mod loader {
                 (beside, RuntimeSource::BesideExecutable)
             }
         };
+        // Before ONNX Runtime first reads XCR0 on this thread.
+        crate::avx512::enable_on_this_thread();
         let version = library_version(&library)?;
         ort::init_from(&library)
             .map_err(|e| format!("can't load ONNX Runtime: {e}"))?
