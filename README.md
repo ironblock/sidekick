@@ -59,8 +59,8 @@ conversion. A parity suite (D26) grades every model through sidekick's own
 code, on inputs chosen to break it: Core ML models on the CPU, GPU and ANE
 paths, ONNX models on `onnx-cpu`. On the ANE, all eight validated
 embedders grade A. Seven embedding models' ONNX exports grade A on
-`onnx-cpu` on an M1 Max; six of them also on an Intel Xeon W-3235 (macOS)
-and two x86-64 Linux machines, with EmbeddingGemma 2's x86-64 grades to
+`onnx-cpu` on an M1 Max and on an Intel Xeon W-3235 (macOS); six of them
+also on two x86-64 Linux machines, with EmbeddingGemma 2's Linux grades to
 follow. See the
 confidence grades in [docs/MODELS.md](docs/MODELS.md), or browse every graded
 result, by model, path, chip and runtime, at

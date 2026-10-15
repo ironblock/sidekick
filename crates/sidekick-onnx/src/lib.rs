@@ -9,6 +9,8 @@
 //!   model.
 //! - [`OnnxModel`] (feature `runtime`): one graph in a session, fed the
 //!   integer types its inputs declare.
+//! - [`avx512`]: on an Intel Mac, turn on AVX-512 state for the thread
+//!   that loads the runtime, so ONNX Runtime picks its AVX-512 kernels.
 //! - [`default_threads`] and [`detected_cores`]: the inference-thread rule,
 //!   the machine's fastest physical cores capped at 8.
 //!
@@ -18,6 +20,7 @@
 //! at scan (interface, quantization, external data) need no runtime, and
 //! live in `sidekick_core::onnx_graph`.
 
+pub mod avx512;
 mod runtime;
 #[cfg(feature = "runtime")]
 mod session;

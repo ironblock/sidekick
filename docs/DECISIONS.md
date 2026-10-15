@@ -2710,6 +2710,64 @@ above, so the existing softmax and multi-label grading apply unchanged.
 The converted models' grades are recorded in docs/MODELS.md as they
 land.
 
+## D42 — AVX-512 for ONNX Runtime on Intel Macs
+ONNX Runtime's CPU kernels (MLAS) are chosen once per process, on the
+first thread that needs them. The AVX-512 kernels are taken only when the
+CPU reports AVX-512F and the XCR0 register says the operating system saves
+AVX-512 state. Linux and Windows set those XCR0 bits for every thread.
+macOS sets them lazily, per thread, the first time that thread executes an
+AVX-512 instruction. Until then XCR0 reads 0x7 (x87, SSE and AVX state
+only), even on a CPU that has AVX-512 and an OS that supports it
+(`hw.optional.avx512f` = 1). On a Xeon W-3235 Mac Pro, XCR0 read 0x7 at
+process start and 0xe7 after one `vpxord zmm` instruction. So on every
+Intel Mac with AVX-512 (Mac Pro 2019, iMac Pro), ONNX Runtime ran its
+AVX2/FMA3 kernels. The check is the same in 1.23.2 (sidekick's Intel
+runtime), 1.28.3 and ONNX Runtime's main branch, so a newer or
+source-built runtime wouldn't change it.
+
+**Decision.** On Intel macOS, when `hw.optional.avx512f` reports AVX-512F,
+sidekick executes one AVX-512 instruction on the thread that loads ONNX
+Runtime and on each thread that creates a session, before ONNX Runtime
+reads XCR0 there. ONNX Runtime then selects its AVX-512F kernels (the
+fp32 GEMM, convolution, exp and reduction kernels; the int8 AVX-512 Core
+and VNNI kernels are selected too, though sidekick ships no int8 model).
+The instruction zeroes `zmm0`, followed by `vzeroupper`; no other state
+changes. `SIDEKICK_ONNX_AVX512=0` in the environment turns this off, for
+comparison or if a machine misbehaves. It does nothing on Apple silicon,
+on Linux, or on an Intel Mac without AVX-512. BF16 and AMX aren't
+affected: the CPUs Apple shipped with AVX-512 have neither, and ONNX
+Runtime doesn't run fp32 models in bf16 on x86 anyway.
+
+**Verification.** On the Xeon W-3235 (12 cores, macOS 26.6.2, ONNX Runtime
+1.23.2):
+- A profile of a running daemon shows `MlasGemmFloatKernelFma3` without
+  the change and `MlasGemmFloatKernelAvx512F` with it.
+- A test reads XCR0 on a fresh thread after the instruction and checks
+  that the AVX-512 bits are set exactly when sidekick enables them; on
+  this machine they are.
+- Latency through `/v1/embeddings` at about 290 tokens, one request at a
+  time, with each thread count run in both modes back to back on an
+  otherwise idle machine. Without the AVX-512 kernels, each model took
+  this many times as long as with them:
+
+  | threads | bge-small | gte-modernbert | embeddinggemma-300m | Qwen3-0.6B |
+  |---|---|---|---|---|
+  | 1 | 1.51 | 1.57 | 1.60 | 1.39 |
+  | 4 | 1.37 | 1.46 | 1.49 | 1.32 |
+  | 8 (the default) | 1.17 | 1.28 | 1.29 | 1.19 |
+  | 12 | 1.23 | 1.26 | 1.73 | 1.63 |
+
+  At 16 tokens the gain is smaller: 2–11% at 8 threads, up to 35% on one
+  thread. AVX-512 lowers this Xeon's clock, but no setting ran slower. A
+  full sweep with the AVX-512 kernels (docs/MODELS.md, threads table)
+  keeps 8 threads as the fastest setting, so the thread default (D40)
+  stands.
+- Accuracy: every exported embedder, EmbeddingGemma 2 included, grades A
+  on onnx-cpu with the AVX-512 kernels (worst 1 − cos ≤ 2e-11), as it did
+  with the AVX2 ones. The two kernel sets round differently, so vectors
+  from an AVX-512 Mac and an AVX2 machine agree to that level, not bit
+  for bit.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

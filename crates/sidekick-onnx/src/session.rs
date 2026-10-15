@@ -39,6 +39,9 @@ impl OnnxModel {
         load_runtime(None).map_err(Error::Inference)?;
         let file = path.file_name().map_or_else(|| path.display().to_string(), |f| f.to_string_lossy().into_owned());
         let fail = |what: &str, e: ort::Error| Error::Inference(format!("model `{id}`: {what}: {e}"));
+        // Session creation is where ONNX Runtime first picks its kernels,
+        // and this thread may not be the one that loaded the runtime.
+        crate::avx512::enable_on_this_thread();
         let session = Session::builder()
             .map_err(|e| fail("session", e))?
             .with_intra_threads(intra_op_threads)
