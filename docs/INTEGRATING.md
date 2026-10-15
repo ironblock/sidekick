@@ -66,7 +66,9 @@ the config's `onnx_runtime` or `ORT_DYLIB_PATH` names, and `/health`'s
 `onnx.runtime` says which loaded, or why none did. Intel Macs run ONNX
 Runtime 1.23.2, the last release Microsoft built for them, where every
 other platform runs 1.28.3. Each platform's results are graded on that
-platform.
+platform. On an Intel Mac with AVX-512, ONNX Runtime runs its AVX-512
+kernels (D42); `SIDEKICK_ONNX_AVX512=0` in the daemon's environment turns
+them off.
 
 How far ONNX vectors are reproducible: at a given thread count, re-runs
 are bit-identical, and so were two Linux x86-64 machines with different

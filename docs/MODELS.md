@@ -467,7 +467,8 @@ grades it as the `onnx-cpu` path.
 Graded natively on the shipped runtimes, 51-case corpus: ONNX Runtime
 1.28.3 on an Apple M1 Max (macOS, arm64), an AMD Ryzen 7 5800X and an AMD
 Threadripper 3970X (Linux, x86-64), and 1.23.2 on an Intel Xeon W-3235
-(macOS, x86-64). onnx-cpu cells give 1 − the worst-case cosine; the
+(macOS, x86-64), there with ONNX Runtime's AVX-512 kernels (D42).
+onnx-cpu cells give 1 − the worst-case cosine; the
 Threadripper's grades match the Ryzen's bit for bit, so they share a
 column. The Core ML columns are the Apple paths from the table above.
 
@@ -478,7 +479,7 @@ column. The Core ML columns are the Apple paths from the table above.
 | bge-small-en-v1.5 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99993 | A 0.999999 | A 0.99997 |
 | gte-modernbert-base | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | B 0.99951 | A 0.99999 | A 0.99992 |
 | embeddinggemma-300m | **A** 1 − 3e-12 | **A** 1 − 3e-12 | **A** 1 − 3e-12 | B 0.99989 | A 0.999998 | A 0.99999 |
-| embeddinggemma-2 | **A** 1 − 2e-12 | | | F 0.99993 | A 0.9999993 | A 0.999995 |
+| embeddinggemma-2 | **A** 1 − 2e-12 | | **A** 1 − 1e-12 | F 0.99993 | A 0.9999993 | A 0.999995 |
 | F2LLM-v2-160M | **A** 1 − 5e-12 | **A** 1 − 4e-12 | **A** 1 − 4e-12 | B 0.99986 | A 0.999999 | A 0.99999 |
 | Qwen3-Embedding-0.6B | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | not converted | not converted | not converted |
 | Qwen3-Embedding-0.6B, fp16 weights | **A** 1 − 2e-11 | | **A** 1 − 2e-11 | | | |
@@ -570,17 +571,18 @@ length in the smallest bucket that fits it, padded. ms per input:
   | Threadripper 3970X (32 cores), gte-modernbert-base | 451 | 236 | 133 | | 117 | | 103 | 104 | 103 | 118 |
   | Threadripper 3970X, embeddinggemma-300m | 417 | 223 | 129 | | 114 | | 120 | 112 | 106 | 137 |
   | Threadripper 3970X, Qwen3-Embedding-0.6B | 1,627 | 833 | 460 | | 335 | | 303 | 277 | 294 | 339 |
-  | Xeon W-3235 (12 cores, 24 threads), gte-modernbert-base | 573 | 292 | 161 | 116 | 98 | | 119 | 99 | 241 | |
-  | Xeon W-3235, embeddinggemma-300m | 564 | 292 | 161 | 115 | 97 | | 112 | 108 | 187 | |
-  | Xeon W-3235, Qwen3-Embedding-0.6B | 2,132 | 1,090 | 572 | 409 | 337 | | 385 | 316 | 451 | |
+  | Xeon W-3235 (12 cores, 24 threads), gte-modernbert-base | 362 | 189 | 110 | 85 | 77 | | 83 | 78 | 207 | |
+  | Xeon W-3235, embeddinggemma-300m | 352 | 185 | 108 | 84 | 74 | | 81 | 78 | 254 | |
+  | Xeon W-3235, Qwen3-Embedding-0.6B | 1,563 | 772 | 432 | 328 | 266 | | 307 | 277 | 664 | |
   <!-- /generated -->
 
   Every row is sidekickd's onnx-cpu path through the HTTP API
   (`/v1/embeddings`, one request at a time, the median of 15) at about 290
   tokens. The M1 Max (macOS 27.0) and the Ryzen 5800X and Threadripper
   3970X (Linux, load average under 6) ran ONNX Runtime 1.28.3; the Xeon
-  W-3235 (macOS) ran 1.23.2, and its numbers are indicative only, because
-  that machine was busy (load average 4–16). On the M1 Max the load average
+  W-3235 (macOS, otherwise idle) ran 1.23.2 with its AVX-512 kernels
+  (D42). Without them, the Xeon was 1.2–1.7× slower at every setting up
+  to 12 threads. On the M1 Max the load average
   read 20–70 throughout, inflated by another user session's waiting threads
   while the CPU stayed about 80% idle; re-running 6, 8 and 10 threads
   reproduced the numbers to within 7%.
@@ -589,13 +591,12 @@ length in the smallest bucket that fits it, padded. ms per input:
   flattens, even with 32 cores. Simultaneous multithreading adds nothing,
   and more threads than fast cores make it worse: on the M1 Max, 10 threads
   (adding its two efficiency cores, ONNX Runtime's own default) is twice as
-  slow as 8, and the Xeon at 24 threads is too. Only a model as large as
+  slow as 8, and the Xeon at 24 threads is 2.5–3.4× slower. Only a model as large as
   Qwen3-Embedding keeps gaining past 8 threads on a machine with more fast
   cores (Threadripper: 277 ms at 16 threads against 335 at 8).
 - Batching helps little on the CPU: a batch of 8 costs 0.9–1.0× per input
   at 256 tokens and 0.6–0.8× at 16.
-- x86-64 latency is from the thread table only: the two Linux machines
-  were idle, the Xeon W-3235 was not.
+- x86-64 latency is from the thread table only.
 
 ### Memory
 
@@ -644,7 +645,9 @@ range.
 - **On x86-64 macOS and Linux,** onnx-cpu is graded at the same grades as
   on arm64 (shipped runtime 1.23.2 on Intel macOS, 1.28.3 elsewhere;
   graded on a Xeon W-3235, a Ryzen 7 5800X and a Threadripper 3970X). On
-  Linux it is the only path.
+  Linux it is the only path. On an Intel Mac whose CPU has AVX-512 (a Mac
+  Pro or iMac Pro Xeon), sidekick makes ONNX Runtime use its AVX-512
+  kernels, which macOS would otherwise hide from it (D42).
 - **On an Intel Mac,** Core ML runs on the CPU and GPU (no Neural Engine;
   the parity suite skips the ANE path). Graded on one Mac Pro (Xeon
   W-3235, AMD GPU, macOS 26.6.2), with four hours per path:
