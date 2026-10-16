@@ -1,6 +1,6 @@
 {
  "sidekick": "0.11.0",
- "as_of": "2026-10-15",
+ "as_of": "2026-10-16",
  "grades": {
   "cosine": {
    "A": 0.9999,
@@ -8373,9 +8373,9 @@
    "chip": "Intel Xeon W-3235",
    "os": "macOS 26.6.2",
    "runtime": "Core ML",
-   "sidekick": "0.8.0 pre-release (commit 611207e)",
+   "sidekick": "0.11.0+ (commit 60ad78b)",
    "threads": null,
-   "date": "2026-10-10",
+   "date": "2026-10-16",
    "served": false,
    "grade": "A",
    "error_kind": "dp",
@@ -8390,7 +8390,7 @@
    "bias": null,
    "rank_flips": 0,
    "matryoshka": null,
-   "ms": 22.8,
+   "ms": 22.5,
    "ms_source": "grading: median per input over the corpus",
    "ms_idle": false,
    "ms_tokens": null,
@@ -8405,7 +8405,7 @@
    "machine_mb": null,
    "machine_measured": null,
    "note": "p99 1.06× its fp16 ceiling (A on that scale)",
-   "source": "coreml-x86_64-nlptown.json"
+   "source": "coreml-x86_64-nlptown-regrade.json"
   },
   {
    "model": "nlptown-sentiment",
@@ -8419,16 +8419,16 @@
    "chip": "Intel Xeon W-3235",
    "os": "macOS 26.6.2",
    "runtime": "Core ML",
-   "sidekick": "0.8.0 pre-release (commit 611207e)",
+   "sidekick": "0.11.0+ (commit 60ad78b)",
    "threads": null,
-   "date": "2026-10-10",
+   "date": "2026-10-16",
    "served": false,
-   "grade": "F",
+   "grade": "A",
    "error_kind": "dp",
    "error": 0.000735,
    "error_text": "7.35e-4",
    "ratio": 1.62,
-   "gate_failed": true,
+   "gate_failed": false,
    "worst_case": "doc-earnings",
    "stress": 0.000206,
    "mean": 0.000264,
@@ -8436,7 +8436,7 @@
    "bias": null,
    "rank_flips": 0,
    "matryoshka": null,
-   "ms": 297.4,
+   "ms": 298.3,
    "ms_source": "grading: median per input over the corpus",
    "ms_idle": false,
    "ms_tokens": null,
@@ -8450,8 +8450,8 @@
    "disk_measured": null,
    "machine_mb": null,
    "machine_measured": null,
-   "note": "p99 1.62× its fp16 ceiling (B on that scale). Graded F under the exact CPU bucket gate this run used. The gate on Intel Macs is now Δp 5e-4 (provisional; D38 amendment), which its drift of 1.9e-4 passes, so the same results grade A (worst Δp 7.35e-4). Gate failed: bucket invariance Δp 1.90e-4 > 0.00001",
-   "source": "coreml-x86_64-nlptown.json"
+   "note": "p99 1.62× its fp16 ceiling (B on that scale)",
+   "source": "coreml-x86_64-nlptown-regrade.json"
   },
   {
    "model": "roberta-large-mnli",

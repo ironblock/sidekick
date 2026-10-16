@@ -659,7 +659,7 @@ range.
   | model | Core ML CPU | Core ML GPU |
   |---|---|---|
   | bge-small-en-v1.5 | A, worst cosine 0.999998 | A, 0.999999 |
-  | nlptown-sentiment | F under the exact bucket gate its run used; its bucket drift of 1.9e-4 passes the current Intel gate (5e-4), and its worst Δp 7.35e-4 is A level, so a re-grade should give A | A, 4.78e-4 |
+  | nlptown-sentiment | A, worst Δp 7.35e-4 (bucket drift 1.9e-4, under the Intel gate) | A, 4.78e-4 |
   | ms-marco-minilm-l6-v2 | B, 1.92e-3 | A, 7.44e-4 |
   | lumma-fev-0.1b | not graded: didn't finish in four hours | A |
   | gliner2.5-decide | not graded: didn't finish | F: bucket drift Δp 4.7e-3, over its 3.5e-3 gate |
