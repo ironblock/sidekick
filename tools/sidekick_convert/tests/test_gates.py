@@ -85,10 +85,10 @@ class AneWeightCap(unittest.TestCase):
             f.truncate(size)
         return d
 
-    def job(self, ignore=False, ane=True):
+    def job(self, ignore=False, ane=True, chunk_ports=None):
         from types import SimpleNamespace
         return SimpleNamespace(name="big-model", gates=SimpleNamespace(plan_required=ane),
-                               ignore_ane_weight_cap=ignore)
+                               ignore_ane_weight_cap=ignore, backbone=SimpleNamespace(chunk_ports=chunk_ports))
 
     def test_over_the_limit_fails_and_names_the_options(self):
         from sidekick_convert import core, plan
@@ -100,6 +100,11 @@ class AneWeightCap(unittest.TestCase):
                                            "Engine's 1 GiB per-program limit (MAX_ANE_PROGRAM_WEIGHT_BYTES)"))
         for option in ("cpu_and_gpu", "--int8-embedding", "--ignore-ane-weight-cap"):
             self.assertIn(option, message)
+        # chunking is offered only for a backbone that implements it
+        self.assertNotIn("--chunks", message)
+        with self.assertRaises(GateFailure) as caught:
+            core.check_ane_weights(self.job(chunk_ports=("input_ids",)), 512, over)
+        self.assertIn("--chunks auto", str(caught.exception))
 
     def test_the_bypass_warns_and_is_recorded(self):
         import tempfile

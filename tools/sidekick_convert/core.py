@@ -286,7 +286,8 @@ def check_ane_weights(job, seq, compiled, chunk=None):
     size = plan.weights_bytes(compiled)
     if size <= plan.MAX_ANE_PROGRAM_WEIGHT_BYTES:
         return None
-    message = plan.over_cap(job.name, seq, size, chunk)
+    chunkable = job.backbone is not None and job.backbone.chunk_ports is not None
+    message = plan.over_cap(job.name, seq, size, chunk, chunkable)
     if not job.ignore_ane_weight_cap:
         raise GateFailure(message)
     print(f"WARNING, --ignore-ane-weight-cap: {message} Converting anyway; the compute-plan gate still "
@@ -342,11 +343,35 @@ def _gate(job, fn, *args):
         return {}
 
 
+def require_coremltools():
+    """Fail now if coremltools lacks its native libraries. A Python version it
+    publishes no wheels for gets a package that imports cleanly and only
+    fails when the first artifact is written ("BlobWriter not loaded"), after
+    the whole trace and conversion."""
+    import importlib
+    try:
+        import coremltools
+    except ImportError as e:
+        raise GateFailure(f"Core ML conversion needs coremltools: {e}") from e
+    missing = []
+    for name in ("libcoremlpython", "libmilstoragepython", "libmodelpackage"):
+        try:
+            importlib.import_module(f"coremltools.{name}")
+        except ImportError:
+            missing.append(name)
+    if missing:
+        raise GateFailure(
+            f"coremltools {coremltools.__version__} on Python {sys.version.split()[0]} has no native "
+            f"{', '.join(missing)}, so it can't write a model. Use a Python version coremltools publishes "
+            "wheels for (docs/CONVERTING.md, Requirements).")
+
+
 def run(job, install_dir):
     """Convert, gate and install every bucket, then install the job's files."""
     if job.format == "onnx":
         from . import onnx_export
         return onnx_export.run(job, install_dir)
+    require_coremltools()
     install_dir = Path(install_dir).expanduser()
     install_dir.mkdir(parents=True, exist_ok=True)
     if job.negative_control:

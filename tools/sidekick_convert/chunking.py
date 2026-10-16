@@ -109,7 +109,9 @@ def plan_cuts(backbone, head, seq, spec="auto", budget=CHUNK_WEIGHT_BUDGET_BYTES
     a chunk count (balanced), or a list of layer indices. Sized for bucket
     `seq`, whose buffers every chunk repeats; plan for the largest bucket."""
     if backbone.chunk_ports is None:
-        raise ValueError(f"the {backbone.family} backbone can't be chunked")
+        raise ValueError(f"this {backbone.family} backbone ({type(backbone).__name__}) can't be chunked: it "
+                         "doesn't implement chunk_ports, chunk_layers, chunk_parts and chunk_call (D37). "
+                         "Other backbones of the same family may.")
     first, per_layer, last, every = weight_plan(backbone, head, seq)
     layers = len(per_layer)
     if isinstance(spec, (list, tuple)):

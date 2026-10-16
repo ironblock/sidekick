@@ -362,7 +362,11 @@ onnx`. Requirements:
   also need Pillow and torchvision: the checkpoint's processor loads them
   even text-only), and keep the other converters on 4.57.6;
 - the Core ML path (the default): arm64-native Python on macOS, coremltools,
-  and Xcode for `xcrun coremlcompiler`;
+  and Xcode for `xcrun coremlcompiler`. Use a Python version coremltools
+  publishes wheels for (3.13 or earlier for coremltools 9.0; the converters
+  are run on 3.12). On a newer Python, pip installs coremltools without its
+  native libraries, so it imports but can't write a model; `core.run`
+  checks for them before it converts anything;
 - `--format onnx`: `onnx` and `onnxruntime` instead, with neither
   coremltools nor Xcode. Every export so far was made on Apple silicon; it
   hasn't been tested elsewhere.
