@@ -1,5 +1,5 @@
-"""Build the tiny Core ML classifiers that sidekick-embed's tests load
-(crates/sidekick-embed/tests/fixtures/).
+"""Build the tiny Core ML classifiers, and the chunked embedder, that
+sidekick-embed's tests load (crates/sidekick-embed/tests/fixtures/).
 
 They check the runtime's Core ML plumbing, not accuracy. The vocabulary is
 small and the weights are seeded random.
@@ -55,6 +55,16 @@ AgentJev head (the library tests' tiny checkpoint), split after layer 2.
 - `model_{16,32}.mlmodelc`: the same model unchunked, for comparison;
 - `expected.json`: fp32 torch logits for fixed trees.
 
+tiny-qwen3-embed-chunked/: an embedder in chunks (D37), built with
+sidekick_convert's own chunking: a random 4-layer plain Qwen3 backbone
+(the embedder converter's, with StableSilu) and last-token pooling, split
+after layer 2. `model_{16,32}.0.mlmodelc` take `input_ids` and
+`attention_mask` and output `hidden_out`, fp16 [1, S, 32];
+`model_{16,32}.1.mlmodelc` take `hidden_in` and `attention_mask` and output
+`embedding` [1, 32].
+- `model_{16,32}.mlmodelc`: the same model unchunked, for comparison;
+- `expected.json`: fp32 torch embeddings (not normalized) for fixed ids.
+
 tiny-nli/: the nli format (D41), two NLI cross-encoders: a mean of the
 real tokens' embeddings, then a linear layer to the classes.
 - `bert_16.mlmodelc`, `bert_32.mlmodelc`: BERT-style, `input_ids`/
@@ -77,8 +87,9 @@ Usage:
     python tools/make_classifier_test_models.py crates/sidekick-embed/tests/fixtures [name ...]
 
     name    tiny-laya, tiny-reranker, tiny-gliner2, tiny-fev, tiny-multishape,
-            tiny-nli, tiny-agentjev, tiny-agentjev-chunked (default: all but the
-            agentjev ones, which are built only when named). Building
+            tiny-nli, tiny-agentjev, tiny-agentjev-chunked,
+            tiny-qwen3-embed-chunked (default: all but the agentjev and
+            qwen3 ones, which are built only when named). Building
             only the one you changed keeps the others' committed bytes.
 
 Requires torch, coremltools and numpy (arm64-native Python 3.12 or
@@ -295,6 +306,8 @@ def main():
         agentjev(root)
     if "tiny-agentjev-chunked" in names:
         agentjev_chunked(root)
+    if "tiny-qwen3-embed-chunked" in names:
+        qwen3_embed_chunked(root)
 
 
 def agentjev(root):
@@ -389,6 +402,35 @@ def agentjev_chunked(root):
                                               torch.tensor([ends + [-1] * (4 - len(ends))], dtype=torch.int32))
         expected.append({"ids": ids, "seg": seg, "position_ids": pos, "markers": ends,
                          "logits": [float(x) for x in logits[0][: len(ends)]]})
+    with open(os.path.join(out, "expected.json"), "w") as f:
+        json.dump({"cases": expected}, f, indent=1)
+        f.write("\n")
+
+
+def qwen3_embed_chunked(root):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from sidekick_convert import chunking, core
+    from sidekick_convert.tests.test_chunking import tiny_plain_qwen3
+    from sidekick_convert.wrapper import compose
+    out = os.path.join(root, "tiny-qwen3-embed-chunked")
+    os.makedirs(out, exist_ok=True)
+    backbone, head = tiny_plain_qwen3(seed=11, layers=4, vocab=32)
+    ports = core.text_ports()
+    make_wrapper, example = compose(backbone, head, ports)
+    for seq in (16, 32):
+        ex = example(seq)
+        _compile(core.trace_convert(make_wrapper(seq).eval(), ports, seq, ex, head.output), out, f"model_{seq}")
+        for c in chunking.chunks(backbone, head, ports, seq, [2], head.output):
+            _compile(chunking.trace_convert(c, seq, ex, backbone.hidden_size), out, f"model_{seq}.{c.index}")
+    cases = [[5, 6, 7, 8, 9], [3] + list(range(10, 22)), [4] * 9 + list(range(1, 31, 2))]
+    expected = []
+    for ids in cases:
+        seq = 16 if len(ids) <= 16 else 32
+        pad = seq - len(ids)
+        t = lambda v: torch.tensor([v + [0] * pad], dtype=torch.int32)  # noqa: E731
+        with torch.no_grad():
+            embedding = make_wrapper(seq).eval()(t(ids), t([1] * len(ids)))[0]
+        expected.append({"ids": ids, "embedding": [float(x) for x in embedding]})
     with open(os.path.join(out, "expected.json"), "w") as f:
         json.dump({"cases": expected}, f, indent=1)
         f.write("\n")

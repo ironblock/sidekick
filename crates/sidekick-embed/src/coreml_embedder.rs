@@ -12,6 +12,7 @@
 //! static artifacts.)
 
 use crate::bucket_models::BucketModels;
+use crate::chain_check::{check_chain, ChainInputs};
 use crate::embed_input::EmbedInput;
 use crate::pooling::{normalize_in_place, pool};
 use sidekick_core::manifest::ResolvedModel;
@@ -31,6 +32,10 @@ pub struct CoremlEmbedder {
     input_ids_name: String,
     attention_mask_name: Option<String>,
     output_name: String,
+    /// Each bucket is a chain of programs (D37).
+    chunked: bool,
+    /// The artifact has a `{seq}` placeholder: each bucket's inputs are [1, bucket].
+    per_bucket: bool,
 }
 
 /// The token ids sidekick feeds the model for one input, and the bucket they
@@ -68,6 +73,8 @@ impl CoremlEmbedder {
             input_ids_name: m.io.input_ids.clone(),
             attention_mask_name: m.io.attention_mask.clone(),
             output_name: m.io.output.clone(),
+            chunked: m.chunks() > 1 || m.chunking.is_some(),
+            per_bucket: m.artifact.contains("{seq}"),
         };
         // Check every bucket's artifact now, from its description (a CPU-only
         // open that never predicts, then released), so a broken one fails the
@@ -93,6 +100,9 @@ impl CoremlEmbedder {
     /// manifest's input and output names. Errors name the artifact relative
     /// to the model directory.
     fn check_bucket(&self, bucket: usize) -> Result<()> {
+        if self.chunked {
+            return self.check_chain(bucket);
+        }
         let name = self.models.artifact_name(bucket);
         let fail = |message: String| Err(Error::Inference(format!("model `{}`, {name}: {message}", self.id)));
         let iface = match sidekick_coreml::interface(&self.models.path(bucket)) {
@@ -113,6 +123,25 @@ impl CoremlEmbedder {
             return fail(format!("no multi-array output `{}`", self.output_name));
         }
         Ok(())
+    }
+
+    /// A chunked bucket's programs (D37): the chain takes `input_ids` and
+    /// the mask at [1, bucket] and nothing else the manifest doesn't name,
+    /// links `hidden_out` to `hidden_in`, and ends in the manifest's output.
+    fn check_chain(&self, bucket: usize) -> Result<()> {
+        let seq = self.per_bucket.then(|| vec![1, bucket]);
+        let inputs = std::iter::once(&self.input_ids_name)
+            .chain(self.attention_mask_name.as_ref())
+            .map(|n| (n, seq.clone()))
+            .collect();
+        let want = ChainInputs { id: &self.id, bucket, inputs, input_ids: &self.input_ids_name, table: "[io]" };
+        check_chain(&want, &self.models.artifact_names(bucket), &self.models.paths(bucket), |iface, fail| {
+            // as for one program: check the name when the artifact declares its outputs
+            if !iface.outputs.is_empty() && !iface.outputs.contains_key(&self.output_name) {
+                return fail(format!("no multi-array output `{}`", self.output_name));
+            }
+            Ok(())
+        })
     }
 
     /// Sequence-length buckets, smallest first.
