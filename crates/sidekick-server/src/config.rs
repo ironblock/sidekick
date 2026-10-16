@@ -134,13 +134,18 @@ impl Default for Config {
 }
 
 impl Config {
+    /// The file `load` reads: `path` when given, else the default path if a
+    /// file is there, else none (the defaults apply).
+    pub fn resolve_path(path: Option<&PathBuf>) -> Option<PathBuf> {
+        match path {
+            Some(p) => Some(p.clone()),
+            None => default_config_path().filter(|p| p.is_file()),
+        }
+    }
+
     pub fn load(path: Option<&PathBuf>) -> anyhow::Result<Self> {
-        let path = match path {
-            Some(p) => p.clone(),
-            None => match default_config_path() {
-                Some(p) if p.is_file() => p,
-                _ => return Ok(Self::default()),
-            },
+        let Some(path) = Self::resolve_path(path) else {
+            return Ok(Self::default());
         };
         let raw = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
@@ -203,6 +208,9 @@ impl Config {
     }
 }
 
+/// `<config dir>/sidekick/config.toml`: on macOS
+/// `~/Library/Application Support/sidekick/config.toml`, on Linux
+/// `$XDG_CONFIG_HOME/sidekick/config.toml` (`~/.config` by default).
 pub fn default_config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("sidekick").join("config.toml"))
 }
