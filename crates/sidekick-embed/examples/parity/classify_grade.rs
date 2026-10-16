@@ -23,7 +23,7 @@
 //!   exactly as before.
 
 use crate::classify_reference::ClassifyReference;
-use crate::expect::{Path3, PerPath};
+use crate::expect::{Grades, Path3, PerPath};
 use crate::grade::STRESS_TAG;
 use serde::{Deserialize, Serialize};
 use sidekick_core::manifest::ClassifierManifest;
@@ -192,6 +192,8 @@ pub struct ClassifyGrade {
     pub letter: char,
     /// The grade on absolute Δp alone, as without a ceiling.
     pub absolute_letter: char,
+    /// The grade on `ratio` alone, when there is one.
+    pub ratio_letter: Option<char>,
     /// The fp16 ceiling, when the reference carries it.
     pub ceiling: Option<Ceiling>,
     /// p99 Δp over the graded cases (`None` if any is non-finite).
@@ -290,40 +292,31 @@ pub fn p99(sorted: &[f64]) -> f64 {
     sorted[((sorted.len() as f64 * 0.99).ceil() as usize).max(1) - 1]
 }
 
-/// Grade for a path's p99 Δp as a multiple of the ceiling's p99: A ≤ 1.25×,
-/// B ≤ 2×, C ≤ 4×, D beyond.
-pub fn ratio_letter(ratio: f64) -> char {
-    match ratio {
-        r if r <= 1.25 => 'A',
-        r if r <= 2.0 => 'B',
-        r if r <= 4.0 => 'C',
-        _ => 'D',
-    }
+/// Grade for a path's p99 Δp as a multiple of the ceiling's p99:
+/// `[grades].ratio`.
+pub fn ratio_letter(grades: &Grades, ratio: f64) -> char {
+    grades.ratio.at_most(ratio)
 }
 
 /// The final grade: the better of the absolute grade and, with a ceiling,
 /// the ratio grade. A graded flip still caps it at C, and a failed gate or
 /// a non-finite worst case is F.
-pub fn final_letter(worst_dp: Option<f64>, flips: usize, failed: bool, ratio: Option<f64>) -> char {
-    let absolute = letter(worst_dp, 0, failed);
+pub fn final_letter(grades: &Grades, worst_dp: Option<f64>, flips: usize, failed: bool, ratio: Option<f64>) -> char {
+    let absolute = letter(grades, worst_dp, 0, failed);
     if absolute == 'F' {
         return 'F';
     }
-    let best = ratio.map_or(absolute, |r| absolute.min(ratio_letter(r)));
+    let best = ratio.map_or(absolute, |r| absolute.min(ratio_letter(grades, r)));
     if flips > 0 { best.max('C') } else { best }
 }
 
-/// Documentation vocabulary for a worst raw Δp (never gated): A ≤ 1e-3,
-/// B ≤ 5e-3, C ≤ 2e-2, D above; a graded flip caps the grade at C; F for
-/// non-finite output or a failed gate.
-pub fn letter(worst_dp: Option<f64>, flips: usize, failed: bool) -> char {
+/// The absolute grade for a worst raw Δp: `[grades].dp`; a graded flip
+/// caps it at C; F for non-finite output or a failed gate.
+pub fn letter(grades: &Grades, worst_dp: Option<f64>, flips: usize, failed: bool) -> char {
     let l = match worst_dp {
         _ if failed => return 'F',
         None => return 'F',
-        Some(d) if d <= 1e-3 => 'A',
-        Some(d) if d <= 5e-3 => 'B',
-        Some(d) if d <= 2e-2 => 'C',
-        Some(_) => 'D',
+        Some(d) => grades.dp.at_most(d),
     };
     if flips > 0 { l.max('C') } else { l }
 }
@@ -348,6 +341,7 @@ pub fn grade(
     result: &ClassifyWorkerResult,
     path: Path3,
     gates: &ClassifyGates,
+    grades: &Grades,
     manifest: &ClassifierManifest,
 ) -> ClassifyGrade {
     let problem = |i: usize| case_problem(manifest, &reference.cases[i]);
@@ -550,8 +544,9 @@ pub fn grade(
 
     ClassifyGrade {
         path: path.name().into(),
-        letter: final_letter(worst_dp, flips.len(), !failures.is_empty(), ratio),
-        absolute_letter: letter(worst_dp, flips.len(), !failures.is_empty()),
+        letter: final_letter(grades, worst_dp, flips.len(), !failures.is_empty(), ratio),
+        absolute_letter: letter(grades, worst_dp, flips.len(), !failures.is_empty()),
+        ratio_letter: ratio.map(|r| ratio_letter(grades, r)),
         ceiling,
         p99_dp,
         ratio,
@@ -656,7 +651,7 @@ mod tests {
         let (json, st) = sample();
         let reference = ClassifyReference::parse(&json, &st).unwrap();
         let result = ClassifyWorkerResult { bucket_coverage: None, model: "z".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
-        grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &manifest())
+        grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &Grades::committed(), &manifest())
     }
 
     #[test]
@@ -694,7 +689,7 @@ mod tests {
             load_ms: 0.0,
         };
         let gates = ClassifyGates { flip_margin: 0.6, ..Default::default() };
-        let g = grade(&reference, &result, Path3::Ane, &gates, &manifest());
+        let g = grade(&reference, &result, Path3::Ane, &gates, &Grades::committed(), &manifest());
         assert!(g.flips.is_empty());
         assert_eq!(g.near_ties.len(), 1);
     }
@@ -732,7 +727,7 @@ mod tests {
             repeat_bitwise: true,
             load_ms: 0.0,
         };
-        let mut g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &manifest());
+        let mut g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &Grades::committed(), &manifest());
         assert!(g.failures.iter().any(|f| f.contains("bucket invariance")), "graded: {:?}", g.failures);
         assert_eq!(g.not_served, None);
         // Reported instead: still measured, its gate failures kept as data.
@@ -768,7 +763,7 @@ mod tests {
                 repeat_bitwise: true,
                 load_ms: 0.0,
             };
-            grade(&reference, &result, path, &ClassifyGates::default(), &manifest())
+            grade(&reference, &result, path, &ClassifyGates::default(), &Grades::committed(), &manifest())
         };
         let cpu = graded(Path3::Cpu);
         assert_eq!(cpu.bucket_invariance.max, Some(0.0), "gated up to 1,024 only");
@@ -789,20 +784,21 @@ mod tests {
             repeat_bitwise: true,
             load_ms: 0.0,
         };
-        let g = grade(&reference, &result, Path3::Cpu, &ClassifyGates::default(), &manifest());
+        let g = grade(&reference, &result, Path3::Cpu, &ClassifyGates::default(), &Grades::committed(), &manifest());
         assert_eq!(g.bucket_invariance.max, Some(0.02));
     }
 
     #[test]
     fn letters_follow_the_thresholds() {
-        assert_eq!(letter(Some(1e-3), 0, false), 'A');
-        assert_eq!(letter(Some(4e-3), 0, false), 'B');
-        assert_eq!(letter(Some(1e-2), 0, false), 'C');
-        assert_eq!(letter(Some(0.1), 0, false), 'D');
-        assert_eq!(letter(Some(0.0), 1, false), 'C');
-        assert_eq!(letter(Some(0.1), 1, false), 'D');
-        assert_eq!(letter(Some(0.0), 0, true), 'F');
-        assert_eq!(letter(None, 0, false), 'F');
+        let gr = Grades::committed();
+        assert_eq!(letter(&gr, Some(1e-3), 0, false), 'A');
+        assert_eq!(letter(&gr, Some(4e-3), 0, false), 'B');
+        assert_eq!(letter(&gr, Some(1e-2), 0, false), 'C');
+        assert_eq!(letter(&gr, Some(0.1), 0, false), 'D');
+        assert_eq!(letter(&gr, Some(0.0), 1, false), 'C');
+        assert_eq!(letter(&gr, Some(0.1), 1, false), 'D');
+        assert_eq!(letter(&gr, Some(0.0), 0, true), 'F');
+        assert_eq!(letter(&gr, None, 0, false), 'F');
     }
 
     #[test]
@@ -849,7 +845,7 @@ mod tests {
         // (Below: a0 tied with a1 exactly also loses a0's order.)
         let cases = reference.cases.iter().zip(got).map(|(c, s)| case(&c.id, vec![s])).collect();
         let result = ClassifyWorkerResult { bucket_coverage: None, model: "r".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
-        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &m);
+        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &Grades::committed(), &m);
         assert_eq!(g.flips.len(), 2, "{:?}", g.flips);
         assert!(g.flips.iter().all(|f| f.starts_with("a: a0 vs")), "{:?}", g.flips);
         assert_eq!(g.near_ties.len(), 1, "{:?}", g.near_ties);
@@ -860,24 +856,25 @@ mod tests {
         let tied = [1.0f32, 1.0, 1.02, 5.0];
         let cases = reference.cases.iter().zip(tied).map(|(c, s)| case(&c.id, vec![s])).collect();
         let result = ClassifyWorkerResult { bucket_coverage: None, model: "r".into(), path: "ane".into(), cases, repeat_bitwise: true, load_ms: 0.0 };
-        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &m);
+        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &Grades::committed(), &m);
         assert!(g.flips.iter().any(|f| f.starts_with("a: a0 vs a1")), "{:?}", g.flips);
     }
 
     #[test]
     fn the_better_of_the_absolute_and_ratio_grades_counts() {
-        assert_eq!([0.9, 1.25, 1.3, 2.0, 2.1, 4.0, 4.1].map(ratio_letter), ['A', 'A', 'B', 'B', 'C', 'C', 'D']);
+        let gr = Grades::committed();
+        assert_eq!([0.9, 1.25, 1.3, 2.0, 2.1, 4.0, 4.1].map(|r| ratio_letter(&gr, r)), ['A', 'A', 'B', 'B', 'C', 'C', 'D']);
         // As bad as fp16 allows: credited by the ratio.
-        assert_eq!(final_letter(Some(0.03), 0, false, Some(1.1)), 'A');
+        assert_eq!(final_letter(&gr, Some(0.03), 0, false, Some(1.1)), 'A');
         // Practically exact against a tiny ceiling (nlptown's is ~1e-4):
         // the honest absolute B stands; the ratio never demotes.
-        assert_eq!(final_letter(Some(4e-3), 0, false, Some(40.0)), 'B');
+        assert_eq!(final_letter(&gr, Some(4e-3), 0, false, Some(40.0)), 'B');
         // A graded flip still caps at C; a failed gate is F.
-        assert_eq!(final_letter(Some(0.0), 1, false, Some(1.0)), 'C');
-        assert_eq!(final_letter(Some(0.03), 0, true, Some(1.0)), 'F');
-        assert_eq!(final_letter(None, 0, false, Some(1.0)), 'F');
+        assert_eq!(final_letter(&gr, Some(0.0), 1, false, Some(1.0)), 'C');
+        assert_eq!(final_letter(&gr, Some(0.03), 0, true, Some(1.0)), 'F');
+        assert_eq!(final_letter(&gr, None, 0, false, Some(1.0)), 'F');
         // No ceiling: exactly the absolute grade.
-        assert_eq!(final_letter(Some(4e-3), 0, false, None), letter(Some(4e-3), 0, false));
+        assert_eq!(final_letter(&gr, Some(4e-3), 0, false, None), letter(&gr, Some(4e-3), 0, false));
     }
 
     /// `sample()` with an `fp16` oracle: case a's ideal-fp16 logits are
@@ -910,7 +907,7 @@ mod tests {
         a.bucket_invariance = Delta { n: 1, max: Some(0.015) };
         let cases = vec![a, case("b", vec![0.5, 0.0, -1.0])];
         let result = ClassifyWorkerResult { bucket_coverage: None, model: "z".into(), path: "ane".into(), cases: cases.clone(), repeat_bitwise: true, load_ms: 0.0 };
-        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &manifest());
+        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &Grades::committed(), &manifest());
         assert!(g.failures.is_empty(), "{:?}", g.failures);
         assert_eq!((g.absolute_letter, g.letter), ('D', 'A'));
         // Two cases: p99 is the maximum, so both ratios are 1.
@@ -919,7 +916,7 @@ mod tests {
 
         // The CPU's exact-invariance gate doesn't move.
         let result = ClassifyWorkerResult { path: "cpu".into(), ..result };
-        let g = grade(&reference, &result, Path3::Cpu, &ClassifyGates::default(), &manifest());
+        let g = grade(&reference, &result, Path3::Cpu, &ClassifyGates::default(), &Grades::committed(), &manifest());
         assert!(g.failures.iter().any(|f| f.starts_with("bucket invariance")), "{:?}", g.failures);
         assert_eq!(g.letter, 'F');
     }
@@ -937,7 +934,7 @@ mod tests {
             repeat_bitwise: true,
             load_ms: 0.0,
         };
-        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &manifest());
+        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &Grades::committed(), &manifest());
         assert_eq!((g.letter, g.absolute_letter, g.ratio, g.ceiling), ('D', 'D', None, None));
     }
 
@@ -996,7 +993,7 @@ mod tests {
 
         let results = (0..n).map(|i| case(&format!("c{i}"), row(i, 0.17, 0.05).to_vec())).collect();
         let result = ClassifyWorkerResult { bucket_coverage: None, model: "z".into(), path: "ane".into(), cases: results, repeat_bitwise: true, load_ms: 0.0 };
-        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &manifest());
+        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &Grades::committed(), &manifest());
         assert!((g.ratio.unwrap() - 1.0).abs() < 1e-6, "p99 vs p99: {:?}", g.ratio);
         assert!((g.max_ratio.unwrap() - dp(0.17) / dp(0.1)).abs() < 1e-3, "reported: {:?}", g.max_ratio); // f32 softmax
         // Absolute D (worst Δp 0.042); the ratio grades A, and that counts.
@@ -1026,7 +1023,7 @@ mod tests {
             repeat_bitwise: true,
             load_ms: 0.0,
         };
-        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &m);
+        let g = grade(&reference, &result, Path3::Ane, &ClassifyGates::default(), &Grades::committed(), &m);
         let sigmoid = |x: f32| 1.0 / (1.0 + (-x as f64).exp());
         let want = sigmoid(0.7) - sigmoid(0.5);
         assert!((g.per_case[1].unwrap() - want).abs() < 1e-6, "{:?} vs {want}", g.per_case[1]);

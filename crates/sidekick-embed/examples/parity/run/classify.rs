@@ -413,7 +413,7 @@ pub fn grade_model(
     }
 
     let mut grades: Vec<ClassifyGrade> =
-        results.iter().map(|(p, r)| grade(&reference, r, *p, gates, m)).collect();
+        results.iter().map(|(p, r)| grade(&reference, r, *p, gates, &expectations.grades, m)).collect();
     if let Some(why) = &ane_refused {
         for g in grades.iter_mut().filter(|g| g.path == Path3::Ane.name()) {
             g.report_only(why.clone());
@@ -517,7 +517,7 @@ fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report:
                 (Some(r), max) => format!(
                     "{} {r:.2}x ({}; absolute {}; max {})",
                     g.path,
-                    crate::classify_grade::ratio_letter(r),
+                    g.ratio_letter.unwrap_or('-'),
                     g.absolute_letter,
                     max.map_or("-".into(), |m| format!("{m:.2}x")),
                 ),

@@ -96,9 +96,71 @@ pub struct Floor {
     pub drift: f64,
 }
 
+/// One letter scale: the bound for A, B and C; past C is D.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Scale {
+    #[serde(rename = "A")]
+    pub a: f64,
+    #[serde(rename = "B")]
+    pub b: f64,
+    #[serde(rename = "C")]
+    pub c: f64,
+}
+
+impl Scale {
+    /// The letter for `v` where higher is better (each bound a minimum).
+    pub fn at_least(&self, v: f64) -> char {
+        if v >= self.a {
+            'A'
+        } else if v >= self.b {
+            'B'
+        } else if v >= self.c {
+            'C'
+        } else {
+            'D'
+        }
+    }
+
+    /// The letter for `v` where lower is better (each bound a maximum).
+    pub fn at_most(&self, v: f64) -> char {
+        if v <= self.a {
+            'A'
+        } else if v <= self.b {
+            'B'
+        } else if v <= self.c {
+            'C'
+        } else {
+            'D'
+        }
+    }
+}
+
+/// `[grades]`: the letter scales, the one definition the suite and
+/// tools/models_table.py both read. Letters describe accuracy; they are
+/// never gates. F is a failed gate or non-finite output.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Grades {
+    /// Embedders: worst-case cosine against fp32, a minimum per letter.
+    pub cosine: Scale,
+    /// Classifiers: worst |Δp| against fp32, a maximum per letter.
+    pub dp: Scale,
+    /// Classifiers with an fp16 ceiling: p99 Δp over the ceiling's p99, a
+    /// maximum per letter.
+    pub ratio: Scale,
+}
+
+impl Grades {
+    /// The committed `[grades]`, for tests.
+    #[cfg(test)]
+    pub fn committed() -> Self {
+        Expectations::load(&Expectations::default_path()).unwrap().grades
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Expectations {
     pub gates: Gates,
+    pub grades: Grades,
     /// Classifier gates; built-in defaults when absent.
     #[serde(default)]
     pub classify_gates: crate::classify_grade::ClassifyGates,
@@ -139,18 +201,10 @@ pub fn ceiling_for(measured: f64) -> f64 {
     (c * 1e6).ceil() / 1e6
 }
 
-/// Documentation vocabulary for a worst-case cosine (never gated):
-/// A ≥ 0.9999, indistinguishable from fp32; B ≥ 0.999; C ≥ 0.985, the
-/// converters' ANE acceptance gate; D below that; F for non-finite output
-/// or a failed hard gate.
-pub fn letter(worst: Option<f64>) -> char {
-    match worst {
-        None => 'F',
-        Some(w) if w >= 0.9999 => 'A',
-        Some(w) if w >= 0.999 => 'B',
-        Some(w) if w >= 0.985 => 'C',
-        Some(_) => 'D',
-    }
+/// The letter for a worst-case cosine: `[grades].cosine`, or F when it
+/// isn't finite.
+pub fn letter(grades: &Grades, worst: Option<f64>) -> char {
+    worst.map_or('F', |w| grades.cosine.at_least(w))
 }
 
 #[cfg(test)]
@@ -171,11 +225,24 @@ mod tests {
 
     #[test]
     fn letters() {
-        assert_eq!(letter(Some(0.99995)), 'A');
-        assert_eq!(letter(Some(0.9995)), 'B');
-        assert_eq!(letter(Some(0.99)), 'C');
-        assert_eq!(letter(Some(0.9)), 'D');
-        assert_eq!(letter(None), 'F');
+        let g = Grades::committed();
+        assert_eq!(letter(&g, Some(0.99995)), 'A');
+        assert_eq!(letter(&g, Some(0.9995)), 'B');
+        assert_eq!(letter(&g, Some(0.99)), 'C');
+        assert_eq!(letter(&g, Some(0.9)), 'D');
+        assert_eq!(letter(&g, None), 'F');
+        // bounds are inclusive
+        assert_eq!(g.cosine.at_least(g.cosine.a), 'A');
+        assert_eq!(g.dp.at_most(g.dp.a), 'A');
+    }
+
+    #[test]
+    fn committed_grades_are_ordered() {
+        let g = Grades::committed();
+        assert!(g.cosine.a > g.cosine.b && g.cosine.b > g.cosine.c && g.cosine.c < 1.0);
+        for s in [g.dp, g.ratio] {
+            assert!(0.0 < s.a && s.a < s.b && s.b < s.c, "{s:?}");
+        }
     }
 
     #[test]
