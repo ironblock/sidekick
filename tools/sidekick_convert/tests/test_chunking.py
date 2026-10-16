@@ -15,7 +15,7 @@ import unittest
 import numpy as np
 import torch
 
-from sidekick_convert import chunking, plan
+from sidekick_convert import chunking, core, plan
 from sidekick_convert.backbones import qwen3
 from sidekick_convert.tests.test_agentjev import load, tiny_checkpoint, tree_feed
 from sidekick_convert.wrapper import Wrapper
@@ -86,6 +86,79 @@ class ComposedChunks(unittest.TestCase):
             chunking.plan_cuts(self.backbone, self.head, 16, 5)
         self.assertEqual([chunking.parse_spec(s) for s in (None, "1", "auto", "3", "10,20")],
                          [chunking.DEFAULT, None, "auto", 3, [10, 20]])
+
+
+def tiny_plain_qwen3(seed=3, layers=4, vocab=120):
+    """A random plain Qwen3 backbone (the embedder converter's), with
+    StableSilu in its MLPs as the converters install it, and a last-token
+    pool: no download. Also builds the runtime's tiny chunked embedder
+    fixture (tools/make_classifier_test_models.py)."""
+    from transformers import Qwen3Config, Qwen3Model
+    from sidekick_convert.heads.pool import Pool
+    from sidekick_convert.techniques import activations
+    torch.manual_seed(seed)
+    config = Qwen3Config(vocab_size=vocab, hidden_size=32, intermediate_size=64, num_hidden_layers=layers,
+                         num_attention_heads=4, num_key_value_heads=2, head_dim=8, max_position_embeddings=128,
+                         rope_theta=1e6, rms_norm_eps=1e-6, attn_implementation="sdpa", use_cache=False)
+    model = Qwen3Model(config).eval().requires_grad_(False)
+    qwen3.install_patches()
+    backbone = qwen3.Qwen3Backbone(family="qwen3", model=model, config=config, special_ids=(),
+                                   forbid_ops={"silu", "gelu"})
+    for layer in model.layers:   # a rewritten module must travel with its layer
+        layer.mlp.up_proj.weight.mul_(1 / activations.StableSilu.GAIN)
+        layer.mlp.act_fn = activations.StableSilu()
+    return backbone, Pool("last_token")
+
+
+class PlainQwen3Chunks(unittest.TestCase):
+    """The plain Qwen3 backbone (the embedder converter's, F2LLM and
+    Qwen3-Embedding) chunked under a last-token pool: text ports only, the
+    mask rebuilt from attention_mask and RoPE from the position buffer in
+    every chunk."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.backbone, cls.head = tiny_plain_qwen3()
+        cls.ports = core.text_ports()
+
+    def feed(self, n, seq, rng):
+        ids = np.zeros((1, seq), dtype=np.int32)
+        ids[0, :n] = rng.integers(1, 120, n)
+        ids[0, n:] = rng.integers(1, 120, seq - n)     # pads carry ids too: the mask must hide them
+        mask = np.zeros((1, seq), dtype=np.int32)
+        mask[0, :n] = 1
+        return {"input_ids": ids, "attention_mask": mask}
+
+    def test_the_composed_chunks_are_the_unchunked_wrapper(self):
+        rng = np.random.default_rng(1)
+        for seq, n, cuts in ((16, 9, [2]), (32, 32, [1, 3]), (32, 5, [1, 2, 3])):
+            f = self.feed(n, seq, rng)
+            whole = Wrapper(self.backbone, self.head, self.ports, seq).eval()
+            with torch.no_grad():
+                want = whole(*(torch.from_numpy(f[p.name]) for p in self.ports))
+            parts = chunking.chunks(self.backbone, self.head, self.ports, seq, cuts, self.head.output)
+            got = chunking.run_torch(parts, f)
+            self.assertEqual(got.shape, want.shape)
+            self.assertLessEqual(float((got - want).abs().max()), 1e-6, (seq, n, cuts))
+
+    def test_each_chunk_takes_the_text_ports_only(self):
+        parts = chunking.chunks(self.backbone, self.head, self.ports, 16, [1, 3], self.head.output)
+        self.assertEqual([c.inputs for c in parts], [("input_ids", "attention_mask"),
+                                                      ("hidden_in", "attention_mask"),
+                                                      ("hidden_in", "attention_mask")])
+        self.assertEqual([c.output for c in parts], ["hidden_out", "hidden_out", "embedding"])
+        self.assertTrue(hasattr(parts[0].module, "embed_tokens"))
+        self.assertFalse(hasattr(parts[1].module, "embed_tokens") or hasattr(parts[1].module, "norm"))
+        self.assertTrue(hasattr(parts[2].module, "norm"))
+
+    def test_auto_plans_cuts_under_the_budget(self):
+        first, per_layer, last, every = chunking.weight_plan(self.backbone, self.head, 32)
+        whole = first + sum(per_layer) + last + every
+        self.assertEqual(chunking.plan_cuts(self.backbone, self.head, 32, "auto", budget=whole), [])
+        budget = whole // 2 + every
+        cuts = chunking.plan_cuts(self.backbone, self.head, 32, "auto", budget=budget)
+        self.assertTrue(cuts)
+        self.assertTrue(all(s <= budget for s in chunking.chunk_sizes(self.backbone, self.head, 32, cuts)))
 
 
 class Planning(unittest.TestCase):

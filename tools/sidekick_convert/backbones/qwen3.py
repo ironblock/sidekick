@@ -58,6 +58,28 @@ def _fp16_safe_causal_mask(config=None, input_embeds=None, attention_mask=None, 
     return add.to(embeds.dtype)
 
 
+def _causal_padding_mask(attention_mask, seq):
+    # _fp16_safe_causal_mask's mask for a chunk (chunking.py, D37), at the
+    # bucket length `seq`, a Python int: a chunk's residual stream is the
+    # `hidden_in` input, and a length read from an input's shape doesn't
+    # convert. The unchunked path keeps _fp16_safe_causal_mask, unchanged.
+    causal = torch.tril(torch.ones(seq, seq, dtype=torch.float32))
+    allowed = causal.unsqueeze(0) * attention_mask.to(torch.float32)[:, None, :]
+    return (1.0 - allowed).unsqueeze(1) * MASK_ADD
+
+
+def _rope(rotary_emb, position_ids):
+    # Qwen3RotaryEmbedding.forward's arithmetic for a batch of one. Its
+    # expand(position_ids.shape[0], ...) converts, in a chunk, to a
+    # one-element array where coremltools wants a scalar; every input here
+    # is a constant (inv_freq and the position buffer), so the conversion
+    # folds it all.
+    inv_freq = rotary_emb.inv_freq[None, :, None].float()
+    freqs = (inv_freq @ position_ids[:, None, :].float()).transpose(1, 2)
+    emb = torch.cat((freqs, freqs), dim=-1)
+    return emb.cos() * rotary_emb.attention_scaling, emb.sin() * rotary_emb.attention_scaling
+
+
 def install_patches():
     import transformers.integrations.sdpa_attention as _sdpa_attention
     import transformers.models.qwen3.modeling_qwen3 as _qwen3
@@ -78,6 +100,45 @@ class Qwen3Backbone(Backbone):
         t = torch.tensor([ids])
         with torch.no_grad():
             return self.model(input_ids=t, attention_mask=torch.ones_like(t))
+
+    def _layers(self, layers, h, w, x):
+        """`layers` over the residual stream `h`, as Qwen3Model.forward runs
+        them in `call`: the causal-and-padding mask built from
+        `attention_mask` (_causal_padding_mask, _fp16_safe_causal_mask's
+        values), and RoPE from the wrapper's position_ids (a port where the
+        job has one)."""
+        position_ids = x.get("position_ids", getattr(w, "position_ids", None))
+        mask = _causal_padding_mask(x["attention_mask"], w.seq)
+        rope = _rope(self.model.rotary_emb, position_ids)
+        for layer in layers:
+            h = layer(h, attention_mask=mask, position_ids=position_ids, position_embeddings=rope)
+            h = h[0] if isinstance(h, tuple) else h
+        return h
+
+    # Chunking (chunking.py, D37): each chunk rebuilds the mask and RoPE
+    # from the int32 ports, so only the residual stream crosses a boundary.
+    # The unchunked path (`call`) stays transformers' own forward.
+    chunk_ports = ("input_ids", "attention_mask", "position_ids")
+
+    def chunk_layers(self):
+        if getattr(self.model, "has_sliding_layers", False):
+            raise ValueError("a Qwen3 model with sliding-window layers can't be chunked: _layers builds "
+                             "only the full causal mask")
+        return list(self.model.layers)
+
+    def chunk_parts(self, lo, hi):
+        layers = self.chunk_layers()
+        parts = {"layers": torch.nn.ModuleList(layers[lo:hi])}
+        if lo == 0:
+            parts["embed_tokens"] = self.model.embed_tokens
+        if hi == len(layers):
+            parts["norm"] = self.model.norm
+        return parts
+
+    def chunk_call(self, w, x):
+        h = w.embed_tokens(x["input_ids"].long()) if w.first else x["hidden_in"]
+        h = self._layers(w.layers, h, w, x)
+        return w.norm(h) if w.last else h
 
 
 def load(src, tok):
@@ -194,26 +255,8 @@ class Qwen3TreeBackbone(Qwen3Backbone):
             layer.self_attn.sidekick_seq = None     # eager runs (references) use the keys' own length
         return h
 
-    # Chunking (chunking.py, D37): each chunk rebuilds the mask and RoPE
-    # from the int32 ports, so only the residual stream crosses a boundary.
+    # Chunking (D37) as Qwen3Backbone's, with the tree's own ports and _layers.
     chunk_ports = ("input_ids", "attention_mask", "seg", "position_ids")
-
-    def chunk_layers(self):
-        return list(self.model.layers)
-
-    def chunk_parts(self, lo, hi):
-        layers = self.chunk_layers()
-        parts = {"layers": torch.nn.ModuleList(layers[lo:hi])}
-        if lo == 0:
-            parts["embed_tokens"] = self.model.embed_tokens
-        if hi == len(layers):
-            parts["norm"] = self.model.norm
-        return parts
-
-    def chunk_call(self, w, x):
-        h = w.embed_tokens(x["input_ids"].long()) if w.first else x["hidden_in"]
-        h = self._layers(w.layers, h, w, x)
-        return w.norm(h) if w.last else h
 
 
 MATMUL_SOFTMAX = "sidekick_matmul_softmax"
