@@ -1021,7 +1021,8 @@ last two on demand.
 
 **The 0.985 gate.** It stays the converters' acceptance gate on their own
 parity sets; the EmbeddingGemma, LFM2.5, F2LLM and gte-modernbert converters
-now gate at 0.999.
+now gate at 0.999. (Since superseded: every embedder converter gates at
+0.999; see D26's October 2026 amendment.)
 A D on the adversarial corpus doesn't remove a model: the grade is
 published, and this chip's floor makes it a regression test.
 
@@ -1068,6 +1069,30 @@ backend, three points above no longer hold as written:
 
 The Core ML gates (compute plans, bucket invariance, ANE determinism)
 don't apply to an onnx model, which has no plan and no buckets.
+
+**Amendment (October 2026): one definition of the letters.** The grade
+scales had been written out separately in the suite's code, in MODELS.md,
+on the comparison page and in this log. The published letters were stored
+by hand beside the numbers that should determine them, so they could drift
+apart, and they had: the data and MODELS.md's Intel table graded one model
+differently. Now:
+- **The scales are `[grades]` in `fixtures/parity/expectations.toml`:** the
+  embedders' cosine scale, the classifiers' |Δp| scale, and the ratio to
+  the fp16 ceiling. The suite reads them, and so does
+  `tools/models_table.py`, which generates MODELS.md's legends and puts the
+  scales in `docs/data/models.json` for the comparison page's legend. The
+  thresholds quoted elsewhere in this log are history, not the definition.
+- **No published letter is stored by hand.** The generator computes each
+  row's letter from its numbers: worst error, ratio, graded flips and
+  failed gates. A report's own letter must agree, and CI fails on any row
+  whose stored letter doesn't. `docs/data/carried.toml` holds numbers only.
+- **Errors are published on the same side of every bound.** Rounding for
+  publication keeps adding digits until the rounded value earns the same
+  letter. One formatter writes each error's text for MODELS.md and the
+  page alike.
+- **0.985 is no longer a converter gate.** Every embedder converter gates
+  `CPU_AND_NE` at 0.999, the default in `EmbeddingGates`. 0.985 remains only
+  the C bound.
 
 ## D27 — Refuse multi-shape Core ML models at load on macOS 27
 D24 said that on macOS 27 a flexible-shape artifact aborts the process at

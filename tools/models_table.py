@@ -13,6 +13,10 @@ Inputs:
   the machine was idle.
 - docs/data/carried.toml: Core ML results that so far exist only as
   docs/MODELS.md tables.
+- fixtures/parity/expectations.toml `[grades]`: the letter scales, which
+  the parity suite also reads. Every letter here is computed from a row's
+  numbers with them; a report's own letter must agree, and `--check`
+  (with `--docs` too) fails on any row whose stored letter doesn't.
 - docs/data/models.toml: each model's name, family, task, checkpoint and
   default served path.
 - --bench: tools/bench_onnx.py, bench_coreml.py and bench_memory.py output
@@ -52,6 +56,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 DATA = REPO / "docs" / "data"
+EXPECTATIONS = REPO / "fixtures" / "parity" / "expectations.toml"
 
 TASKS = ["embed", "classify", "rerank"]
 PATHS = ["coreml-ane", "coreml-gpu", "coreml-cpu", "onnx-cpu"]
@@ -60,7 +65,8 @@ REPORT_PATH = {"ane": "coreml-ane", "gpu": "coreml-gpu", "cpu": "coreml-cpu", "o
 
 FIELDS = [
     "model", "name", "family", "task", "checkpoint", "license_note", "path", "precision", "chip", "os", "runtime",
-    "sidekick", "threads", "date", "served", "grade", "error_kind", "error", "worst_case", "stress", "mean",
+    "sidekick", "threads", "date", "served", "grade", "error_kind", "error", "error_text", "ratio",
+    "gate_failed", "worst_case", "stress", "mean",
     "drift", "bias", "rank_flips", "matryoshka", "ms", "ms_source", "ms_idle", "ms_tokens", "latency",
     "footprint_mb", "footprint_range_mb", "footprint_measured", "peak_mb", "peak_measured", "disk_mb", "disk_measured",
     "machine_mb", "machine_measured", "note", "source",
@@ -75,16 +81,115 @@ def finite(x):
     return x if isinstance(x, (int, float)) and math.isfinite(x) else None
 
 
-def rounded(x, digits=4):
+def rounded(x, digits=4, keeps=None):
     """Round a measurement for publication: significant digits for small
-    errors, fixed decimals otherwise."""
+    errors, fixed decimals otherwise. With `keeps`, more digits until
+    keeps(rounded value) holds, so rounding never moves a value across a
+    grade boundary."""
     if x is None:
         return None
     if x == 0:
         return 0
-    if abs(x) < 1e-3:
-        return float(f"{x:.3g}")
-    return round(x, digits)
+    v = float(f"{x:.3g}") if abs(x) < 1e-3 else round(x, digits)
+    sig = 4
+    while keeps is not None and not keeps(v) and sig <= 17:
+        v, sig = float(f"{x:.{sig}g}"), sig + 1
+    return v
+
+
+# --- grades ------------------------------------------------------------------
+#
+# One definition of the letters: [grades] in fixtures/parity/expectations.toml,
+# which the parity suite (crates/sidekick-embed/examples/parity) reads too.
+
+def load_grades():
+    return load_toml(EXPECTATIONS)["grades"]
+
+
+def scale_letter(scale, v, higher_is_better):
+    """A, B or C by the first bound `v` meets (inclusive), else D."""
+    for letter in "ABC":
+        if (v >= scale[letter]) if higher_is_better else (v <= scale[letter]):
+            return letter
+    return "D"
+
+
+def absolute_letter(grades, kind, error):
+    """The letter for a worst error alone: 1 − cosine (embedders) or |Δp|."""
+    if kind == "1-cos":
+        return scale_letter(grades["cosine"], 1 - error, True)
+    return scale_letter(grades["dp"], error, False)
+
+
+def grade_of(row, grades):
+    """The letter a row's numbers earn, by the parity suite's rules: F for a
+    failed gate or a non-finite error; embedders by worst cosine;
+    classifiers by the better of worst |Δp| and the ratio to their fp16
+    ceiling, with a graded flip capping the grade at C."""
+    if row["gate_failed"] or row["error"] is None:
+        return "F"
+    best = absolute_letter(grades, row["error_kind"], row["error"])
+    if row["error_kind"] == "1-cos":
+        return best
+    if row["ratio"] is not None:
+        best = min(best, scale_letter(grades["ratio"], row["ratio"], False))
+    return max(best, "C") if row["rank_flips"] else best
+
+
+def publish_error(grades, kind, error):
+    """`error` rounded for publication, on the same side of every bound."""
+    if error is None:
+        return None
+    exact = absolute_letter(grades, kind, error)
+    return rounded(error, keeps=lambda v: absolute_letter(grades, kind, v) == exact)
+
+
+def publish_ratio(grades, ratio):
+    if ratio is None:
+        return None
+    exact = scale_letter(grades["ratio"], ratio, False)
+    v, digits = round(ratio, 2), 3
+    while scale_letter(grades["ratio"], v, False) != exact and digits <= 12:
+        v, digits = round(ratio, digits), digits + 1
+    return v
+
+
+def error_text(row):
+    """The one way a row's error is written, in the tables and on the page:
+    a cosine for embedders (1 − cosine as "1 − 2e-12" when it rounds to 1),
+    |Δp| for classifiers."""
+    e = row["error"]
+    if e is None:
+        return ""
+    if row["error_kind"] == "1-cos":
+        return cosine(e)
+    if e == 0:
+        return "0"
+    if e < 1e-2:
+        mantissa, exponent = f"{e:.3g}".split("e") if "e" in f"{e:.3g}" else (None, None)
+        if mantissa is None:
+            m, x = f"{e:.2e}".split("e")
+            return f"{float(m):g}e{int(x)}"
+        return f"{float(mantissa):g}e{int(exponent)}"
+    return f"{e:.3g}"
+
+
+def ratio_note(row, grades):
+    if row["ratio"] is None:
+        return None
+    return (f"p99 {row['ratio']:g}× its fp16 ceiling "
+            f"({scale_letter(grades['ratio'], row['ratio'], False)} on that scale)")
+
+
+def finish(row, grades, reported=None):
+    """Fill a row's letter and error text from its numbers; a report's own
+    letter must be the same."""
+    row["grade"] = grade_of(row, grades)
+    if reported is not None and reported != row["grade"]:
+        raise SystemExit(f"{row['source']}: {row['model']} {row['path']}: the report's grade {reported} isn't what "
+                         f"its numbers earn under [grades] ({row['grade']}); were they graded with other scales?")
+    row["error_text"] = error_text(row)
+    row["note"] = join_notes(ratio_note(row, grades), row["note"])
 
 
 def blank(model, models, **kw):
@@ -107,7 +212,7 @@ def served(row, models):
     return row["chip"].startswith("Apple") and row["path"] == models[row["model"]]["served"]
 
 
-def from_reports(dirs, runs, models):
+def from_reports(dirs, runs, models, grades):
     rows, used, seen = [], [], {}
     for d in dirs:
         for f in sorted(Path(d).rglob("*.json")):
@@ -136,8 +241,8 @@ def from_reports(dirs, runs, models):
                 for p in m["paths"]:
                     row = blank(m["id"], models, path=REPORT_PATH[p["path"]], **common)
                     worst = finite(p.get("worst"))
-                    row.update(grade=p["letter"], error_kind="1-cos",
-                               error=rounded(1 - worst) if worst is not None else None,
+                    row.update(error_kind="1-cos", gate_failed=bool(p.get("failures")),
+                               error=publish_error(grades, "1-cos", 1 - worst) if worst is not None else None,
                                worst_case=p.get("worst_case"), stress=one_minus(p.get("stress")),
                                mean=one_minus(p.get("mean")), drift=rounded(finite(p.get("drift"))),
                                rank_flips=p.get("rank_flips"),
@@ -146,15 +251,20 @@ def from_reports(dirs, runs, models):
                     grading_ms(row, p, meta)
                     row["note"] = join_notes(notes.get(f"{f.name}:{m['id']}:{row['path']}"), failures_note(p, m))
                     row["threads"] = runs.get("threads", {}).get(f"{f.name}:{m['id']}", row["threads"])
+                    finish(row, grades, p["letter"])
                     rows.append(row)
             for c in report.get("classifiers", []):
                 for p in c["paths"]:
                     row = blank(c["id"], models, path=REPORT_PATH[p["path"]], **common)
-                    row.update(grade=p["letter"], error_kind="dp", error=rounded(finite(p.get("worst_dp"))),
+                    # a path the runtime won't serve keeps its failed gates under "reported"
+                    row.update(error_kind="dp", gate_failed=bool(p.get("failures") or p.get("reported")),
+                               error=publish_error(grades, "dp", finite(p.get("worst_dp"))),
+                               ratio=publish_ratio(grades, finite(p.get("ratio"))),
                                worst_case=p.get("worst_case"), stress=rounded(finite(p.get("stress_dp"))),
                                mean=rounded(finite(p.get("mean_dp"))), rank_flips=len(p.get("flips") or []))
                     grading_ms(row, p, meta)
                     row["note"] = join_notes(notes.get(f"{f.name}:{c['id']}:{row['path']}"), failures_note(p, c))
+                    finish(row, grades, p["letter"])
                     rows.append(row)
     return rows, used
 
@@ -179,7 +289,7 @@ def failures_note(p, m):
     return "; ".join(f"Gate failed: {n}" for n in notes) or None
 
 
-def from_carried(carried, models):
+def from_carried(carried, models, grades):
     d = carried["defaults"]
     rows = []
     for c in carried["row"]:
@@ -187,11 +297,13 @@ def from_carried(carried, models):
                     chip=d["chip"], os=d["os"], runtime=d["runtime"], date=d["date"], source=d["source"])
         kind = c.get("error", "cos")
         worst = c.get("worst")
-        row.update(grade=c["grade"], error_kind="1-cos" if kind == "cos" else "dp",
+        if "grade" in c:
+            raise SystemExit(f"carried.toml: {c['model']} {c['path']} stores a grade; give its numbers instead")
+        row.update(error_kind="1-cos" if kind == "cos" else "dp", gate_failed=False,
                    error=None if worst is None else rounded(1 - worst if kind == "cos" else worst),
-                   worst_case=c.get("worst_case"), drift=c.get("drift"), bias=c.get("bias"),
-                   rank_flips=c.get("rank_flips"),
-                   note=c.get("note"))
+                   ratio=c.get("ratio"), worst_case=c.get("worst_case"), drift=c.get("drift"),
+                   bias=c.get("bias"), rank_flips=c.get("rank_flips"), note=c.get("note"))
+        finish(row, grades)
         if c["model"] in carried.get("disk", {}):
             row.update(disk_mb=carried["disk"][c["model"]],
                        disk_measured="every bucket of the Core ML install, shared by its three paths "
@@ -369,7 +481,7 @@ def grade_cell(r, bold=False):
     if r is None:
         return ""
     g = f"**{r['grade']}**" if bold else r["grade"]
-    return f"{g} {cosine(r['error'])}"
+    return f"{g} {r['error_text']}"
 
 
 def table(header, rows):
@@ -507,8 +619,33 @@ def memory(rows, models):
                   "Core ML GPU", "Core ML ANE (process)"], out)
 
 
+def bound(x):
+    return f"{x:g}" if x >= 1e-3 else f"{x:.0e}".replace("e-0", "e-")
+
+
+def cosine_scale(rows, models):
+    """The embedder letters, from [grades]."""
+    c = load_grades()["cosine"]
+    return table(["grade", "worst-case cosine", "meaning"],
+                 [["**A**", f"≥ {bound(c['A'])}", "indistinguishable from fp32"],
+                  ["**B**", f"≥ {bound(c['B'])}", ""], ["**C**", f"≥ {bound(c['C'])}", ""],
+                  ["**D**", f"below {bound(c['C'])}", ""], ["**F**", "—", "a hard gate failed"]])
+
+
+def classifier_scales(rows, models):
+    """The classifier letters, from [grades]: absolute |Δp| and the ratio to
+    the fp16 ceiling."""
+    g = load_grades()
+    d, r = g["dp"], g["ratio"]
+    return table(["grade", "worst-case \\|Δp\\|", "p99 \\|Δp\\| ÷ the fp16 ceiling's"],
+                 [[f"**{x}**", f"≤ {bound(d[x])}", f"≤ {r[x]:g}×"] for x in "ABC"]
+                 + [["**D**", f"above {bound(d['C'])}", f"above {r['C']:g}×"],
+                    ["**F**", "—", "a hard gate failed"]])
+
+
 TABLES = {"coreml-grades": coreml_grades, "onnx-accuracy": onnx_accuracy, "latency": latency,
-          "threads": threads, "memory": memory}
+          "threads": threads, "memory": memory, "cosine-scale": cosine_scale,
+          "classifier-scales": classifier_scales}
 MARKER = re.compile(r"^( *)<!-- generated: ([a-z-]+) -->$")
 
 
@@ -538,6 +675,9 @@ def render_docs(text, rows, models):
 
 HAND_WRITTEN = re.compile(r"as `([^`]+)`")
 CELL = re.compile(r"^\**([A-F])\**\s+([0-9.]+(?:e-?\d+)?)")
+RATIO = re.compile(r"([0-9.]+)× ceiling(?:, ([A-D]) level)?")
+LETTER = re.compile(r"^\**([A-F])\**(?:[,:\s]|$)")
+INTEL_HEADER = ["model", "Core ML CPU", "Core ML GPU"]
 
 
 def check_hand_written(text, rows):
@@ -563,14 +703,73 @@ def check_hand_written(text, rows):
             elif c.group(1) != r["grade"] or not math.isclose(float(c.group(2)), r["error"], rel_tol=1e-9):
                 problems.append(f"{m.group(1)} {col}: the table says {c.group(1)} {c.group(2)}, "
                                 f"models.json {r['grade']} {r['error']}")
+            else:
+                problems += check_ratio(f"{m.group(1)} {col}", cells[header.index(col)], r)
+    return problems + check_intel(text, rows)
+
+
+def check_ratio(where, cell, row):
+    """A cell's "N× ceiling" (and "X level") against the row's ratio."""
+    m = RATIO.search(cell)
+    if m is None:
+        return []
+    if row["ratio"] is None or not math.isclose(float(m.group(1)), row["ratio"], rel_tol=1e-9):
+        return [f"{where}: the table says {m.group(1)}× ceiling, models.json {row['ratio']}"]
+    if m.group(2) and m.group(2) != scale_letter(load_grades()["ratio"], row["ratio"], False):
+        return [f"{where}: the table calls {m.group(1)}× {m.group(2)} level"]
+    return []
+
+
+def check_intel(text, rows):
+    """The Intel Mac table: each cell's letter against the Xeon rows, and no
+    "not graded" cell where models.json has a grade."""
+    idx = index(rows)
+    problems, header = [], None
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            header = None
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if header is None:
+            header = cells
+            continue
+        if header != INTEL_HEADER or set(cells[0]) <= set("-"):
+            continue
+        model = cells[0].split()[0]
+        for col, path in (("Core ML CPU", "coreml-cpu"), ("Core ML GPU", "coreml-gpu")):
+            r, cell = idx.get((model, path, "fp16", XEON)), cells[header.index(col)]
+            m = LETTER.match(cell)
+            if m is None:
+                if r is not None:
+                    problems.append(f"{model} {col} (Intel): the table says {cell!r}, models.json {r['grade']}")
+            elif r is None:
+                problems.append(f"{model} {col} (Intel): the table says {m.group(1)}, models.json has no row")
+            elif m.group(1) != r["grade"]:
+                problems.append(f"{model} {col} (Intel): the table says {m.group(1)}, models.json {r['grade']}")
+    return problems
+
+
+def check_grades(results, rows):
+    """Every row's letter and error text against what its numbers give."""
+    grades, problems = load_grades(), []
+    if results.get("grades") != grades:
+        problems.append("models.json's [grades] isn't fixtures/parity/expectations.toml's: rerun tools/models_table.py")
+    for r in rows:
+        where = f"{r['model']} {r['path']} {r['precision']} {r['chip']}"
+        if grade_of(r, grades) != r["grade"]:
+            problems.append(f"{where}: stored {r['grade']}, its numbers earn {grade_of(r, grades)}")
+        if error_text(r) != r["error_text"]:
+            problems.append(f"{where}: error text {r['error_text']!r}, expected {error_text(r)!r}")
     return problems
 
 
 def docs(results, models, check):
-    rows = json.loads(results.read_text())["rows"]
+    data = json.loads(results.read_text())
+    rows = data["rows"]
     text = MODELS_MD.read_text()
     new = render_docs(text, rows, models)
-    problems = check_hand_written(new, rows)
+    problems = check_grades(data, rows) + check_hand_written(new, rows)
     if problems:
         raise SystemExit("docs/MODELS.md disagrees with the results file:\n  " + "\n  ".join(problems))
     if check:
@@ -603,9 +802,10 @@ def main():
         docs(args.out, models, args.check)
         return
     runs = load_toml(DATA / "runs.toml")
-    rows, used = from_reports(args.reports, runs, models)
+    grades = load_grades()
+    rows, used = from_reports(args.reports, runs, models, grades)
     n_reports = len(rows)
-    carried = from_carried(load_toml(DATA / "carried.toml"), models)
+    carried = from_carried(load_toml(DATA / "carried.toml"), models, grades)
     have = {(r["model"], r["path"], r["precision"], r["chip"]) for r in rows}
     rows += [c for c in carried if (c["model"], c["path"], c["precision"], c["chip"]) not in have]
     if args.bench:
@@ -625,7 +825,7 @@ def main():
     dates = sorted(d for d in (r["date"] for r in rows) if d)
     cargo = tomllib.loads((REPO / "Cargo.toml").read_text())
     out = {"sidekick": cargo["workspace"]["package"]["version"], "as_of": dates[-1] if dates else None,
-           "fields": FIELDS, "rows": rows}
+           "grades": grades, "fields": FIELDS, "rows": rows}
     text = json.dumps(out, indent=1, ensure_ascii=False) + "\n"
     if args.check:
         if not args.out.exists() or args.out.read_text() != text:
