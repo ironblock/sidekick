@@ -123,9 +123,18 @@ operations on the ANE, and with 1.022 GiB none of them. The true limit lies
 in that bracket, and other chips or OS versions may set it elsewhere: the
 compute-plan gate still judges where Core ML actually places a program."""
 
-_CAP_OPTIONS = ("convert it in chunks under the limit (--chunks auto, D37), serve it on the GPU "
-                '(compute_units = "cpu_and_gpu"), convert with --int8-embedding, or pass '
-                "--ignore-ane-weight-cap to try anyway")
+_CHUNK_OPTION = "convert it in chunks under the limit (--chunks auto, D37)"
+_OTHER_OPTIONS = ('serve it on the GPU (compute_units = "cpu_and_gpu"), convert with --int8-embedding, '
+                  "or pass --ignore-ane-weight-cap to try anyway")
+
+
+def cap_options(chunkable=None):
+    """The ways past the limit. Chunking is offered only for a backbone that
+    implements it (chunk_ports); None, when the caller can't tell, offers it
+    with that condition."""
+    if chunkable is None:
+        return f"{_CHUNK_OPTION} where the backbone supports it, {_OTHER_OPTIONS}"
+    return f"{_CHUNK_OPTION}, {_OTHER_OPTIONS}" if chunkable else _OTHER_OPTIONS
 
 
 def weights_bytes(compiled):
@@ -136,12 +145,12 @@ def weights_bytes(compiled):
     return sum(f.stat().st_size for f in (Path(compiled) / "weights").rglob("*") if f.is_file())
 
 
-def over_cap(model, seq, size, chunk=None):
+def over_cap(model, seq, size, chunk=None, chunkable=None):
     """Why a program of `size` bytes of weights won't run on the ANE."""
     what = f"{seq} bucket" if chunk is None else f"{seq} bucket's chunk {chunk}"
     return (f"{model}'s {what} has {size / 2**30:.3f} GiB of weights, over the Neural Engine's 1 GiB "
             f"per-program limit (MAX_ANE_PROGRAM_WEIGHT_BYTES), so Core ML would run it on the CPU. "
-            f"Options: {_CAP_OPTIONS}.")
+            f"Options: {cap_options(chunkable)}.")
 
 
 def combine(summaries):
@@ -185,7 +194,7 @@ def gate(compiled, min_ane=0.8):
         size = weights_bytes(compiled)
         if s["ane"] == 0 and size > 0.9 * MAX_ANE_PROGRAM_WEIGHT_BYTES:
             hint = (f"; its {size / 2**30:.3f} GiB of weights are near the Neural Engine's 1 GiB per-program "
-                    f"limit (MAX_ANE_PROGRAM_WEIGHT_BYTES), which shows up this way. Options: {_CAP_OPTIONS}")
+                    f"limit (MAX_ANE_PROGRAM_WEIGHT_BYTES), which shows up this way. Options: {cap_options()}")
         raise GateFailure(f"compute plan: {s['ane']}/{s['assigned']} ops on the ANE ({share:.1%}); "
                           f"off the ANE: {s['off']}{hint}")
     if s["masked_fused_attention"]:

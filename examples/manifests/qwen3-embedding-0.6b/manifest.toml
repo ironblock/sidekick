@@ -6,8 +6,11 @@
 # recipe as F2LLM-v2-160M. `--format onnx` exports one fp32 model.onnx for
 # ONNX Runtime's CPU backend, from which the installed ONNX manifest is
 # derived (docs/DECISIONS.md D40). As Core ML artifacts the fp16 weights are
-# about 1.2 GB per bucket, past the ANE's 1 GiB per-program limit (D32), so
-# a Core ML build is chunked (D37).
+# about 1.2 GB per bucket, past the ANE's 1 GiB per-program limit (D32).
+# Chunking (D37) would bring each program under it, but the embedder
+# converter's Qwen3 backbone doesn't implement chunking yet, so the
+# converter refuses a Core ML build. No Core ML build has been graded; the
+# ONNX build is the supported route (docs/MODELS.md).
 #
 # max_seq_len 512 matches the other decoder embedders' buckets; the model
 # itself takes up to 32k tokens.
