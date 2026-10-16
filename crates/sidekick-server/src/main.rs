@@ -9,7 +9,9 @@ use std::path::PathBuf;
     about = "OpenAI-compatible server for on-device embeddings, classification and chat (Apple Foundation Models, Core ML, and ONNX Runtime on the CPU)"
 )]
 struct Args {
-    /// Config file (default: ~/.config/sidekick/config.toml if present)
+    /// Config file (default, if present: ~/Library/Application
+    /// Support/sidekick/config.toml on macOS, ~/.config/sidekick/config.toml
+    /// on Linux; the startup log names the file read)
     #[arg(long)]
     config: Option<PathBuf>,
     /// Listen address (overrides config)
@@ -68,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::from_arg_matches(&Args::command().version(version()).get_matches())?;
+    let config_file = Config::resolve_path(args.config.as_ref());
     let mut config = Config::load(args.config.as_ref())?;
     if let Some(addr) = args.addr {
         config.addr = addr;
@@ -92,7 +95,15 @@ async fn main() -> anyhow::Result<()> {
     let availability = state.chat.availability().await;
     let model = state.chat.model_info().await.unwrap_or_default();
     state.chat_model.set(model.variant_id.clone());
+    let config_file = match config_file {
+        Some(p) => p.display().to_string(),
+        None => match sidekick_server::config::default_config_path() {
+            Some(p) => format!("none (defaults; no file at {})", p.display()),
+            None => "none (defaults)".into(),
+        },
+    };
     tracing::info!(
+        config = %config_file,
         addr = %config.addr,
         models_dir = %config.models_dir().display(),
         chat_availability = ?availability,

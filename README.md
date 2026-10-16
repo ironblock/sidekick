@@ -331,7 +331,10 @@ accuracy on each compute path.
 
 ## Configuration
 
-`~/.config/sidekick/config.toml`, all optional (defaults shown):
+`config.toml` in sidekick's config directory: `~/Library/Application
+Support/sidekick/config.toml` on macOS, `~/.config/sidekick/config.toml` on
+Linux, or any file passed with `--config`. sidekickd's startup log names
+the file it read. Every key is optional (defaults shown):
 
 ```toml
 addr = "127.0.0.1:8790"        # loopback only by default
