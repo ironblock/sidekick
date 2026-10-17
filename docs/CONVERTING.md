@@ -369,7 +369,11 @@ onnx`. Requirements:
   checks for them before it converts anything;
 - `--format onnx`: `onnx` and `onnxruntime` instead, with neither
   coremltools nor Xcode. Every export so far was made on Apple silicon; it
-  hasn't been tested elsewhere.
+  hasn't been tested elsewhere. Any recent `onnxruntime` wheel for your
+  Python will do: the export's gate only runs the graph on the CPU, to
+  check it against the checkpoint. It needn't match the ONNX Runtime the
+  daemon bundles (D40), which is what the published onnx-cpu grades
+  measure; ONNX Runtime 1.28.3, for one, has no Python 3.14 wheel.
 
 ## ONNX export
 
