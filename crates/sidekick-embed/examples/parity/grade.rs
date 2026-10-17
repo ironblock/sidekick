@@ -1,6 +1,6 @@
 //! Grading one path's results against the reference: pure, unit-tested.
 
-use crate::expect::{ceiling_for, floor_for, letter, Floor, Gates, Path3};
+use crate::expect::{ceiling_for, floor_for, letter, Floor, Gates, Grades, Path3};
 use crate::metrics::{cosine, rank_flips, similarity_drift, summarize};
 use crate::reference::Reference;
 use serde::{Deserialize, Serialize};
@@ -157,6 +157,7 @@ pub fn grade(
     result: &WorkerResult,
     path: Path3,
     gates: &Gates,
+    grades: &Grades,
     floor: Option<&Floor>,
     matryoshka: &[usize],
 ) -> PathGrade {
@@ -341,7 +342,7 @@ pub fn grade(
     }
 
     let letter = if failures.is_empty() {
-        letter(worst)
+        letter(grades, worst)
     } else {
         'F'
     };
@@ -495,7 +496,7 @@ mod tests {
             c.pad_invariance = Check::default();
         }
         check_external(&r, &ext).unwrap();
-        let g = grade(&r, &ext, Path3::OnnxCpu, &gates(), None, &[]);
+        let g = grade(&r, &ext, Path3::OnnxCpu, &gates(), &Grades::committed(), None, &[]);
         assert_eq!((g.path.as_str(), g.letter, g.bucket_invariance.n), ("onnx-cpu", 'A', 0));
 
         let mut wrong = ext.clone();
@@ -541,7 +542,7 @@ mod tests {
         let r = reference(t.clone(), &[&[], &["tiny"], &["degenerate"]]);
         let mut v = t.clone();
         v[2] = unit(&[0.5, 0.6, 0.3]); // stress case off; core exact
-        let g = grade(&r, &result(v), Path3::Ane, &gates(), None, &[]);
+        let g = grade(&r, &result(v), Path3::Ane, &gates(), &Grades::committed(), None, &[]);
         assert_eq!(g.letter, 'A');
         assert!(g.stress.unwrap() < 0.99);
         assert!(g.failures.is_empty(), "{:?}", g.failures);
@@ -555,7 +556,7 @@ mod tests {
         v[1] = vec![f32::NAN, 0.0];
         let mut res = result(v);
         res.cases[1].vector = vec![0.0, 0.0];
-        let g = grade(&r, &res, Path3::Cpu, &gates(), None, &[]);
+        let g = grade(&r, &res, Path3::Cpu, &gates(), &Grades::committed(), None, &[]);
         assert_eq!(g.letter, 'F');
         assert_eq!(g.worst, None);
         assert_eq!(g.drift, None);
@@ -568,7 +569,7 @@ mod tests {
         let r = reference(t.clone(), &[&[], &[]]);
         let mut v = t;
         v[1] = vec![0.0, 0.0];
-        let g = grade(&r, &result(v), Path3::Ane, &gates(), None, &[]);
+        let g = grade(&r, &result(v), Path3::Ane, &gates(), &Grades::committed(), None, &[]);
         assert_eq!(g.letter, 'F');
         assert!(
             g.failures[0].contains("all zeros") && g.failures[0].contains("c1"),
@@ -586,18 +587,18 @@ mod tests {
             n: 2,
             min: Some(0.998),
         };
-        assert!(grade(&r, &res, Path3::Ane, &gates(), None, &[])
+        assert!(grade(&r, &res, Path3::Ane, &gates(), &Grades::committed(), None, &[])
             .failures
             .is_empty());
-        assert_eq!(grade(&r, &res, Path3::Cpu, &gates(), None, &[]).letter, 'F');
+        assert_eq!(grade(&r, &res, Path3::Cpu, &gates(), &Grades::committed(), None, &[]).letter, 'F');
         res.cases[0].bucket_invariance = Check { n: 2, min: None };
-        assert_eq!(grade(&r, &res, Path3::Ane, &gates(), None, &[]).letter, 'F');
+        assert_eq!(grade(&r, &res, Path3::Ane, &gates(), &Grades::committed(), None, &[]).letter, 'F');
         let mut res = result(t);
         res.cases[1].pad_invariance = Check {
             n: 1,
             min: Some(0.9),
         };
-        let g = grade(&r, &res, Path3::Ane, &gates(), None, &[]);
+        let g = grade(&r, &res, Path3::Ane, &gates(), &Grades::committed(), None, &[]);
         assert!(g.failures.iter().any(|f| f.contains("pad content")));
     }
 
@@ -607,7 +608,7 @@ mod tests {
         let r = reference(t.clone(), &[&[], &[]]);
         let mut res = result(t);
         res.cases[1].ids_match = false;
-        let g = grade(&r, &res, Path3::Ane, &gates(), None, &[]);
+        let g = grade(&r, &res, Path3::Ane, &gates(), &Grades::committed(), None, &[]);
         assert_eq!(g.letter, 'F');
         assert!(g.failures[0].contains("c1"));
     }
@@ -630,7 +631,7 @@ mod tests {
             stress: None,
             drift: 1.0,
         };
-        let g = grade(&r, &result(v), Path3::Ane, &gates(), Some(&floor), &[]);
+        let g = grade(&r, &result(v), Path3::Ane, &gates(), &Grades::committed(), Some(&floor), &[]);
         assert_eq!(g.letter, 'C');
         assert!(g.failures.is_empty());
         assert!(g.regressions[0].contains("floor"));
@@ -644,7 +645,7 @@ mod tests {
         let r = reference(t.clone(), &[&[], &[]]);
         let mut v = t.clone();
         v[0] = unit(&[1.0, 0.0, 0.0, -0.3]); // differs only past dim 2
-        let g = grade(&r, &result(v), Path3::Ane, &gates(), None, &[4, 2]);
+        let g = grade(&r, &result(v), Path3::Ane, &gates(), &Grades::committed(), None, &[4, 2]);
         assert!((g.matryoshka[&2].unwrap() - 1.0).abs() < 1e-9);
         assert!(g.worst.unwrap() < 0.9);
     }

@@ -27,11 +27,11 @@ Method, for every validated entry:
 - **parity** — worst-case cosine between the Core ML artifact and the fp32
   torch/sentence-transformers reference over the converter's parity set
   (short pairs + a ~400-token text), reported per compute path (D17):
-  `CPU_ONLY` proves the conversion is faithful (gate ≥ 0.999), `CPU_AND_NE`
-  is what the ANE delivers on those inputs (gate ≥ 0.985; the
-  embeddinggemma converter gates ≥ 0.999 since its MLP precision rewrite,
-  D17). Check that the long text really fits the bucket: an over-length
-  parity text is silently skipped.
+  `CPU_ONLY` proves the conversion is faithful, `CPU_AND_NE` is what the
+  ANE delivers on those inputs; both gate at ≥ 0.999, the default in
+  `tools/sidekick_convert/gates.py` (`EmbeddingGates`). Check that the long
+  text really fits the bucket: an over-length parity text is silently
+  skipped.
 - **grade** — the parity suite (D26): every compute path, through sidekick's
   own product code, on a 51-input adversarial corpus.
 - **ANE eligibility** (`cargo run -p sidekick-coreml --example ane_check`),
@@ -274,15 +274,19 @@ Runtime's CPU (`onnx-cpu`); the output is compared with the model as
 published: sentence-transformers in fp32, one input at a time.
 
 A grade is the worst-case cosine over the corpus, with repeated-token
-stress inputs graded separately:
+stress inputs graded separately. The scale is `[grades]` in
+`fixtures/parity/expectations.toml`, which the parity suite and this
+document's generator both read:
 
+<!-- generated: cosine-scale -->
 | grade | worst-case cosine | meaning |
 |---|---|---|
 | **A** | ≥ 0.9999 | indistinguishable from fp32 |
 | **B** | ≥ 0.999 | |
-| **C** | ≥ 0.985 | the converters' ANE acceptance gate |
+| **C** | ≥ 0.985 | |
 | **D** | below 0.985 | |
 | **F** | — | a hard gate failed |
+<!-- /generated -->
 
 Grades are a best-effort statement about these inputs on this hardware,
 not a bound on every input. How much accuracy the ANE loses depends on the
@@ -717,19 +721,31 @@ Classifiers run as Core ML only; the ONNX backend serves embedders.
 Classifiers are served by `POST /v1/classify` (D28), from a
 `classifier.toml` manifest ([examples/classifiers/](../examples/classifiers/)).
 The parity suite grades them in probability space against the model's own
-fp32 forward: A for a worst-case |Δp| ≤ 1e-3, B ≤ 5e-3, C ≤ 2e-2, D
-above; a flipped decision whose fp32 top-2 margin is at least 0.05 logits
-caps the grade at C; F is a failed hard gate. Unlike the embedders, the
-classifiers have no per-chip floors yet, so the suite reports their
-accuracy without regression-testing it.
+fp32 forward, by the worst-case |Δp| (the first scale below); a flipped
+decision whose fp32 top-2 margin is at least 0.05 logits caps the grade at
+C; F is a failed hard gate. Unlike the embedders, the classifiers have no
+per-chip floors yet, so the suite reports their accuracy without
+regression-testing it.
 
 Some models resolve decisions finer than fp16 can represent, so a second
 grade compares each path with the model's **ideal-fp16 ceiling**: what an
 ideal fp16 engine would lose, simulated by `sidekick_convert.fp16sim` and
 recorded in the reference as the `fp16` oracle. The ratio grade is the
-path's p99 |Δp| over the ceiling's p99: A ≤ 1.25×, B ≤ 2×, C ≤ 4×, D
-beyond. The grade that counts is the better of the two, so a model is
-credited for being practically exact or for being as good as fp16 allows.
+path's p99 |Δp| over the ceiling's p99 (the second scale). The grade that
+counts is the better of the two, so a model is credited for being
+practically exact or for being as good as fp16 allows. Both scales are
+`[grades]` in `fixtures/parity/expectations.toml`:
+
+<!-- generated: classifier-scales -->
+| grade | worst-case \|Δp\| | p99 \|Δp\| ÷ the fp16 ceiling's |
+|---|---|---|
+| **A** | ≤ 0.001 | ≤ 1.25× |
+| **B** | ≤ 0.005 | ≤ 2× |
+| **C** | ≤ 0.02 | ≤ 4× |
+| **D** | above 0.02 | above 4× |
+| **F** | — | a hard gate failed |
+<!-- /generated -->
+
 On the GPU and ANE, variation between buckets within the ceiling passes
 the bucket gate (D28 amendment). Models whose references don't yet carry
 the `fp16` oracle are graded on the absolute scale only.
@@ -758,7 +774,7 @@ path.
 | [cross-encoder/nli-MiniLM2-L6-H768](https://huggingface.co/cross-encoder/nli-MiniLM2-L6-H768) as `nli-minilm2-l6-h768-ane` (its ANE build) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) with the BERT backbone's ANE rewrites | C 0.0179 | **A** 0.0027 (1.20× ceiling) | **B** 0.0049 (bucket invariance exact) | 233/243 | 2.4 |
 | [cross-encoder/nli-deberta-v3-xsmall](https://huggingface.co/cross-encoder/nli-deberta-v3-xsmall) as `nli-deberta-v3-xsmall` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | C 0.0189 | **B** 0.004 (1.27× ceiling) | F 0.0276: bucket invariance 5.1e-3, over its 4.4e-3 ceiling | 479/488 | 15 |
 | [cross-encoder/nli-deberta-v3-small](https://huggingface.co/cross-encoder/nli-deberta-v3-small) as `nli-deberta-v3-small` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | D 0.0295 | **A** 0.005 (1.03× ceiling) | F 0.0254: bucket invariance 7.4e-3, over its 3.0e-3 ceiling | 245/254 | 16 |
-| [cross-encoder/nli-deberta-v3-base](https://huggingface.co/cross-encoder/nli-deberta-v3-base) as `nli-deberta-v3-base` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | C 0.013 | **B** 0.0037 (1.29× ceiling) | C 0.0101 (4.6× ceiling) | 479/488 | 33 |
+| [cross-encoder/nli-deberta-v3-base](https://huggingface.co/cross-encoder/nli-deberta-v3-base) as `nli-deberta-v3-base` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | C 0.013 | **B** 0.0037 (1.29× ceiling) | C 0.0101 (4.55× ceiling) | 479/488 | 33 |
 | [FacebookAI/roberta-large-mnli](https://huggingface.co/FacebookAI/roberta-large-mnli) as `roberta-large-mnli` (served on the GPU) | zero-shot, nli format | [convert_nli.py](../tools/convert_nli.py) | D 0.1629 | **A** 0.1191 (0.92× ceiling; one fp16-sensitive MultiNLI pair) | F 0.0428: bucket invariance 1.7e-2, over its 1.2e-2 ceiling | 582/591 | 14 |
 | [MoritzLaurer/deberta-v3-base-zeroshot-v2.0-c](https://huggingface.co/MoritzLaurer/deberta-v3-base-zeroshot-v2.0-c) as `deberta-v3-base-zeroshot-v2.0-c` (served on the GPU) | zero-shot, nli format, two-way | [convert_nli.py](../tools/convert_nli.py) | D 0.0281 | **A** 0.0024 (1.15× ceiling) | F 0.0178: bucket invariance 3.9e-3, over its 2.7e-3 ceiling | 479/488 | 33 |
 | [MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c](https://huggingface.co/MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c) as `deberta-v3-large-zeroshot-v2.0-c` (served on the GPU) | zero-shot, nli format, two-way | [convert_nli.py](../tools/convert_nli.py) | C 0.0167 | **A** 0.0038 (1.19× ceiling) | F 0.0131: bucket invariance 3.7e-3, over its 2.1e-3 ceiling | 947/956 | 100 |
@@ -1452,7 +1468,7 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   buckets. Fine on disk, but mind the install footprint.
 
 Gates to pass, in order: fp32 rewrite parity ≥ 0.9999 (only if rewriting),
-`CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.985, `ane_check` per bucket (compute
+`CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.999, `ane_check` per bucket (compute
 plan eligible and pad invariance on both paths; its ratio should be clearly
 above 1.0 on a quiet machine). Then generate a reference with
 `tools/parity_reference.py` and run the parity suite. It repeats those gates

@@ -35,6 +35,23 @@ determinism = 0.999999
 # Similarity gap below which a path may reorder two candidates (report only).
 rank_margin = 0.02
 
+[grades]
+# The letter scales: the one definition the parity suite and
+# tools/models_table.py (docs/MODELS.md, docs/data/models.json and the
+# comparison page) all read. A letter describes accuracy and is never a
+# gate; F means a hard gate failed or the output wasn't finite.
+#
+# Embedders: the worst-case cosine against the fp32 reference, at least.
+# A is indistinguishable from fp32.
+cosine = { A = 0.9999, B = 0.999, C = 0.985 }
+# Classifiers: the worst |Δp| against the fp32 reference, at most. A graded
+# argmax flip caps the grade at C.
+dp = { A = 1e-3, B = 5e-3, C = 2e-2 }
+# Classifiers whose reference carries the ideal-fp16 ceiling: the p99 |Δp|
+# as a multiple of the ceiling's p99, at most. Such a classifier gets the
+# better of this and its dp grade.
+ratio = { A = 1.25, B = 2.0, C = 4.0 }
+
 # Apple M1 Max, macOS 27.0 (September 2026). embeddinggemma-300m's,
 # lfm2.5-embedding-350m's, f2llm-v2-160m's and gte-modernbert-base's floors
 # are from after their precision rewrites (D17, D19, D20, D25 amendments).

@@ -132,11 +132,11 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
   <section class="legend" aria-label="How to read this table">
     <div>
       <h2>Grade</h2>
-      <p>A to F, the parity suite's letter. Embedders: the worst cosine against fp32 (A ≥ 0.9999, B ≥ 0.999, C ≥ 0.985). Classifiers and rerankers: Core ML paths against what ideal fp16 achieves on that model, with a flipped decision capping the grade at C. F is a failed hard gate. Compare letters within a task.</p>
+      <p id="gradelegend">A to F, the parity suite's letter. F is a failed hard gate. Compare letters within a task.</p>
     </div>
     <div>
       <h2>Nines</h2>
-      <p>−log₁₀ of the worst error: <code>1 − cosine</code> for embedders, the largest probability change (Δp) for classifiers and rerankers. 4 nines means 0.9999. Higher is better.</p>
+      <p>−log₁₀ of the worst error: <code>1 − cosine</code> for embedders (4 nines is a cosine of 0.9999), the largest probability change Δp for classifiers and rerankers (3 nines is a Δp of 0.001). Higher is better. The grade, not the nines, is comparable across tasks' scales.</p>
     </div>
     <div>
       <h2>ms / input</h2>
@@ -231,7 +231,7 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     if (r.note) notes.push(r.note);
     return {
       model:r.model, name:r.name, family:r.family, task:r.task, path:r.path, precision:r.precision, chip:r.chip,
-      runtime:[r.runtime, r.os].filter(Boolean).join(" · "), grade:r.grade, err:r.error, errKind:r.error_kind,
+      runtime:[r.runtime, r.os].filter(Boolean).join(" · "), grade:r.grade, err:r.error, errText:r.error_text, errKind:r.error_kind,
       flips:r.rank_flips, ms:r.ms, prov:r.ms != null && r.ms_idle !== true, msIdle:r.ms_idle, msSource:r.ms_source, latency:r.latency || [],
       served:r.served, licence:r.license_note, note:notes.join(". "), nines:r.error == null ? null : -Math.log10(Math.max(r.error, 1e-15)),
       mem:r.footprint_mb, memWhy:r.footprint_measured, peak:r.peak_mb, peakWhy:r.peak_measured,
@@ -340,11 +340,21 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     if (typeof x === "number") return (x - y) * d;
     return String(x).localeCompare(String(y)) * d;
   }
+  // The text tools/models_table.py wrote, the same as docs/MODELS.md's.
   function fmtErr(r) {
     if (r.err == null) return "–";
-    var e = r.err;
-    var s = e === 0 ? "0" : e < 1e-3 ? e.toExponential(2).replace("e-", "e−") : e.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
-    return (r.errKind === "1-cos" ? "1−cos " : "Δp ") + s;
+    return (r.errKind === "1-cos" ? "cos " : "Δp ") + r.errText;
+  }
+  // The letter scales, from fixtures/parity/expectations.toml via models.json.
+  function gradeLegend(g) {
+    var s = function (x) {
+      var u = x[2] || "";
+      return ["A", "B", "C"].map(function (l) { return l + " " + x[0] + " " + g[x[1]][l] + u; }).join(", ");
+    };
+    return "A to F, the parity suite's letter. Embedders: the worst cosine against fp32 (" + s(["≥", "cosine"]) + "). " +
+      "Classifiers and rerankers: the better of the worst Δp against fp32 (" + s(["≤", "dp"]) + ") and, where the model's " +
+      "ideal-fp16 ceiling is known, the p99 Δp as a multiple of the ceiling's (" + s(["≤", "ratio", "×"]) + "); a flipped " +
+      "decision caps the grade at C. F is a failed hard gate. Compare letters within a task.";
   }
   function fmtMB(mb) {
     if (Math.abs(mb) < 1) return "<1 MB";
@@ -454,6 +464,7 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     data = d;
     rows = d.rows.map(toRow);
     document.getElementById("asof").textContent = "Data as of " + d.as_of + ", sidekick " + d.sidekick + ".";
+    if (d.grades) document.getElementById("gradelegend").textContent = gradeLegend(d.grades);
     document.getElementById("sources").textContent = sources(d);
     build();
     render();

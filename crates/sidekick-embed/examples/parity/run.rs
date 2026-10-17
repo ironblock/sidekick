@@ -1185,6 +1185,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
                     r,
                     *p,
                     &expectations.gates,
+                    &expectations.grades,
                     floor,
                     &model.manifest.matryoshka,
                 )
