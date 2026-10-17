@@ -1297,8 +1297,8 @@ for the document).
 The triage, the checklist and the gates below are for Core ML. The ANE's
 weight cap, fp16 range and precision limits don't apply to onnx-cpu, which
 computes in fp32 with dynamic shapes, so an embedder rejected only by those
-may still serve there (Qwen3-Embedding-0.6B was one: past the ANE's cap
-unchunked, A on onnx-cpu, before chunking, D37, gave it an ANE build). Its gate is the ONNX export's own (fp32 parity
+may still serve there (Qwen3-Embedding-0.6B was one, until chunking (D37)
+gave it an ANE build). Its gate is the ONNX export's own (fp32 parity
 against the checkpoint, batch and pad invariance; docs/CONVERTING.md, "ONNX
 export"), then the parity suite's `onnx-cpu` path.
 

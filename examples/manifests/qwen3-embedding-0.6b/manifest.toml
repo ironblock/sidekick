@@ -6,13 +6,13 @@
 # recipe as F2LLM-v2-160M. `--format onnx` exports one fp32 model.onnx for
 # ONNX Runtime's CPU backend, from which the installed ONNX manifest is
 # derived (docs/DECISIONS.md D40). As Core ML artifacts the fp16 weights are
-# about 1.2 GB per bucket, past the ANE's 1 GiB per-program limit (D32), so
-# the converter splits each bucket into two chunks of about 0.57 GB
-# (`--chunks auto`, D37): the embedding and layers 0-8, then layers 9-27,
-# the final norm and the pooling. The installed manifest gains the
-# `{chunk}` placeholder and the [chunking] table. Graded on an M1 Max,
-# the chunked build is A on the ANE and the GPU and B on the CPU
-# (docs/MODELS.md; D37's amendment).
+# about 1.2 GB per bucket, past the ANE's 1 GiB per-program limit (D32,
+# measured on an M1 Max), so the converter splits each bucket into two
+# chunks of about 0.57 GB (`--chunks auto`, D37): the embedding and layers
+# 0-8, then layers 9-27, the final norm and the pooling. The installed
+# manifest gains the `{chunk}` placeholder and the [chunking] table. Graded
+# on an M1 Max, the chunked build is A on the ANE and the GPU and B on the
+# CPU (docs/MODELS.md; D37's amendment).
 #
 # max_seq_len 512 matches the other decoder embedders' buckets; the model
 # itself takes up to 32k tokens.
