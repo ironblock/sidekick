@@ -320,6 +320,19 @@ the median per input, ANE (CPU).
   about 62,000 comparisons count.
 - EmbeddingGemma's Matryoshka dimensions grade the same on the ANE:
   0.99999 at 512, 256 and 128.
+- **Qwen3-Embedding-0.6B's CPU path returns zeros on an M4 Max under
+  macOS 26.5.** There, Core ML's CPU engine collapses its fp16 activations
+  to exactly zero once the model is deeper than about 23 of its 28
+  layers, whether chunked or not and with or without the precision
+  rewrite. The parity suite grades that path F.
+  - The same chunked build on that machine grades A on the ANE (0.999986,
+    as on the M1 Max) and A on the GPU (0.999997).
+  - The same program compiled for fp32 is healthy on the CPU, and so is
+    onnx-cpu there: A, 29 ms per input with ONNX Runtime's SME kernels.
+  - On the M1 Max under macOS 27.0, the CPU path is healthy (B above).
+  - sidekick refuses an all-zero embedding rather than serve it, so a
+    `cpu_only` override on such a machine fails loudly. Serve this model
+    on its default, the ANE, or on the GPU.
 - EmbeddingGemma graded D before its MLP precision rewrite (D17): 0.975 on
   a run of digits, drift 0.042 with scores biased +0.009 high, and 122 rank
   flips.
@@ -562,7 +575,8 @@ length in the smallest bucket that fits it, padded. ms per input:
   asks for more (D40).
   Fewer threads leave room for a primary model on the same machine, at a
   cost. Median ms for one long input by intra-op threads, on four
-  machines:
+  machines, measured through sidekickd's HTTP API by
+  `tools/bench_threads.py`:
 
   <!-- generated: threads -->
   | machine, model | 1 | 2 | 4 | 6 | 8 | 10 | 12 | 16 | 24 | 32 |
