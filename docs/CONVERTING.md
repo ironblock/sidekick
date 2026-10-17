@@ -502,6 +502,21 @@ pre-library builds at every bucket.
 
 ## Gotchas
 
+Matthijs Hollemans' [neural-engine](https://github.com/hollance/neural-engine)
+notes are the long-standing community reference on the ANE: supported
+layers, fp16 behaviour, device generations and diagnostics. Some of it
+predates ML programs and `MLComputePlan`, and sidekick's measurements
+refine two points there:
+- Core ML's CPU path can run an fp16 ML program in fp16, as the notes
+  allow. Whether that is safe depends on the machine: Qwen3-Embedding-0.6B
+  grades B on an M1 Max's CPU, but collapses to exactly zero on an M4 Max
+  under macOS 26.5 ([MODELS.md](MODELS.md)).
+- The notes warn about activations above about 1e2 or below about 1e-4.
+  The limits measured here are fp16's own range (65504; D17's range
+  rewrite), a precision floor on small `linear` inputs (D17), and the
+  `linear` op saturating at 2^15 (D25 amendment). Large activations below
+  2^15 are not an ANE problem by themselves.
+
 **Core ML and the ANE**
 - **The fused attention op ignores its mask on the ANE** when the mask is an
   input of the ANE procedure that runs it: a model input, a CPU op's output,
@@ -619,6 +634,27 @@ pre-library builds at every bucket.
   using it: rename it, then delete it.
 - **The mean-pooling tail runs on the CPU** (reduce_sum, real_div, clip):
   one extra hand-off after the encoder, well within the compute-plan gate.
+- **Core ML's diagnostics go to the unified log, not to stderr.** An
+  error code such as -14 says little on its own; the reason is often in
+  the log. On macOS 27, Core ML logs under `com.apple.coreml`,
+  `com.apple.e5rt` and `com.apple.ane`; Hollemans' notes also name
+  `com.apple.espresso`, from older releases. Use `/usr/bin/log`, because
+  `log` alone is a zsh builtin:
+
+  ```sh
+  /usr/bin/log stream --info --debug --predicate \
+    'subsystem IN {"com.apple.coreml","com.apple.e5rt","com.apple.ane","com.apple.espresso"}'
+  ```
+
+  ANE compile failures come from the system's `ANECompilerService` and
+  `aned` processes, not from sidekickd or the converter, so filter by
+  subsystem rather than by `--process`. Model and layer names appear as
+  `<private>` unless private data logging is enabled with a logging
+  configuration profile.
+- **sidekick doesn't set `allowLowPrecisionAccumulationOnGPU`.** It
+  leaves Core ML's default (off), under which the GPU accumulates in
+  higher precision than fp16, according to the reference.
+  Turning it on could change GPU grades, so it would need regrading.
 
 **coremltools and transformers**
 - **Shape arithmetic in traced code crashes coremltools 9** under static
