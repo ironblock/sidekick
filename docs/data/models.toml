@@ -65,7 +65,7 @@ name = "Qwen3-Embedding-0.6B"
 family = "Qwen3 decoder"
 task = "embed"
 source = "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
-served = "onnx-cpu"
+served = "coreml-ane"
 
 [models."nlptown-sentiment"]
 name = "nlptown-sentiment"

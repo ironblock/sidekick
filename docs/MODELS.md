@@ -711,8 +711,9 @@ range.
   flattens. Qwen3-Embedding's manifest raises its cap to 16 (`[onnx]
   default_intra_op_threads`), which pays only on machines with more than 8
   fast cores (Threadripper 3970X: 277 ms at 16 threads against 335 at 8).
-- **Qwen3-Embedding-0.6B:** serve fp32 (or fp16 weights to halve the disk).
-  Don't use int8 on ONNX Runtime.
+- **Qwen3-Embedding-0.6B on onnx-cpu:** serve fp32 (or fp16 weights to
+  halve the disk). Don't use int8 on ONNX Runtime. On Apple silicon its
+  chunked Core ML build (D37) serves on the ANE instead.
 
 ## Classifiers (`/v1/classify`)
 
@@ -1295,8 +1296,8 @@ for the document).
 The triage, the checklist and the gates below are for Core ML. The ANE's
 weight cap, fp16 range and precision limits don't apply to onnx-cpu, which
 computes in fp32 with dynamic shapes, so an embedder rejected only by those
-may still serve there (Qwen3-Embedding-0.6B is one: past the ANE's cap
-unchunked, A on onnx-cpu). Its gate is the ONNX export's own (fp32 parity
+may still serve there (Qwen3-Embedding-0.6B was one: past the ANE's cap
+unchunked, A on onnx-cpu, before chunking, D37, gave it an ANE build). Its gate is the ONNX export's own (fp32 parity
 against the checkpoint, batch and pad invariance; docs/CONVERTING.md, "ONNX
 export"), then the parity suite's `onnx-cpu` path.
 
