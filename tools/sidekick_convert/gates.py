@@ -108,6 +108,12 @@ class EmbeddingGates:
             outs = [m.predict(c.feed(seq, job.ports))[job.output][0] for c in cases]
             if not all(finite(o) for o in outs):
                 raise GateFailure(f"bucket {seq} [{path}]: non-finite output")
+            zero = sum(not np.any(o) for o in outs)
+            if zero:
+                # Core ML's CPU engine can collapse an fp16 model to exact zero
+                # (Qwen3-Embedding-0.6B on an M4 Max, macOS 26): finite, but no
+                # direction, and the cosine would only read NaN.
+                raise GateFailure(f"bucket {seq} [{path}]: all-zero output for {zero} of {len(outs)} parity cases")
             w = worst(cosine(c.ref, o) for c, o in zip(cases, outs))
             if not w >= gate:
                 raise GateFailure(f"bucket {seq} [{path}]: parity cosine {w:.6f} < {gate}")

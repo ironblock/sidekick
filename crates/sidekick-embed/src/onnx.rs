@@ -28,7 +28,7 @@ pub use backend::OnnxEmbedder;
 #[cfg(feature = "onnx")]
 mod backend {
     use crate::embed_input::EmbedInput;
-    use crate::pooling::{normalize_in_place, pool};
+    use crate::pooling::{degenerate, normalize_in_place, pool};
     use sidekick_core::manifest::ResolvedModel;
     use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder, Error, Pooling, Result};
     use sidekick_onnx::OnnxModel;
@@ -140,7 +140,19 @@ mod backend {
         fn embed_with(&self, texts: &[&str], purpose: EmbedPurpose, limits: EmbedLimits) -> Result<Vec<Vec<f32>>> {
             // Prepare every text first, so a rejected one costs no inference.
             let prepared = texts.iter().map(|t| self.prepare(t, purpose, limits)).collect::<Result<Vec<_>>>()?;
-            prepared.iter().map(|ids| self.run(ids)).collect()
+            prepared
+                .iter()
+                .map(|ids| {
+                    let v = self.run(ids)?;
+                    match degenerate(&v) {
+                        Some(what) => Err(Error::Inference(format!(
+                            "model `{}`: its output has {what}, which isn't an embedding",
+                            self.id
+                        ))),
+                        None => Ok(v),
+                    }
+                })
+                .collect()
         }
     }
 }

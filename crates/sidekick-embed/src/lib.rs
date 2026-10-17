@@ -23,7 +23,7 @@ mod pooling;
 mod static_embedder;
 
 pub use classify_input::InputBuilder;
-pub use pooling::{mean_pool, normalize_in_place, pool};
+pub use pooling::{degenerate, mean_pool, normalize_in_place, pool};
 pub use static_embedder::StaticEmbedder;
 
 #[cfg(all(feature = "coreml", target_os = "macos"))]
