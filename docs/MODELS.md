@@ -308,6 +308,7 @@ the median per input, ANE (CPU).
 | embeddinggemma-2 | F 0.99993 | A 0.9999993 | **A** 0.999995 (numbers-order) | 0.001 | 0 | 10.1 (28.0) |
 | F2LLM-v2-160M | B 0.99986 | A 0.999999 | **A** 0.99999 (a run of digits) | 0.001 (0.000) | 0 | 5.3 (13.0) |
 | LFM2.5-Embedding-350M | B 0.99986 | A 0.999999 | **A** 0.99999 (a delimiter flood) | 0.003 (0.000) | 0 | 14.9 (33.8) |
+| Qwen3-Embedding-0.6B | B 0.99968 | A 0.999997 | **A** 0.99999 (delim-bert-specials) | 0.002 | 0 | 33.3 (69.0) |
 <!-- /generated -->
 
 - **Similarity drift** is the largest change in any pairwise similarity
@@ -485,7 +486,7 @@ column. The Core ML columns are the Apple paths from the table above.
 | embeddinggemma-300m | **A** 1 − 3e-12 | **A** 1 − 3e-12 | **A** 1 − 3e-12 | B 0.99989 | A 0.999998 | A 0.99999 |
 | embeddinggemma-2 | **A** 1 − 2e-12 | | **A** 1 − 1e-12 | F 0.99993 | A 0.9999993 | A 0.999995 |
 | F2LLM-v2-160M | **A** 1 − 5e-12 | **A** 1 − 4e-12 | **A** 1 − 4e-12 | B 0.99986 | A 0.999999 | A 0.99999 |
-| Qwen3-Embedding-0.6B | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | not converted | not converted | not converted |
+| Qwen3-Embedding-0.6B | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | B 0.99968 | A 0.999997 | A 0.99999 |
 | Qwen3-Embedding-0.6B, fp16 weights | **A** 1 − 2e-11 | | **A** 1 − 2e-11 | | | |
 | Qwen3-Embedding-0.6B, int8 | **D** 0.406 | | **D** 0.404 | | | |
 <!-- /generated -->
