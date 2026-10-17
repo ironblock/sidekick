@@ -188,6 +188,9 @@ impl CoremlEmbedder {
     pub fn prepare_with(&self, text: &str, purpose: EmbedPurpose, limits: EmbedLimits) -> Result<Prepared> {
         let largest = *self.buckets.last().expect("validated non-empty");
         let ids = self.input.ids(text, purpose, limits, largest)?;
+        if ids.is_empty() {
+            return Err(Error::InvalidRequest("the input has no tokens to embed".into()));
+        }
         let bucket = *self
             .buckets
             .iter()
@@ -262,16 +265,25 @@ impl CoremlEmbedder {
                 pool(&out.data, self.dims, &mask_u32, pooling)
             }
         };
-        if let Some(what) = degenerate(&vector) {
-            return Err(Error::Inference(format!(
-                "model `{}`: the {bucket}-token bucket's output on {} has {what}, which isn't an embedding; \
-                 Core ML's CPU engine can collapse an fp16 model to zero, so try serving it on other compute units",
-                self.id,
-                self.models.units().name()
-            )));
-        }
         normalize_in_place(&mut vector);
         Ok(vector)
+    }
+
+    /// The error for an output `degenerate` refuses: it names the model, the
+    /// bucket and the compute units, and on `cpu_only` an all-zero output
+    /// points at Core ML's CPU engine.
+    fn degenerate_error(&self, what: &str, bucket: usize) -> Error {
+        let units = self.models.units();
+        let hint = if units == ComputeUnits::CpuOnly && what == "every value zero" {
+            "; Core ML's CPU engine can collapse an fp16 model to zero, so try other compute units"
+        } else {
+            ""
+        };
+        Error::Inference(format!(
+            "model `{}`: the {bucket}-token bucket's output on {} has {what}, which isn't an embedding{hint}",
+            self.id,
+            units.name()
+        ))
     }
 }
 
@@ -324,7 +336,16 @@ impl Embedder for CoremlEmbedder {
             .collect::<Result<Vec<_>>>()?;
         let buckets: Vec<usize> = prepared.iter().map(|p| p.bucket).collect();
         loaded(&load_buckets(&self.models, &buckets)?);
-        let vectors = prepared.iter().map(|p| self.run(&p.ids, p.bucket)).collect::<Result<_>>()?;
+        let vectors = prepared
+            .iter()
+            .map(|p| {
+                let v = self.run(&p.ids, p.bucket)?;
+                match degenerate(&v) {
+                    Some(what) => Err(self.degenerate_error(what, p.bucket)),
+                    None => Ok(v),
+                }
+            })
+            .collect::<Result<_>>()?;
         Ok((vectors, Some(buckets)))
     }
 }

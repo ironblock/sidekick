@@ -43,13 +43,12 @@ pub fn pool(hidden: &[f32], dims: usize, mask: &[u32], pooling: Pooling) -> Vec<
     }
 }
 
-/// Scale to unit L2 norm (no-op on the zero vector).
 /// What makes an embedding unservable, if anything: a non-finite value, or
-/// every value zero, which has no direction and normalizes to zeros. Core
-/// ML's CPU engine has been measured collapsing an fp16 model's activations
-/// to exact zero (Qwen3-Embedding-0.6B on an M4 Max under macOS 26, past
-/// about 23 of its 28 layers), so the backends refuse such an output rather
-/// than serve it.
+/// every value zero, which has no direction. Core ML's CPU engine has been
+/// measured collapsing an fp16 model's activations to exact zero
+/// (Qwen3-Embedding-0.6B on an M4 Max under macOS 26.5), so the backends'
+/// `embed` refuses such an output rather than serve it. Any other finite
+/// vector normalizes to unit length (`normalize_in_place` sums in f64).
 pub fn degenerate(v: &[f32]) -> Option<&'static str> {
     if v.iter().any(|x| !x.is_finite()) {
         Some("a non-finite value")
@@ -60,11 +59,13 @@ pub fn degenerate(v: &[f32]) -> Option<&'static str> {
     }
 }
 
+/// Scale to unit L2 norm (no-op on the zero vector). The norm is summed in
+/// f64, so no finite f32 vector overflows it or underflows it to zero.
 pub fn normalize_in_place(v: &mut [f32]) {
-    let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm = v.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>().sqrt();
     if norm > 0.0 {
         for x in v.iter_mut() {
-            *x /= norm;
+            *x = (f64::from(*x) / norm) as f32;
         }
     }
 }
@@ -98,6 +99,17 @@ mod tests {
         assert_eq!(degenerate(&[0.0, f32::NAN]), Some("a non-finite value"));
         assert_eq!(degenerate(&[1.0, f32::INFINITY]), Some("a non-finite value"));
         assert_eq!(degenerate(&[0.0, 1e-30]), None);
+        assert_eq!(degenerate(&[-0.0, 0.0]), Some("every value zero"));
+    }
+
+    #[test]
+    fn extreme_vectors_normalize() {
+        // an f32 sum of squares would underflow to 0 and overflow to inf
+        for scale in [1e-30_f32, 3e30] {
+            let mut v = [3.0 * scale, 4.0 * scale];
+            normalize_in_place(&mut v);
+            assert!((v[0] - 0.6).abs() < 1e-6 && (v[1] - 0.8).abs() < 1e-6, "{scale}: {v:?}");
+        }
     }
 
     #[test]

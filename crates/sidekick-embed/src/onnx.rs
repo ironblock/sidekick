@@ -110,19 +110,13 @@ mod backend {
             }
             let per_row = data.len() / n;
             let mask_u32: Vec<u32> = mask.iter().map(|&m| m as u32).collect();
-            (0..n)
+            Ok((0..n)
                 .map(|r| {
                     let mut v = pool(&data[r * per_row..(r + 1) * per_row], self.dims, &mask_u32[r * len..(r + 1) * len], self.pooling);
-                    if let Some(what) = degenerate(&v) {
-                        return Err(Error::Inference(format!(
-                            "model `{}`: its output has {what}, which isn't an embedding",
-                            self.id
-                        )));
-                    }
                     normalize_in_place(&mut v);
-                    Ok(v)
+                    v
                 })
-                .collect()
+                .collect())
         }
     }
 
@@ -146,7 +140,19 @@ mod backend {
         fn embed_with(&self, texts: &[&str], purpose: EmbedPurpose, limits: EmbedLimits) -> Result<Vec<Vec<f32>>> {
             // Prepare every text first, so a rejected one costs no inference.
             let prepared = texts.iter().map(|t| self.prepare(t, purpose, limits)).collect::<Result<Vec<_>>>()?;
-            prepared.iter().map(|ids| self.run(ids)).collect()
+            prepared
+                .iter()
+                .map(|ids| {
+                    let v = self.run(ids)?;
+                    match degenerate(&v) {
+                        Some(what) => Err(Error::Inference(format!(
+                            "model `{}`: its output has {what}, which isn't an embedding",
+                            self.id
+                        ))),
+                        None => Ok(v),
+                    }
+                })
+                .collect()
         }
     }
 }

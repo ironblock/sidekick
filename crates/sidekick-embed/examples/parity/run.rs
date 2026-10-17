@@ -285,6 +285,23 @@ impl XorShift {
     }
 }
 
+/// One input's vector through the product path, or, when the product path
+/// refuses the output as degenerate (all zeros or a non-finite value), the
+/// raw output that it refused. The case is then graded as unusable output
+/// (F) instead of the whole path failing. Any other error stands.
+fn product_or_raw(
+    embedded: sidekick_core::Result<Vec<Vec<f32>>>,
+    raw: impl FnOnce() -> sidekick_core::Result<Vec<f32>>,
+) -> Result<Vec<f32>, String> {
+    match embedded {
+        Ok(mut v) => Ok(v.remove(0)),
+        Err(err) => match raw() {
+            Ok(r) if sidekick_embed::degenerate(&r).is_some() => Ok(r),
+            _ => Err(err.to_string()),
+        },
+    }
+}
+
 fn bitwise_eq(a: &[f32], b: &[f32]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
 }
@@ -316,7 +333,7 @@ fn onnx_worker(model: &ResolvedModel, reference: &Reference, id: &str, out: &str
     for case in cases {
         let ids = emb.prepare(&case.text, purpose(&case.purpose), EmbedLimits::default()).map_err(e)?;
         let t = Instant::now();
-        let v = emb.embed(&[case.text.as_str()], purpose(&case.purpose)).map_err(e)?.remove(0);
+        let v = product_or_raw(emb.embed(&[case.text.as_str()], purpose(&case.purpose)), || emb.run(&ids))?;
         let ms = t.elapsed().as_secs_f64() * 1e3;
         let ids_match = ids == case.ids;
         let model_only = if ids_match { None } else { Some(emb.run(&case.ids).map_err(e)?) };
@@ -336,7 +353,8 @@ fn onnx_worker(model: &ResolvedModel, reference: &Reference, id: &str, out: &str
     }
     let mut repeat_bitwise = true;
     for (case, first) in cases.iter().zip(&raw).take(5) {
-        let again = emb.embed(&[case.text.as_str()], purpose(&case.purpose)).map_err(e)?.remove(0);
+        let ids = emb.prepare(&case.text, purpose(&case.purpose), EmbedLimits::default()).map_err(e)?;
+        let again = product_or_raw(emb.embed(&[case.text.as_str()], purpose(&case.purpose)), || emb.run(&ids))?;
         repeat_bitwise &= bitwise_eq(first, &again);
     }
     let result = WorkerResult {
@@ -428,10 +446,9 @@ fn coreml_worker(
         };
         let prepared = emb.prepare(&case.text, purpose).map_err(e)?;
         let t = Instant::now();
-        let v = emb
-            .embed(&[case.text.as_str()], purpose)
-            .map_err(e)?
-            .remove(0);
+        let v = product_or_raw(emb.embed(&[case.text.as_str()], purpose), || {
+            emb.run(&prepared.ids, prepared.bucket)
+        })?;
         let ms = t.elapsed().as_secs_f64() * 1e3;
 
         let ids_match = prepared.ids == case.ids;
@@ -487,10 +504,10 @@ fn coreml_worker(
         } else {
             EmbedPurpose::Document
         };
-        let again = emb
-            .embed(&[case.text.as_str()], purpose)
-            .map_err(e)?
-            .remove(0);
+        let prepared = emb.prepare(&case.text, purpose).map_err(e)?;
+        let again = product_or_raw(emb.embed(&[case.text.as_str()], purpose), || {
+            emb.run(&prepared.ids, prepared.bucket)
+        })?;
         repeat_bitwise &= bitwise_eq(first, &again);
     }
 
