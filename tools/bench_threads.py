@@ -9,7 +9,7 @@ estimate of four bytes per token, not the tokenizer's count. Results are
 written after every setting. Standard library only.
 
   bench_threads.py --daemon PATH --models-dir DIR --model ID [--model ID ...]
-                   --threads 1,2,4,8 [--reps 20] [--out results.json]
+                   --threads 1,2,4,8 [--reps 15] [--out results.json]
 """
 import argparse, json, math, os, platform, signal, socket, statistics, subprocess, sys, tempfile, time, urllib.request
 
@@ -131,7 +131,7 @@ def main():
     ap.add_argument("--models-dir", required=True)
     ap.add_argument("--model", action="append", required=True)
     ap.add_argument("--threads", required=True)
-    ap.add_argument("--reps", type=int, default=20)
+    ap.add_argument("--reps", type=int, default=15, help="timed requests per length (MODELS.md's table: 15)")
     ap.add_argument("--out", default="bench_threads.json")
     ap.add_argument("--wait-gpu-idle-from", type=int, default=0,
                     help="before each setting with at least this many threads, wait for an NVIDIA GPU to be idle, "
