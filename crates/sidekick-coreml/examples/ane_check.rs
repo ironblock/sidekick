@@ -111,10 +111,19 @@ fn main() {
         let dot: f64 = a.iter().zip(&b).map(|(x, y)| f64::from(*x) * f64::from(*y)).sum();
         let norm = |v: &[f32]| v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
         let cos = dot / (norm(&a) * norm(&b));
-        if !finite || cos.is_nan() || cos < 0.99999 {
+        if !finite {
+            eprintln!("FAIL: {label}: the output has non-finite values");
+            std::process::exit(1);
+        }
+        if norm(&a) == 0.0 || norm(&b) == 0.0 {
+            // Core ML's CPU engine can collapse an fp16 model to exact zero
+            // (Qwen3-Embedding-0.6B on an M4 Max, macOS 26).
+            eprintln!("FAIL: {label}: the output is all zeros, so pad invariance can't be judged");
+            std::process::exit(1);
+        }
+        if cos.is_nan() || cos < 0.99999 {
             eprintln!(
-                "FAIL: {label}: output depends on pad content or is non-finite \
-                 (finite: {finite}, cosine {cos:.6}); the attention mask is not being honoured"
+                "FAIL: {label}: output depends on pad content (cosine {cos:.6}); the attention mask is not being honoured"
             );
             std::process::exit(1);
         }

@@ -14,7 +14,7 @@
 use crate::bucket_models::BucketModels;
 use crate::chain_check::{check_chain, ChainInputs};
 use crate::embed_input::EmbedInput;
-use crate::pooling::{normalize_in_place, pool};
+use crate::pooling::{degenerate, normalize_in_place, pool};
 use sidekick_core::manifest::ResolvedModel;
 use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder, Error, Pooling, Result};
 use sidekick_coreml::{ComputeUnits, Int32Input, ShapeVerdict};
@@ -262,6 +262,14 @@ impl CoremlEmbedder {
                 pool(&out.data, self.dims, &mask_u32, pooling)
             }
         };
+        if let Some(what) = degenerate(&vector) {
+            return Err(Error::Inference(format!(
+                "model `{}`: the {bucket}-token bucket's output on {} has {what}, which isn't an embedding; \
+                 Core ML's CPU engine can collapse an fp16 model to zero, so try serving it on other compute units",
+                self.id,
+                self.models.units().name()
+            )));
+        }
         normalize_in_place(&mut vector);
         Ok(vector)
     }

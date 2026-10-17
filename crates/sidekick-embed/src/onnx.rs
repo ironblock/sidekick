@@ -28,7 +28,7 @@ pub use backend::OnnxEmbedder;
 #[cfg(feature = "onnx")]
 mod backend {
     use crate::embed_input::EmbedInput;
-    use crate::pooling::{normalize_in_place, pool};
+    use crate::pooling::{degenerate, normalize_in_place, pool};
     use sidekick_core::manifest::ResolvedModel;
     use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder, Error, Pooling, Result};
     use sidekick_onnx::OnnxModel;
@@ -110,13 +110,19 @@ mod backend {
             }
             let per_row = data.len() / n;
             let mask_u32: Vec<u32> = mask.iter().map(|&m| m as u32).collect();
-            Ok((0..n)
+            (0..n)
                 .map(|r| {
                     let mut v = pool(&data[r * per_row..(r + 1) * per_row], self.dims, &mask_u32[r * len..(r + 1) * len], self.pooling);
+                    if let Some(what) = degenerate(&v) {
+                        return Err(Error::Inference(format!(
+                            "model `{}`: its output has {what}, which isn't an embedding",
+                            self.id
+                        )));
+                    }
                     normalize_in_place(&mut v);
-                    v
+                    Ok(v)
                 })
-                .collect())
+                .collect()
         }
     }
 

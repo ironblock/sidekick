@@ -44,6 +44,22 @@ pub fn pool(hidden: &[f32], dims: usize, mask: &[u32], pooling: Pooling) -> Vec<
 }
 
 /// Scale to unit L2 norm (no-op on the zero vector).
+/// What makes an embedding unservable, if anything: a non-finite value, or
+/// every value zero, which has no direction and normalizes to zeros. Core
+/// ML's CPU engine has been measured collapsing an fp16 model's activations
+/// to exact zero (Qwen3-Embedding-0.6B on an M4 Max under macOS 26, past
+/// about 23 of its 28 layers), so the backends refuse such an output rather
+/// than serve it.
+pub fn degenerate(v: &[f32]) -> Option<&'static str> {
+    if v.iter().any(|x| !x.is_finite()) {
+        Some("a non-finite value")
+    } else if v.iter().all(|&x| x == 0.0) {
+        Some("every value zero")
+    } else {
+        None
+    }
+}
+
 pub fn normalize_in_place(v: &mut [f32]) {
     let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm > 0.0 {
@@ -74,6 +90,14 @@ mod tests {
         assert_eq!(pool(&hidden, 2, &mask, Pooling::Cls), vec![1.0, 2.0]);
         assert_eq!(pool(&hidden, 2, &mask, Pooling::LastToken), vec![3.0, 4.0], "the last real token, not the pad");
         assert_eq!(pool(&[5.0, 6.0], 2, &[1], Pooling::None), vec![5.0, 6.0]);
+    }
+
+    #[test]
+    fn degenerate_outputs_are_named() {
+        assert_eq!(degenerate(&[0.0, 0.0, 0.0]), Some("every value zero"));
+        assert_eq!(degenerate(&[0.0, f32::NAN]), Some("a non-finite value"));
+        assert_eq!(degenerate(&[1.0, f32::INFINITY]), Some("a non-finite value"));
+        assert_eq!(degenerate(&[0.0, 1e-30]), None);
     }
 
     #[test]
