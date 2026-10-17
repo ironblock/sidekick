@@ -2,13 +2,16 @@
 """Thread scaling of sidekickd's onnx-cpu path, through the HTTP API.
 
 For each intra-op thread count: start sidekickd with that
-`onnx_intra_op_threads`, then for each model time sequential single-input
-/v1/embeddings requests at ~16 and ~256 tokens. Standard library only.
+`onnx_intra_op_threads`, check in /health that each model runs with it,
+then for each model time sequential single-input /v1/embeddings requests
+at ~16 and ~256 tokens. Token counts are sidekickd's `usage` figure, an
+estimate of four bytes per token, not the tokenizer's count. Results are
+written after every setting. Standard library only.
 
   bench_threads.py --daemon PATH --models-dir DIR --model ID [--model ID ...]
                    --threads 1,2,4,8 [--reps 20] [--out results.json]
 """
-import argparse, json, os, platform, signal, socket, statistics, subprocess, sys, tempfile, time, urllib.request
+import argparse, json, math, os, platform, signal, socket, statistics, subprocess, sys, tempfile, time, urllib.request
 
 SENTENCE = ("The committee reviewed the quarterly figures, noted a modest rise in "
             "operating costs, and asked the regional teams to report on supplier delays. ")
@@ -75,6 +78,27 @@ def text_for(port, model, target):
         n += 1
 
 
+def configured_threads(health, model):
+    """The intra-op threads /health reports for an onnx model, or None."""
+    stack = [health]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            entry = node.get(model)
+            if isinstance(entry, dict) and "intra_op_threads" in entry:
+                return entry["intra_op_threads"]
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return None
+
+
+def p90(times):
+    """Nearest-rank 90th percentile."""
+    ordered = sorted(times)
+    return ordered[max(math.ceil(0.9 * len(ordered)) - 1, 0)]
+
+
 def wait_gpu_idle(threshold=5, quiet_secs=20):
     """Block until nvidia-smi reports GPU utilization under threshold for
     quiet_secs in a row, so a CPU-heavy setting doesn't slow GPU serving."""
@@ -110,8 +134,11 @@ def main():
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--out", default="bench_threads.json")
     ap.add_argument("--wait-gpu-idle-from", type=int, default=0,
-                    help="before each setting with at least this many threads, wait for the GPU to be idle (0: never)")
+                    help="before each setting with at least this many threads, wait for an NVIDIA GPU to be idle, "
+                         "by nvidia-smi (0: never; without nvidia-smi it doesn't wait)")
     a = ap.parse_args()
+    if a.reps < 1:
+        sys.exit("--reps must be at least 1")
     threads = [int(x) for x in a.threads.split(",")]
     result = {"machine": machine(), "reps": a.reps, "runs": []}
     texts = {}
@@ -120,19 +147,28 @@ def main():
         port = free_port()
         cfg = os.path.join(work, f"config-{n}.toml")
         with open(cfg, "w") as f:
-            f.write(f'addr = "127.0.0.1:{port}"\nmodels_dir = "{os.path.abspath(a.models_dir)}"\nonnx_intra_op_threads = {n}\n')
+            # json.dumps quotes and escapes the path as a TOML basic string
+            f.write(f'addr = "127.0.0.1:{port}"\nmodels_dir = {json.dumps(os.path.abspath(a.models_dir))}\n'
+                    f'onnx_intra_op_threads = {n}\n')
         log = open(os.path.join(work, f"daemon-{n}.log"), "w")
         proc = subprocess.Popen([a.daemon, "--config", cfg], stdout=log, stderr=subprocess.STDOUT)
         try:
+            health = None
             for _ in range(300):
+                if proc.poll() is not None:
+                    sys.exit(f"sidekickd exited ({proc.returncode}); see {log.name}")
                 try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2).read()
+                    health = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2).read())
                     break
                 except Exception:
                     time.sleep(0.1)
             else:
                 sys.exit(f"sidekickd didn't start; see {log.name}")
             for model in a.model:
+                got = configured_threads(health, model)
+                if got != n:
+                    sys.exit(f"{model}: /health reports {got} intra-op threads, not {n}: is it an onnx model, "
+                             f"or does a per-model setting override the config? See {log.name}")
                 if a.wait_gpu_idle_from and n >= a.wait_gpu_idle_from:
                     wait_gpu_idle()
                 if model not in texts:
@@ -148,12 +184,15 @@ def main():
                         post(port, body)
                         times.append((time.perf_counter() - t0) * 1000)
                     run[kind] = {"tokens": tokens(resp), "median_ms": statistics.median(times),
-                                 "min_ms": min(times), "p90_ms": sorted(times)[int(0.9 * (len(times) - 1))]}
+                                 "min_ms": min(times), "p90_ms": p90(times)}
                 run["load_after"] = loadavg()
                 result["runs"].append(run)
-                print(f"threads {n:>2}  {model:<24} short {run['short']['tokens']:>4} tok {run['short']['median_ms']:8.1f} ms"
-                      f"   long {run['long']['tokens']:>4} tok {run['long']['median_ms']:8.1f} ms   load {run['load_after'][0]:.1f}",
-                      flush=True)
+                load = run["load_after"][0] if run["load_after"] else float("nan")
+                print(f"threads {n:>2}  {model:<24} short {run['short']['tokens'] or '?':>4} tok "
+                      f"{run['short']['median_ms']:8.1f} ms   long {run['long']['tokens'] or '?':>4} tok "
+                      f"{run['long']['median_ms']:8.1f} ms   load {load:.1f}", flush=True)
+                with open(a.out, "w") as f:
+                    json.dump(result, f, indent=1)
         finally:
             proc.send_signal(signal.SIGTERM)
             try:
@@ -163,7 +202,7 @@ def main():
             log.close()
     with open(a.out, "w") as f:
         json.dump(result, f, indent=1)
-    print(f"wrote {a.out}")
+    print(f"wrote {a.out}; daemon logs in {work}")
 
 
 if __name__ == "__main__":
