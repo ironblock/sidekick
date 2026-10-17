@@ -2051,9 +2051,9 @@ weights; M1 Max, macOS 27.0; two chunks):
   table, `chunks` is required. `{chunk}` without a `[chunking]` table, or
   a `[chunking]` table without `{chunk}`, skips the manifest with a reason
   (D28). At load a classifier checks every chunk's declared inputs and
-  outputs against these rules. Chunking is for classifiers for now: no
-  converter makes a chunked embedder, and an embedder's manifest with
-  `[chunking]` is skipped with that reason. Buckets, `sidekick-buckets` and every other
+  outputs against these rules. (Embedders were first left out: an
+  embedder's manifest with `[chunking]` was skipped. The amendment below
+  admits Core ML embedders.) Buckets, `sidekick-buckets` and every other
   per-bucket behavior are unchanged: a bucket is still one entry, whatever
   the number of programs that answer it.
 - **A chain is served one way.** Every chunk of every bucket loads with
@@ -2087,6 +2087,45 @@ path names no file. It lists the model, finds no weights at that path to
 check, and fails every request to it with an error naming the missing
 artifact, so it never serves part of a chain. Chunked models need
 sidekick 0.7.0.
+
+**Amendment (October 2026): chunked embedders.** A Core ML embedder may be
+chunked, by the same rules: `{chunk}` and `[chunking]` come together, and
+static and ONNX embedders still reject both. Its load checks each bucket's
+chain as a classifier's does (the shared check: the inputs the manifest's
+`[io]` names, `hidden_out` handed to `hidden_in` at [1, S, H], and the
+last chunk's `embedding` output). The embedder converter's Qwen3 backbone
+(F2LLM, Qwen3-Embedding) implements chunking. Each chunk rebuilds the
+causal and padding mask from `attention_mask` and RoPE from the position
+buffer, and its unchunked path is unchanged: F2LLM-v2-160M reconverts
+byte-identically.
+
+Measured on Qwen3-Embedding-0.6B (1.11 GiB of fp16 weights per bucket;
+M1 Max, macOS 27.0), converted with `--chunks auto --chunk-identity-all`:
+- **The chain.** It has two chunks per bucket: the embedding and layers
+  0–8, then layers 9–27, the final norm and the pooling. Each has
+  566–571 MB of compiled weights. Every bucket (128, 256, 512) passed
+  the chain checks:
+  - in fp32, the composed chunks equal the unchunked wrapper exactly
+    (max |diff| 0);
+  - on the GPU, the chain is bit-identical to the unchunked program;
+  - the compute plan puts 2,129 of 2,135 operations on the ANE (99.7%),
+    the rest being mask and pooling setup.
+- **Which gate covered which chunk.** `ane_check` covered chunk 0: plan
+  eligible, and pad invariance 1.0000000 on `.cpuAndNeuralEngine` and
+  `.cpuOnly`. It feeds only int32 inputs, so it can't drive chunk 1,
+  which takes `hidden_in`. The converter covered chunk 1, with its
+  per-chunk compute plan and weight check, and with the chain's pad gate
+  (1.0000000).
+- **Grades.** The parity suite's 51 cases grade it A on the ANE
+  (worst cosine 0.999986, mean 0.999993) and on the GPU (0.999997), and
+  B on the CPU (0.999684). Every path had no rank flips and exact pads.
+  Buckets reached 0.999988 or better, and the ANE gave identical output
+  in two processes. The machine was busy (load about 6), so its timings
+  (ANE 33.3, GPU 25.6, CPU 69.0 ms per case) are provisional.
+- **Unlike agent-jev.** Chunked agent-jev, the same backbone size, graded
+  D on the ANE until D39's StableSilu. The embedder recipe already
+  carries StableSilu and the attention and `down_proj` input rescales
+  (D20 amendment), so Qwen3-Embedding is A on the ANE as converted.
 
 ## D38 — The operator may choose a model's compute units
 D31 lets a manifest name its compute units, and the converter that wrote
