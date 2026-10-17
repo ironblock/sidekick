@@ -29,6 +29,8 @@ pub use static_embedder::StaticEmbedder;
 #[cfg(all(feature = "coreml", target_os = "macos"))]
 mod bucket_models;
 #[cfg(all(feature = "coreml", target_os = "macos"))]
+mod chain_check;
+#[cfg(all(feature = "coreml", target_os = "macos"))]
 mod coreml_classifier;
 #[cfg(all(feature = "coreml", target_os = "macos"))]
 mod coreml_embedder;

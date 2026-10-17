@@ -1368,11 +1368,8 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
     if m.backend != EmbeddingBackendKind::Coreml && (m.chunking.is_some() || m.artifact.contains("{chunk}")) {
         return Err("`[chunking]` is only valid for the coreml backend".into());
     }
-    if m.chunking.is_some() || m.artifact.contains("{chunk}") {
-        // No converter makes one, and the daemon checks chunks' interfaces at
-        // classifier load only (D37).
-        return Err("`[chunking]` is for classifiers; chunked embedders aren't supported yet".into());
-    }
+    // A Core ML embedder may be chunked (D37): its load checks the chain.
+    validate_chunking(&m.artifact, m.chunking.as_ref())?;
     if m.backend != EmbeddingBackendKind::Onnx && (m.io.token_type_ids.is_some() || m.io.position_ids.is_some()) {
         return Err("`[io] token_type_ids` and `position_ids` are only valid for the onnx backend".into());
     }
@@ -2792,19 +2789,33 @@ max_seq_len = 512
         let reg = ModelRegistry::scan(&tmp).unwrap();
         assert!(reg.skipped()[0].reason.contains("only valid for the coreml backend"), "{:?}", reg.skipped());
         std::fs::remove_dir_all(&tmp).unwrap();
-        // Nor, for now, does a Core ML embedder (D37).
-        let tmp = tmp_dir("chunking-embedder");
-        let dir = tmp.join("e");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join(EMBEDDER_MANIFEST),
-            "id = \"e\"\nbackend = \"coreml\"\nartifact = \"m_{seq}.{chunk}.mlmodelc\"\ntokenizer = \"t\"\n\
-             dims = 4\nbuckets = [8]\nmax_seq_len = 8\n\n[chunking]\nchunks = 2\n",
-        )
-        .unwrap();
-        let reg = ModelRegistry::scan(&tmp).unwrap();
-        assert!(reg.skipped()[0].reason.contains("chunked embedders aren't supported yet"), "{:?}", reg.skipped());
-        std::fs::remove_dir_all(&tmp).unwrap();
+        // A Core ML embedder may be chunked (D37), by the classifier's rules.
+        let embedder = |name: &str, artifact: &str, table: &str| {
+            let tmp = tmp_dir(&format!("chunking-embedder-{name}"));
+            let dir = tmp.join("e");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(EMBEDDER_MANIFEST),
+                format!(
+                    "id = \"e\"\nbackend = \"coreml\"\nartifact = \"{artifact}\"\ntokenizer = \"t\"\n\
+                     dims = 4\nbuckets = [8]\nmax_seq_len = 8\n{table}"
+                ),
+            )
+            .unwrap();
+            let reg = ModelRegistry::scan(&tmp).unwrap();
+            std::fs::remove_dir_all(&tmp).unwrap();
+            reg
+        };
+        let reg = embedder("ok", "m_{seq}.{chunk}.mlmodelc", "\n[chunking]\nchunks = 2\n");
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped());
+        assert_eq!(reg.get("e").unwrap().manifest.chunks(), 2);
+        for (name, artifact, table, want) in [
+            ("no-table", "m_{seq}.{chunk}.mlmodelc", "", "no `[chunking]` table"),
+            ("no-placeholder", "m_{seq}.mlmodelc", "\n[chunking]\nchunks = 2\n", "needs a `{chunk}` placeholder"),
+        ] {
+            let reg = embedder(name, artifact, table);
+            assert!(reg.skipped().first().is_some_and(|s| s.reason.contains(want)), "{name}: {:?}", reg.skipped());
+        }
     }
 
     #[test]

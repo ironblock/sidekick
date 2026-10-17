@@ -141,6 +141,13 @@ precision = "fp16"
 date = "2026-10-12"
 idle = false
 sidekick = "0.8.0+ (commit 46e6e91)"
+[runs."coreml-arm64-qwen3-embedding-0.6b.json"]
+runtime = "Core ML"
+os = "macOS 27.0"
+precision = "fp16"
+date = "2026-10-16"
+idle = false
+sidekick = "0.11.0+ with chunked embedders (commit 71ef17c)"
 [runs."native-arm64-f2llm-v2-160m.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
