@@ -36,6 +36,20 @@ fn have_runtime() -> bool {
 
 /// A word-level tokenizer over the fixture's 12 ids, splitting on spaces
 /// only, with no special tokens of its own.
+#[test]
+fn an_input_with_no_tokens_is_a_bad_request() {
+    use sidekick_core::{EmbedPurpose, Embedder, Error};
+    if !have_runtime() {
+        return;
+    }
+    // This tokenizer adds no special tokens, so "" tokenizes to nothing.
+    let dir = models_dir("empty", "pooled.onnx", "none", POOLED_IO);
+    let model = load(&dir, 1);
+    let err = model.embed(&[""], EmbedPurpose::Document).unwrap_err();
+    assert!(matches!(err, Error::InvalidRequest(_)), "{err:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 fn tokenizer() -> String {
     let words = ["[UNK]", "[CLS]", "[SEP]", "a", "b", "c", "d", "e", "f", "g", "h", "i"];
     let vocab: serde_json::Map<String, serde_json::Value> =

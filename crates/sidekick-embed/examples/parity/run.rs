@@ -295,10 +295,13 @@ fn product_or_raw(
 ) -> Result<Vec<f32>, String> {
     match embedded {
         Ok(mut v) => Ok(v.remove(0)),
-        Err(err) => match raw() {
+        // only the backends' refusal of a degenerate output: any other
+        // failure fails the path
+        Err(sidekick_core::Error::Inference(m)) if m.contains("which isn't an embedding") => match raw() {
             Ok(r) if sidekick_embed::degenerate(&r).is_some() => Ok(r),
-            _ => Err(err.to_string()),
+            _ => Err(m),
         },
+        Err(err) => Err(err.to_string()),
     }
 }
 

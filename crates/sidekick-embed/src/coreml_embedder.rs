@@ -188,9 +188,6 @@ impl CoremlEmbedder {
     pub fn prepare_with(&self, text: &str, purpose: EmbedPurpose, limits: EmbedLimits) -> Result<Prepared> {
         let largest = *self.buckets.last().expect("validated non-empty");
         let ids = self.input.ids(text, purpose, limits, largest)?;
-        if ids.is_empty() {
-            return Err(Error::InvalidRequest("the input has no tokens to embed".into()));
-        }
         let bucket = *self
             .buckets
             .iter()

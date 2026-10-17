@@ -66,7 +66,7 @@ impl EmbedInput {
             Truncate::Reject => text,
         };
         let text = format!("{prefix}{body}");
-        Ok(match limits.truncate {
+        let ids = match limits.truncate {
             // START keeps the end of the text, and the model's prompt
             // prefix whole: the model was never trained without it.
             Truncate::Start if !prefix.is_empty() => {
@@ -87,7 +87,13 @@ impl EmbedInput {
                     Truncate::Reject => raw.iter().map(|&u| u as i32).collect(),
                 }
             }
-        })
+        };
+        // A tokenizer that adds no special tokens gives nothing for an empty
+        // text: a bad request, not a model failure.
+        if ids.is_empty() {
+            return Err(Error::InvalidRequest("the input has no tokens to embed".into()));
+        }
+        Ok(ids)
     }
 }
 

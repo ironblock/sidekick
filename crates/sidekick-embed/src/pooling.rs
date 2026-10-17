@@ -46,8 +46,10 @@ pub fn pool(hidden: &[f32], dims: usize, mask: &[u32], pooling: Pooling) -> Vec<
 /// What makes an embedding unservable, if anything: a non-finite value, or
 /// every value zero, which has no direction. Core ML's CPU engine has been
 /// measured collapsing an fp16 model's activations to exact zero
-/// (Qwen3-Embedding-0.6B on an M4 Max under macOS 26.5), so the backends'
-/// `embed` refuses such an output rather than serve it. Any other finite
+/// (Qwen3-Embedding-0.6B on an M4 Max under macOS 26.5), so the Core ML and
+/// ONNX backends' `embed` refuses such an output rather than serve it. The
+/// static embedder doesn't: a lookup table can legitimately give zero for
+/// text made only of unknown words. Any other finite
 /// vector normalizes to unit length (`normalize_in_place` sums in f64).
 pub fn degenerate(v: &[f32]) -> Option<&'static str> {
     if v.iter().any(|x| !x.is_finite()) {
