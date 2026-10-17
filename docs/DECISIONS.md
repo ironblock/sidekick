@@ -1723,6 +1723,25 @@ token table (a CPU-side lookup) as per-row int8, and is graded against the
 model's ideal-fp16 ceiling like any other rewrite. Chunked variants, which
 lose no precision, are planned.
 
+**Amendment (October 2026): the limit depends on the chip or OS.** On an M4
+Max under macOS 26.5.2, Qwen3-Embedding-0.6B's unchunked 128 bucket, with
+1.110 GiB of fp16 weights, runs on the ANE.
+- **The compute plan** put 2,124 of its 2,129 ops there. The five off it
+  are mask setup.
+- **Latency agreed:** 15.4 ms per input under `cpu_and_ne`, against 43.2 ms
+  under `cpu_only`, with a resident set of 322 MB against 1.17 GB.
+- **The same program on the M1 Max under macOS 27.0** gets 0 of 2,129 ops
+  on the ANE.
+
+So 1 GiB is the M1 Max's limit under macOS 27.0, measured between 0.964
+and 1.022 GiB. On the M4
+Max under macOS 26.5.2 it is at least 1.110 GiB. The two machines differ in
+both chip and OS, so which of them moved the limit is open. The constant
+stays, as the conservative choice. Chunking (D37) keeps a chunkable model's
+programs under it, losslessly and at under 2% on the GPU. Deciding at load
+from the machine's own compute plan, rather than from the constant, is
+tracked as #102.
+
 ## D33 — Cap CPU-served models at 1,024 tokens
 On the CPU, Core ML's fp16 matmul is accurate at every contraction length,
 but past 1,024 it sums in a different order. Measured on an M1 Max with
