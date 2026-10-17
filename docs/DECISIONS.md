@@ -1733,11 +1733,13 @@ Max under macOS 26.5.2, Qwen3-Embedding-0.6B's unchunked 128 bucket, with
 - **The same program on the M1 Max under macOS 27.0** gets 0 of 2,129 ops
   on the ANE.
 
-So 1 GiB is the M1 Max's limit, not the ANE's; on the M4 Max it is at least
-1.110 GiB. The constant stays, as the conservative choice: chunking (D37)
-keeps every program under it at no measured cost. Deciding at load from
-the machine's own compute plan, rather than from the constant, is tracked
-separately.
+So 1 GiB is the limit measured on the M1 Max under macOS 27.0. On the M4
+Max under macOS 26.5.2 it is at least 1.110 GiB. The two machines differ in
+both chip and OS, so which of them moved the limit is open. The constant
+stays, as the conservative choice. Chunking (D37) keeps a chunkable model's
+programs under it, losslessly and at under 2% on the GPU. Deciding at load
+from the machine's own compute plan, rather than from the constant, is
+tracked as #102.
 
 ## D33 — Cap CPU-served models at 1,024 tokens
 On the CPU, Core ML's fp16 matmul is accurate at every contraction length,
