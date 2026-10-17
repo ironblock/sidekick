@@ -510,12 +510,12 @@ refine two points there:
 - Core ML's CPU path can run an fp16 ML program in fp16, as the notes
   allow. Whether that is safe depends on the machine: Qwen3-Embedding-0.6B
   grades B on an M1 Max's CPU, but collapses to exactly zero on an M4 Max
-  under macOS 26.5 (docs/MODELS.md).
+  under macOS 26.5 ([MODELS.md](MODELS.md)).
 - The notes warn about activations above about 1e2 or below about 1e-4.
   The limits measured here are fp16's own range (65504; D17's range
   rewrite), a precision floor on small `linear` inputs (D17), and the
   `linear` op saturating at 2^15 (D25 amendment). Large activations below
-  those are not an ANE problem by themselves.
+  2^15 are not an ANE problem by themselves.
 
 **Core ML and the ANE**
 - **The fused attention op ignores its mask on the ANE** when the mask is an
