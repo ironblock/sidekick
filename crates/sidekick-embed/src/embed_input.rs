@@ -5,10 +5,12 @@
 
 use sidekick_core::manifest::ResolvedModel;
 use sidekick_core::{EmbedLimits, EmbedPurpose, Error, Result, Truncate};
-use tokenizers::{Tokenizer, TruncationDirection};
+use tokenizers::{Encoding, Tokenizer, TruncationDirection};
 
 /// A model's tokenizer and prompt prefixes.
 pub struct EmbedInput {
+    /// The model's id, for errors.
+    model: String,
     tokenizer: Tokenizer,
     prefix_query: String,
     prefix_document: String,
@@ -19,14 +21,19 @@ pub struct EmbedInput {
 impl EmbedInput {
     pub fn load(model: &ResolvedModel) -> Result<Self> {
         let m = &model.manifest;
-        let mut tokenizer = Tokenizer::from_file(model.tokenizer_path())
+        let tokenizer = Tokenizer::from_file(model.tokenizer_path())
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
+        Self::new(&m.id, tokenizer, &m.prefixes.query, &m.prefixes.document)
+    }
+
+    fn new(model: &str, mut tokenizer: Tokenizer, prefix_query: &str, prefix_document: &str) -> Result<Self> {
         // A tokenizer.json may pad every input to a fixed length
         // (all-MiniLM ships padding to 128), and every returned token is
         // marked real in the attention mask: the pads would be read as
         // text. One input is never padded; a backend pads if it must.
         // Truncation stays as shipped: models' parity references were
         // graded with it (LFM2.5 truncates at 512 in its tokenizer.json).
+        // Under truncate NONE, an input it cut is refused (`check_whole`).
         tokenizer.with_padding(None);
         // Measured with padding off, or a padding tokenizer would count its
         // pads as added tokens.
@@ -35,9 +42,10 @@ impl EmbedInput {
             .map_err(|e| Error::Tokenizer(e.to_string()))?
             .len();
         Ok(Self {
+            model: model.to_string(),
             tokenizer,
-            prefix_query: m.prefixes.query.clone(),
-            prefix_document: m.prefixes.document.clone(),
+            prefix_query: prefix_query.to_string(),
+            prefix_document: prefix_document.to_string(),
             added_tokens,
         })
     }
@@ -61,7 +69,7 @@ impl EmbedInput {
             Truncate::End => crate::byte_cap(text, max),
             Truncate::Start => crate::classify_input::byte_cap_end(text, max),
             Truncate::Reject if text.len() > max.saturating_mul(16) => {
-                return Err(too_long(format!("{} bytes", text.len()), max))
+                return Err(too_long(&self.model, format!("{} bytes", text.len()), max))
             }
             Truncate::Reject => text,
         };
@@ -81,10 +89,10 @@ impl EmbedInput {
                 match truncate {
                     Truncate::End => truncate_preserving_last(raw, max),
                     Truncate::Start => truncate_preserving_first(raw, max),
-                    Truncate::Reject if raw.len() > max => {
-                        return Err(too_long(format!("{} tokens", raw.len()), max))
+                    Truncate::Reject => {
+                        check_whole(&self.tokenizer, &self.model, &text, true, &encoding, max)?;
+                        raw.iter().map(|&u| u as i32).collect()
                     }
-                    Truncate::Reject => raw.iter().map(|&u| u as i32).collect(),
                 }
             }
         };
@@ -165,15 +173,126 @@ fn truncate_preserving_first(raw: &[u32], max: usize) -> Vec<i32> {
     }
 }
 
-fn too_long(size: String, max: usize) -> Error {
+/// `prepare` over each text, in order, stopping at the first error. The
+/// backends prepare every input before they run any, so a rejected input
+/// refuses the whole request at no inference cost. A 400 names the input's
+/// index in the batch.
+pub(crate) fn each_input<T>(texts: &[&str], mut prepare: impl FnMut(&str) -> Result<T>) -> Result<Vec<T>> {
+    texts
+        .iter()
+        .enumerate()
+        .map(|(i, text)| {
+            prepare(text).map_err(|e| match e {
+                Error::InvalidRequest(m) => Error::InvalidRequest(format!("input {i}: {m}")),
+                e => e,
+            })
+        })
+        .collect()
+}
+
+/// Under truncate `NONE`: an error unless `encoding` (of `text`, with or
+/// without special tokens) is whole and at most `max` tokens. A
+/// tokenizer.json may truncate on its own (LFM2.5's does at 512) before
+/// sidekick sees the ids, so an encoding it cut is too long whatever its
+/// length: the limit is then the lower of the tokenizer's and `max`, and
+/// the count is the text's untruncated length.
+pub(crate) fn check_whole(
+    tokenizer: &Tokenizer,
+    model: &str,
+    text: &str,
+    add_special_tokens: bool,
+    encoding: &Encoding,
+    max: usize,
+) -> Result<()> {
+    if encoding.get_overflowing().is_empty() {
+        return match encoding.len() {
+            n if n > max => Err(too_long(model, format!("{n} tokens"), max)),
+            _ => Ok(()),
+        };
+    }
+    let limit = tokenizer.get_truncation().map_or(max, |t| t.max_length.min(max));
+    // Only an input being refused pays for the copy.
+    let mut whole = tokenizer.clone();
+    let count = whole
+        .with_truncation(None)
+        .ok()
+        .and_then(|t| t.encode(text, add_special_tokens).ok())
+        .map_or_else(|| format!("more than {} tokens", encoding.len()), |e| format!("{} tokens", e.len()));
+    Err(too_long(model, count, limit))
+}
+
+/// The 400 for an input longer than `model`'s limit of `max` tokens under
+/// truncate `NONE`. `size` is its length: `600 tokens`, or `40000 bytes`
+/// for a text too long to be worth tokenizing.
+pub(crate) fn too_long(model: &str, size: String, max: usize) -> Error {
     Error::InvalidRequest(format!(
-        "input of {size} exceeds the limit of {max} tokens, and truncate is NONE"
+        "{size}, over model `{model}`'s limit of {max} tokens, and truncate is NONE \
+         (send END or START to truncate it)"
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_preserving_last;
+    use super::{truncate_preserving_last, EmbedInput};
+    use sidekick_core::{EmbedLimits, EmbedPurpose, Error, Truncate};
+    use tokenizers::TruncationParams;
+
+    const NONE: EmbedLimits = EmbedLimits { truncate: Truncate::Reject, max_tokens: None };
+
+    /// laya's test tokenizer ([CLS] text [SEP]), truncating to `at` tokens
+    /// on its own when given, as LFM2.5's tokenizer.json does at 512.
+    fn input(at: Option<usize>) -> EmbedInput {
+        let mut tok = crate::laya::tests::tokenizer();
+        let truncation = at.map(|max_length| TruncationParams { max_length, ..Default::default() });
+        tok.with_truncation(truncation).unwrap();
+        EmbedInput::new("tiny", tok, "", "").unwrap()
+    }
+
+    fn message(e: Error) -> String {
+        match e {
+            Error::InvalidRequest(m) => m,
+            e => panic!("not a 400: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn truncate_none_refuses_an_input_over_the_limit() {
+        // "a b c d e f": 8 tokens with [CLS] and [SEP].
+        let e = input(None).ids("a b c d e f", EmbedPurpose::Document, NONE, 6).unwrap_err();
+        assert_eq!(
+            message(e),
+            "8 tokens, over model `tiny`'s limit of 6 tokens, and truncate is NONE (send END or START to truncate it)"
+        );
+        assert_eq!(input(None).ids("a b c d", EmbedPurpose::Document, NONE, 6).unwrap().len(), 6, "at the limit");
+    }
+
+    #[test]
+    fn truncate_none_refuses_an_input_the_tokenizer_cut() {
+        // The tokenizer keeps 5 of 8 tokens, under the model's 32: END
+        // runs what it kept, and NONE refuses, naming the untruncated
+        // length and the tokenizer's limit.
+        let tok = input(Some(5));
+        let end = tok.ids("a b c d e f", EmbedPurpose::Document, EmbedLimits::default(), 32).unwrap();
+        assert_eq!(end.len(), 5);
+        let e = tok.ids("a b c d e f", EmbedPurpose::Document, NONE, 32).unwrap_err();
+        assert!(message(e).starts_with("8 tokens, over model `tiny`'s limit of 5 tokens"));
+        // Within the tokenizer's limit: nothing cut, nothing refused.
+        assert_eq!(tok.ids("a b c", EmbedPurpose::Document, NONE, 32).unwrap().len(), 5);
+        // A tokenizer limit above the model's: the model's applies.
+        let e = input(Some(64)).ids("a b c d e f", EmbedPurpose::Document, NONE, 6).unwrap_err();
+        assert!(message(e).starts_with("8 tokens, over model `tiny`'s limit of 6 tokens"));
+    }
+
+    #[test]
+    fn a_refused_input_is_named_by_its_index() {
+        let tok = input(None);
+        let e = super::each_input(&["a", "a b c d e f", "b"], |t| tok.ids(t, EmbedPurpose::Document, NONE, 6)).unwrap_err();
+        assert!(message(e).starts_with("input 1: 8 tokens, over model `tiny`'s limit of 6 tokens"));
+        // A text too long to be worth tokenizing is measured in bytes.
+        let long = "a ".repeat(100);
+        let e = super::each_input(&[long.as_str()], |t| tok.ids(t, EmbedPurpose::Document, NONE, 6)).unwrap_err();
+        assert!(message(e).starts_with("input 0: 200 bytes, over model `tiny`'s limit of 6 tokens"));
+    }
 
     #[test]
     fn keeps_all_when_within_max() {

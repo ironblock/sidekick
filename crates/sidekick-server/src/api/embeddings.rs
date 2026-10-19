@@ -1,6 +1,6 @@
 use super::wire::*;
 use super::deadline::{signal, Deadline, Work};
-use super::{model_task, wrong_route, ApiError, ApiJson, Provenance};
+use super::{embed_v2, model_task, wrong_route, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
@@ -55,6 +55,10 @@ pub async fn embeddings(
         }
     };
 
+    // By default an over-length input keeps its start (`END`); `NONE`
+    // refuses the request with a 400 naming the input.
+    let limits = EmbedLimits { truncate: embed_v2::truncate(req.truncate.as_deref())?, max_tokens: None };
+
     // Loading isn't counted against the request timeout (api::deadline).
     let mut deadline = Deadline::new(Work::Embedding, &req.model, state.request_timeout, state.load_timeout);
     let embedder = deadline.model(state.embedders.get_tracked(&req.model)).await?;
@@ -87,7 +91,7 @@ pub async fn embeddings(
         let task = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
             let mut tx = Some(loaded_tx);
-            embedder.embed_staged(&refs, purpose, EmbedLimits::default(), &mut |b| signal(&mut tx, b))
+            embedder.embed_staged(&refs, purpose, limits, &mut |b| signal(&mut tx, b))
         });
         deadline.finish(loaded, task, "embed").await?
     };

@@ -13,7 +13,7 @@
 
 use crate::bucket_models::BucketModels;
 use crate::chain_check::{check_chain, ChainInputs};
-use crate::embed_input::EmbedInput;
+use crate::embed_input::{each_input, EmbedInput};
 use crate::pooling::{degenerate, normalize_in_place, pool};
 use sidekick_core::manifest::ResolvedModel;
 use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder, Error, Pooling, Result};
@@ -327,10 +327,7 @@ impl Embedder for CoremlEmbedder {
         loaded: &mut dyn FnMut(&[usize]),
     ) -> Result<(Vec<Vec<f32>>, Option<Vec<usize>>)> {
         // Prepare every text first, so a rejected one costs no prediction.
-        let prepared = texts
-            .iter()
-            .map(|t| self.prepare_with(t, purpose, limits))
-            .collect::<Result<Vec<_>>>()?;
+        let prepared = each_input(texts, |t| self.prepare_with(t, purpose, limits))?;
         let buckets: Vec<usize> = prepared.iter().map(|p| p.bucket).collect();
         loaded(&load_buckets(&self.models, &buckets)?);
         let vectors = prepared

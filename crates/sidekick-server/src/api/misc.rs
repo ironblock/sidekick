@@ -36,6 +36,9 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
                 .filter(|m| m.backend == EmbeddingBackendKind::Coreml)
                 .map(|m| m.compute_units_source.name()),
             seq_cap: m.and_then(|m| m.seq_cap.clone()),
+            // Effective values: the registry has already applied any cap (D33).
+            max_seq_len: m.map(|m| m.max_seq_len),
+            buckets: m.filter(|m| m.backend == EmbeddingBackendKind::Coreml).map(|m| m.buckets.clone()),
             placement: r.and_then(|r| embedder_placement(&state, r, false)),
             ..ModelObject::new(id.to_string(), created, "feature-extraction")
         });
@@ -62,6 +65,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             compute_units: Some(m.compute_units.name()),
             compute_units_source: Some(m.compute_units_source.name()),
             seq_cap: m.seq_cap.clone(),
+            max_seq_len: Some(m.max_seq_len),
             placement: placement(&state, &c.dir, &m.artifact, &m.buckets, m.chunks(), m.compute_units, m.placement.as_ref(), false),
             calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
             ..ModelObject::new(m.id.clone(), created, m.task.name())

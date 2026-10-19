@@ -219,6 +219,11 @@ pub struct EmbeddingsRequest {
     /// query prefix instead of the document prefix.
     #[serde(default)]
     pub input_type: Option<String>,
+    /// Non-standard extension (Cohere's, as on /v2/embed): what to do with
+    /// an input longer than the model's limit. `END` (the default) keeps
+    /// its start, `START` its end, and `NONE` refuses the request.
+    #[serde(default)]
+    pub truncate: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -527,6 +532,18 @@ pub struct ModelObject {
     /// length and why.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seq_cap: Option<sidekick_core::manifest::SeqCap>,
+    /// Extension, embedders and classifiers: the longest sequence the model
+    /// runs, in tokens, special tokens included (and an embedder's prompt
+    /// prefix), with `seq_cap` already applied: a Core ML model's largest
+    /// bucket. A longer embeddings input is truncated or refused, as the
+    /// request's `truncate` says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_seq_len: Option<usize>,
+    /// Extension, Core ML embedders: the sequence-length buckets the model
+    /// runs in, smallest first, with `seq_cap` already applied. An ONNX
+    /// model has none: its graph takes any length up to `max_seq_len`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub buckets: Option<Vec<usize>>,
     /// Extension, embedders and classifiers: the compute units the model is
     /// loaded with (`cpu` for a static model), as `sidekick-compute-units`
     /// reports them.
@@ -567,6 +584,8 @@ impl ModelObject {
             extensions: None,
             required: None,
             seq_cap: None,
+            max_seq_len: None,
+            buckets: None,
             compute_units: None,
             compute_units_source: None,
             placement: None,

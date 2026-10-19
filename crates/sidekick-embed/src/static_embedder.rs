@@ -6,6 +6,7 @@
 //! normalize. No context, no attention — a floor tier that works on any
 //! hardware in microseconds.
 
+use crate::embed_input::{check_whole, each_input, too_long};
 use crate::pooling::normalize_in_place;
 use half::f16;
 use sidekick_core::manifest::ResolvedModel;
@@ -73,7 +74,8 @@ impl StaticEmbedder {
         })
     }
 
-    fn embed_one(&self, prefix: &str, text: &str, limits: EmbedLimits) -> Result<Vec<f32>> {
+    /// Prefix, tokenize, and truncate (or refuse) one input.
+    fn ids(&self, prefix: &str, text: &str, limits: EmbedLimits) -> Result<Vec<u32>> {
         if limits.max_tokens == Some(0) {
             return Err(Error::InvalidRequest("max_tokens must be at least 1".into()));
         }
@@ -84,7 +86,7 @@ impl StaticEmbedder {
             Truncate::Start => crate::classify_input::byte_cap_end(text, max),
             // Beyond 16 bytes per token, the text is over-long anyway.
             Truncate::Reject if text.len() > max.saturating_mul(16) => {
-                return Err(too_long(text.len(), "bytes", max))
+                return Err(too_long(&self.id, format!("{} bytes", text.len()), max))
             }
             Truncate::Reject => text,
         };
@@ -96,6 +98,9 @@ impl StaticEmbedder {
         let all = encoding.get_ids();
         // START keeps the prompt prefix's tokens whole, then the text's end.
         let kept = encoding.get_offsets().iter().take_while(|(start, _)| *start < prefix.len()).count();
+        if limits.truncate == Truncate::Reject {
+            check_whole(&self.tokenizer, &self.id, &text, false, &encoding, max)?;
+        }
         let ids: Vec<u32> = match limits.truncate {
             _ if all.len() <= max => all.to_vec(),
             Truncate::End => all[..max].to_vec(),
@@ -105,12 +110,18 @@ impl StaticEmbedder {
                 )))
             }
             Truncate::Start => all[..kept].iter().chain(&all[all.len() - (max - kept)..]).copied().collect(),
-            Truncate::Reject => return Err(too_long(all.len(), "tokens", max)),
+            // `check_whole` refused it above.
+            Truncate::Reject => return Err(too_long(&self.id, format!("{} tokens", all.len()), max)),
         };
+        Ok(ids)
+    }
+
+    /// The mean of `ids`' rows, unit-normalized.
+    fn lookup(&self, ids: &[u32]) -> Vec<f32> {
         let vocab = self.table.len() / self.dims;
         let mut out = vec![0.0f32; self.dims];
         let mut count = 0usize;
-        for &id in &ids {
+        for &id in ids {
             let id = id as usize;
             if id >= vocab {
                 continue;
@@ -128,7 +139,7 @@ impl StaticEmbedder {
             }
         }
         normalize_in_place(&mut out);
-        Ok(out)
+        out
     }
 }
 
@@ -159,19 +170,11 @@ impl Embedder for StaticEmbedder {
             EmbedPurpose::Query => &self.prefix_query,
             EmbedPurpose::Document => &self.prefix_document,
         };
-        texts
-            .iter()
-            .map(|t| {
-                self.embed_one(prefix, t, limits)
-            })
-            .collect()
+        // Every input first, as the other backends do: one refused input
+        // refuses the request.
+        let ids = each_input(texts, |t| self.ids(prefix, t, limits))?;
+        Ok(ids.iter().map(|ids| self.lookup(ids)).collect())
     }
-}
-
-fn too_long(n: usize, unit: &str, max: usize) -> Error {
-    Error::InvalidRequest(format!(
-        "input of {n} {unit} exceeds the limit of {max} tokens, and truncate is NONE"
-    ))
 }
 
 #[cfg(test)]
@@ -288,6 +291,29 @@ mod tests {
         // max_tokens 0 is refused, not an empty (zero) vector.
         let zero = EmbedLimits { max_tokens: Some(0), ..Default::default() };
         assert!(matches!(e.embed_with(&["hello"], EmbedPurpose::Document, zero), Err(Error::InvalidRequest(_))));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn truncate_none_refuses_the_request_naming_the_input() {
+        let dir = std::env::temp_dir().join(format!("sk-static-none-{}", std::process::id()));
+        let mut e = StaticEmbedder::load(&fixture(&dir)).unwrap();
+        let none = EmbedLimits { truncate: Truncate::Reject, max_tokens: Some(2) };
+        let message = |r: Result<Vec<Vec<f32>>>| match r {
+            Err(Error::InvalidRequest(m)) => m,
+            other => panic!("not a 400: {other:?}"),
+        };
+        let m = message(e.embed_with(&["hello", "hello world hello"], EmbedPurpose::Document, none));
+        assert!(m.starts_with("input 1: 3 tokens, over model `test-static`'s limit of 2 tokens"), "{m}");
+        // A tokenizer that truncates on its own, at 2: END keeps its 2
+        // tokens, and NONE refuses the input it cut.
+        e.tokenizer
+            .with_truncation(Some(tokenizers::TruncationParams { max_length: 2, ..Default::default() }))
+            .unwrap();
+        assert!(e.embed(&["hello world hello"], EmbedPurpose::Document).is_ok());
+        let none = EmbedLimits { truncate: Truncate::Reject, max_tokens: None };
+        let m = message(e.embed_with(&["hello world hello"], EmbedPurpose::Document, none));
+        assert!(m.starts_with("input 0: 3 tokens, over model `test-static`'s limit of 2 tokens"), "{m}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
