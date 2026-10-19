@@ -104,13 +104,17 @@ the response to say so. A long document then embeds only its start. The
 limit is `max_seq_len` in the model's `/v1/models` entry, in tokens,
 counting special tokens and the model's prompt prefix (for a Core ML model,
 its largest bucket; its `buckets` are listed too). Send `truncate: "NONE"`
-to get a 400 instead. The message names the input's index in the batch,
-its token count, the model and the limit, and the whole request is
-refused, so split or shorten that input and send the batch again. A model
-whose own `tokenizer.json` truncates (LFM2.5-Embedding-350M's does, at 512
-tokens) is refused past that point too. In 0.13.0, `NONE` becomes the
-default; send `truncate: "END"` to keep truncating. `libsidekick.dylib`
-always truncates, and `sk_model_info` reports each model's `max_seq_len`.
+(or TEI's `truncate: false`) to get a 400 instead. The message names the
+input's index in the batch, its token count, the model and the limit, and
+the whole request is refused, so split or shorten that input and send the
+batch again. A text over 64 bytes per token of the limit is refused
+without being tokenized, and its message gives the size in bytes instead.
+A model whose own `tokenizer.json` truncates (LFM2.5-Embedding-350M's
+does, at 512 tokens, its `max_seq_len`) is refused past that point too; if
+such a limit were lower than `max_seq_len`, `/v1/models` wouldn't show it.
+In 0.13.0, `NONE` becomes the default; send `truncate: "END"` to keep
+truncating. `libsidekick.dylib` always truncates, and `sk_model_info`
+reports each model's `max_seq_len`.
 
 To make "installed but not running" disappear entirely, install the
 LaunchAgent from the README (`KeepAlive` keeps it warm); then path 2 only

@@ -175,11 +175,19 @@ An input longer than the model's limit is truncated by default: its vector
 embeds the start of the text, and nothing in the response says so. The
 limit is the model's `max_seq_len` in `/v1/models`, in tokens, counting
 special tokens and the model's prompt prefix. For a Core ML model it is
-the largest of its `buckets`, also listed there. Send `truncate: "NONE"`
-to get a 400 instead: it names the input's index in the batch, its token
-count, the model and the limit, and nothing in the request is embedded.
-`truncate` takes the values `/v2/embed` does: `END` (the default) keeps
-the start of the text, and `START` keeps its end.
+the largest of its `buckets`, also listed there. One exception: a model
+whose own `tokenizer.json` truncates at fewer tokens than `max_seq_len`
+stops there, and `/v1/models` doesn't show it. LFM2.5-Embedding-350M's
+truncates at 512, which is also its `max_seq_len`.
+
+Send `truncate: "NONE"` to get a 400 instead. It names the input's index
+in the batch, its token count, the model and the limit, and nothing in the
+request is embedded. A text longer than 64 bytes per token of the limit is
+refused without being tokenized, and the message gives its size in bytes.
+`truncate` takes `/v2/embed`'s values in any case: `END` (the default)
+keeps the start of the text, `START` keeps its end, and `NONE` refuses.
+Hugging Face TEI's boolean works too: `true` is `END`, `false` is `NONE`.
+Anything else is a 400.
 
 0.13.0 will make `NONE` the default: OpenAI's `/v1/embeddings` refuses
 over-length input, and so do `/v1/classify` and `/v1/rerank` here unless a
