@@ -31,6 +31,60 @@ def load(path):
     return tomllib.loads(path.read_text())
 
 
+# Top-level keys an onnx.toml may set for the ONNX build alone, replacing the
+# Core ML manifest's value. max_seq_len: the Core ML build's limit is its
+# largest bucket, a per-bucket program with its own copy of the weights,
+# while the ONNX build is one dynamic-shape graph that runs each input at
+# its own length, so the two limits are separate decisions.
+ONNX_OVERRIDES = frozenset({"max_seq_len"})
+
+
+def onnx_sidecar(text):
+    """An onnx.toml beside a committed Core ML manifest: settings for the
+    ONNX build only. Returns (overrides, tables): `overrides` maps each
+    top-level key (one of ONNX_OVERRIDES) to (its comment lines, its line),
+    and `tables` is the text from the first table on ([onnx]), appended to
+    the installed manifest as it is. The file's description, its leading
+    comment block, is dropped."""
+    lines = text.strip().splitlines()
+    while lines and lines[0].startswith("#"):
+        lines.pop(0)                   # the sidecar's own description
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    first_table = next((i for i, line in enumerate(lines) if line.strip().startswith("[")), len(lines))
+    top, tables = lines[:first_table], lines[first_table:]
+    values = tomllib.loads("\n".join(top))
+    unknown = sorted(set(values) - ONNX_OVERRIDES)
+    if unknown:
+        raise SystemExit(f"onnx.toml: top-level {', '.join(unknown)} can't be set for the ONNX build "
+                         f"(only {', '.join(sorted(ONNX_OVERRIDES))}); settings go in its [onnx] table")
+    overrides, comments = {}, []
+    for line in top:
+        s = line.strip()
+        if s.startswith("#"):
+            comments.append(line)
+        elif not s:
+            comments = []
+        else:
+            overrides[s.split("=", 1)[0].strip()] = (comments, line)
+            comments = []
+    return overrides, "\n".join(tables)
+
+
+def onnx_view(m, sidecar_text):
+    """The committed Core ML manifest `m` as the ONNX build installs it, for
+    the checks: no buckets, and the sidecar's overrides applied."""
+    view = {k: v for k, v in m.items() if k != "buckets"}
+    view.update(tomllib.loads("\n".join(line for _, line in onnx_sidecar(sidecar_text)[0].values())))
+    return view
+
+
+def onnx_sidecar_text(manifest_path):
+    """The onnx.toml beside a committed manifest, or "" without one."""
+    sidecar = Path(manifest_path).with_name("onnx.toml")
+    return sidecar.read_text() if sidecar.exists() else ""
+
+
 # A manifest's `compute_units` ("cpu_and_ne" when absent; docs/design/
 # classify.md, "Compute units") and the Core ML compute units it names.
 COMPUTE_UNITS = {"cpu_and_ne": "CPU_AND_NE", "cpu_and_gpu": "CPU_AND_GPU", "cpu_only": "CPU_ONLY", "all": "ALL"}

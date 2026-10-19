@@ -6,6 +6,11 @@ differs is the graph's shape contract:
 
 - DYNAMIC SHAPES. One model.onnx with symbolic batch and sequence axes, no
   buckets: ONNX Runtime pads a batch to its longest input.
+- ITS OWN LENGTH LIMIT. max_seq_len is the Core ML manifest's unless the
+  onnx.toml beside it sets one for the ONNX build (manifest.onnx_sidecar):
+  the Core ML limit is the largest bucket, a program with its own copy of
+  the weights, while this graph runs each input at its own length. The
+  gate texts are cut at the ONNX build's limit.
 - int64 INPUTS, input_ids and attention_mask, as ONNX exports conventionally
   take them, so a published export and sidekick's take the same feed.
 - TOKEN-LEVEL OUTPUT. `last_hidden_state` [batch, seq, hidden], and the
@@ -37,6 +42,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from . import manifest as _manifest
 from .core import GateFailure
 
 FP32_COS = 0.99999
@@ -233,7 +239,10 @@ def manifest_text(coreml_text, pooling, output, extra_inputs=(), onnx_extra=""):
     inputs beyond input_ids and attention_mask (token_type_ids,
     position_ids), named in [io] so the server feeds them. `onnx_extra` is
     the committed onnx.toml beside the Core ML manifest, if any: settings
-    for the ONNX build only (an [onnx] table), appended as they are."""
+    for the ONNX build only. Its top-level keys (max_seq_len) replace the
+    Core ML manifest's, each with the comment above it; its tables
+    ([onnx]) are appended as they are (manifest.onnx_sidecar)."""
+    overrides, tables = _manifest.onnx_sidecar(onnx_extra)
     out, section, header = [], None, True
     for line in coreml_text.splitlines():
         s = line.strip()
@@ -251,18 +260,20 @@ def manifest_text(coreml_text, pooling, output, extra_inputs=(), onnx_extra=""):
             line = f'pooling = "{pooling or "none"}"'
         elif section is None and key == "buckets":
             continue
+        elif section is None and key in overrides:
+            comments, line = overrides.pop(key)
+            out.extend(comments)
         elif section == "[io]" and key == "output":
             out.extend(f'{name} = "{name}"' for name in extra_inputs)
             line = f'output = "{output}"'
         out.append(line)
-    intro = ("# Exported for ONNX Runtime's CPU backend by the conversion library\n"
+    if overrides:
+        raise SystemExit(f"onnx.toml sets {', '.join(sorted(overrides))}, which the Core ML manifest doesn't")
+    intro =("# Exported for ONNX Runtime's CPU backend by the conversion library\n"
              "# (tools/sidekick_convert/onnx_export.py): one fp32 model.onnx with dynamic batch and\n"
              f"# sequence axes; {'the server pools its ' + output + ' (' + pooling + ')' if pooling else 'pooled in the graph'}.\n\n")
     text = intro + "\n".join(out) + "\n"
-    lines = onnx_extra.strip().splitlines()
-    while lines and (lines[0].startswith("#") or not lines[0].strip()):
-        lines.pop(0)                   # the sidecar's own description
-    return text + ("\n" + "\n".join(lines) + "\n" if lines else "")
+    return text + ("\n" + tables + "\n" if tables else "")
 
 
 def run(job, install_dir, report=print):
@@ -299,8 +310,7 @@ def run(job, install_dir, report=print):
     extra = [i for i in graph_inputs(install_dir / "model.onnx") if i not in ("input_ids", "attention_mask")]
     for source, name in job.install_files:
         if name == "manifest.toml":
-            sidecar = Path(source).with_name("onnx.toml")
-            onnx_extra = sidecar.read_text() if sidecar.exists() else ""
+            onnx_extra = _manifest.onnx_sidecar_text(source)
             (install_dir / name).write_text(manifest_text(Path(source).read_text(), pooling, output, extra, onnx_extra))
     (install_dir / "onnx_gates.json").write_text(json.dumps(result, indent=2) + "\n")
     report(f"installed model.onnx and manifest.toml -> {install_dir}")

@@ -17,7 +17,10 @@ and the load average, for a results generator to read.
 
 Usage:
     python tools/bench_memory.py <model-dir> --path onnx-cpu|cpu|gpu|ane --refs <refs-dir>
-        [--model-file F] [--lengths 16,64,256] [--json out.json]
+        [--corpus main|long] [--model-file F] [--lengths 16,64,256] [--json out.json]
+
+    --corpus long takes the token ids from the long-input reference
+    (reference-long.json), for lengths past 512.
 """
 
 import argparse
@@ -32,6 +35,8 @@ import tomllib
 from pathlib import Path
 
 PAGE = os.sysconf("SC_PAGE_SIZE")
+# --corpus: the parity reference (tools/parity_reference.py) to take token ids from.
+REFERENCE = {"main": "reference.json", "long": "reference-long.json"}
 
 
 class _RUsageInfoV4(ctypes.Structure):
@@ -93,7 +98,7 @@ def size_on_disk(paths):
 def child(args):
     import numpy as np
     manifest = tomllib.loads((args.model_dir / "manifest.toml").read_text())
-    ref = json.loads((args.refs / manifest["id"] / "reference.json").read_text())
+    ref = json.loads((args.refs / manifest["id"] / REFERENCE[args.corpus]).read_text())
     rows = [json.loads(c["ids"]) if isinstance(c["ids"], str) else c["ids"] for c in ref["cases"]]
     longest = max(rows, key=len)
     inputs = [longest[:n - 1] + longest[-1:] if len(longest) >= n else longest for n in args.lengths]
@@ -142,6 +147,9 @@ def main():
     p.add_argument("model_dir", type=Path)
     p.add_argument("--path", required=True, choices=("onnx-cpu", "cpu", "gpu", "ane"))
     p.add_argument("--refs", type=Path, required=True)
+    p.add_argument("--corpus", choices=sorted(REFERENCE), default="main",
+                   help="the reference whose longest case is cut to each length: main (reference.json) or "
+                        "long (reference-long.json, for lengths past 512)")
     p.add_argument("--model-file", default=None)
     p.add_argument("--lengths", default="16,64,256")
     p.add_argument("--json", type=Path, default=None)
@@ -153,6 +161,7 @@ def main():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from bench_onnx import machine
     cmd = [sys.executable, __file__, str(args.model_dir), "--path", args.path, "--refs", str(args.refs),
+           "--corpus", args.corpus,
            "--lengths", ",".join(map(str, args.lengths)), "--child"]
     if args.model_file:
         cmd += ["--model-file", args.model_file]

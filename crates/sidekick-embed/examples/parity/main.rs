@@ -25,6 +25,13 @@
 //!    accuracy (classify_grade.rs); and the worst cases side by side across
 //!    paths.
 //!
+//! An embedder whose max_seq_len reaches the long-input corpus
+//! (fixtures/parity/corpus_long.toml, 600 tokens and up) is also graded
+//! on it, from its own reference (`reference-long.*`, written by
+//! `tools/parity_reference.py --corpus long`), on the same paths, and
+//! reported as the model's `long` section; its gate failures are the
+//! model's. Without that reference the suite warns and goes on.
+//!
 //! An `onnx` model (D40) is graded on ONNX Runtime's CPU instead, as the
 //! `onnx-cpu` path: natively when the suite is built with `--features
 //! onnx` (and ORT_DYLIB_PATH names the runtime), and from results written

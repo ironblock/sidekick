@@ -11,7 +11,7 @@ mod classify;
 use crate::expect::{Expectations, Path3};
 use crate::grade::{check_external, fmt, grade, suggest_floor, CaseResult, Check, PathGrade, WorkerResult};
 use crate::metrics::cosine;
-use crate::reference::{corpus_sha256, sha256_hex, Reference};
+use crate::reference::{corpus_sha256, corpus_sha256_of, long_corpus_reaches, sha256_hex, Corpus, Reference};
 use serde::Serialize;
 use sidekick_core::manifest::{ModelRegistry, ResolvedClassifier, ResolvedModel};
 use sidekick_core::{EmbedPurpose, Embedder, EmbeddingBackendKind};
@@ -28,7 +28,9 @@ usage: parity [options]
   --models-dir DIR     a models directory to scan (repeatable; default: the
                        daemon's, ~/Library/Application Support/sidekick/models)
   --refs DIR           references as DIR/<model id>/reference.* (default:
-                       <model dir>/parity/)
+                       <model dir>/parity/), and reference-long.* for the
+                       long-input corpus, graded for a model whose
+                       max_seq_len reaches it
   --model ID           only this model (repeatable)
   --paths LIST         compute paths, comma-separated: cpu,gpu,ane (Core ML)
                        and onnx-cpu (default: all this build can run;
@@ -380,13 +382,18 @@ fn worker(args: &[String]) -> Result<(), String> {
     let [models_dir, id, refs, path, out, rest @ ..] = args else {
         return Err("bad worker arguments".into());
     };
-    // The optional rest: a case limit, and `--bucket-invariance=MODE`.
+    // The optional rest: a case limit, `--bucket-invariance=MODE`, and
+    // `--corpus=long` (an embedder's long-input reference).
     let mut limit: Option<usize> = None;
     let mut bucket_mode = BucketInvariance::Auto;
+    let mut corpus = Corpus::Main;
     for a in rest {
-        match a.strip_prefix("--bucket-invariance=") {
-            Some(m) => bucket_mode = BucketInvariance::parse(m).ok_or("bad bucket-invariance mode")?,
-            None => limit = Some(a.parse().map_err(|_| "bad limit")?),
+        if let Some(m) = a.strip_prefix("--bucket-invariance=") {
+            bucket_mode = BucketInvariance::parse(m).ok_or("bad bucket-invariance mode")?;
+        } else if let Some(c) = a.strip_prefix("--corpus=") {
+            corpus = Corpus::parse(c).ok_or("bad corpus")?;
+        } else {
+            limit = Some(a.parse().map_err(|_| "bad limit")?);
         }
     }
     let path = Path3::parse(path).ok_or("bad path")?;
@@ -399,7 +406,7 @@ fn worker(args: &[String]) -> Result<(), String> {
         return Err(format!("{} is a Core ML classifier ({}): {CORE_ML_BUILD}", model.manifest.id, bucket_mode.name()));
     }
     let model = load_model(Path::new(models_dir), id)?;
-    let reference = Reference::load(&reference_dir(&model, refs.as_deref()))?;
+    let reference = Reference::load_corpus(&reference_dir(&model, refs.as_deref()), corpus)?;
     if model.manifest.backend == EmbeddingBackendKind::Onnx {
         if path != Path3::OnnxCpu {
             return Err(format!("an onnx model runs on onnx-cpu, not {}", path.name()));
@@ -772,6 +779,31 @@ struct ModelReport {
     failures: Vec<String>,
     regressions: Vec<String>,
     warnings: Vec<String>,
+    /// The long-input corpus's grades, for a model whose max_seq_len
+    /// reaches it and that has its reference. Absent otherwise, so other
+    /// models' reports are unchanged by it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    long: Option<LongReport>,
+}
+
+/// The long-input corpus (fixtures/parity/corpus_long.toml), graded apart
+/// from the main corpus: its own reference, cases and per-path grades. Its
+/// gate failures are also the model's, prefixed `long corpus:`.
+#[derive(Serialize)]
+struct LongReport {
+    corpus: &'static str,
+    /// Each case, with the token count the reference pipeline fed it, in
+    /// reference order (each path's `per_case` follows it).
+    cases: Vec<LongCase>,
+    /// The corpus's cases past the model's max_seq_len, left out.
+    skipped: Vec<String>,
+    paths: Vec<PathGrade>,
+}
+
+#[derive(Serialize)]
+struct LongCase {
+    id: String,
+    tokens: usize,
 }
 
 #[derive(Serialize)]
@@ -925,7 +957,7 @@ fn check_plans(
     plans
 }
 
-/// Run a worker in its own process, with a timeout.
+/// Run a worker in its own process, with a timeout, on the main corpus.
 fn spawn_worker<T: serde::de::DeserializeOwned>(
     id: &str,
     models_dir: &Path,
@@ -934,11 +966,26 @@ fn spawn_worker<T: serde::de::DeserializeOwned>(
     scratch: &Path,
     o: &Options,
 ) -> Result<T, String> {
+    spawn_corpus_worker(id, models_dir, path, limit, Corpus::Main, scratch, o)
+}
+
+/// Run a worker in its own process, with a timeout, on `corpus`'s
+/// reference.
+fn spawn_corpus_worker<T: serde::de::DeserializeOwned>(
+    id: &str,
+    models_dir: &Path,
+    path: Path3,
+    limit: Option<usize>,
+    corpus: Corpus,
+    scratch: &Path,
+    o: &Options,
+) -> Result<T, String> {
     let (refs, timeout) = (o.refs.as_deref(), o.timeout);
     let tag = format!(
-        "{id}-{}-{}",
+        "{id}-{}-{}{}",
         path.name(),
-        limit.map_or("full".into(), |l| l.to_string())
+        limit.map_or("full".into(), |l| l.to_string()),
+        if corpus == Corpus::Main { String::new() } else { format!("-{}", corpus.name()) }
     );
     let out = scratch.join(format!("{tag}.json"));
     let log = scratch.join(format!("{tag}.log"));
@@ -954,6 +1001,9 @@ fn spawn_worker<T: serde::de::DeserializeOwned>(
         args.push(l.to_string().into());
     }
     args.push(format!("--bucket-invariance={}", o.bucket_invariance.name()).into());
+    if corpus != Corpus::Main {
+        args.push(format!("--corpus={}", corpus.name()).into());
+    }
     run_child(&args, &out, &log, timeout)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
@@ -1090,6 +1140,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             failures: Vec::new(),
             regressions: Vec::new(),
             warnings: Vec::new(),
+            long: None,
         };
         if let Some(why) = reference.stale(&model.manifest, &corpus, &tok_sha) {
             println!("  FAIL: {why}");
@@ -1274,7 +1325,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             }
         }
 
-        print_model(&reference, &grades, &mr);
+        print_model(&reference, &grades, mr.determinism.as_ref());
         for g in &grades {
             mr.failures
                 .extend(g.failures.iter().map(|f| format!("{}: {f}", g.path)));
@@ -1286,6 +1337,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
                 }
             }
         }
+        mr.long = grade_long(model, models_dir, &worker_paths, &tok_sha, &expectations, &o, &scratch, &mut mr);
         for f in &mr.failures {
             println!("  FAIL: {f}");
         }
@@ -1343,12 +1395,116 @@ fn parent(args: &[String]) -> Result<bool, String> {
     Ok(ok)
 }
 
-fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
+/// The long-input corpus for one model, on the paths its main corpus ran
+/// in workers: `None` (and nothing printed) when the model's max_seq_len
+/// doesn't reach the corpus. A model it reaches without a long reference
+/// gets a warning, not a failure: the corpus is graded where it was
+/// generated. Its gate failures join the model's, prefixed `long corpus:`.
+/// No floors apply to it yet.
+#[allow(clippy::too_many_arguments)]
+fn grade_long(
+    model: &ResolvedModel,
+    models_dir: &Path,
+    paths: &[Path3],
+    tok_sha: &str,
+    expectations: &Expectations,
+    o: &Options,
+    scratch: &Path,
+    mr: &mut ModelReport,
+) -> Option<LongReport> {
+    let corpus = Corpus::Long;
+    match long_corpus_reaches(model.manifest.max_seq_len) {
+        Ok(true) => {}
+        Ok(false) => return None,
+        Err(e) => {
+            mr.failures.push(format!("long corpus: {e}"));
+            return None;
+        }
+    }
+    if paths.is_empty() {
+        return None;
+    }
+    let dir = reference_dir(model, o.refs.as_deref());
+    let file = corpus.file();
+    if !dir.join(format!("{}.json", corpus.stem())).exists() {
+        let why = format!(
+            "long corpus: max_seq_len {} reaches fixtures/parity/{file}, but there's no {}.json; \
+             generate one with tools/parity_reference.py --corpus {}",
+            model.manifest.max_seq_len,
+            corpus.stem(),
+            corpus.name()
+        );
+        println!("  {why}");
+        mr.warnings.push(why);
+        return None;
+    }
+    let fail = |mr: &mut ModelReport, why: String| {
+        println!("  long corpus: FAIL: {why}");
+        mr.failures.push(format!("long corpus: {why}"));
+        None
+    };
+    let reference = match Reference::load_corpus(&dir, corpus) {
+        Ok(r) => r,
+        Err(e) => return fail(mr, format!("unusable reference: {e}")),
+    };
+    let sha = match corpus_sha256_of(corpus) {
+        Ok(s) => s,
+        Err(e) => return fail(mr, e),
+    };
+    if let Some(why) = reference.stale(&model.manifest, &sha, tok_sha) {
+        return fail(mr, why);
+    }
+    let tokens: Vec<usize> = reference.cases.iter().map(|c| c.ids.len()).collect();
+    println!(
+        "\n  long corpus (fixtures/parity/{file}): {} cases of {}-{} tokens{}",
+        reference.cases.len(),
+        tokens.iter().min().unwrap_or(&0),
+        tokens.iter().max().unwrap_or(&0),
+        if reference.skipped.is_empty() {
+            String::new()
+        } else {
+            format!("; past max_seq_len, skipped: {}", reference.skipped.join(", "))
+        }
+    );
+    let id = &model.manifest.id;
+    let mut grades = Vec::new();
+    for &path in paths {
+        match spawn_corpus_worker::<WorkerResult>(id, models_dir, path, None, corpus, scratch, o) {
+            Ok(r) => grades.push(grade(
+                &reference,
+                &r,
+                path,
+                &expectations.gates,
+                &expectations.grades,
+                None,
+                &model.manifest.matryoshka,
+            )),
+            Err(e) => {
+                println!("  {}: CRASHED: {e}", path.name());
+                mr.failures.push(format!("long corpus: {}: worker failed: {e}", path.name()));
+            }
+        }
+    }
+    print_model(&reference, &grades, None);
+    for g in &grades {
+        mr.failures.extend(g.failures.iter().map(|f| format!("long corpus: {}: {f}", g.path)));
+    }
+    Some(LongReport {
+        corpus: file,
+        cases: reference.cases.iter().map(|c| LongCase { id: c.id.clone(), tokens: c.ids.len() }).collect(),
+        skipped: reference.skipped.clone(),
+        paths: grades,
+    })
+}
+
+fn print_model(reference: &Reference, grades: &[PathGrade], determinism: Option<&Check>) {
     if grades.is_empty() {
         return;
     }
     // Wide enough for every path's name (onnx-cpu:external is the longest).
     let w = grades.iter().map(|g| g.path.len()).max().unwrap_or(4).max(4);
+    // A corpus without stress cases (the long one) has no stress column.
+    let stressed = reference.cases.iter().any(|c| c.tags.iter().any(|t| t == crate::grade::STRESS_TAG));
     println!(
         "  {:<w$} {:<5} {:>10} {:<24} {:>10} {:>9} {:>9} {:>8} {:>6} {:>10} {:>10} {:>8}",
         "path",
@@ -1371,7 +1527,7 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
             g.letter,
             fmt(g.worst),
             format!("({})", g.worst_case),
-            fmt(g.stress),
+            if stressed { fmt(g.stress) } else { "-".into() },
             g.mean,
             g.drift.map_or("n/a".into(), |d| format!("{d:.5}")),
             g.drift_bias,
@@ -1389,7 +1545,7 @@ fn print_model(reference: &Reference, grades: &[PathGrade], mr: &ModelReport) {
             g.median_ms,
         );
     }
-    if let Some(d) = &mr.determinism {
+    if let Some(d) = determinism {
         println!(
             "  ANE across two processes: {} over {} cases",
             fmt(d.min),

@@ -16,14 +16,23 @@ buckets, then embeds every case with the model as published:
 It writes reference.json (materialized texts, purposes, tags, the token ids
 the reference pipeline used, metadata) and reference.safetensors (one
 [cases, dims] float32 tensor per oracle) to <model-dir>/parity, or to
-<out>/<model id> with --out. Then run the suite:
+<out>/<model id> with --out.
+
+`--corpus long` does the same for fixtures/parity/corpus_long.toml, the
+inputs past 512 tokens, as reference-long.json and reference-long.safetensors
+beside the first pair: only its cases that fit the model's max_seq_len, and
+it refuses a model whose max_seq_len doesn't reach the shortest one. The
+model directory may hold an onnx build (no buckets, D40): corpus.toml's
+bucket-relative lengths then come from its committed Core ML manifest, so
+both builds are graded on the same texts. Then run the suite:
 
     cargo run --release -p sidekick-embed --features coreml --example parity -- \\
         [--refs <out>]
 
 Usage:
     python tools/parity_reference.py <model-dir> --source <hf-id-or-dir> \\
-        [--onnx <hf-id-or-dir>:<file.onnx>] ... [--trust-remote-code] [--text-only] [--out DIR]
+        [--onnx <hf-id-or-dir>:<file.onnx>] ... [--trust-remote-code] [--text-only] [--out DIR] \\
+        [--corpus main|long]
 
     <model-dir>   an installed sidekick model directory (manifest.toml,
                   tokenizer.json, artifacts)
@@ -51,6 +60,12 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
 CORPUS = REPO / "fixtures" / "parity" / "corpus.toml"
+# --corpus: the corpus file, and the stem of the reference files written
+# for it. The parity suite reads the same pairs (reference.rs, Corpus).
+CORPORA = {
+    "main": (CORPUS, "reference"),
+    "long": (REPO / "fixtures" / "parity" / "corpus_long.toml", "reference-long"),
+}
 FORMAT = 1
 
 
@@ -86,16 +101,22 @@ def source_identity(source):
     return {"id": "local checkpoint", "revision": None}
 
 
-def target_length(spec, buckets):
+def target_length(spec, buckets, max_seq_len=None):
+    """A case's total token count: an integer; { bucket = i, offset = n }
+    (corpus.toml); or { beyond_max = n }, max_seq_len + n (corpus_long.toml)."""
     if isinstance(spec, int):
         return spec
+    if "beyond_max" in spec:
+        return max_seq_len + spec["beyond_max"]
     return buckets[spec["bucket"]] + spec.get("offset", 0)
 
 
-def materialize(filler_words, prefix, target, count):
+def materialize(filler_words, prefix, target, count, start=0):
     """Filler words whose tokenized length, with prefix and special tokens,
-    is exactly `target`. Words are taken in order; when the next one would
-    overshoot, a one-token word goes in its place and it's retried."""
+    is exactly `target`. Words are taken in order from word `start`,
+    wrapping around; when the next one would overshoot, a one-token word
+    goes in its place and it's retried."""
+    filler_words = filler_words[start:] + filler_words[:start]
     words, n = [], count(prefix)
     if n > target:
         sys.exit(f"the prefix alone is {n} tokens, more than the {target}-token target")
@@ -112,6 +133,37 @@ def materialize(filler_words, prefix, target, count):
         else:
             sys.exit(f"can't reach exactly {target} tokens (stuck at {n})")
     return " ".join(words)
+
+
+def model_buckets(manifest, required=True):
+    """The buckets that corpus.toml's bucket-relative lengths refer to. An
+    onnx build has none (D40); it is graded on the same texts as its Core
+    ML build, so they are the committed Core ML manifest's. Without one,
+    an error if `required`, else none."""
+    if "buckets" in manifest:
+        return manifest["buckets"]
+    committed = REPO / "examples" / "manifests" / manifest["id"] / "manifest.toml"
+    if committed.exists():
+        return tomllib.loads(committed.read_text())["buckets"]
+    if not required:
+        return []
+    sys.exit(f"{manifest['id']}: the manifest has no buckets, and there's no Core ML manifest at {committed} "
+             "to take them from")
+
+
+def select_cases(corpus, max_seq_len, which):
+    """The corpus's cases for a model, and the ids left out. In the long
+    corpus a case longer than the model's max_seq_len is left out (one
+    `beyond_max` past it is kept: it tests truncation); a model whose
+    max_seq_len doesn't reach the shortest case has no long reference."""
+    if which != "long":
+        return corpus["case"], []
+    fits = lambda c: not isinstance(c["length"], int) or c["length"] <= max_seq_len  # noqa: E731
+    kept = [c for c in corpus["case"] if fits(c)]
+    if not any(isinstance(c["length"], int) for c in kept):
+        shortest = min(c["length"] for c in corpus["case"] if isinstance(c["length"], int))
+        sys.exit(f"max_seq_len {max_seq_len} doesn't reach the long corpus (its shortest case is {shortest} tokens)")
+    return kept, [c["id"] for c in corpus["case"] if not fits(c)]
 
 
 def st_pooling(model):
@@ -192,6 +244,9 @@ def main():
     ap.add_argument("--text-only", action="store_true",
                     help="load a multimodal checkpoint's text tower alone (vision and audio configs dropped)")
     ap.add_argument("--out", type=Path)
+    ap.add_argument("--corpus", choices=sorted(CORPORA), default="main",
+                    help="main: fixtures/parity/corpus.toml (reference.*); long: corpus_long.toml, the inputs "
+                         "past 512 tokens (reference-long.*)")
     args = ap.parse_args()
 
     import torch
@@ -199,10 +254,14 @@ def main():
     from sentence_transformers import SentenceTransformer
 
     manifest = tomllib.loads((args.model_dir / "manifest.toml").read_text())
-    corpus_bytes = CORPUS.read_bytes()
+    corpus_path, stem = CORPORA[args.corpus]
+    corpus_bytes = corpus_path.read_bytes()
     corpus = tomllib.loads(corpus_bytes.decode())
     prefixes = manifest.get("prefixes", {})
-    buckets = manifest["buckets"]
+    # the long corpus's lengths are absolute, or relative to max_seq_len:
+    # it needs no buckets
+    buckets = model_buckets(manifest, required=args.corpus == "main")
+    selected, skipped = select_cases(corpus, manifest["max_seq_len"], args.corpus)
 
     model = SentenceTransformer(
         args.source, device="cpu", trust_remote_code=args.trust_remote_code,
@@ -212,7 +271,7 @@ def main():
     model.max_seq_length = manifest["max_seq_len"]
     mode, has_dense = st_pooling(model)
     print(f"{manifest['id']}: pooling {mode}{' + dense' if has_dense else ''}, "
-          f"max_seq_len {manifest['max_seq_len']}, buckets {buckets}")
+          f"max_seq_len {manifest['max_seq_len']}, buckets {buckets}, corpus {corpus_path.name}")
 
     # The reference uses the prompts the model publishes, so a manifest
     # prefix that disagrees with them fails the suite's token-id check.
@@ -241,12 +300,12 @@ def main():
     filler = corpus["filler"]["text"].split()
     cases, vectors = [], []
     with torch.no_grad():
-        for case in corpus["case"]:
+        for case in selected:
             purpose = case.get("purpose", "document")
             prefix = prompts[purpose]
             if "length" in case:
-                target = target_length(case["length"], buckets)
-                text = materialize(filler, prefix, target, count)
+                target = target_length(case["length"], buckets, manifest["max_seq_len"])
+                text = materialize(filler, prefix, target, count, case.get("start", 0))
             else:
                 text = case["text"]
             # Exactly what SentenceTransformer.encode feeds the model:
@@ -300,9 +359,13 @@ def main():
                      ("torch", "transformers", "sentence-transformers", "onnxruntime")},
         "cases": cases,
     }
-    (out_dir / "reference.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False))
-    save_file(tensors, str(out_dir / "reference.safetensors"))
-    print(f"wrote {len(cases)} cases x {dims} dims, oracles {list(tensors)}, to {out_dir}")
+    if args.corpus != "main":
+        # which corpus, and its cases past this model's max_seq_len
+        meta.update(corpus=corpus_path.name, skipped=skipped)
+    (out_dir / f"{stem}.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False))
+    save_file(tensors, str(out_dir / f"{stem}.safetensors"))
+    print(f"wrote {len(cases)} cases x {dims} dims, oracles {list(tensors)}, to {out_dir}/{stem}.*"
+          + (f"; skipped (past max_seq_len): {', '.join(skipped)}" if skipped else ""))
 
 
 if __name__ == "__main__":

@@ -16,11 +16,12 @@ from .wrapper import compose
 
 
 def evaluation(backbone, head, tok, texts, max_len, pairs=None, truncate=False):
-    """Cases for gate texts (or (a, b) text pairs). A text longer than the
-    largest bucket is an error, since it would silently gate nothing, unless
-    `truncate`: then it is cut as the server cuts it, keeping the first
-    max_len - 1 tokens and the final one (the EOS that last-token pooling
-    reads, docs/DECISIONS.md D20), and its reference is computed on that."""
+    """Cases for gate texts (or (a, b) text pairs). A text longer than
+    `max_len` (the largest bucket, or an ONNX build's max_seq_len) is an
+    error, since it would silently gate nothing, unless `truncate`: then it
+    is cut as the server cuts it, keeping the first max_len - 1 tokens and
+    the final one (the EOS that last-token pooling reads, docs/DECISIONS.md
+    D20), and its reference is computed on that."""
     cases = []
     for i, item in enumerate(pairs if pairs is not None else texts):
         if pairs is not None:
@@ -31,7 +32,7 @@ def evaluation(backbone, head, tok, texts, max_len, pairs=None, truncate=False):
         if len(ids) > max_len and truncate and types is None:
             ids = ids[:max_len - 1] + ids[-1:]
         if len(ids) > max_len:
-            raise SystemExit(f"gate input {i} is {len(ids)} tokens, longer than the largest bucket {max_len}")
+            raise SystemExit(f"gate input {i} is {len(ids)} tokens, longer than the limit {max_len}")
         ref = head.reference(backbone.reference(ids, types))
         cases.append(Case(ids=ids, ref=ref, extra=extra, label=str(i)))
     return Evaluation(cases)
@@ -51,14 +52,21 @@ def embedder(*, model_id, src, buckets, backbone, head, tok, texts, calibration=
     `rewrites` (functions of the backbone) run after the fp32 references are
     computed from the unmodified checkpoint. For `format="onnx"` they don't
     run: they are the ANE's precision rewrites, exact in fp32, and only add
-    operations on the CPU."""
+    operations on the CPU. An ONNX job checks the manifest as the ONNX build
+    installs it (no buckets, onnx.toml's max_seq_len) and cuts its gate
+    texts at that max_seq_len rather than at the largest bucket."""
     path = _manifest.embedder_path(model_id)
     m = _manifest.load(path)
     head.bind(backbone)
-    _manifest.check_embedder(m, src=src, buckets=buckets, backbone=backbone, head=head,
+    if format == "onnx":
+        m = _manifest.onnx_view(m, _manifest.onnx_sidecar_text(path))
+        checked, max_len = [], m["max_seq_len"]
+    else:
+        checked, max_len = buckets, max(buckets)
+    _manifest.check_embedder(m, src=src, buckets=checked, backbone=backbone, head=head,
                              strict_max_seq_len=strict_max_seq_len)
     ports = text_ports(token_type_ids=getattr(backbone, "token_types", None) == "input")
-    cases = evaluation(backbone, head, tok, texts, max(buckets), truncate=truncate)
+    cases = evaluation(backbone, head, tok, texts, max_len, truncate=truncate)
     if format != "onnx":
         _apply(backbone, rewrites)
     make_wrapper, example = compose(backbone, head, ports)

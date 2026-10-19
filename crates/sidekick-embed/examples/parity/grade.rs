@@ -445,7 +445,9 @@ mod tests {
             oracles: vec!["torch".into()],
             versions: BTreeMap::new(),
             cases,
+            skipped: Vec::new(),
             vectors: BTreeMap::from([("torch".to_string(), vectors)]),
+            corpus: Default::default(),
         }
     }
 
