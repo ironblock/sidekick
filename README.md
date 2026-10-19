@@ -20,7 +20,8 @@ POST /v1/classify           Core ML classifiers, on macOS (vLLM's /classify cont
 POST /v1/rerank, /rerank    Core ML cross-encoder rerankers, on macOS (vLLM's / Jina's shape)
 POST /v2/rerank             the same, in Cohere's v2 shape
 POST /v2/embed              the embedders, in Cohere's v2 embed shape
-GET  /v1/models             what this machine can serve, and each model's backend
+GET  /v1/models             what this machine can serve: each model's backend and
+                            longest input (max_seq_len)
 GET  /health                availability per tier, and why when unavailable
 ```
 
@@ -162,6 +163,28 @@ for constrained output that means the JSON may be missing properties.
 
 `stop` (one string or up to four) is supported, except together with
 `json_schema`.
+
+### Embeddings
+
+`POST /v1/embeddings` is OpenAI's embeddings route: `input` (one string or
+up to 256), `dimensions` for Matryoshka models, and `encoding_format:
+"base64"`. `input_type: "query"` applies a model's query prompt instead of
+its document prompt.
+
+An input longer than the model's limit is truncated by default: its vector
+embeds the start of the text, and nothing in the response says so. The
+limit is the model's `max_seq_len` in `/v1/models`, in tokens, counting
+special tokens and the model's prompt prefix. For a Core ML model it is
+the largest of its `buckets`, also listed there. Send `truncate: "NONE"`
+to get a 400 instead: it names the input's index in the batch, its token
+count, the model and the limit, and nothing in the request is embedded.
+`truncate` takes the values `/v2/embed` does: `END` (the default) keeps
+the start of the text, and `START` keeps its end.
+
+0.13.0 will make `NONE` the default: OpenAI's `/v1/embeddings` refuses
+over-length input, and so do `/v1/classify` and `/v1/rerank` here unless a
+request asks them to truncate. To keep truncating after that, send
+`truncate: "END"`.
 
 ### Classification
 
