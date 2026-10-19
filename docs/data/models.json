@@ -1,6 +1,6 @@
 {
  "sidekick": "0.12.0",
- "as_of": "2026-10-16",
+ "as_of": "2026-10-19",
  "grades": {
   "cosine": {
    "A": 0.9999,
@@ -5131,9 +5131,9 @@
    "chip": "Apple M1 Max",
    "os": "macOS 27.0",
    "runtime": "ONNX Runtime 1.28.3",
-   "sidekick": "0.8.0 pre-release (commit 571c7d3)",
-   "threads": 4,
-   "date": "2026-10-10",
+   "sidekick": "0.12.0+ with the long-input corpus (commit dcb699c)",
+   "threads": 8,
+   "date": "2026-10-19",
    "served": true,
    "grade": "A",
    "error_kind": "1-cos",
@@ -5143,16 +5143,16 @@
    "gate_failed": false,
    "worst_case": "delim-flood",
    "stress": 1.04e-11,
-   "mean": 6.84e-12,
+   "mean": 6.78e-12,
    "drift": 2.31e-06,
    "bias": null,
    "rank_flips": 0,
    "matryoshka": {
     "512": 1.63e-11,
-    "256": 1.66e-11,
+    "256": 1.67e-11,
     "128": 1.63e-11
    },
-   "ms": 84.6,
+   "ms": 78.5,
    "ms_source": "grading: median per input over the corpus",
    "ms_idle": false,
    "ms_tokens": null,
@@ -5332,8 +5332,8 @@
    "disk_measured": "the ONNX graph and its external data",
    "machine_mb": null,
    "machine_measured": null,
-   "note": null,
-   "source": "native-arm64-qwen3-embedding-0.6b.json, onnx-cpu-qwen3-embedding-0.6b.json, onnx-cpu-qwen3-embedding-0.6b.r2.json, onnx-cpu-qwen3-embedding-0.6b.r3.json"
+   "note": "Long inputs (6 cases of 600–4,096 tokens, fixtures/parity/corpus_long.toml): A, worst cosine 1 − 1e-11",
+   "source": "native-arm64-qwen3-embedding-0.6b-4096.json, onnx-cpu-qwen3-embedding-0.6b.json, onnx-cpu-qwen3-embedding-0.6b.r2.json, onnx-cpu-qwen3-embedding-0.6b.r3.json"
   },
   {
    "model": "qwen3-embedding-0.6b",

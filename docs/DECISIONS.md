@@ -2712,6 +2712,59 @@ says which model backends it serves: `sidekickd --version` ends with
 always there; `coreml` needs the `coreml` feature on macOS, and `onnx`
 the `onnx` feature.
 
+**Amendment (October 2026): an ONNX build's own length limit, and a
+long-input corpus.** Qwen3-Embedding-0.6B takes 32k tokens, but both of
+its builds stopped at 512. That was the converter's default bucket list,
+which the ONNX export inherited as its `max_seq_len`; nobody had chosen it
+for the ONNX build, and no gate tested past it.
+- **Its own setting.** An `onnx.toml` beside the committed Core ML
+  manifest may set a top-level `max_seq_len` for the ONNX build. The export
+  checks it against the checkpoint as it checks the Core ML one (at most
+  the position embeddings, less any offset), cuts its gate texts at it,
+  and writes it into the installed manifest with the comment above it.
+  No other top-level key is accepted. The Core ML bucket list doesn't
+  change: a bucket is a program with its own copy of the weights (about
+  1.1 GiB for this model in fp16), and attention at 4,096 tokens would
+  hold about 0.5 GiB of fp16 scores per layer. Core ML buckets past 512
+  stay out of scope until there's demand.
+- **Qwen3-Embedding-0.6B's ONNX build takes 4,096.** Its graph's
+  sequence axis is dynamic and each input runs alone, unpadded, so a
+  short input costs what it did at 512; only a long one pays.
+- **A long-input corpus,** `fixtures/parity/corpus_long.toml`: about 600,
+  1,500 (a document and a query), 2,400 and 4,096 tokens of ordinary text
+  in varied registers, and one input 188 tokens past `max_seq_len`, which
+  truncation must cut keeping its final token. It has its own hash and its
+  own references (`reference-long.*`, from `tools/parity_reference.py
+  --corpus long`), so adding it changed neither `corpus.toml`'s hash nor
+  any model's existing references. A reference holds only the cases that
+  fit the model's `max_seq_len`. The parity suite grades it for a model
+  whose `max_seq_len` reaches its shortest case, on the same paths as the
+  main corpus, and reports it as the model's `long` section, absent for
+  every other model, so their reports are unchanged. Its gate failures are
+  the model's; it has no floors yet. `tools/models_table.py` turns it into
+  a note on the model's row, whose grade stays the main corpus's.
+- **An ONNX build with a longer limit needs its own main-corpus
+  reference.** The suite checks that the reference's `max_seq_len` equals
+  the build's, and at 4,096 corpus.toml's over-length cases (700 tokens)
+  are no longer truncated. `tools/parity_reference.py` now reads an onnx
+  install directly, taking corpus.toml's bucket-relative lengths from the
+  committed Core ML manifest, so both builds are graded on the same texts.
+
+Measured on an M1 Max (ONNX Runtime 1.28.3, 8 threads, the parity suite's
+native worker), the 4,096-token build grades A on both corpora: worst
+1 − cos 1.7e-11 on corpus.toml, unchanged from the 512-token build, and
+7.6e-12 at 600 tokens to 1.2e-11 at 4,096 on the long corpus, the
+truncated input included, with token ids equal to the reference
+pipeline's. It is slow and memory-hungry at length, because the export's
+attention is a MatMul, a Softmax and a MatMul per layer, which
+materializes the fp32 scores: one input took a median 6.8–7.1 s at 2,400
+tokens and 15–17 s at 4,096 (two runs, `tools/bench_onnx.py`, Python's
+onnxruntime 1.27 at 8 threads, on a machine running other work), against 0.87–0.96 s at 512.
+The process's peak footprint rose to 2.6 GB above its pre-load footprint
+at 2,400 tokens and 4.1 GB at 4,096, against 1.7 GB loaded
+(`tools/bench_memory.py`, three runs each, identical to within 2 MB). A fused attention kernel would cut both;
+that is a follow-up.
+
 ## D41 — The nli format: NLI cross-encoders as zero-shot classifiers
 A natural-language-inference cross-encoder reads a (premise, hypothesis)
 pair and says whether the premise entails, contradicts or is neutral

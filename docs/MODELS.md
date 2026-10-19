@@ -266,6 +266,18 @@ inputs are each tagged with the failure they exist to catch:
 - digits, URLs and code;
 - four scripts.
 
+A second corpus,
+[fixtures/parity/corpus_long.toml](../fixtures/parity/corpus_long.toml),
+holds inputs past 512 tokens: about 600, 1,500 (a document and a query),
+2,400 and 4,096 tokens of ordinary prose in varied registers, and one
+input 188 tokens past the model's `max_seq_len`, which truncation must cut
+keeping its final token. A model whose `max_seq_len` reaches its shortest
+case is graded on it from a reference of its own, with the cases that fit,
+and the report gives it a section of its own. It is separate so that adding
+it changed no other model's references. So far it grades
+Qwen3-Embedding-0.6B's ONNX build (4,096 tokens; see
+[ONNX Runtime on the CPU](#onnx-runtime-on-the-cpu-onnx-cpu)).
+
 It runs them through sidekick's product path: the same prefixes,
 tokenizer, truncation, bucketing, padding and pooling the daemon uses.
 Each run happens on Core ML's `.cpuOnly`, `.cpuAndGPU` and
@@ -420,6 +432,9 @@ measure the ecosystem, not sidekick:
 python tools/parity_reference.py "<data dir>/models/gte-modernbert-base" \
     --source Alibaba-NLP/gte-modernbert-base \
     --onnx Alibaba-NLP/gte-modernbert-base:onnx/model_int8.onnx
+# A model whose max_seq_len passes 512: the long-input reference too.
+python tools/parity_reference.py "<data dir>/models/qwen3-embedding-0.6b" \
+    --source Qwen/Qwen3-Embedding-0.6B --corpus long
 # The suite on macOS: every model that has a reference, Core ML paths
 # (about 10 minutes for five), plus onnx-cpu with the onnx feature.
 cargo run --release -p sidekick-embed --features coreml,onnx --example parity
@@ -527,6 +542,18 @@ column. The Core ML columns are the Apple paths from the table above.
   fail the batch and pad gates, because an input's vector depends on what it
   is batched with. The same holds on x86-64 (0.404 on the Xeon). The backend
   runs any quantized graph one input at a time.
+- **Qwen3-Embedding-0.6B's ONNX build takes 4,096 tokens** (its Core ML
+  build stops at 512: each bucket is a program with its own 1.1 GiB of
+  weights). On the M1 Max it grades A on the long-input corpus
+  (`fixtures/parity/corpus_long.toml`), every case at 1 − cosine 1.2e-11
+  or better: 7.6e-12 at 600 tokens, 9.2e-12 at 1,500 (1.1e-11 for the
+  query), 1.1e-11 at 2,400, 1.2e-11 at 4,096, and 1.1e-11 for a
+  4,284-token input truncated to 4,096, with token ids equal to the
+  reference pipeline's. Its M1 Max row above is the 4,096-token build on
+  the main corpus, whose 700-token over-length cases it no longer
+  truncates; the other chips' rows, and the fp16-weight and int8 rows,
+  were graded on the 512-token build (the same graph). See Latency and
+  Memory for its cost at length.
 
 Published ONNX exports, graded the same way: bge-small-en-v1.5's and
 gte-modernbert-base's fp32 exports match their checkpoints exactly
@@ -619,6 +646,13 @@ length in the smallest bucket that fits it, padded. ms per input:
 - Batching helps little on the CPU: a batch of 8 costs 0.9–1.0× per input
   at 256 tokens and 0.6–0.8× at 16.
 - x86-64 latency is from the thread table only.
+- **Long inputs (Qwen3-Embedding-0.6B, max_seq_len 4,096).** Same method,
+  8 threads, 10 passes, two runs on a machine running other work: a median
+  0.87–0.96 s per input at 512 tokens, 6.8–7.1 s at 2,400 and 15–17 s at
+  4,096. Past a few hundred tokens time grows faster than length: the
+  export's attention computes the full matrix of scores, so it is a
+  long-input option for indexing in the background, not for interactive
+  requests.
 
 ### Memory
 
@@ -656,6 +690,12 @@ range.
 - fp16 weights halve the file, not the memory: ONNX Runtime upcasts them
   at load, so Qwen3-Embedding's fp16-weight build holds more (+2.7 GB) than
   its fp32 one.
+- The table's footprints are after inputs of up to 256 tokens. Memory
+  grows with the input actually sent, since each input runs alone and
+  unpadded: Qwen3-Embedding-0.6B's peak footprint is +2,633 MB above its
+  pre-load footprint after one 2,400-token input and +4,089 MB after one of
+  4,096, against +1,704 MB loaded (three runs each, within 2 MB). Its
+  attention holds each layer's fp32 scores, 1 GiB at 4,096 tokens.
 
 ### Recommendations
 
@@ -731,7 +771,10 @@ range.
   fast cores (Threadripper 3970X: 277 ms at 16 threads against 335 at 8).
 - **Qwen3-Embedding-0.6B on onnx-cpu:** serve fp32 (or fp16 weights to
   halve the disk). Don't use int8 on ONNX Runtime. On Apple silicon its
-  chunked Core ML build (D37) serves on the ANE instead.
+  chunked Core ML build (D37) serves on the ANE instead, up to 512 tokens.
+  The ONNX build takes up to 4,096 (graded A there), at seconds per input
+  and a peak footprint of 4.1 GB at 4,096 tokens (1.7 GB loaded); `max_tokens` on
+  `/v2/embed` caps a request's inputs where that matters.
 
 ## Classifiers (`/v1/classify`)
 

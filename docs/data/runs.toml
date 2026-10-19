@@ -164,14 +164,19 @@ date = "2026-10-10"
 idle = false
 sidekick = "0.8.0 pre-release (commit 571c7d3)"
 threads = 4
-[runs."native-arm64-qwen3-embedding-0.6b.json"]
+# Qwen3-Embedding-0.6B's ONNX build at max_seq_len 4,096, graded on the
+# main corpus and the long-input corpus (fixtures/parity/corpus_long.toml,
+# the report's `long` section). It replaces the 512-token build's report,
+# native-arm64-qwen3-embedding-0.6b.json (same graph; A at 1 - 1.7e-11),
+# whose over-length cases were truncated at 512.
+[runs."native-arm64-qwen3-embedding-0.6b-4096.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp32"
-date = "2026-10-10"
+date = "2026-10-19"
 idle = false
-sidekick = "0.8.0 pre-release (commit 571c7d3)"
-threads = 4
+sidekick = "0.12.0+ with the long-input corpus (commit dcb699c)"
+threads = 8
 [runs."native-arm64-qwen3-embedding-0.6b-fp16w.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
