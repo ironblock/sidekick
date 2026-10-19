@@ -139,6 +139,7 @@ mod backend {
 
         fn embed_with(&self, texts: &[&str], purpose: EmbedPurpose, limits: EmbedLimits) -> Result<Vec<Vec<f32>>> {
             // Prepare every text first, so a rejected one costs no inference.
+            self.input.check_limits(purpose, limits, self.max_seq_len)?;
             let prepared = each_input(texts, |t| self.prepare(t, purpose, limits))?;
             prepared
                 .iter()

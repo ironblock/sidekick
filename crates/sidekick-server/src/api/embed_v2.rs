@@ -171,9 +171,10 @@ pub async fn embed_v2(
     ))
 }
 
-/// Cohere's `truncate`, which `/v1/embeddings` takes too: `END` (the
-/// default) keeps an over-length input's start, `START` its end, and
-/// `NONE` makes it a 400.
+/// Cohere's `truncate`, spelled as Cohere spells it: `END` (the default)
+/// keeps an over-length input's start, `START` its end, and `NONE` makes
+/// it a 400. `/v1/embeddings` reads the same values in any case, and a
+/// boolean (`embeddings::truncate`).
 pub(super) fn truncate(value: Option<&str>) -> Result<Truncate, ApiError> {
     match value {
         None | Some("END") => Ok(Truncate::End),

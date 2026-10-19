@@ -327,6 +327,8 @@ impl Embedder for CoremlEmbedder {
         loaded: &mut dyn FnMut(&[usize]),
     ) -> Result<(Vec<Vec<f32>>, Option<Vec<usize>>)> {
         // Prepare every text first, so a rejected one costs no prediction.
+        let largest = *self.buckets.last().expect("validated non-empty");
+        self.input.check_limits(purpose, limits, largest)?;
         let prepared = each_input(texts, |t| self.prepare_with(t, purpose, limits))?;
         let buckets: Vec<usize> = prepared.iter().map(|p| p.bucket).collect();
         loaded(&load_buckets(&self.models, &buckets)?);

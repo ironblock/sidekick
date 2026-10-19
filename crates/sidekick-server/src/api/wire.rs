@@ -219,11 +219,13 @@ pub struct EmbeddingsRequest {
     /// query prefix instead of the document prefix.
     #[serde(default)]
     pub input_type: Option<String>,
-    /// Non-standard extension (Cohere's, as on /v2/embed): what to do with
-    /// an input longer than the model's limit. `END` (the default) keeps
-    /// its start, `START` its end, and `NONE` refuses the request.
+    /// Non-standard extension: what to do with an input longer than the
+    /// model's limit. Cohere's values, as on /v2/embed but in any case:
+    /// `END` (the default) keeps its start, `START` its end, and `NONE`
+    /// refuses the request. Or Hugging Face TEI's boolean: `true` is `END`,
+    /// `false` is `NONE`.
     #[serde(default)]
-    pub truncate: Option<String>,
+    pub truncate: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -536,7 +538,8 @@ pub struct ModelObject {
     /// runs, in tokens, special tokens included (and an embedder's prompt
     /// prefix), with `seq_cap` already applied: a Core ML model's largest
     /// bucket. A longer embeddings input is truncated or refused, as the
-    /// request's `truncate` says.
+    /// request's `truncate` says. From the manifest: a tokenizer.json that
+    /// truncates at fewer tokens isn't read to list it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_seq_len: Option<usize>,
     /// Extension, Core ML embedders: the sequence-length buckets the model

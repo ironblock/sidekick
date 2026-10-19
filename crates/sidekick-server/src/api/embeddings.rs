@@ -6,7 +6,8 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::Engine as _;
-use sidekick_core::{truncate_normalized, EmbedLimits, EmbedPurpose};
+use serde_json::Value;
+use sidekick_core::{truncate_normalized, EmbedLimits, EmbedPurpose, Truncate};
 
 /// Hard cap on batch size to keep one request from monopolizing the ANE.
 const MAX_BATCH: usize = 256;
@@ -57,7 +58,7 @@ pub async fn embeddings(
 
     // By default an over-length input keeps its start (`END`); `NONE`
     // refuses the request with a 400 naming the input.
-    let limits = EmbedLimits { truncate: embed_v2::truncate(req.truncate.as_deref())?, max_tokens: None };
+    let limits = EmbedLimits { truncate: truncate(req.truncate.as_ref())?, max_tokens: None };
 
     // Loading isn't counted against the request timeout (api::deadline).
     let mut deadline = Deadline::new(Work::Embedding, &req.model, state.request_timeout, state.load_timeout);
@@ -124,4 +125,20 @@ pub async fn embeddings(
         })
         .into_response(),
     ))
+}
+
+/// `truncate` on /v1/embeddings: /v2/embed's values in any case, or Hugging
+/// Face TEI's boolean, `true` truncating (`END`) and `false` refusing
+/// (`NONE`), so that clients built for either work here.
+fn truncate(value: Option<&Value>) -> Result<Truncate, ApiError> {
+    let unsupported =
+        |v: String| ApiError::invalid(format!("unsupported truncate {v} (use NONE, START or END, or true or false)"));
+    match value {
+        None | Some(Value::Bool(true)) => Ok(Truncate::End),
+        Some(Value::Bool(false)) => Ok(Truncate::Reject),
+        Some(Value::String(s)) => {
+            embed_v2::truncate(Some(&s.to_ascii_uppercase())).map_err(|_| unsupported(format!("`{s}`")))
+        }
+        Some(other) => Err(unsupported(other.to_string())),
+    }
 }

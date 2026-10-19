@@ -1,9 +1,10 @@
 //! How long an input `/v1/embeddings` takes, and what happens past it.
 //! `/v1/models` lists each embedder's `max_seq_len`, and a Core ML
 //! model's `buckets`, after the registry's CPU cap (D33). The request's
-//! `truncate` (Cohere's, as on `/v2/embed`) picks what happens to a longer
-//! input: `END`, the default, keeps its start, `START` its end, and `NONE`
-//! refuses the whole request with a 400 naming the input.
+//! `truncate` (Cohere's values, as on `/v2/embed` but in any case, or TEI's
+//! boolean) picks what happens to a longer input: `END`, the default, keeps
+//! its start, `START` its end, and `NONE` refuses the whole request with a
+//! 400 naming the input.
 //!
 //! Over the static test model, and, on macOS with `--features coreml`, a
 //! real Core ML model (sidekick-embed's tiny Qwen3 fixture) on the CPU.
@@ -97,24 +98,38 @@ async fn truncate_picks_what_happens_past_the_limit() {
     let (state, dir) = state_with("truncate", &[]);
     // 600 tokens, over test-static's 512.
     let long = "hello ".repeat(600);
-    let request = |truncate: Option<&str>, input: Value| {
+    let request = |truncate: Option<Value>, input: Value| {
         let mut body = json!({"model": "test-static", "input": input});
         if let Some(t) = truncate {
-            body["truncate"] = json!(t);
+            body["truncate"] = t;
         }
         body
     };
     let batch = json!(["hello world", long, "world"]);
 
     // Without `truncate`, an over-length input is truncated, as before the
-    // field existed: `END` gives the same response.
+    // field existed: the static model's rows are hello [1, 0, 0, 0] and
+    // world [0, 2, 0, 0], so its 512 hellos embed as one.
     let (status, default) = embed(&state, request(None, batch.clone())).await;
     assert_eq!(status, StatusCode::OK, "{default}");
-    assert_eq!(embed(&state, request(Some("END"), batch.clone())).await, (StatusCode::OK, default.clone()));
-    assert_eq!(embed(&state, request(Some("START"), batch.clone())).await.0, StatusCode::OK);
+    let (a, b) = (1.0 / 5f64.sqrt(), 2.0 / 5f64.sqrt());
+    for (i, want) in [[a, b, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]].iter().enumerate() {
+        let got: Vec<f64> = default["data"][i]["embedding"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+        assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-6), "input {i}: {got:?}");
+    }
+    // `END`, and TEI's `true`, are the default.
+    for end in [json!("END"), json!("end"), json!(true)] {
+        assert_eq!(embed(&state, request(Some(end), batch.clone())).await, (StatusCode::OK, default.clone()));
+    }
+    assert_eq!(embed(&state, request(Some(json!("START")), batch.clone())).await.0, StatusCode::OK);
 
-    // `NONE`: one over-length input refuses the whole request, naming it.
-    let (status, body) = embed(&state, request(Some("NONE"), batch.clone())).await;
+    // `NONE`, in any case, or TEI's `false`: one over-length input refuses
+    // the whole request, naming it.
+    for none in [json!("none"), json!(false)] {
+        let (status, body) = embed(&state, request(Some(none), batch.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+    let (status, body) = embed(&state, request(Some(json!("NONE")), batch.clone())).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["type"], "invalid_request_error");
     assert_eq!(
@@ -122,22 +137,32 @@ async fn truncate_picks_what_happens_past_the_limit() {
         "input 1: 600 tokens, over model `test-static`'s limit of 512 tokens, and truncate is NONE \
          (send END or START to truncate it)"
     );
-    let (status, body) = embed(&state, request(Some("NONE"), json!(long))).await;
+    let (status, body) = embed(&state, request(Some(json!("NONE")), json!(long))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(body["error"]["message"].as_str().unwrap().starts_with("input 0: 600 tokens"), "{body}");
 
     // Within the limit, `NONE` changes nothing.
     let short = json!(["hello world", "world"]);
-    let (status, body) = embed(&state, request(Some("NONE"), short.clone())).await;
+    let (status, body) = embed(&state, request(Some(json!("NONE")), short.clone())).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body, embed(&state, request(None, short)).await.1);
 
-    // The values are /v2/embed's, spelled as Cohere spells them.
-    for bad in ["MIDDLE", "none", ""] {
-        let (status, body) = embed(&state, request(Some(bad), json!("hello"))).await;
+    // Anything else is a 400; `null` is no value.
+    for bad in [json!("MIDDLE"), json!(""), json!(1)] {
+        let (status, body) = embed(&state, request(Some(bad.clone()), json!("hello"))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
-        assert_eq!(body["error"]["message"], format!("unsupported truncate `{bad}` (use NONE, START or END)"));
+        assert!(body["error"]["message"].as_str().unwrap().starts_with("unsupported truncate"), "{body}");
     }
+    assert_eq!(embed(&state, request(Some(Value::Null), json!("hello"))).await.0, StatusCode::OK);
+
+    // /v2/embed keeps Cohere's spelling, and names a request's max_tokens
+    // as the limit it set.
+    let v2 = |truncate: &str| json!({"model": "test-static", "texts": ["hello world hello"], "truncate": truncate, "max_tokens": 2});
+    let (status, body) = call(state.clone(), post_json("/v2/embed", v2("none"))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = call(state.clone(), post_json("/v2/embed", v2("NONE"))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"]["message"].as_str().unwrap().starts_with("input 0: 3 tokens, over max_tokens 2,"), "{body}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
