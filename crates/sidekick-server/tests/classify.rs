@@ -655,6 +655,10 @@ async fn listings_are_task_aware() {
 
     assert_eq!(model("cpu-capped")["seq_cap"]["limit"], 1024);
     assert_eq!(model("cpu-capped")["compute_units"], "cpu_only");
+    // Each classifier's effective maximum, after the cap; no buckets.
+    assert_eq!(model("cpu-capped")["max_seq_len"], 1024);
+    assert_eq!(model("sentiment")["max_seq_len"], 64);
+    assert!(model("sentiment").get("buckets").is_none());
     let s = model("sentiment");
     assert_eq!(s["task"], "text-classification");
     assert_eq!(s["labels"], json!(["1 star", "2 stars", "3 stars", "4 stars", "5 stars"]));

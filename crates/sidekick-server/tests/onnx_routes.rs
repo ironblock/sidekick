@@ -2,7 +2,8 @@
 //! Runtime with sidekick-embed's tiny fixture graph: /v1/embeddings and
 //! /v2/embed serve it, /v1/models and the provenance headers say it runs
 //! on the CPU with no buckets, and /health reports the runtime and each
-//! model's threads.
+//! model's threads. /v1/models lists its `max_seq_len`, past which
+//! `truncate: "NONE"` is a 400.
 //!
 //! Needs `--features onnx` and ORT_DYLIB_PATH; skips without them unless
 //! SIDEKICK_REQUIRE_ONNX=1.
@@ -30,10 +31,11 @@ fn have_runtime() -> bool {
 }
 
 /// The test state with one onnx model, `tiny`, over the fixture's
-/// token-level graph pooled at its first token, with 2 threads.
-fn onnx_state() -> AppState {
+/// token-level graph pooled at its first token, with 2 threads. Each test
+/// names its own models directory, `tag`: tests run concurrently.
+fn onnx_state(tag: &str) -> AppState {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidekick-embed/tests/fixtures/tiny-onnx");
-    let dir = std::env::temp_dir().join(format!("sk-onnx-routes-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("sk-onnx-routes-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let model = dir.join("tiny");
     std::fs::create_dir_all(&model).unwrap();
@@ -68,7 +70,7 @@ async fn the_routes_serve_an_onnx_model_on_the_cpu() {
     if !have_runtime() {
         return;
     }
-    let state = onnx_state();
+    let state = onnx_state("serve");
     let (status, headers, body) =
         call_with_headers(state.clone(), post_json("/v1/embeddings", json!({"model": "tiny", "input": ["[CLS] b c [SEP]", "[CLS] d [SEP]"]}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -107,4 +109,29 @@ async fn the_routes_serve_an_onnx_model_on_the_cpu() {
         json!({"tiny": {"intra_op_threads": 2, "source": "config (model)", "model_default": null, "quantized": false}})
     );
     assert_eq!(onnx["unmatched_thread_overrides"], json!(["ghost"]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_onnx_model_lists_its_limit_and_truncate_none_refuses_past_it() {
+    if !have_runtime() {
+        return;
+    }
+    let state = onnx_state("length");
+    let (_, models) = call(state.clone(), Request::get("/v1/models").body(Body::empty()).unwrap()).await;
+    let tiny = models["data"].as_array().unwrap().iter().find(|m| m["id"] == "tiny").unwrap().clone();
+    assert_eq!(tiny["max_seq_len"], 16);
+    assert!(tiny.get("buckets").is_none(), "a dynamic sequence axis: no buckets");
+
+    // 20 tokens, over the model's 16.
+    let long = "b ".repeat(20);
+    let batch = json!(["[CLS] b c [SEP]", long]);
+    let (status, body) = call(state.clone(), post_json("/v1/embeddings", json!({"model": "tiny", "input": batch, "truncate": "NONE"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.starts_with("input 1: 20 tokens, over model `tiny`'s limit of 16 tokens"), "{message}");
+    // Without `truncate`, as with `END`, it is truncated.
+    let (status, default) = call(state.clone(), post_json("/v1/embeddings", json!({"model": "tiny", "input": batch}))).await;
+    assert_eq!(status, StatusCode::OK, "{default}");
+    let end = call(state, post_json("/v1/embeddings", json!({"model": "tiny", "input": batch, "truncate": "END"}))).await;
+    assert_eq!(end, (StatusCode::OK, default));
 }
