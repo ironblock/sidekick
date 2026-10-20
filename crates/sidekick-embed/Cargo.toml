@@ -38,6 +38,12 @@ toml = { workspace = true }
 name = "onnx_invariance"
 required-features = ["onnx"]
 
+# What an onnx model's memory does around a long input, by CPU-arena mode,
+# and what each mode costs short inputs (D40).
+[[example]]
+name = "onnx_memory"
+required-features = ["onnx"]
+
 # The parity suite (examples/parity): `cargo test` runs its grading unit
 # tests on every platform; the live runner needs macOS and `--features coreml`.
 [[example]]

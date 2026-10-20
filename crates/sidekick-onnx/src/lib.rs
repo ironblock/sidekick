@@ -28,7 +28,7 @@ mod threads;
 
 pub use runtime::{load_runtime, runtime_state, RuntimeInfo, RuntimeSource};
 #[cfg(feature = "runtime")]
-pub use session::OnnxModel;
+pub use session::{MemoryOptions, OnnxModel, SHRINK_FROM_TOKENS};
 pub use threads::{
     default_intra_op_threads, default_threads, detected_cores, DetectedCores, FALLBACK_INTRA_OP_THREADS,
     MAX_DEFAULT_INTRA_OP_THREADS,

@@ -46,6 +46,8 @@ usage: parity [options]
                        (a warning, not a failure), provided its ANE output
                        isn't bit-identical to CPU_ONLY
   --timeout SECS       per worker (default 1200)
+  --onnx-threads N     intra-op threads for onnx-cpu workers (default:
+                       sidekick's default for the machine, D40)
   --external FILE      grade results written outside the suite, a worker's
                        JSON (model, path, cases, repeat_bitwise, load_ms)
                        for path onnx-cpu, as that model's onnx-cpu path
@@ -324,12 +326,19 @@ fn finite_cos(a: &[f32], b: &[f32]) -> Option<f64> {
 /// this grade alike. Each input runs alone and unpadded, as the daemon runs
 /// it, so there are no bucket or pad comparisons (n = 0).
 #[cfg(feature = "onnx")]
-fn onnx_worker(model: &ResolvedModel, reference: &Reference, id: &str, out: &str, limit: Option<usize>) -> Result<(), String> {
+fn onnx_worker(
+    model: &ResolvedModel,
+    reference: &Reference,
+    id: &str,
+    out: &str,
+    limit: Option<usize>,
+    threads: Option<usize>,
+) -> Result<(), String> {
     use sidekick_core::EmbedLimits;
     use sidekick_embed::onnx::{default_intra_op_threads, OnnxEmbedder};
     let e = |e: sidekick_core::Error| e.to_string();
     let t0 = Instant::now();
-    let emb = OnnxEmbedder::load(model, default_intra_op_threads()).map_err(e)?;
+    let emb = OnnxEmbedder::load(model, threads.unwrap_or_else(default_intra_op_threads)).map_err(e)?;
     let load_ms = t0.elapsed().as_secs_f64() * 1e3;
     let cases = &reference.cases[..limit.unwrap_or(reference.cases.len()).min(reference.cases.len())];
     let purpose = |p: &str| if p == "query" { EmbedPurpose::Query } else { EmbedPurpose::Document };
@@ -373,7 +382,7 @@ fn onnx_worker(model: &ResolvedModel, reference: &Reference, id: &str, out: &str
 }
 
 #[cfg(not(feature = "onnx"))]
-fn onnx_worker(_: &ResolvedModel, _: &Reference, _: &str, _: &str, _: Option<usize>) -> Result<(), String> {
+fn onnx_worker(_: &ResolvedModel, _: &Reference, _: &str, _: &str, _: Option<usize>, _: Option<usize>) -> Result<(), String> {
     Err("this parity build has no onnx backend: build it with --features onnx".into())
 }
 
@@ -382,16 +391,20 @@ fn worker(args: &[String]) -> Result<(), String> {
     let [models_dir, id, refs, path, out, rest @ ..] = args else {
         return Err("bad worker arguments".into());
     };
-    // The optional rest: a case limit, `--bucket-invariance=MODE`, and
-    // `--corpus=long` (an embedder's long-input reference).
+    // The optional rest: a case limit, `--bucket-invariance=MODE`,
+    // `--corpus=long` (an embedder's long-input reference) and
+    // `--onnx-threads=N`.
     let mut limit: Option<usize> = None;
     let mut bucket_mode = BucketInvariance::Auto;
     let mut corpus = Corpus::Main;
+    let mut onnx_threads: Option<usize> = None;
     for a in rest {
         if let Some(m) = a.strip_prefix("--bucket-invariance=") {
             bucket_mode = BucketInvariance::parse(m).ok_or("bad bucket-invariance mode")?;
         } else if let Some(c) = a.strip_prefix("--corpus=") {
             corpus = Corpus::parse(c).ok_or("bad corpus")?;
+        } else if let Some(n) = a.strip_prefix("--onnx-threads=") {
+            onnx_threads = Some(n.parse().map_err(|_| "bad onnx-threads")?);
         } else {
             limit = Some(a.parse().map_err(|_| "bad limit")?);
         }
@@ -411,7 +424,7 @@ fn worker(args: &[String]) -> Result<(), String> {
         if path != Path3::OnnxCpu {
             return Err(format!("an onnx model runs on onnx-cpu, not {}", path.name()));
         }
-        return onnx_worker(&model, &reference, id, out, limit);
+        return onnx_worker(&model, &reference, id, out, limit, onnx_threads);
     }
     coreml_worker(&model, &reference, id, path, out, limit)
 }
@@ -554,6 +567,8 @@ struct Options {
     /// Results written outside the suite, graded as their own path
     /// (`--external`; D40).
     externals: Vec<PathBuf>,
+    /// `--onnx-threads`: onnx-cpu workers' intra-op threads.
+    onnx_threads: Option<usize>,
 }
 
 /// Which larger buckets a classifier case re-runs in for bucket invariance
@@ -594,6 +609,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         timeout: Duration::from_secs(1200),
         bucket_invariance: BucketInvariance::Auto,
         externals: Vec::new(),
+        onnx_threads: None,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -619,6 +635,13 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 o.paths_named = true;
             }
             "--external" => o.externals.push(val()?.into()),
+            "--onnx-threads" => {
+                let n: usize = val()?.parse().map_err(|_| "bad --onnx-threads")?;
+                if n == 0 {
+                    return Err("--onnx-threads must be at least 1".into());
+                }
+                o.onnx_threads = Some(n);
+            }
             "--expectations" => o.expectations = Some(val()?.into()),
             "--fixtures" => o.fixtures = Some(val()?.into()),
             "--json" => o.json = Some(val()?.into()),
@@ -1004,6 +1027,9 @@ fn spawn_corpus_worker<T: serde::de::DeserializeOwned>(
     if corpus != Corpus::Main {
         args.push(format!("--corpus={}", corpus.name()).into());
     }
+    if let Some(n) = o.onnx_threads {
+        args.push(format!("--onnx-threads={n}").into());
+    }
     run_child(&args, &out, &log, timeout)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
@@ -1337,7 +1363,8 @@ fn parent(args: &[String]) -> Result<bool, String> {
                 }
             }
         }
-        mr.long = grade_long(model, models_dir, &worker_paths, &tok_sha, &expectations, &o, &scratch, &mut mr);
+        let main_longest = reference.cases.iter().map(|c| c.ids.len()).max().unwrap_or(0);
+        mr.long = grade_long(model, models_dir, &worker_paths, main_longest, &tok_sha, &expectations, &o, &scratch, &mut mr);
         for f in &mr.failures {
             println!("  FAIL: {f}");
         }
@@ -1395,17 +1422,29 @@ fn parent(args: &[String]) -> Result<bool, String> {
     Ok(ok)
 }
 
+/// Whether a model without a long-input reference fails, rather than
+/// being warned: when it was named (`--model`, as a missing main reference
+/// fails then too) and its main corpus stops short of its max_seq_len, so
+/// nothing else grades its longest inputs (an onnx build whose limit is
+/// above the main corpus's 700-token over-length cases). A model whose
+/// main corpus already reaches its limit (EmbeddingGemma-2's 2,048, which
+/// the over-length cases fill) is only warned.
+fn long_reference_required(named: bool, max_seq_len: usize, main_longest: usize) -> bool {
+    named && main_longest < max_seq_len
+}
+
 /// The long-input corpus for one model, on the paths its main corpus ran
 /// in workers: `None` (and nothing printed) when the model's max_seq_len
-/// doesn't reach the corpus. A model it reaches without a long reference
-/// gets a warning, not a failure: the corpus is graded where it was
-/// generated. Its gate failures join the model's, prefixed `long corpus:`.
-/// No floors apply to it yet.
+/// doesn't reach the corpus. A missing long reference fails the model when
+/// [`long_reference_required`], and is a warning otherwise. Its gate
+/// failures join the model's, prefixed `long corpus:`. No floors apply to
+/// it yet.
 #[allow(clippy::too_many_arguments)]
 fn grade_long(
     model: &ResolvedModel,
     models_dir: &Path,
     paths: &[Path3],
+    main_longest: usize,
     tok_sha: &str,
     expectations: &Expectations,
     o: &Options,
@@ -1421,25 +1460,34 @@ fn grade_long(
             return None;
         }
     }
+    let file = corpus.file();
     if paths.is_empty() {
+        let why = format!(
+            "long corpus: max_seq_len {} reaches fixtures/parity/{file}, but it wasn't graded: \
+             no worker ran this model (--external results cover the main corpus only)",
+            model.manifest.max_seq_len
+        );
+        mr.warnings.push(why);
         return None;
     }
     let dir = reference_dir(model, o.refs.as_deref());
-    let file = corpus.file();
     if !dir.join(format!("{}.json", corpus.stem())).exists() {
         let why = format!(
-            "long corpus: max_seq_len {} reaches fixtures/parity/{file}, but there's no {}.json; \
-             generate one with tools/parity_reference.py --corpus {}",
+            "long corpus: max_seq_len {} reaches fixtures/parity/{file} (the main corpus stops at {main_longest} \
+             tokens), but there's no {}.json; generate one with tools/parity_reference.py --corpus {}",
             model.manifest.max_seq_len,
             corpus.stem(),
             corpus.name()
         );
-        println!("  {why}");
-        mr.warnings.push(why);
+        let named = o.models.contains(&model.manifest.id);
+        if long_reference_required(named, model.manifest.max_seq_len, main_longest) {
+            mr.failures.push(why);
+        } else {
+            mr.warnings.push(why);
+        }
         return None;
     }
     let fail = |mr: &mut ModelReport, why: String| {
-        println!("  long corpus: FAIL: {why}");
         mr.failures.push(format!("long corpus: {why}"));
         None
     };
@@ -1673,6 +1721,18 @@ mod tests {
         // Without the backend, onnx-cpu comes from --external results only:
         // no worker, and not a skip.
         assert_eq!(model_paths(&[Path3::OnnxCpu], Runtime::Onnx { native: false }), (vec![], vec![]));
+    }
+
+    #[test]
+    fn a_missing_long_reference_fails_a_named_model_the_main_corpus_stops_short_of() {
+        // Qwen3-Embedding-0.6B's onnx build: 4,096 tokens, main corpus to 700.
+        assert!(long_reference_required(true, 4096, 700));
+        // The same, not named: every model with a reference is graded, and
+        // one without a long reference is warned, as one without a main
+        // reference is skipped.
+        assert!(!long_reference_required(false, 4096, 700));
+        // EmbeddingGemma-2: its over-length cases already fill its 2,048.
+        assert!(!long_reference_required(true, 2048, 2048));
     }
 
     #[test]
