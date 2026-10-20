@@ -125,8 +125,10 @@ impl ClassifierPool {
 }
 
 /// Models' tokenizers on their own, for `/tokenize` and `/detokenize`:
-/// loaded without the models' weights, kept while in use as the models
-/// are.
+/// without the models' weights, kept while in use as the models are. A
+/// tokenizer is the same copy its model holds when the model is resident
+/// (`EmbedInput::shared`, `InputBuilder::shared`), and concurrent first
+/// requests load it once.
 pub type TokenizerPool = ModelPool<sidekick_embed::tokenize::ModelTokenizer>;
 
 impl TokenizerPool {

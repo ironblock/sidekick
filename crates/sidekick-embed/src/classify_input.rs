@@ -12,8 +12,18 @@ use sidekick_core::{
     check_hypothesis_template, ClassifyParams, ClassifyTask, Error, NliPair, NliPairs, PairParams, Prepared, Result,
     TruncationSide,
 };
+use std::sync::{Arc, LazyLock};
 use tokenizers::utils::truncation::{truncate_encodings, TruncationParams, TruncationStrategy};
 use tokenizers::{Tokenizer, TruncationDirection};
+
+/// Every classifier's input builder in use, shared by the classifier and
+/// `/tokenize`.
+static BUILDERS: LazyLock<crate::shared::Shared<InputBuilder>> = LazyLock::new(Default::default);
+
+/// Under `/v1/classify` without `truncate_prompt_tokens`, a text longer
+/// than this many bytes per token of the model's limit is refused without
+/// being tokenized: no tokenizer spends 16 bytes per token.
+const REFUSE_BYTES_PER_TOKEN: usize = 16;
 
 /// Everything `prepare` needs from a classifier's manifest and tokenizer.
 pub struct InputBuilder {
@@ -73,6 +83,13 @@ pub fn check_tokenizable(task: ClassifyTask, format: Option<ClassifyFormat>) -> 
 }
 
 impl InputBuilder {
+    /// The classifier's builder: the copy already in use (by the
+    /// classifier, or by the daemon's `/tokenize`), or a new one.
+    pub fn shared(model: &ResolvedClassifier) -> Result<Arc<Self>> {
+        BUILDERS.get_or_load(&model.dir, &model.manifest.id, || Self::load(model))
+    }
+
+    /// A copy of its own, outside the cache.
     pub fn load(model: &ResolvedClassifier) -> Result<Self> {
         let mut tokenizer = Tokenizer::from_file(model.tokenizer_path())
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
@@ -168,6 +185,12 @@ impl InputBuilder {
     /// zero-shot format's layout of text and labels), so they are a 400
     /// saying so. No byte bound: the caller bounds the text.
     pub fn tokenize(&self, text: &str, add_special_tokens: bool) -> Result<tokenizers::Encoding> {
+        self.check_one_text()?;
+        self.tokenizer.encode(text, add_special_tokens).map_err(|e| Error::Tokenizer(e.to_string()))
+    }
+
+    /// [`check_tokenizable`] for this model.
+    fn check_one_text(&self) -> Result<()> {
         let format = self.format.as_ref().map(|f| match f {
             Format::Laya { .. } => ClassifyFormat::Laya,
             Format::Gliner2 { .. } => ClassifyFormat::Gliner2,
@@ -175,8 +198,26 @@ impl InputBuilder {
             Format::Agentjev => ClassifyFormat::Agentjev,
             Format::Nli { .. } => ClassifyFormat::Nli,
         });
-        check_tokenizable(self.task, format)?;
-        self.tokenizer.encode(text, add_special_tokens).map_err(|e| Error::Tokenizer(e.to_string()))
+        check_tokenizable(self.task, format)
+    }
+
+    /// `/v1/classify`'s verdict on one text without
+    /// `truncate_prompt_tokens`: its whole encoding, special tokens
+    /// included, or the 400 the route refuses it with. A text of more than
+    /// 16 bytes per token of `max_seq_len` is refused without being
+    /// tokenized, and one of more tokens than `max_seq_len` after. The one
+    /// check behind `/v1/classify` and the daemon's `/tokenize` `fits`.
+    pub fn check_text(&self, text: &str) -> Result<tokenizers::Encoding> {
+        let max = self.max_seq_len;
+        self.check_one_text()?;
+        if text.len() > max.saturating_mul(REFUSE_BYTES_PER_TOKEN) {
+            return Err(too_long(format!("{} bytes", text.len()), max));
+        }
+        let encoding = self.tokenize(text, true)?;
+        if encoding.len() > max {
+            return Err(too_long(format!("{} tokens", encoding.len()), max));
+        }
+        Ok(encoding)
     }
 
     /// Token ids back to text, special tokens kept. An id outside the
@@ -239,21 +280,14 @@ impl InputBuilder {
             }
             Some(n) => n,
         };
-        let cap = max.saturating_mul(16);
-        let text = match (params.truncate_prompt_tokens, params.truncation_side) {
-            // No tokenizer spends 16 bytes per token, so an input this long
-            // is over-length without spending the time to tokenize it.
-            (None, _) if input.len() > cap => {
-                return Err(too_long(format!("{} bytes", input.len()), max))
-            }
-            (None, _) => input,
-            (Some(_), TruncationSide::Right) => crate::byte_cap(input, max),
-            (Some(_), TruncationSide::Left) => byte_cap_end(input, max),
-        };
         let encoding = match params.truncate_prompt_tokens {
-            // The whole text, as /tokenize counts it.
-            None => self.tokenize(text, true)?,
+            // The whole text, checked as /tokenize's `fits` checks it.
+            None => self.check_text(input)?,
             Some(_) => {
+                let text = match params.truncation_side {
+                    TruncationSide::Right => crate::byte_cap(input, max),
+                    TruncationSide::Left => byte_cap_end(input, max),
+                };
                 let tok_err = |e: tokenizers::Error| Error::Tokenizer(e.to_string());
                 let mut encoding = self.tokenizer.encode(text, false).map_err(tok_err)?;
                 let direction = match params.truncation_side {
@@ -836,6 +870,12 @@ mod tests {
         assert_eq!(b.tokenize(&words(31), true).unwrap().len(), 33);
         assert_eq!(b.tokenize(&words(31), false).unwrap().len(), 31);
         assert_eq!(b.tokenize(&words(300), true).unwrap().len(), 302, "not truncated");
+        // /v1/classify's verdict, the one /tokenize's `fits` reports.
+        assert_eq!(ids(b.check_text(&words(30)).unwrap()), p.ids);
+        assert!(b.check_text(&words(31)).unwrap_err().to_string().contains("33 tokens"));
+        let run = "x".repeat(32 * 16 + 1);
+        assert_eq!(b.tokenize(&run, true).unwrap().len(), 3, "one unknown token");
+        assert!(b.check_text(&run).unwrap_err().to_string().contains("513 bytes"));
         // Pairs and zero-shot layouts aren't one text.
         let e = builder(ClassifyTask::TextRanking).tokenize("a", true).unwrap_err();
         assert!(e.to_string().contains("(query, document) pair"), "{e}");

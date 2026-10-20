@@ -28,7 +28,7 @@ use sidekick_coreml::{ComputeUnits, Int32Input, ShapeVerdict};
 
 pub struct CoremlClassifier {
     manifest: ClassifierManifest,
-    inputs: InputBuilder,
+    inputs: std::sync::Arc<InputBuilder>,
     models: BucketModels,
     io: Io,
 }
@@ -238,7 +238,7 @@ impl CoremlClassifier {
         // CPU, and released it: a broken artifact has already failed the load.
         // No bucket stays resident until a request needs it, so a model
         // costs the memory of the buckets it serves, not also its smallest.
-        Ok(Self { manifest: m.clone(), inputs: InputBuilder::load(model)?, models, io })
+        Ok(Self { manifest: m.clone(), inputs: InputBuilder::shared(model)?, models, io })
     }
 
     /// Sequence-length buckets, smallest first.

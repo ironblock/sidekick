@@ -112,16 +112,21 @@ instead. A model whose own `tokenizer.json` truncates
 refused past that point too.
 
 **Checking fit before embedding.** `POST /tokenize` with `{model,
-prompt}` (and the `input_type` you will embed with) returns sidekick's own
-count of the text, never truncated, and `max_model_len`, the limit it is
-compared with (the model's `max_seq_len`). The count is the one
-`/v1/embeddings` checks, prompt prefix and special tokens included, so a
-text embeds without truncation when `count <= max_model_len` and its size
-in bytes is at most 64 times `max_model_len`. A tokenizer of your own, or
-an estimate from characters, can disagree with sidekick at the edge: it may
-miss the prompt prefix or the special tokens, or tokenize differently.
-A client that truncates some documents on purpose can use the count to
-decide which, and log them, then send those with `truncate: "END"`. The
+prompt}` (and the `input_type` you will embed with) answers with `fits`:
+whether `/v1/embeddings` will take the text whole under its default
+`truncate: NONE`, decided by the same check the route runs. Use `fits`
+rather than re-deriving it. The route refuses a text by its size in bytes
+as well as its tokens, and the two disagree for some text: a run of Thai
+or Khmer without spaces can be one unknown token yet far too many bytes,
+and a text of spaces counts no tokens at all. The response also has
+sidekick's own `count`, never truncated, with the prompt prefix and
+special tokens included, and `max_model_len`, the limit it is compared
+with. A tokenizer of your own, or an estimate from characters, can
+disagree with that count at the edge: it may miss the prompt prefix or the
+special tokens, or tokenize differently. A client that truncates some
+documents on purpose can send `/tokenize` first, log the ones that don't
+fit, with their counts, and send those with `truncate: "END"`. At most one
+tokenization per core runs at once, within the request timeout, and the
 request body limit (2 MiB) bounds the text. See the README's Tokenize
 section for the full shape (D44).
 

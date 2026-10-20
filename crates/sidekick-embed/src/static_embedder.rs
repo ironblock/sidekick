@@ -21,7 +21,7 @@ pub struct StaticEmbedder {
     /// The tokenizer and prompt prefixes, without special tokens: a static
     /// model averages the text's own token rows. `NONE` and the request's
     /// limits are checked by the code every backend shares.
-    input: EmbedInput,
+    input: std::sync::Arc<EmbedInput>,
     max_seq_len: usize,
 }
 
@@ -63,7 +63,7 @@ impl StaticEmbedder {
             dims: m.dims,
             matryoshka: m.matryoshka.clone(),
             table,
-            input: EmbedInput::load(model)?,
+            input: EmbedInput::shared(model)?,
             max_seq_len: m.max_seq_len,
         })
     }
@@ -281,7 +281,8 @@ mod tests {
     #[test]
     fn truncate_none_refuses_the_request_naming_the_input() {
         let dir = std::env::temp_dir().join(format!("sk-static-none-{}", std::process::id()));
-        let mut e = StaticEmbedder::load(&fixture(&dir)).unwrap();
+        let model = fixture(&dir);
+        let mut e = StaticEmbedder::load(&model).unwrap();
         let none = EmbedLimits { truncate: Truncate::Reject, max_tokens: Some(2) };
         let message = |r: Result<Vec<Vec<f32>>>| match r {
             Err(Error::InvalidRequest(m)) => m,
@@ -293,7 +294,9 @@ mod tests {
         // 2 tokens, START the text's last 2, and NONE refuses the input.
         let mut tokenizer = e.input.tokenizers.shipped().clone();
         tokenizer.with_truncation(Some(tokenizers::TruncationParams { max_length: 2, ..Default::default() })).unwrap();
-        e.input.tokenizers = crate::embed_input::Tokenizers::new(tokenizer).unwrap();
+        let mut input = EmbedInput::load(&model).unwrap();
+        input.tokenizers = crate::embed_input::Tokenizers::new(tokenizer).unwrap();
+        e.input = std::sync::Arc::new(input);
         let end = e.embed(&["world hello hello"], EmbedPurpose::Document).unwrap();
         assert!(end[0][1] > 0.5, "world, hello: {:?}", end[0]);
         let start = EmbedLimits { truncate: Truncate::Start, max_tokens: None };

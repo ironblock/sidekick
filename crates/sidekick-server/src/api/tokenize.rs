@@ -2,23 +2,34 @@
 //! an embedder's or a text-classification model's tokenizer (D44).
 //!
 //! The count is the one the model's route compares with its limit: for an
-//! embedder, the prompt prefix `input_type` selects (as on
-//! /v1/embeddings: the document prefix by default), the text, and the
-//! special tokens the backend adds, by the code /v1/embeddings tokenizes
-//! with (`EmbedInput`). It is never truncated: a text past the limit is
-//! counted whole, a tokenizer.json's own truncation included, so a client
-//! can see by how much. The request body limit (2 MiB) bounds the text.
-//! The tokenizer loads on its own, without the model's weights.
+//! embedder, the prompt prefix `input_type` selects (by /v1/embeddings' or
+//! /v2/embed's names, with their default, the document prefix), the text,
+//! and the special tokens the backend adds, by the code and the tokenizer
+//! the backend uses. It is never truncated: a text past the limit is
+//! counted whole, a tokenizer.json's own truncation included. `fits` is the
+//! route's own verdict on the text, by the check the route runs, so a
+//! client needn't re-derive it from the count. The request body limit
+//! (2 MiB) bounds the text; at most one tokenization per core runs at once,
+//! within the request timeout.
 
+use super::deadline::{Deadline, Work};
 use super::wire::*;
-use super::{embeddings, ApiError, ApiJson, Provenance};
+use super::{embed_v2, embeddings, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use sidekick_core::{EmbedPurpose, Error, UnavailableReason};
-use sidekick_embed::tokenize::ModelTokenizer;
-use std::sync::Arc;
+use sidekick_embed::tokenize::{MeasureOptions, ModelTokenizer};
+use std::sync::{Arc, LazyLock};
+use tokio::sync::Semaphore;
+
+/// Tokenizations running at once: one per core. A 2 MiB text can be over a
+/// million tokens and take a few hundred megabytes while it is tokenized.
+static TURNS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| {
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    Arc::new(Semaphore::new(cores))
+});
 
 pub async fn tokenize(
     State(state): State<AppState>,
@@ -33,28 +44,36 @@ pub async fn tokenize(
     let Some(prompt) = req.prompt else {
         return Err(ApiError::invalid("`prompt` is required"));
     };
-    let purpose: Option<EmbedPurpose> = match model.kind {
-        // The same reading of `input_type`, and the same default, as
-        // /v1/embeddings'.
-        Kind::Embedder => Some(embeddings::purpose(req.input_type.as_deref())?),
-        Kind::Classifier if req.input_type.is_some() => {
+    let options = match model.kind {
+        Kind::Embedder => MeasureOptions {
+            purpose: Some(purpose(req.input_type.as_deref())?),
+            max_tokens: embed_v2::max_tokens(&state, &req.model, req.max_tokens)?,
+            ..Default::default()
+        },
+        Kind::Classifier if req.input_type.is_some() || req.max_tokens.is_some() => {
             return Err(ApiError::invalid(format!(
-                "input_type selects an embedding model's prompt prefix; model `{}` is a classifier",
+                "input_type and max_tokens are embedding models' options; model `{}` is a classifier",
                 req.model
             )))
         }
-        Kind::Classifier => None,
+        Kind::Classifier => MeasureOptions::default(),
     };
-    let add_special_tokens = req.add_special_tokens.unwrap_or(true);
-    let tokenizer = state.tokenizers.get(&req.model).await?;
-    let max_model_len = tokenizer.max_model_len();
-    let tokens = blocking(tokenizer, move |t| t.tokenize(&prompt, purpose, add_special_tokens)).await?;
+    let options = MeasureOptions {
+        add_special_tokens: req.add_special_tokens.unwrap_or(true),
+        token_strs: req.return_token_strs.unwrap_or(false),
+        ..options
+    };
+    let (max_model_len, measured) = run(&state, &req.model, move |t| {
+        Ok((t.max_model_len(), t.measure(&prompt, options)?))
+    })
+    .await?;
     Ok(model.provenance.apply(
         Json(TokenizeResponse {
-            count: tokens.ids.len(),
+            count: measured.ids.len(),
             max_model_len,
-            tokens: tokens.ids,
-            token_strs: req.return_token_strs.unwrap_or(false).then_some(tokens.strs),
+            tokens: measured.ids,
+            token_strs: measured.strs,
+            fits: measured.fits,
         })
         .into_response(),
     ))
@@ -67,10 +86,46 @@ pub async fn detokenize(
     ApiJson(req): ApiJson<DetokenizeRequest>,
 ) -> Result<Response, ApiError> {
     let model = served(&state, &req.model, "/detokenize")?;
-    let tokenizer = state.tokenizers.get(&req.model).await?;
     let ids = req.tokens;
-    let prompt = blocking(tokenizer, move |t| t.decode(&ids)).await?;
+    let prompt = run(&state, &req.model, move |t| t.decode(&ids)).await?;
     Ok(model.provenance.apply(Json(DetokenizeResponse { prompt }).into_response()))
+}
+
+/// `input_type` by /v1/embeddings' names or /v2/embed's, which map alike:
+/// `query`, `search_query`; `document` (the default), `passage`,
+/// `search_document`.
+fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
+    embeddings::purpose(input_type).or_else(|_| embed_v2::purpose(input_type)).map_err(|_| {
+        ApiError::invalid(format!(
+            "unsupported input_type `{}` (use `query` or `search_query`, or `document`, `passage` or \
+             `search_document`)",
+            input_type.unwrap_or_default()
+        ))
+    })
+}
+
+/// `work` with the model's tokenizer, on a blocking thread when a turn is
+/// free: the tokenizer's load bounded as a model's is, and the wait for a
+/// turn and the work by the request timeout (api::deadline). A request
+/// that times out waiting never runs.
+async fn run<T: Send + 'static>(
+    state: &AppState,
+    model: &str,
+    work: impl FnOnce(&ModelTokenizer) -> sidekick_core::Result<T> + Send + 'static,
+) -> Result<T, ApiError> {
+    let mut deadline = Deadline::new(Work::Tokenizing, model, state.request_timeout, state.load_timeout);
+    let tokenizer = deadline.model(state.tokenizers.get_tracked(model)).await?;
+    let turn = deadline
+        .within(TURNS.clone().acquire_owned())
+        .await?
+        .map_err(|e| ApiError::from(Error::Other(format!("tokenize turns: {e}"))))?;
+    // Nothing loads from here: the loading phase is over.
+    let (_, loaded) = tokio::sync::oneshot::channel();
+    let task = tokio::task::spawn_blocking(move || {
+        let _turn = turn;
+        work(&tokenizer)
+    });
+    deadline.finish(loaded, task, "tokenize").await
 }
 
 enum Kind {
@@ -112,15 +167,4 @@ fn served(state: &AppState, id: &str, route: &str) -> Result<Served, ApiError> {
         )));
     }
     Err(ApiError::model_not_found(id))
-}
-
-/// `work` on a blocking thread: tokenizing a long text takes a while.
-async fn blocking<T: Send + 'static>(
-    tokenizer: Arc<ModelTokenizer>,
-    work: impl FnOnce(&ModelTokenizer) -> sidekick_core::Result<T> + Send + 'static,
-) -> Result<T, ApiError> {
-    let result = tokio::task::spawn_blocking(move || work(&tokenizer))
-        .await
-        .map_err(|e| ApiError::from(Error::Other(format!("tokenize task failed: {e}"))))?;
-    Ok(result?)
 }

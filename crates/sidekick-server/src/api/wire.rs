@@ -502,10 +502,15 @@ pub struct TokenizeRequest {
     pub add_special_tokens: Option<bool>,
     #[serde(default)]
     pub return_token_strs: Option<bool>,
-    /// Extension, embedders: which prompt prefix applies, as on
-    /// /v1/embeddings (`query`, or `document`, the default).
+    /// Extension, embedders: which prompt prefix applies, by
+    /// /v1/embeddings' names or /v2/embed's (`query`, `search_query`;
+    /// `document`, the default, `passage`, `search_document`).
     #[serde(default)]
     pub input_type: Option<String>,
+    /// Extension, embedders: /v2/embed's `max_tokens`, which `fits` then
+    /// measures against.
+    #[serde(default)]
+    pub max_tokens: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -515,6 +520,9 @@ pub struct TokenizeResponse {
     pub tokens: Vec<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_strs: Option<Vec<String>>,
+    /// Extension: whether the model's route takes the text whole, by the
+    /// check it runs (D44).
+    pub fits: bool,
 }
 
 /// vLLM's `/detokenize` request.

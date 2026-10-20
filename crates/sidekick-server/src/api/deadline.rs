@@ -34,6 +34,7 @@ pub enum Work {
     Classification,
     Embedding,
     Reranking,
+    Tokenizing,
 }
 
 impl Work {
@@ -42,6 +43,7 @@ impl Work {
             Self::Classification => "Classification",
             Self::Embedding => "Embedding",
             Self::Reranking => "Reranking",
+            Self::Tokenizing => "Tokenizing",
         }
     }
 }
@@ -78,6 +80,13 @@ impl Deadline {
             self.loaded.push("the model".into());
         }
         Ok(model)
+    }
+
+    /// `fut` within the request timeout, which then goes on running: for a
+    /// wait that is part of the request's work, such as for a turn to run.
+    pub async fn within<T>(&self, fut: impl Future<Output = T>) -> Result<T, ApiError> {
+        let deadline = self.loaded_at.unwrap_or(self.started) + self.request;
+        tokio::time::timeout_at(deadline, fut).await.map_err(|_| self.request_timeout())
     }
 
     /// Wait for `task`: its loading phase, which ends when it sends on the

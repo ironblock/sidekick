@@ -23,6 +23,7 @@ pub mod laya;
 pub mod onnx;
 pub mod placement;
 mod pooling;
+mod shared;
 mod static_embedder;
 pub mod tokenize;
 

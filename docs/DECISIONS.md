@@ -3027,41 +3027,66 @@ with its own tokenizer or estimated them from characters, and either can
 disagree with sidekick. A Hugging Face tokenizer's count usually misses
 the model's prompt prefix, which sidekick applies per `input_type`, and an
 estimate can be off in either direction. Since D43 refuses an over-length
-input, the client needs the number sidekick will compare with the limit.
+input, the client needs sidekick's own verdict.
 
 **Decision.** `POST /tokenize` and `POST /detokenize` serve vLLM's shapes
 (`{model, prompt, add_special_tokens, return_token_strs}` →
 `{count, max_model_len, tokens, token_strs?}`, and `{model, tokens}` →
-`{prompt}`) for embedders and text-classification models. They are not
-mounted under `/v1/`: vLLM and SGLang serve them at the root, and their
-clients call them there.
+`{prompt}`) for embedders and text-classification models, with one
+response extension, `fits`, and two request extensions, `input_type` and
+`max_tokens`. They are not mounted under `/v1/`: vLLM and SGLang serve
+them at the root, and their clients call them there.
 
-- **The count is the embedding path's.** For an embedder, `/tokenize`
-  calls the code `/v1/embeddings` measures with under `truncate: NONE`
-  (`EmbedInput::tokenize`): the prompt prefix, the text, and the special
-  tokens the backend adds, by the tokenizer without its own truncation.
-  The static backend now shares that code too, where it had its own copy,
-  so no backend can count differently from `/tokenize`. `input_type` is
-  read by the same function as on `/v1/embeddings`, with the same default,
-  the document prefix. `add_special_tokens: false` leaves the special
-  tokens out, but the prefix stays: it is part of every input the model
-  sees. A static model's inputs carry no special tokens, so for one
-  `add_special_tokens` changes nothing.
+- **`fits` is the route's verdict, by the route's check.** It says
+  whether the model's route takes the text whole with its default
+  options. For an embedder that is `/v1/embeddings` under
+  `truncate: NONE`, and for a text classifier `/v1/classify` without
+  `truncate_prompt_tokens`. It is computed by the one function each route
+  runs: `EmbedInput::check_whole` for every embedding backend,
+  `InputBuilder::check_text` for `/v1/classify`. So it can't drift from
+  the route. `count <= max_model_len` is not the same test and clients
+  shouldn't use it in its place. Both routes also refuse a text by its
+  size in bytes before tokenizing it: an embedder past 64 bytes per token
+  of the limit, a text classifier past 16. Real text can be far over that
+  ratio. A WordPiece vocabulary maps a run of more than 100 characters
+  without spaces to one `[UNK]`, so ordinary Thai, Lao, Khmer or Burmese
+  prose is more than 64 bytes per token. Measured on bge-small-en-v1.5,
+  42,599 bytes of Thai prose counted 122 of 512 tokens, and
+  `/v1/embeddings` refuses it by size. A text of spaces counts no tokens at
+  all, however long. An empty text is refused by a Core ML or ONNX model
+  that adds no special tokens and has no prefix, though it counts 0; a
+  static model embeds it. `fits` covers all of these.
+- **The count is the embedding path's.** For an embedder, the count is
+  the encoding that check produces, or, when the text doesn't fit, the
+  same encoding without the check (`EmbedInput::tokenize`). It includes
+  the prompt prefix, the text, and the special tokens the backend adds, by
+  the tokenizer without its own truncation. The static backend had its own
+  copy of the `NONE` check and now shares the one above. `input_type`
+  takes `/v1/embeddings`' names and `/v2/embed`'s, mapped as those routes
+  map them, with their default, the document prefix.
+  `add_special_tokens: false` leaves the special tokens out of `count` and
+  `tokens` but not out of `fits`. The prefix stays, since it is part of
+  every input the model sees. A static model's inputs carry no special
+  tokens, so for one it changes nothing.
+- **`max_tokens`** is `/v2/embed`'s, validated as `/v2/embed` validates
+  it. With it, `fits` is `/v2/embed`'s verdict under `truncate: "NONE"`:
+  the limit is `max_tokens` (when lower), and the byte bound scales with
+  it. `max_model_len` stays the model's limit. Without it, `fits` is
+  `/v1/embeddings`'.
 - **Nothing is truncated.** A text past the limit is counted in full, so a
-  client can see by how much it is over. That includes a model whose
-  tokenizer.json truncates on its own (LFM2.5-Embedding-350M's, at 512).
-  The only bound is the request body limit, 2 MiB, which `/v1/embeddings`
-  also relies on. NONE's byte bound (64 bytes per token of the limit)
-  doesn't apply, because it would refuse the long texts a client most
-  needs counted. That bound still applies on `/v1/embeddings`, so a text
-  fits when `count <= max_model_len` and it is within 64 bytes per token
-  of `max_model_len`. Only text that averages more than 64 bytes per token,
-  such as long runs of whitespace, can pass the first check and fail the
-  second.
-- **`max_model_len` is the limit the count is compared with.** That is
-  the model's `max_seq_len` as `/v1/models` lists it, after any cap (D33):
-  for a Core ML model, its largest bucket, as the issue proposed. The one
-  case where it can differ is a tokenizer.json that truncates at fewer
+  client can see by how much. That includes a model whose tokenizer.json
+  truncates on its own (LFM2.5-Embedding-350M's, at 512). This departs
+  from issue #4, which asked for "truncation and byte-cap behavior
+  identical to the embedding path". Truncating would hide the count the
+  route compares with the limit, and the routes' byte bounds would refuse
+  the long texts a client most needs counted. The verdict those bounds
+  give is in `fits` instead. `/tokenize`'s own bound on the text is the
+  request body limit, 2 MiB.
+- **`max_model_len` is the limit the count is compared with:** the
+  model's `max_seq_len` as `/v1/models` lists it, after any cap (D33).
+  For a Core ML model that is its largest bucket, which is what issue #4
+  proposed ("bucket seems right"). The one case where it differs from
+  `/v1/models` is an embedder whose tokenizer.json truncates at fewer
   tokens than `max_seq_len`. `/v1/embeddings` enforces the tokenizer's
   limit, but `/v1/models` doesn't read tokenizers to list models. There,
   `max_model_len` reports the tokenizer's limit, because that is what the
@@ -3075,16 +3100,28 @@ clients call them there.
   instructions, then cuts the text to fit by design. A count of the text
   alone wouldn't be compared with any limit, so returning one would
   mislead. `/detokenize` takes any embedder or classifier, since decoding
-  doesn't depend on layout.
+  doesn't depend on layout. `input_type` and `max_tokens` are 400s for a
+  classifier.
 - **The chat model and `messages` are 400s.** Foundation Models reports
   token counts but not token ids, and counting for chat belongs with the
   Responses and Messages token-count routes. `messages`, vLLM's chat form,
   needs a chat template, which encoders don't have.
-- **The tokenizer loads without the model.** `/tokenize` uses a separate
-  pool of tokenizers, loaded from the manifest and the tokenizer.json and
-  dropped after the same idle time as models. A client that only counts
-  doesn't load any weights. `/detokenize` keeps special tokens, as
-  vLLM's does, and an id outside the vocabulary is a 400.
+- **Cost is bounded.** A 2 MiB text can be over a million tokens and a
+  few hundred megabytes while it is tokenized, so at most one
+  tokenization per core runs at once. A request's wait for its turn, and
+  its work, are bounded by the request timeout, as other routes' work is,
+  and the tokenizer's load by the load timeout. A request that times out
+  waiting never runs. Token strings are built only when
+  `return_token_strs` asks for them.
+- **One tokenizer per model.** `/tokenize` loads a model's tokenizer
+  without its weights, into a pool dropped after the same idle time as
+  models. The tokenizer is shared: a model's backend and `/tokenize` get
+  the same copy through a process-wide cache (`EmbedInput::shared`,
+  `InputBuilder::shared`), which holds it weakly. Concurrent first loads of
+  one model wait for one load instead of each loading a copy. A model
+  loaded while `/tokenize` holds its tokenizer reuses it, and the other
+  way round. `/detokenize` keeps special tokens, as vLLM's does, and an id
+  outside the vocabulary is a 400.
 
 ## Hardware verification status
 

@@ -105,8 +105,9 @@ async fn post(state: &AppState, route: &str, body: Value) -> (StatusCode, Value)
     call(state.clone(), post_json(route, body)).await
 }
 
-/// /tokenize's count and max_model_len for `text`, as `input_type`.
-async fn count(state: &AppState, model: &str, text: &str, input_type: Option<&str>) -> (usize, usize) {
+/// /tokenize's answer for `text` as `input_type`: (count, max_model_len,
+/// fits).
+async fn tokenize(state: &AppState, model: &str, text: &str, input_type: Option<&str>) -> (usize, usize, bool) {
     let mut body = json!({"model": model, "prompt": text});
     if let Some(t) = input_type {
         body["input_type"] = json!(t);
@@ -115,37 +116,56 @@ async fn count(state: &AppState, model: &str, text: &str, input_type: Option<&st
     assert_eq!(status, StatusCode::OK, "{body}");
     let count = body["count"].as_u64().unwrap() as usize;
     assert_eq!(count, body["tokens"].as_array().unwrap().len());
-    (count, body["max_model_len"].as_u64().unwrap() as usize)
+    (count, body["max_model_len"].as_u64().unwrap() as usize, body["fits"].as_bool().unwrap())
 }
 
-/// The contract, for `model` as `input_type`: /tokenize counts a text of
-/// exactly `max_model_len` tokens, which /v1/embeddings embeds under
-/// `truncate: NONE`, and a longer one, which it refuses naming the same
-/// count. `word` is one token. Returns `max_model_len`.
-async fn agrees_with_embeddings(state: &AppState, model: &str, word: &str, input_type: Option<&str>) -> usize {
-    let (fixed, limit) = count(state, model, "", input_type).await;
-    let text = |words: usize| vec![word; words].join(" ");
-    let mut request = json!({"model": model, "truncate": "NONE"});
+/// /v1/embeddings' verdict on `text` under `truncate: NONE`: `None` when
+/// it embeds it, else its 400's message.
+async fn refusal(state: &AppState, model: &str, text: &str, input_type: Option<&str>) -> Option<String> {
+    let mut request = json!({"model": model, "input": text, "truncate": "NONE"});
     if let Some(t) = input_type {
         request["input_type"] = json!(t);
     }
-
-    let at_limit = text(limit - fixed);
-    assert_eq!(count(state, model, &at_limit, input_type).await, (limit, limit), "{model} {input_type:?}");
-    request["input"] = json!(at_limit);
-    let (status, body) = post(state, "/v1/embeddings", request.clone()).await;
-    assert_eq!(status, StatusCode::OK, "{model} {input_type:?}, at the limit: {body}");
-
-    // Well past the limit: counted whole, not truncated.
-    let over = text(limit - fixed + 7);
-    let (n, _) = count(state, model, &over, input_type).await;
-    assert_eq!(n, limit + 7);
-    request["input"] = json!(over);
     let (status, body) = post(state, "/v1/embeddings", request).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    let message = body["error"]["message"].as_str().unwrap();
-    let want = format!("input 0: {n} tokens, over model `{model}`'s limit of {limit} tokens");
-    assert!(message.starts_with(&want), "{message}\nwanted: {want}");
+    match status {
+        StatusCode::OK => None,
+        StatusCode::BAD_REQUEST => Some(body["error"]["message"].as_str().unwrap().to_string()),
+        other => panic!("{model}: {other}: {body}"),
+    }
+}
+
+/// /tokenize on `text`, checked against /v1/embeddings: `fits` is its
+/// verdict, and a refusal for length names /tokenize's count and
+/// max_model_len. Returns (count, max_model_len, fits).
+async fn agrees(state: &AppState, model: &str, text: &str, input_type: Option<&str>) -> (usize, usize, bool) {
+    let (n, limit, fits) = tokenize(state, model, text, input_type).await;
+    let refused = refusal(state, model, text, input_type).await;
+    assert_eq!(fits, refused.is_none(), "{model} {input_type:?}, {} bytes: {refused:?}", text.len());
+    if let Some(m) = refused.filter(|m| m.contains(" tokens, over")) {
+        let want = format!("input 0: {n} tokens, over model `{model}`'s limit of {limit} tokens");
+        assert!(m.starts_with(&want), "{m}\nwanted: {want}");
+    }
+    (n, limit, fits)
+}
+
+/// The contract, for `model` as `input_type`, `word` being one token: a
+/// text of exactly `max_model_len` tokens fits and embeds; a longer one is
+/// counted whole and refused, naming that count. And `fits`, not the
+/// count, decides: a long run without spaces is one token but too many
+/// bytes, as is a long run of spaces, which is none. Returns
+/// `max_model_len`.
+async fn agrees_with_embeddings(state: &AppState, model: &str, word: &str, input_type: Option<&str>) -> usize {
+    let (fixed, limit, _) = agrees(state, model, "", input_type).await;
+    let text = |words: usize| vec![word; words].join(" ");
+    assert_eq!(agrees(state, model, &text(limit - fixed), input_type).await, (limit, limit, true), "{model} {input_type:?}");
+    let (n, _, fits) = agrees(state, model, &text(limit - fixed + 7), input_type).await;
+    assert_eq!((n, fits), (limit + 7, false), "counted whole");
+    // As Thai, Lao or Khmer prose is to a WordPiece vocabulary: one
+    // unknown token per run, but past the byte bound.
+    let run = "x".repeat(limit * 64 + 1);
+    assert_eq!(agrees(state, model, &run, input_type).await, (fixed + 1, limit, false));
+    let blank = " ".repeat(limit * 64 + 1);
+    assert_eq!(agrees(state, model, &blank, input_type).await, (fixed, limit, false));
     limit
 }
 
@@ -177,14 +197,18 @@ async fn a_static_models_count_is_the_one_embeddings_checks() {
 
     assert_eq!(agrees_with_embeddings(&state, "test-static", "hello", None).await, 512);
     assert_eq!(listed_max_seq_len(&state, "test-static").await, 512);
+    // A static model embeds an empty text (no special tokens, no prefix).
+    assert_eq!(agrees(&state, "test-static", "", None).await, (0, 512, true));
 
     // The default input_type is /v1/embeddings': the document prefix.
     for input_type in [None, Some("document"), Some("passage"), Some("query")] {
         assert_eq!(agrees_with_embeddings(&state, "prefixed", "hello", input_type).await, 32);
     }
-    assert_eq!(count(&state, "prefixed", "hello", None).await.0, 3);
-    assert_eq!(count(&state, "prefixed", "hello", Some("document")).await.0, 3);
-    assert_eq!(count(&state, "prefixed", "hello", Some("query")).await.0, 2);
+    assert_eq!(tokenize(&state, "prefixed", "hello", None).await.0, 3);
+    assert_eq!(tokenize(&state, "prefixed", "hello", Some("query")).await.0, 2);
+    // /v2/embed's names map as /v2/embed maps them.
+    assert_eq!(tokenize(&state, "prefixed", "hello", Some("search_document")).await.0, 3);
+    assert_eq!(tokenize(&state, "prefixed", "hello", Some("search_query")).await.0, 2);
     // A static model's inputs carry no special tokens, so there are none
     // to leave out; the prefix still counts.
     let (status, body) = post(&state, "/tokenize", json!({"model": "prefixed", "prompt": "hello", "add_special_tokens": false})).await;
@@ -193,21 +217,44 @@ async fn a_static_models_count_is_the_one_embeddings_checks() {
     // The tokenizer's own limit is the one /v1/embeddings applies, and
     // /tokenize counts past it, where the tokenizer as shipped would stop.
     assert_eq!(agrees_with_embeddings(&state, "truncating", "hello", None).await, 8);
-    assert_eq!(count(&state, "truncating", &"hello ".repeat(100), None).await, (100, 8));
+    assert_eq!(tokenize(&state, "truncating", &"hello ".repeat(100), None).await, (100, 8, false));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fits_follows_a_v2_embed_max_tokens() {
+    let state = test_state(true, None);
+    // /v2/embed's NONE measures against max_tokens, and so does `fits`.
+    for (text, fits) in [("hello world", true), ("hello world hello", false)] {
+        let body = json!({"model": "test-static", "prompt": text, "max_tokens": 2});
+        let (status, body) = post(&state, "/tokenize", body).await;
+        assert_eq!((status, &body["fits"], &body["max_model_len"]), (StatusCode::OK, &json!(fits), &json!(512)), "{body}");
+        let v2 = json!({"model": "test-static", "texts": [text], "truncate": "NONE", "max_tokens": 2});
+        let (status, body) = post(&state, "/v2/embed", v2).await;
+        assert_eq!(status == StatusCode::OK, fits, "{body}");
+    }
+    // Validated as /v2/embed validates it.
+    for bad in [json!(0), json!(513)] {
+        let (status, body) = post(&state, "/tokenize", json!({"model": "test-static", "prompt": "hi", "max_tokens": bad})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tokenize_shapes_and_refusals() {
     let state = test_state(true, None);
-    // vLLM's shape: ids, and with return_token_strs their vocabulary entries.
+    // vLLM's shape: ids, and with return_token_strs their vocabulary
+    // entries, and the `fits` extension.
     let (status, headers, body) = call_with_headers(
         state.clone(),
         post_json("/tokenize", json!({"model": "test-static", "prompt": "Hello world zebra", "return_token_strs": true})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body, json!({"count": 3, "max_model_len": 512, "tokens": [0, 1, 2], "token_strs": ["hello", "world", "[UNK]"]}));
+    assert_eq!(
+        body,
+        json!({"count": 3, "max_model_len": 512, "tokens": [0, 1, 2], "token_strs": ["hello", "world", "[UNK]"], "fits": true})
+    );
     assert_eq!(headers["sidekick-model"], "test-static");
     let (status, body) = post(&state, "/tokenize", json!({"model": "test-static", "prompt": "hello"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -236,8 +283,8 @@ async fn tokenize_shapes_and_refusals() {
     assert!(m.starts_with("`messages` isn't supported"), "{m}");
     let m = refused(json!({"model": "test-static"}), "/tokenize").await;
     assert_eq!(m, "`prompt` is required");
-    let m = refused(json!({"model": "test-static", "prompt": "hi", "input_type": "search_query"}), "/tokenize").await;
-    assert!(m.starts_with("unsupported input_type `search_query`"), "{m}");
+    let m = refused(json!({"model": "test-static", "prompt": "hi", "input_type": "classification"}), "/tokenize").await;
+    assert!(m.starts_with("unsupported input_type `classification`"), "{m}");
     // The chat model has no token ids to give.
     for route in ["/tokenize", "/detokenize"] {
         let m = refused(json!({"model": "apple-fm", "prompt": "hi", "tokens": [1]}), route).await;
@@ -247,7 +294,14 @@ async fn tokenize_shapes_and_refusals() {
     // manifest, before any tokenizer loads.
     let m = refused(json!({"model": "reranker", "prompt": "hi"}), "/tokenize").await;
     assert!(m.starts_with("a text-ranking model's input is a (query, document) pair"), "{m}");
-    for (model, format) in [("decider", "laya"), ("schema-decider", "gliner2"), ("fev-decider", "fev"), ("nli-decider", "nli")] {
+    let formats = [
+        ("decider", "laya"),
+        ("schema-decider", "gliner2"),
+        ("fev-decider", "fev"),
+        ("jev-decider", "agentjev"),
+        ("nli-decider", "nli"),
+    ];
+    for (model, format) in formats {
         let m = refused(json!({"model": model, "prompt": "hi"}), "/tokenize").await;
         assert!(m.starts_with(&format!("a zero-shot model in the {format} format")), "{model}: {m}");
     }
@@ -256,7 +310,45 @@ async fn tokenize_shapes_and_refusals() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_text_classifier_counts_with_its_special_tokens() {
+async fn both_routes_need_the_api_key() {
+    let state = test_state(true, Some("sekrit"));
+    for (route, body) in [
+        ("/tokenize", json!({"model": "test-static", "prompt": "hello"})),
+        ("/detokenize", json!({"model": "test-static", "tokens": [0]})),
+    ] {
+        let (status, reply) = post(&state, route, body.clone()).await;
+        assert_eq!((status, &reply["error"]["code"]), (StatusCode::UNAUTHORIZED, &json!("invalid_api_key")), "{route}");
+        let mut request = post_json(route, body);
+        request.headers_mut().insert("authorization", "Bearer sekrit".parse().unwrap());
+        let (status, reply) = call(state.clone(), request).await;
+        assert_eq!(status, StatusCode::OK, "{route}: {reply}");
+    }
+}
+
+/// A model whose backend this build lacks is a 503, as on /v1/embeddings.
+#[cfg(not(feature = "onnx"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_backend_not_built_in_is_a_503() {
+    let manifest = "id = \"tiny\"\nbackend = \"onnx\"\nartifact = \"hidden.onnx\"\ntokenizer = \"tokenizer.json\"\ndims = 8\n\
+                    pooling = \"cls\"\nmax_seq_len = 16\n\n[io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\n\
+                    token_type_ids = \"token_type_ids\"\nposition_ids = \"position_ids\"\noutput = \"last_hidden_state\"\n";
+    let dir = models_dir("no-onnx", &[("tiny", manifest.into(), tokenizer_json(&["[UNK]"], false, None))]);
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidekick-embed/tests/fixtures/tiny-onnx");
+    std::os::unix::fs::symlink(fixtures.join("hidden.onnx"), dir.join("tiny/hidden.onnx")).unwrap();
+    let state = state_over(&dir);
+    for (route, body) in [
+        ("/tokenize", json!({"model": "tiny", "prompt": "a"})),
+        ("/detokenize", json!({"model": "tiny", "tokens": [0]})),
+        ("/v1/embeddings", json!({"model": "tiny", "input": "a"})),
+    ] {
+        let (status, reply) = post(&state, route, body).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{route}: {reply}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_text_classifier_counts_and_fits_as_classify_checks() {
     let state = test_state(true, None);
     // The sentiment test model, 64 tokens, given a tokenizer.json.
     let dir = state.registry.classifier("sentiment").unwrap().dir.clone();
@@ -271,24 +363,39 @@ async fn a_text_classifier_counts_with_its_special_tokens() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
-        json!({"count": 4, "max_model_len": 64, "tokens": [1, 3, 4, 2], "token_strs": ["[CLS]", "good", "bad", "[SEP]"]})
+        json!({"count": 4, "max_model_len": 64, "tokens": [1, 3, 4, 2], "token_strs": ["[CLS]", "good", "bad", "[SEP]"],
+               "fits": true})
     );
     assert_eq!(headers["sidekick-model"], "sentiment@abc123");
     let (status, body) = post(&state, "/tokenize", json!({"model": "sentiment", "prompt": "good bad", "add_special_tokens": false})).await;
-    assert_eq!((status, &body["tokens"]), (StatusCode::OK, &json!([3, 4])), "{body}");
-    // Past the limit: counted whole.
-    let (status, body) = post(&state, "/tokenize", json!({"model": "sentiment", "prompt": "good ".repeat(100)})).await;
-    assert_eq!((status, &body["count"]), (StatusCode::OK, &json!(102)), "{body}");
-    // A classifier has no prompt prefix to pick.
-    let (status, body) = post(&state, "/tokenize", json!({"model": "sentiment", "prompt": "good", "input_type": "query"})).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!((status, &body["tokens"], &body["fits"]), (StatusCode::OK, &json!([3, 4]), &json!(true)), "{body}");
+    // At the limit, past it (counted whole), and past /v1/classify's 16
+    // bytes per token: one token, but refused.
+    for (text, count, fits) in [
+        ("good ".repeat(62), 64, true),
+        ("good ".repeat(63), 65, false),
+        ("good ".repeat(100), 102, false),
+        ("x".repeat(64 * 16 + 1), 3, false),
+        (String::new(), 2, true),
+    ] {
+        let (status, body) = post(&state, "/tokenize", json!({"model": "sentiment", "prompt": text})).await;
+        assert_eq!((status, &body["count"], &body["fits"]), (StatusCode::OK, &json!(count), &json!(fits)), "{body}");
+    }
+    // A classifier has no prompt prefix or max_tokens.
+    for extra in [json!({"input_type": "query"}), json!({"max_tokens": 8})] {
+        let mut body = json!({"model": "sentiment", "prompt": "good"});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let (status, body) = post(&state, "/tokenize", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
     // Special tokens are kept on the way back.
     let (status, body) = post(&state, "/detokenize", json!({"model": "sentiment", "tokens": [1, 3, 4, 2]})).await;
     assert_eq!((status, body), (StatusCode::OK, json!({"prompt": "[CLS] good bad [SEP]"})));
 }
 
 /// sidekick-embed's tiny ONNX graph with `[CLS] … [SEP]` and prompt
-/// prefixes, 16 tokens.
+/// prefixes, 16 tokens; and again with a tokenizer that truncates at 10 on
+/// its own, as LFM2.5-Embedding's does at 512.
 #[cfg(feature = "onnx")]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_onnx_models_count_includes_its_special_tokens_and_prefix() {
@@ -297,19 +404,35 @@ async fn an_onnx_models_count_includes_its_special_tokens_and_prefix() {
         return;
     }
     let words = ["[UNK]", "[CLS]", "[SEP]", "a", "b", "c", "d", "e", "f", "g", "h", "i"];
-    let manifest = "id = \"tiny\"\nbackend = \"onnx\"\nartifact = \"hidden.onnx\"\ntokenizer = \"tokenizer.json\"\ndims = 8\n\
-                    pooling = \"cls\"\nmax_seq_len = 16\n\n[io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\n\
-                    token_type_ids = \"token_type_ids\"\nposition_ids = \"position_ids\"\noutput = \"last_hidden_state\"\n\n\
-                    [prefixes]\nquery = \"a \"\ndocument = \"b c \"\n";
-    let dir = models_dir("onnx", &[("tiny", manifest.into(), tokenizer_json(&words, true, None))]);
+    let manifest = |id: &str| {
+        format!(
+            "id = \"{id}\"\nbackend = \"onnx\"\nartifact = \"hidden.onnx\"\ntokenizer = \"tokenizer.json\"\ndims = 8\n\
+             pooling = \"cls\"\nmax_seq_len = 16\n\n[io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\n\
+             token_type_ids = \"token_type_ids\"\nposition_ids = \"position_ids\"\noutput = \"last_hidden_state\"\n\n\
+             [prefixes]\nquery = \"a \"\ndocument = \"b c \"\n"
+        )
+    };
+    let dir = models_dir(
+        "onnx",
+        &[
+            ("tiny", manifest("tiny"), tokenizer_json(&words, true, None)),
+            ("tiny-truncating", manifest("tiny-truncating"), tokenizer_json(&words, true, Some(10))),
+        ],
+    );
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidekick-embed/tests/fixtures/tiny-onnx");
-    std::os::unix::fs::symlink(fixtures.join("hidden.onnx"), dir.join("tiny/hidden.onnx")).unwrap();
+    for id in ["tiny", "tiny-truncating"] {
+        std::os::unix::fs::symlink(fixtures.join("hidden.onnx"), dir.join(id).join("hidden.onnx")).unwrap();
+    }
     let state = state_over(&dir);
 
     for input_type in [None, Some("query")] {
         assert_eq!(agrees_with_embeddings(&state, "tiny", "d", input_type).await, 16);
+        assert_eq!(agrees_with_embeddings(&state, "tiny-truncating", "d", input_type).await, 10);
     }
     assert_eq!(listed_max_seq_len(&state, "tiny").await, 16);
+    // /v1/models lists the manifest's; /tokenize the tokenizer's, which
+    // /v1/embeddings applies (D44).
+    assert_eq!(listed_max_seq_len(&state, "tiny-truncating").await, 16);
     // [CLS] b c d [SEP], and without the special tokens b c d.
     let (status, body) = post(&state, "/tokenize", json!({"model": "tiny", "prompt": "d", "return_token_strs": true})).await;
     assert_eq!((status, &body["token_strs"]), (StatusCode::OK, &json!(["[CLS]", "b", "c", "d", "[SEP]"])), "{body}");
@@ -319,24 +442,40 @@ async fn an_onnx_models_count_includes_its_special_tokens_and_prefix() {
 }
 
 /// sidekick-embed's tiny Qwen3 Core ML model on the CPU, in buckets 16 and
-/// 32, with a one-token query prefix.
+/// 32, with a one-token query prefix; and with `[CLS] … [SEP]` and a
+/// tokenizer that truncates at 20 on its own.
 #[cfg(all(target_os = "macos", feature = "coreml"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_core_ml_models_count_is_the_one_embeddings_checks() {
-    let manifest = "id = \"tiny-qwen3-embed\"\nbackend = \"coreml\"\nartifact = \"model_{seq}.mlmodelc\"\n\
-                    tokenizer = \"tokenizer.json\"\ndims = 32\npooling = \"none\"\nbuckets = [16, 32]\nmax_seq_len = 32\n\
-                    compute_units = \"cpu_only\"\n\n[io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\n\
-                    output = \"embedding\"\n\n[prefixes]\nquery = \"b \"\n";
-    let dir = models_dir("coreml", &[("tiny-qwen3-embed", manifest.into(), tokenizer_json(&["[UNK]", "a", "b"], false, None))]);
+    let manifest = |id: &str| {
+        format!(
+            "id = \"{id}\"\nbackend = \"coreml\"\nartifact = \"model_{{seq}}.mlmodelc\"\n\
+             tokenizer = \"tokenizer.json\"\ndims = 32\npooling = \"none\"\nbuckets = [16, 32]\nmax_seq_len = 32\n\
+             compute_units = \"cpu_only\"\n\n[io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\n\
+             output = \"embedding\"\n\n[prefixes]\nquery = \"b \"\n"
+        )
+    };
+    let dir = models_dir(
+        "coreml",
+        &[
+            ("tiny-qwen3-embed", manifest("tiny-qwen3-embed"), tokenizer_json(&["[UNK]", "a", "b"], false, None)),
+            ("tiny-truncating", manifest("tiny-truncating"), tokenizer_json(&["[UNK]", "[CLS]", "[SEP]"], true, Some(20))),
+        ],
+    );
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidekick-embed/tests/fixtures/tiny-qwen3-embed-chunked");
-    for bucket in [16, 32] {
-        let name = format!("model_{bucket}.mlmodelc");
-        std::os::unix::fs::symlink(fixtures.join(&name), dir.join("tiny-qwen3-embed").join(&name)).unwrap();
+    for id in ["tiny-qwen3-embed", "tiny-truncating"] {
+        for bucket in [16, 32] {
+            let name = format!("model_{bucket}.mlmodelc");
+            std::os::unix::fs::symlink(fixtures.join(&name), dir.join(id).join(&name)).unwrap();
+        }
     }
     let state = state_over(&dir);
-    for input_type in [None, Some("query")] {
-        assert_eq!(agrees_with_embeddings(&state, "tiny-qwen3-embed", "a", input_type).await, 32);
-    }
+    assert_eq!(agrees_with_embeddings(&state, "tiny-qwen3-embed", "a", None).await, 32);
+    assert_eq!(agrees_with_embeddings(&state, "tiny-truncating", "x", None).await, 20);
     assert_eq!(listed_max_seq_len(&state, "tiny-qwen3-embed").await, 32);
+    // No special tokens and no document prefix: an empty text has no
+    // tokens, which a Core ML model can't run. Its query prefix is one.
+    assert_eq!(agrees(&state, "tiny-qwen3-embed", "", None).await, (0, 32, false));
+    assert_eq!(agrees(&state, "tiny-qwen3-embed", "", Some("query")).await, (1, 32, true));
     std::fs::remove_dir_all(&dir).unwrap();
 }
