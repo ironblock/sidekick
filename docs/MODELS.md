@@ -1451,19 +1451,21 @@ MTEB results: [mteb/results at 3b0980076221](https://huggingface.co/datasets/mte
   run may score lower. That hasn't been measured.
 - **Prompts.** MTEB prompts many models: an instruction per task
   (Qwen3-Embedding, F2LLM), a prompt per task type (EmbeddingGemma), or
-  query and document prefixes on retrieval tasks only. sidekick always
+  query and document prefixes on retrieval and reranking tasks only
+  (mteb counts reranking as retrieval). sidekick always
   adds the manifest's prefix for the request's `input_type` (the document
   prefix when none is given), so whether a client can reproduce the run's
   prompts depends on the model:
   - all-MiniLM-L6-v2, gte-modernbert-base: no prompts in either.
   - bge-small-en-v1.5, Qwen3-Embedding-0.6B, F2LLM-v2-160M: yes. Their
     document prefix is empty, so send the run's instruction in the text
-    with `input_type: "document"` (bge's `query` prefix is its retrieval
-    query prompt).
+    with `input_type: "document"` (bge's `query` prefix is its query
+    prompt for retrieval and reranking).
   - LFM2.5-Embedding-350M: its one score is retrieval, where sidekick's
     query and document prefixes are the run's.
-  - e5-small-v2: only on retrieval. Its runs used no prefix on other
-    tasks, and sidekick always adds `query: ` or `passage: `.
+  - e5-small-v2: only on retrieval and reranking. Its runs used no
+    prefix on other tasks, and sidekick always adds `query: ` or
+    `passage: `.
   - embeddinggemma-300m, embeddinggemma-2: no. Every input gets a prefix
     (`title: none | text: ` for documents), so a task-type prompt such as
     `task: classification | query: ` sent by a client ends up inside it.
@@ -1495,8 +1497,8 @@ The primary English benchmark: 41 tasks.
 | model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | Classification | Clustering | PairClassification | Reranking | STS | Summarization | revision evaluated |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | ANE **A**, onnx-cpu **A** | 256 / 256 | none | 59.03 | 42.92 | 69.25 | 44.90 | 82.37 | 47.14 | 78.94 | 25.96 | another revision, same weights |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix, retrieval only | 64.30 | 53.86 | 76.56 | 47.02 | 84.95 | 46.94 | 81.28 | 28.92 | sidekick's revision; 8 of 41 tasks from the model card |
-| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes, retrieval only | 61.32 | 48.46 | 74.58 | 42.05 | 84.79 | 44.10 | 80.09 | 33.23 | another revision, same weights; 8 of 41 tasks from the model card |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix, retrieval and reranking only | 64.30 | 53.86 | 76.56 | 47.02 | 84.95 | 46.94 | 81.28 | 28.92 | sidekick's revision; 8 of 41 tasks from the model card (the authors' own runs, not mteb's) |
+| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes, retrieval and reranking only | 61.32 | 48.46 | 74.58 | 42.05 | 84.79 | 44.10 | 80.09 | 33.23 | another revision, same weights; 8 of 41 tasks from the model card (the authors' own runs, not mteb's) |
 | gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / ≤ 8,192 (advertised) | none | (27 of 41 tasks) | (6 of 10 tasks) | 80.71 | | 85.94 | 47.63 | (8 of 9 tasks) | | another revision, same weights |
 | embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / ≤ 2,048 (advertised) | a prompt per task type | 69.67 †2 | 55.69 †2 | 87.55 | 56.55 | 87.29 | 47.43 | 83.61 | 37.64 | another revision, weights not checked (gated) |
 | embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / ≤ 8,192 (advertised) | a prompt per task type | 67.53 †2 | 51.33 †2 | 88.82 | 51.70 | 86.39 | 46.03 | 82.75 | 35.09 | sidekick's revision |
@@ -1514,8 +1516,8 @@ The primary English benchmark: 41 tasks.
 | model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | Classification | Clustering | PairClassification | Reranking | STS | BitextMining | MultilabelClassification | InstructionReranking | revision evaluated |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | ANE **A**, onnx-cpu **A** | 256 / 256 | none | 41.39 | 32.51 | 46.20 | 37.47 | 71.23 | 40.28 | 56.08 | 20.09 | 15.05 | -2.84 | another revision, same weights |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix, retrieval only | 43.76 †1 | 36.26 †1 | 47.37 | 39.93 | 71.56 | 45.89 | 59.73 | 23.63 | 17.01 | -1.86 | sidekick's revision |
-| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes, retrieval only | 44.47 | 39.38 | 48.07 | 37.53 | 72.13 | 44.44 | 59.87 | 28.04 | 15.14 | -2.85 | another revision, same weights |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix, retrieval and reranking only | 43.76 †1 | 36.26 †1 | 47.37 | 39.93 | 71.56 | 45.89 | 59.73 | 23.63 | 17.01 | -1.86 | sidekick's revision |
+| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes, retrieval and reranking only | 44.47 | 39.38 | 48.07 | 37.53 | 72.13 | 44.44 | 59.87 | 28.04 | 15.14 | -2.85 | another revision, same weights |
 | gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / ≤ 8,192 (advertised) | none | (13 of 131 tasks) | (4 of 18 tasks) | (1 of 43 tasks) | | (2 of 11 tasks) | | (6 of 16 tasks) | | | | another revision, same weights |
 | embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / ≤ 2,048 (advertised) | a prompt per task type | 61.14 †1 | 62.49 †1 | 60.90 | 51.17 | 81.40 | 63.22 | 74.73 | 64.40 | 24.66 | 5.61 | another revision, weights not checked (gated) |
 | embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / ≤ 8,192 (advertised) | a prompt per task type | 60.52 †1 | 60.60 †1 | 62.30 | 47.58 | 78.70 | 62.32 | 73.89 | 65.48 | 25.23 | -0.61 | sidekick's revision |
@@ -1532,8 +1534,8 @@ complete only here.
 | model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | Classification | Clustering | PairClassification | Reranking | STS | Summarization | revision evaluated |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | ANE **A**, onnx-cpu **A** | 256 / 256 | none | 56.10 †2 | 41.95 †2 | 62.63 | 41.91 | 82.37 | 58.04 | 78.95 | 30.81 | another revision, same weights |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix, retrieval only | 61.75 †2 | 51.65 †1 | 72.18 †1 | 43.82 | 84.95 | 58.36 | 81.64 | 30.12 | sidekick's revision; 33 of 56 tasks from the model card |
-| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes, retrieval only | 59.32 †2 | 49.04 †2 | 69.96 | 39.94 | 84.79 | 54.33 | 80.46 | 31.16 | another revision, same weights; 26 of 56 tasks from the model card |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix, retrieval and reranking only | 61.75 †2 | 51.65 †1 | 72.18 †1 | 43.82 | 84.95 | 58.36 | 81.64 | 30.12 | sidekick's revision; 33 of 56 tasks from the model card (the authors' own runs, not mteb's) |
+| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes, retrieval and reranking only | 59.32 †2 | 49.04 †2 | 69.96 | 39.94 | 84.79 | 54.33 | 80.46 | 31.16 | another revision, same weights; 26 of 56 tasks from the model card (the authors' own runs, not mteb's) |
 | gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / ≤ 8,192 (advertised) | none | 64.36 †4 | 55.19 †4 | 77.00 | 46.47 | 85.94 | 59.24 | 81.58 | 30.69 | another revision, same weights |
 | embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / ≤ 2,048 (advertised) | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 87.29 | (2 of 4 tasks) | (8 of 10 tasks) | | another revision, weights not checked (gated) |
 | embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / ≤ 8,192 (advertised) | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 86.39 | (2 of 4 tasks) | (8 of 10 tasks) | | sidekick's revision |
@@ -1549,7 +1551,7 @@ has no score on the MTEB benchmarks above; this is the one it was run on.
 <!-- generated: nanobeir-multilingual -->
 | model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | revision evaluated |
 |---|---|---|---|---|---|---|
-| LFM2.5-Embedding-350M | ANE **A** | 512 / 512 | query and document prefixes, retrieval only | 57.62 | 57.62 | another revision, same weights |
+| LFM2.5-Embedding-350M | ANE **A** | 512 / 512 | query and document prefixes, retrieval and reranking only | 57.62 | 57.62 | another revision, same weights |
 <!-- /generated -->
 
 ### Self-reported scores
@@ -1591,7 +1593,7 @@ Rerankers, NLI models and the bespoke classifiers have no MTEB results.
 | roberta-large-zeroshot-v2.0-c | GPU **B** | 512 | zeroshot-v2.0 evaluation (28 text-classification datasets, the card's 'all datasets mean' row) | Zero-shot classification | f1_macro | 62.2 | [model card](https://huggingface.co/MoritzLaurer/roberta-large-zeroshot-v2.0-c/blob/4c24ed4bba5af8d3162604abc2a141b9d2183ecc/README.md), read 2026-10-20 | |
 | bge-m3-zeroshot-v2.0-c | GPU **A** | 2,048 | zeroshot-v2.0 evaluation (28 text-classification datasets, the card's 'all datasets mean' row) | Zero-shot classification | f1_macro | 59 | [model card](https://huggingface.co/MoritzLaurer/bge-m3-zeroshot-v2.0-c/blob/705510dfe0f35d223a4bf6f5d2695ec5fd162341/README.md), read 2026-10-20 | |
 | ModernBERT-large-zeroshot-v2.0 | GPU **B** | 2,048 | ModernBERT-large-zeroshot-v2.0 training results (mean over the card's 36 datasets, NLI and text classification) | Zero-shot classification | f1_macro | 83.4 † | [model card](https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md), read 2026-10-20 | Measured on the evaluation splits of the datasets it was trained on, so not zero-shot and not comparable with the -c models' 28-dataset mean |
-| ModernBERT-large-zeroshot-v2.0 | GPU **B** | 2,048 | MultiNLI (mismatched validation set, the card's training results) | NLI | accuracy | 94.4 † | [model card](https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md), read 2026-10-20 | |
+| ModernBERT-large-zeroshot-v2.0 | GPU **B** | 2,048 | MultiNLI (mismatched validation set, the card's training results) | NLI | accuracy, two-way (entailment vs not) | 94.4 † | [model card](https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md), read 2026-10-20 | A two-way model (entailment or not; chance 50%), so not comparable with the three-way NLI models' accuracy (chance 33%) |
 <!-- /generated -->
 
 ## Incompatible / not integrated

@@ -266,13 +266,14 @@ model = "modernbert-large-zeroshot-v2.0"
 benchmark = "MultiNLI"
 version = "mismatched validation set, the card's training results"
 category = "NLI"
-metric = "accuracy"
+metric = "accuracy, two-way (entailment vs not)"
 value = "0.944"
 scale = "fraction"
 source_kind = "self-reported"
 source_url = "https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md"
 read_on = "2026-10-20"
 trained_on = true
+note = "A two-way model (entailment or not; chance 50%), so not comparable with the three-way NLI models' accuracy (chance 33%)"
 
 [[scores]]
 model = "modernbert-large-zeroshot-v2.0"

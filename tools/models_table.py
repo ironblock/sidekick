@@ -641,16 +641,83 @@ def curated_problems(entries, models):
     return problems
 
 
+REVISION_MATCHES = ("exact", "same-weights", "unverified", "different", "model card only")
+CONTEXT_SOURCES = ("mteb loader", "sentence-transformers config", "advertised")
+
+
+def is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def is_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def mteb_type_problems(e):
+    """An MTEB entry's fields of the wrong JSON type, or outside their
+    closed sets."""
+    out = []
+    for k in ("model", "benchmark", "mteb_version", "task_set_hash", "source_kind", "source_url", "read_on",
+              "sidekick_revision"):
+        if not isinstance(e[k], str):
+            out.append(f"{k} {e[k]!r} isn't a string")
+    for k in ("n_tasks", "of"):
+        if not is_int(e[k]):
+            out.append(f"{k} {e[k]!r} isn't an integer")
+    for k in ("mean_task", "mean_task_type"):
+        if e.get(k) is not None and not is_number(e[k]):
+            out.append(f"{k} {e[k]!r} isn't a number")
+    revs = e["evaluated_revisions"]
+    if not isinstance(revs, dict) or not all(isinstance(r, str) and is_int(n) for r, n in revs.items()):
+        out.append("evaluated_revisions isn't a map of revision to task count")
+    if e.get("revision_match") is not None and e["revision_match"] not in REVISION_MATCHES:
+        out.append(f"revision_match {e['revision_match']!r} isn't one of {', '.join(REVISION_MATCHES)}")
+    if e.get("model_context") is not None and not is_int(e["model_context"]):
+        out.append(f"model_context {e['model_context']!r} isn't an integer")
+    if (e.get("model_context") is None) != (e.get("model_context_source") is None):
+        out.append("model_context and model_context_source must be given together")
+    elif e.get("model_context_source") is not None and e["model_context_source"] not in CONTEXT_SOURCES:
+        out.append(f"model_context_source {e['model_context_source']!r} isn't one of {', '.join(CONTEXT_SOURCES)}")
+    if e.get("prompting") is not None and not isinstance(e["prompting"], str):
+        out.append(f"prompting {e['prompting']!r} isn't a string")
+    if not isinstance(e["categories"], dict):
+        return out + ["categories isn't a map"]
+    for name, c in e["categories"].items():
+        if not isinstance(c, dict):
+            out.append(f"{name} isn't a map")
+            continue
+        if c.get("value") is not None and not is_number(c["value"]):
+            out.append(f"{name}: value {c['value']!r} isn't a number")
+        for k in ("n_tasks", "of", "n_trained_on", "n_model_card"):
+            if not is_int(c.get(k)):
+                out.append(f"{name}: {k} {c.get(k)!r} isn't an integer")
+        if not isinstance(c.get("metric"), str):
+            out.append(f"{name}: metric {c.get('metric')!r} isn't a string")
+    return out
+
+
 def mteb_problems(data, models):
     """docs/data/benchmarks.mteb.json's entries: what --check refuses."""
     problems = []
     if data.get("scale") != "fraction":
         problems.append("benchmarks.mteb.json: scale isn't fraction")
     revision = (data.get("results") or {}).get("revision")
-    if not revision or not re.fullmatch(SHA, revision):
+    if not isinstance(revision, str) or not re.fullmatch(SHA, revision):
         problems.append("benchmarks.mteb.json: no results revision")
-    benchmarks = data.get("benchmarks") or {}
-    for i, e in enumerate(data.get("entries", [])):
+    problems += [f"benchmarks.mteb.json: {k} isn't a string" for k in ("mteb_version", "read_on")
+                 if not isinstance(data.get(k), str)]
+    benchmarks = data.get("benchmarks")
+    if not isinstance(benchmarks, dict) or not all(
+            isinstance(b, dict) and is_int(b.get("n_tasks")) and isinstance(b.get("task_set_hash"), str)
+            and isinstance(b.get("categories"), dict) and all(is_int(n) for n in b["categories"].values())
+            for b in benchmarks.values()):
+        return problems + ["benchmarks.mteb.json: `benchmarks` isn't a map of benchmark to its task set"]
+    if not isinstance(data.get("entries"), list):
+        return problems + ["benchmarks.mteb.json: `entries` isn't a list"]
+    for i, e in enumerate(data["entries"]):
+        if not isinstance(e, dict):
+            problems.append(f"benchmarks.mteb.json entry {i + 1} isn't an object")
+            continue
         where = f"benchmarks.mteb.json entry {i + 1} ({e.get('model')}, {e.get('benchmark')})"
         need = ("model", "benchmark", "mteb_version", "task_set_hash", "source_kind", "source_url", "read_on",
                 "sidekick_revision", "evaluated_revisions", "n_tasks", "of", "categories")
@@ -658,6 +725,13 @@ def mteb_problems(data, models):
         if missing:
             problems.append(f"{where}: missing {', '.join(missing)}")
             continue
+        wrong = mteb_type_problems(e)
+        if wrong:
+            problems += [f"{where}: {w}" for w in wrong]
+            continue
+        if sum(e["evaluated_revisions"].values()) != e["n_tasks"]:
+            problems.append(f"{where}: evaluated_revisions count {sum(e['evaluated_revisions'].values())} tasks, "
+                            f"not its {e['n_tasks']}")
         if e["model"] not in models:
             problems.append(f"{where}: model {e['model']!r} isn't in docs/data/models.toml")
         b = benchmarks.get(e["benchmark"])
@@ -1041,7 +1115,8 @@ def mteb_table(benchmark, every_embedder=False):
             if mean:
                 revision = REVISION_TEXT.get(mean["revision_match"], mean["revision_match"] or "")
                 if mean["model_card_tasks"]:
-                    revision += f"; {mean['model_card_tasks']} of {mean['of']} tasks from the model card"
+                    revision += (f"; {mean['model_card_tasks']} of {mean['of']} tasks from the model card "
+                                 "(the authors' own runs, not mteb's)")
             out.append([m["name"], grades, f"{caps} / {context}" if mean else caps,
                         (mean["prompting"] or "") if mean else ""]
                        + [score_text(by.get((model, c))) for c in [MEAN] + cats] + [revision])

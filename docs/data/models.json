@@ -9991,7 +9991,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 33,
      "external": 8
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10016,7 +10016,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 33,
      "external": 8
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10041,7 +10041,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 33,
      "external": 8
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10066,7 +10066,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 33,
      "external": 8
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10091,7 +10091,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 33,
      "external": 8
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10116,7 +10116,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 33,
      "external": 8
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10141,7 +10141,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 33,
      "external": 8
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10166,7 +10166,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 33,
      "external": 8
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10190,7 +10190,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10214,7 +10214,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10238,7 +10238,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10262,7 +10262,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10286,7 +10286,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10310,7 +10310,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10334,7 +10334,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10358,7 +10358,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10382,7 +10382,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10406,7 +10406,7 @@
     "evaluated_revisions": {
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 131
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10431,7 +10431,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 23,
      "external": 33
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10456,7 +10456,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 23,
      "external": 33
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10481,7 +10481,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 23,
      "external": 33
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10506,7 +10506,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 23,
      "external": 33
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10531,7 +10531,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 23,
      "external": 33
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10556,7 +10556,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 23,
      "external": 33
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10581,7 +10581,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 23,
      "external": 33
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10606,7 +10606,7 @@
      "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a": 23,
      "external": 33
     },
-    "prompting": "query prefix, retrieval only",
+    "prompting": "query prefix, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10631,7 +10631,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 33,
      "external": 8
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10656,7 +10656,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 33,
      "external": 8
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10681,7 +10681,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 33,
      "external": 8
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10706,7 +10706,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 33,
      "external": 8
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10731,7 +10731,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 33,
      "external": 8
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10756,7 +10756,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 33,
      "external": 8
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10781,7 +10781,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 33,
      "external": 8
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10806,7 +10806,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 33,
      "external": 8
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10830,7 +10830,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10854,7 +10854,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10878,7 +10878,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10902,7 +10902,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10926,7 +10926,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10950,7 +10950,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10974,7 +10974,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -10998,7 +10998,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11022,7 +11022,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11046,7 +11046,7 @@
     "evaluated_revisions": {
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 131
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11071,7 +11071,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 30,
      "external": 26
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11096,7 +11096,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 30,
      "external": 26
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11121,7 +11121,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 30,
      "external": 26
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11146,7 +11146,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 30,
      "external": 26
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11171,7 +11171,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 30,
      "external": 26
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11196,7 +11196,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 30,
      "external": 26
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11221,7 +11221,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 30,
      "external": 26
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -11246,7 +11246,7 @@
      "dca8b1a9dae0d4575df2bf423a5edb485a431236": 30,
      "external": 26
     },
-    "prompting": "query and passage prefixes, retrieval only",
+    "prompting": "query and passage prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -13832,7 +13832,7 @@
     "evaluated_revisions": {
      "85a23d142ff20a1204f4103ca0d4c86be06a9cfe": 13
     },
-    "prompting": "query and document prefixes, retrieval only",
+    "prompting": "query and document prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -13856,7 +13856,7 @@
     "evaluated_revisions": {
      "85a23d142ff20a1204f4103ca0d4c86be06a9cfe": 13
     },
-    "prompting": "query and document prefixes, retrieval only",
+    "prompting": "query and document prefixes, retrieval and reranking only",
     "model_context": 512,
     "model_context_source": "sentence-transformers config",
     "note": null,
@@ -15077,9 +15077,9 @@
     "prompting": null,
     "model_context": null,
     "model_context_source": null,
-    "note": null,
+    "note": "A two-way model (entailment or not; chance 50%), so not comparable with the three-way NLI models' accuracy (chance 33%)",
     "category": "NLI",
-    "metric": "accuracy",
+    "metric": "accuracy, two-way (entailment vs not)",
     "value": 94.4,
     "value_text": "94.4",
     "n_tasks": null,

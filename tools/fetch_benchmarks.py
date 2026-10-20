@@ -80,13 +80,13 @@ TASKS = ("embed", "rerank")
 # input_type may not reproduce. From each model's mteb implementation.
 PROMPTING = {
     "sentence-transformers/all-MiniLM-L6-v2": "none",
-    "BAAI/bge-small-en-v1.5": "query prefix, retrieval only",
-    "intfloat/e5-small-v2": "query and passage prefixes, retrieval only",
+    "BAAI/bge-small-en-v1.5": "query prefix, retrieval and reranking only",
+    "intfloat/e5-small-v2": "query and passage prefixes, retrieval and reranking only",
     "Alibaba-NLP/gte-modernbert-base": "none",
     "google/embeddinggemma-300m": "a prompt per task type",
     "google/embeddinggemma-2": "a prompt per task type",
     "codefuse-ai/F2LLM-v2-160M": "an instruction per task",
-    "LiquidAI/LFM2.5-Embedding-350M": "query and document prefixes, retrieval only",
+    "LiquidAI/LFM2.5-Embedding-350M": "query and document prefixes, retrieval and reranking only",
     "Qwen/Qwen3-Embedding-0.6B": "an instruction per task",
     "cross-encoder/ms-marco-MiniLM-L6-v2": "none",
 }
