@@ -221,9 +221,9 @@ pub struct EmbeddingsRequest {
     pub input_type: Option<String>,
     /// Non-standard extension: what to do with an input longer than the
     /// model's limit. Cohere's values, as on /v2/embed but in any case:
-    /// `END` (the default) keeps its start, `START` its end, and `NONE`
-    /// refuses the request. Or Hugging Face TEI's boolean: `true` is `END`,
-    /// `false` is `NONE`.
+    /// `NONE` (the default here, D43) refuses the request, `END` keeps its
+    /// start and `START` its end. Or Hugging Face TEI's boolean: `true` is
+    /// `END`, `false` is `NONE`.
     #[serde(default)]
     pub truncate: Option<Value>,
 }

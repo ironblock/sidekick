@@ -98,23 +98,33 @@ README. Embeddings: `POST /v1/embeddings` with optional `input_type:
 and `truncate`. Classification: `POST /v1/classify`; see
 [Classification](#classification) below.
 
-**Over-length input.** By default `/v1/embeddings` truncates an input
-longer than the model's limit and returns a normal vector, with nothing in
-the response to say so. A long document then embeds only its start. The
-limit is `max_seq_len` in the model's `/v1/models` entry, in tokens,
-counting special tokens and the model's prompt prefix (for a Core ML model,
-its largest bucket; its `buckets` are listed too). Send `truncate: "NONE"`
-(or TEI's `truncate: false`) to get a 400 instead. The message names the
-input's index in the batch, its token count, the model and the limit, and
-the whole request is refused, so split or shorten that input and send the
-batch again. A text over 64 bytes per token of the limit is refused
-without being tokenized, and its message gives the size in bytes instead.
-A model whose own `tokenizer.json` truncates (LFM2.5-Embedding-350M's
-does, at 512 tokens, its `max_seq_len`) is refused past that point too; if
-such a limit were lower than `max_seq_len`, `/v1/models` wouldn't show it.
-In 0.13.0, `NONE` becomes the default; send `truncate: "END"` to keep
-truncating. `libsidekick.dylib` always truncates, and `sk_model_info`
-reports each model's `max_seq_len`.
+**Over-length input.** `/v1/embeddings` refuses an input longer than the
+model's limit with a 400 `invalid_request_error`, as OpenAI's embeddings
+API does. The message names the input's index in the batch, its token
+count, the model and the limit, and the whole request is refused, so split
+or shorten that input and send the batch again. The limit is `max_seq_len`
+in the model's `/v1/models` entry, in tokens, counting special tokens and
+the model's prompt prefix (for a Core ML model, its largest bucket; its
+`buckets` are listed too). A text over 64 bytes per token of the limit is
+refused without being tokenized, and its message gives the size in bytes
+instead. A model whose own `tokenizer.json` truncates
+(LFM2.5-Embedding-350M's does, at 512 tokens, its `max_seq_len`) is
+refused past that point too.
+
+To truncate instead, send `truncate: "END"` (or TEI's `truncate: true`;
+OpenAI's SDKs send it through `extra_body`): the input is cut to the limit
+and returns a normal vector, with nothing in the response to say so, so a
+long document embeds only its start. `truncate: "START"` keeps the end
+instead. Until 0.13.0, `END` was the default (D43). `/v2/embed` keeps
+Cohere's default, `END`.
+
+**The two paths differ here.** The library's own default stays `END`:
+`sk_embed` has no `truncate` parameter and always truncates, as does the
+Rust `Embedder::embed`. `sk_model_info` reports each model's
+`max_seq_len`. A host that follows the probe order above (daemon, else
+dylib) should send `truncate: "END"` to the daemon to get the same vectors
+on both paths, or handle both behaviours: a 400 from the daemon, and a
+silently truncated vector from the dylib.
 
 To make "installed but not running" disappear entirely, install the
 LaunchAgent from the README (`KeepAlive` keeps it warm); then path 2 only

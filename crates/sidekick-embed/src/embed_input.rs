@@ -306,7 +306,7 @@ pub(crate) fn each_input<T>(texts: &[&str], mut prepare: impl FnMut(&str) -> Res
 /// `NONE`.
 pub(crate) fn too_long(model: &str, tokens: usize, limit: Limit) -> Error {
     Error::InvalidRequest(format!(
-        "{tokens} tokens, over {}, and truncate is NONE (send END or START to truncate it)",
+        "{tokens} tokens, over {}, and truncate is NONE (send truncate: END or START to truncate it)",
         limit.describe(model)
     ))
 }
@@ -316,7 +316,7 @@ pub(crate) fn too_long(model: &str, tokens: usize, limit: Limit) -> Error {
 pub(crate) fn too_big(model: &str, bytes: usize, limit: Limit) -> Error {
     Error::InvalidRequest(format!(
         "{bytes} bytes, more than the {} bytes sidekick reads for {}, and truncate is NONE \
-         (send END or START to truncate it)",
+         (send truncate: END or START to truncate it)",
         limit.tokens().saturating_mul(REJECT_BYTES_PER_TOKEN),
         limit.describe(model)
     ))
@@ -358,7 +358,7 @@ mod tests {
         let e = input(None).ids("a b c d e f", EmbedPurpose::Document, NONE, 6).unwrap_err();
         assert_eq!(
             message(e),
-            "8 tokens, over model `tiny`'s limit of 6 tokens, and truncate is NONE (send END or START to truncate it)"
+            "8 tokens, over model `tiny`'s limit of 6 tokens, and truncate is NONE (send truncate: END or START to truncate it)"
         );
         assert_eq!(input(None).ids("a b c d", EmbedPurpose::Document, NONE, 6).unwrap().len(), 6, "at the limit");
         // A lower max_tokens is the request's limit, and says so.

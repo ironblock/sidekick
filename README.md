@@ -171,28 +171,39 @@ up to 256), `dimensions` for Matryoshka models, and `encoding_format:
 "base64"`. `input_type: "query"` applies a model's query prompt instead of
 its document prompt.
 
-An input longer than the model's limit is truncated by default: its vector
-embeds the start of the text, and nothing in the response says so. The
-limit is the model's `max_seq_len` in `/v1/models`, in tokens, counting
-special tokens and the model's prompt prefix. For a Core ML model it is
-the largest of its `buckets`, also listed there. One exception: a model
-whose own `tokenizer.json` truncates at fewer tokens than `max_seq_len`
-stops there, and `/v1/models` doesn't show it. LFM2.5-Embedding-350M's
+An input longer than the model's limit is a 400 `invalid_request_error`.
+OpenAI's `/v1/embeddings` refuses it too, and Hugging Face TEI returns an
+error unless the request asks it to truncate. Here, `/v1/rerank` and
+text-classification models on `/v1/classify` do the same unless the
+request sends `truncate_prompt_tokens`. The message names the input's
+index in the batch, its token count, the model and the limit, and nothing
+in the request is embedded, so split or shorten that input and send the
+batch again. The limit is the
+model's `max_seq_len` in `/v1/models`, in tokens, counting special tokens
+and the model's prompt prefix. For a Core ML model it is the largest of
+its `buckets`, also listed there. A text longer than 64 bytes per token of
+the limit is refused without being tokenized, and the message gives its
+size in bytes.
+
+Send `truncate: "END"` to truncate instead: the vector then embeds the
+start of the text, and nothing in the response says it was cut. `truncate`
+takes `/v2/embed`'s values in any case: `NONE` (the default) refuses,
+`END` keeps the start of the text, and `START` keeps its end. Hugging Face
+TEI's boolean works too: `true` is `END`, `false` is `NONE`. Anything
+else is a 400, and `null` is the default. Before 0.13.0, `END` was the
+default (D43). OpenAI's SDKs send it through `extra_body`, as in
+`client.embeddings.create(..., extra_body={"truncate": "END"})`.
+
+`/v2/embed` keeps Cohere's default, `END`, and so do `libsidekick.dylib`'s
+`sk_embed` and the Rust library's `Embedder::embed`, which have no
+`truncate` parameter. A host that falls back from the daemon to the dylib
+gets the same vectors on both paths only if it sends `truncate: "END"` to
+the daemon.
+
+A model whose own `tokenizer.json` truncates is refused past that point
+too. Under `END` it stops there, and if that were fewer tokens than
+`max_seq_len`, `/v1/models` wouldn't show it. LFM2.5-Embedding-350M's
 truncates at 512, which is also its `max_seq_len`.
-
-Send `truncate: "NONE"` to get a 400 instead. It names the input's index
-in the batch, its token count, the model and the limit, and nothing in the
-request is embedded. A text longer than 64 bytes per token of the limit is
-refused without being tokenized, and the message gives its size in bytes.
-`truncate` takes `/v2/embed`'s values in any case: `END` (the default)
-keeps the start of the text, `START` keeps its end, and `NONE` refuses.
-Hugging Face TEI's boolean works too: `true` is `END`, `false` is `NONE`.
-Anything else is a 400.
-
-0.13.0 will make `NONE` the default: OpenAI's `/v1/embeddings` refuses
-over-length input, and so do `/v1/classify` and `/v1/rerank` here unless a
-request asks them to truncate. To keep truncating after that, send
-`truncate: "END"`.
 
 ### Classification
 

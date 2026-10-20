@@ -2951,6 +2951,75 @@ Runtime doesn't run fp32 models in bf16 on x86 anyway.
   from an AVX-512 Mac and an AVX2 machine agree to that level, not bit
   for bit.
 
+## D43 — Over-length /v1/embeddings input is refused by default
+Through 0.12, `/v1/embeddings` truncated an input longer than the model's
+limit, keeping its start, and returned a normal vector with nothing in
+the response to say the text was cut. No decision chose that: it was the
+default of the embedders' limits (`EmbedLimits::default()`, `END`) that
+the route passed through. A client that embeds long documents gets
+vectors for their openings and can't tell which. Issue #111 records one
+consumer's measurement: embedding a 2,355-document corpus through
+Qwen3-Embedding-0.6B's ONNX build, then limited to 512 tokens (4,096
+since D40's October amendment), 36% of the documents were over the limit,
+and their vectors agreed with full-length ones only down to cosine 0.855.
+Every gate graded A, since each vector was a valid unit vector.
+
+That is the harm D10 already refuses for the output: a `dimensions`
+value a model wasn't trained to truncate to is a 400, not a best-effort
+truncation. Truncating the input silently is the same harm, and D22's
+rule is the same: a wrong answer that looks right is worse than a 400.
+The APIs clients compare sidekick with refuse too: OpenAI's
+`/v1/embeddings` is a 400 for an over-length input, and Hugging Face Text
+Embeddings Inference returns an error unless the request sends
+`truncate: true`. Within sidekick, `/v1/rerank` and text-classification
+models on `/v1/classify` are 400s unless the request sends
+`truncate_prompt_tokens`. Other routes and formats truncate by design and
+are unchanged: laya, gliner2, fev and nli classifiers cut the text
+(docs/design/classify.md), and `/v2/rerank` truncates documents as
+Cohere's contract does.
+
+**Decision.** On `/v1/embeddings`, a request without `truncate` (or with
+`null`) is `NONE`. An over-length input is a 400 `invalid_request_error`
+naming the input's index in the batch, its token count, the model and
+its limit, and saying how to truncate instead:
+
+```
+input 1: 600 tokens, over model `bge-small-en-v1.5`'s limit of 512 tokens, and truncate is NONE (send truncate: END or START to truncate it)
+```
+
+The whole request is refused before any inference runs: each backend
+prepares every input before it runs any. A client that wants truncation
+sends `truncate: "END"` (or TEI's `true`), which gives exactly the
+vectors the old default did, or `"START"` to keep the end of the text.
+`truncate` was added in 0.12.1 with the old default, so clients could
+opt in before the default changed in 0.13.0.
+
+**What still truncates by default.** The library's default,
+`EmbedLimits::default()`, stays `END`; only the `/v1/embeddings` route
+changed.
+- `/v2/embed` follows Cohere's v2 contract, whose `truncate` defaults to
+  `END`. Its clients expect that, so it is unchanged.
+- `libsidekick.dylib`'s `sk_embed` has no `truncate` parameter and always
+  truncates (`END`), as it always has. `sk_model_info` reports
+  `max_seq_len` for hosts that check.
+- The Rust library API, `Embedder::embed`, has no limits parameter and
+  truncates (`END`); `embed_with` takes explicit limits.
+- The parity suite embeds with the library default (`END`), as its
+  references were made.
+
+So the daemon and the dylib now differ for an over-length input. A host
+that follows INTEGRATING.md's probe order (the daemon, else the dylib)
+should send `truncate: "END"` to the daemon to get the same vectors on
+both paths, or handle both behaviours.
+
+**A tokenizer's own truncation.** LFM2.5-Embedding-350M's
+`tokenizer.json` truncates at 512 tokens itself, before sidekick sees the
+ids, so `NONE` couldn't fire for it. `NONE` and `START` encode with a
+copy of the tokenizer with its truncation turned off and apply the lower
+of its limit and the model's `max_seq_len` themselves. So under the new
+default, LFM2.5 refuses an input past 512 tokens like any other model.
+`END` still uses the tokenizer as shipped.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
