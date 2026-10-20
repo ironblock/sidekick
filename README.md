@@ -20,7 +20,8 @@ POST /v1/classify           Core ML classifiers, on macOS (vLLM's /classify cont
 POST /v1/rerank, /rerank    Core ML cross-encoder rerankers, on macOS (vLLM's / Jina's shape)
 POST /v2/rerank             the same, in Cohere's v2 shape
 POST /v2/embed              the embedders, in Cohere's v2 embed shape
-GET  /v1/models             what this machine can serve, and each model's backend
+GET  /v1/models             what this machine can serve: each model's backend and
+                            longest input (max_seq_len)
 GET  /health                availability per tier, and why when unavailable
 ```
 
@@ -162,6 +163,36 @@ for constrained output that means the JSON may be missing properties.
 
 `stop` (one string or up to four) is supported, except together with
 `json_schema`.
+
+### Embeddings
+
+`POST /v1/embeddings` is OpenAI's embeddings route: `input` (one string or
+up to 256), `dimensions` for Matryoshka models, and `encoding_format:
+"base64"`. `input_type: "query"` applies a model's query prompt instead of
+its document prompt.
+
+An input longer than the model's limit is truncated by default: its vector
+embeds the start of the text, and nothing in the response says so. The
+limit is the model's `max_seq_len` in `/v1/models`, in tokens, counting
+special tokens and the model's prompt prefix. For a Core ML model it is
+the largest of its `buckets`, also listed there. One exception: a model
+whose own `tokenizer.json` truncates at fewer tokens than `max_seq_len`
+stops there, and `/v1/models` doesn't show it. LFM2.5-Embedding-350M's
+truncates at 512, which is also its `max_seq_len`.
+
+Send `truncate: "NONE"` to get a 400 instead. It names the input's index
+in the batch, its token count, the model and the limit, and nothing in the
+request is embedded. A text longer than 64 bytes per token of the limit is
+refused without being tokenized, and the message gives its size in bytes.
+`truncate` takes `/v2/embed`'s values in any case: `END` (the default)
+keeps the start of the text, `START` keeps its end, and `NONE` refuses.
+Hugging Face TEI's boolean works too: `true` is `END`, `false` is `NONE`.
+Anything else is a 400.
+
+0.13.0 will make `NONE` the default: OpenAI's `/v1/embeddings` refuses
+over-length input, and so do `/v1/classify` and `/v1/rerank` here unless a
+request asks them to truncate. To keep truncating after that, send
+`truncate: "END"`.
 
 ### Classification
 

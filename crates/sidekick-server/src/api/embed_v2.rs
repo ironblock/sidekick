@@ -62,14 +62,7 @@ pub async fn embed_v2(
             other => return Err(ApiError::invalid(format!("unknown embedding type `{other}`"))),
         }
     }
-    let truncate = match req.truncate.as_deref() {
-        None | Some("END") => Truncate::End,
-        Some("START") => Truncate::Start,
-        Some("NONE") => Truncate::Reject,
-        Some(other) => {
-            return Err(ApiError::invalid(format!("unsupported truncate `{other}` (use NONE, START or END)")))
-        }
-    };
+    let truncate = truncate(req.truncate.as_deref())?;
     // As in vLLM: positive, and within the model's maximum.
     let model_max = state.registry.get(&req.model).map(|m| m.manifest.max_seq_len).unwrap_or(usize::MAX);
     let max_tokens = match req.max_tokens {
@@ -176,6 +169,19 @@ pub async fn embed_v2(
         })
         .into_response(),
     ))
+}
+
+/// Cohere's `truncate`, spelled as Cohere spells it: `END` (the default)
+/// keeps an over-length input's start, `START` its end, and `NONE` makes
+/// it a 400. `/v1/embeddings` reads the same values in any case, and a
+/// boolean (`embeddings::truncate`).
+pub(super) fn truncate(value: Option<&str>) -> Result<Truncate, ApiError> {
+    match value {
+        None | Some("END") => Ok(Truncate::End),
+        Some("START") => Ok(Truncate::Start),
+        Some("NONE") => Ok(Truncate::Reject),
+        Some(other) => Err(ApiError::invalid(format!("unsupported truncate `{other}` (use NONE, START or END)"))),
+    }
 }
 
 /// Sign bits (x ≥ 0 → 1), packed MSB-first, eight per byte: Cohere's and

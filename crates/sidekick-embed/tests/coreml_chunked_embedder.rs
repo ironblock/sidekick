@@ -4,7 +4,9 @@
 //! (tools/make_classifier_test_models.py), with the same model unchunked
 //! beside it. Through the embedder's own load and run, the chain matches the
 //! unchunked program bit for bit and the fp32 torch model, and a chain whose
-//! chunks don't fit together is refused at load.
+//! chunks don't fit together is refused at load. The unchunked model also
+//! shows truncate `NONE` refusing an over-length batch before any bucket
+//! loads.
 //!
 //! macOS with `--features coreml` only; runs on the CPU and the GPU, so it
 //! needs no ANE.
@@ -158,4 +160,22 @@ fn a_chained_embedder_whose_chunks_dont_fit_together_is_refused() {
         assert!(e.to_string().contains(want), "{tag}: {e}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
+}
+
+#[test]
+fn truncate_none_refuses_a_batch_before_any_bucket_loads() {
+    use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder, Truncate};
+    let dir = model_dir("none", &unchunked(), &all_programs());
+    let model = load(&dir, ComputeUnits::CpuOnly).unwrap();
+    let long = "a ".repeat(40);
+    let batch = ["a b", long.as_str()];
+    let none = EmbedLimits { truncate: Truncate::Reject, max_tokens: None };
+    let e = model.embed_with(&batch, EmbedPurpose::Document, none).unwrap_err();
+    assert!(e.to_string().contains("input 1: 40 tokens, over model `tiny-qwen3-embed`'s limit of 32 tokens"), "{e}");
+    // Every input is prepared before any runs: nothing loaded, so nothing ran.
+    assert!(model.resident_buckets().is_empty(), "{:?}", model.resident_buckets());
+    // The default truncates it to the largest bucket instead.
+    let (vectors, buckets) = model.embed_bucketed(&batch, EmbedPurpose::Document, EmbedLimits::default()).unwrap();
+    assert_eq!((vectors.len(), buckets), (2, Some(vec![16, 32])));
+    std::fs::remove_dir_all(&dir).unwrap();
 }
