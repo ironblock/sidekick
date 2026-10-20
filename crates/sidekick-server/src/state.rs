@@ -1,5 +1,5 @@
 use crate::config::OnnxThreads;
-use crate::pool::{ClassifierPool, EmbedderPool};
+use crate::pool::{ClassifierPool, EmbedderPool, TokenizerPool};
 use sidekick_core::{ChatBackend, ModelRegistry};
 use sidekick_embed::placement::Placements;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -13,6 +13,8 @@ pub struct AppState {
     pub registry: Arc<ModelRegistry>,
     pub embedders: Arc<EmbedderPool>,
     pub classifiers: Arc<ClassifierPool>,
+    /// The same models' tokenizers alone, for /tokenize and /detokenize.
+    pub tokenizers: Arc<TokenizerPool>,
     /// Whether this build can run classifiers (Core ML). When it can't,
     /// they're left out of /v1/models, as chat is, and every classify
     /// request is a 503.

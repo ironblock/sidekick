@@ -43,6 +43,35 @@ fn invalid(message: impl Into<String>) -> Error {
     Error::InvalidRequest(message.into())
 }
 
+/// Whether the daemon's `/tokenize` takes a classifier's input, from its
+/// manifest, so that a request is refused before the tokenizer loads: a
+/// text-classification model's input is one text, counted as
+/// `/v1/classify` counts it ([`InputBuilder::tokenize`]). A reranker's is
+/// a pair, and a zero-shot format lays the text out with the request's
+/// labels (and cuts it to fit, by design), so a count of the text alone
+/// isn't one any route compares with a limit: a 400 saying so.
+pub fn check_tokenizable(task: ClassifyTask, format: Option<ClassifyFormat>) -> Result<()> {
+    if task == ClassifyTask::TextRanking {
+        return Err(invalid(
+            "a text-ranking model's input is a (query, document) pair, which /tokenize doesn't take",
+        ));
+    }
+    if let Some(format) = format {
+        let name = match format {
+            ClassifyFormat::Laya => "laya",
+            ClassifyFormat::Gliner2 => "gliner2",
+            ClassifyFormat::Fev => "fev",
+            ClassifyFormat::Agentjev => "agentjev",
+            ClassifyFormat::Nli => "nli",
+        };
+        return Err(invalid(format!(
+            "a zero-shot model in the {name} format lays its input out with the request's labels, so \
+             /tokenize, which counts one text, doesn't take it"
+        )));
+    }
+    Ok(())
+}
+
 impl InputBuilder {
     pub fn load(model: &ResolvedClassifier) -> Result<Self> {
         let mut tokenizer = Tokenizer::from_file(model.tokenizer_path())
@@ -125,6 +154,37 @@ impl InputBuilder {
         &self.buckets
     }
 
+    /// The longest input the model takes, in tokens, special tokens
+    /// included: its `max_seq_len`, after any cap (D33).
+    pub fn max_seq_len(&self) -> usize {
+        self.max_seq_len
+    }
+
+    /// A text-classification model's input as `/v1/classify` counts it
+    /// without `truncate_prompt_tokens`, however long: the whole text,
+    /// wrapped in the tokenizer's special tokens unless
+    /// `add_special_tokens` is false. The daemon's `/tokenize` reports
+    /// this. Other models' inputs aren't one text on its own (a pair, or a
+    /// zero-shot format's layout of text and labels), so they are a 400
+    /// saying so. No byte bound: the caller bounds the text.
+    pub fn tokenize(&self, text: &str, add_special_tokens: bool) -> Result<tokenizers::Encoding> {
+        let format = self.format.as_ref().map(|f| match f {
+            Format::Laya { .. } => ClassifyFormat::Laya,
+            Format::Gliner2 { .. } => ClassifyFormat::Gliner2,
+            Format::Fev { .. } => ClassifyFormat::Fev,
+            Format::Agentjev => ClassifyFormat::Agentjev,
+            Format::Nli { .. } => ClassifyFormat::Nli,
+        });
+        check_tokenizable(self.task, format)?;
+        self.tokenizer.encode(text, add_special_tokens).map_err(|e| Error::Tokenizer(e.to_string()))
+    }
+
+    /// Token ids back to text, special tokens kept. An id outside the
+    /// vocabulary is a 400.
+    pub fn decode(&self, ids: &[u32]) -> Result<String> {
+        crate::embed_input::decode(&self.tokenizer, ids)
+    }
+
     fn bucket_for(&self, len: usize) -> usize {
         *self
             .buckets
@@ -190,21 +250,20 @@ impl InputBuilder {
             (Some(_), TruncationSide::Right) => crate::byte_cap(input, max),
             (Some(_), TruncationSide::Left) => byte_cap_end(input, max),
         };
-        let mut encoding = self
-            .tokenizer
-            .encode(text, false)
-            .map_err(|e| Error::Tokenizer(e.to_string()))?;
-        if params.truncate_prompt_tokens.is_some() {
-            let direction = match params.truncation_side {
-                TruncationSide::Right => TruncationDirection::Right,
-                TruncationSide::Left => TruncationDirection::Left,
-            };
-            encoding.truncate(limit - self.added_tokens, 0, direction);
-        }
-        let encoding = self
-            .tokenizer
-            .post_process(encoding, None, true)
-            .map_err(|e| Error::Tokenizer(e.to_string()))?;
+        let encoding = match params.truncate_prompt_tokens {
+            // The whole text, as /tokenize counts it.
+            None => self.tokenize(text, true)?,
+            Some(_) => {
+                let tok_err = |e: tokenizers::Error| Error::Tokenizer(e.to_string());
+                let mut encoding = self.tokenizer.encode(text, false).map_err(tok_err)?;
+                let direction = match params.truncation_side {
+                    TruncationSide::Right => TruncationDirection::Right,
+                    TruncationSide::Left => TruncationDirection::Left,
+                };
+                encoding.truncate(limit - self.added_tokens, 0, direction);
+                self.tokenizer.post_process(encoding, None, true).map_err(tok_err)?
+            }
+        };
         let ids: Vec<i32> = encoding.get_ids().iter().map(|&u| u as i32).collect();
         if ids.len() > max {
             return Err(too_long(format!("{} tokens", ids.len()), max));
@@ -765,6 +824,23 @@ mod tests {
         // Too long to be worth tokenizing.
         let e = b.prepare(&"a ".repeat(400), &ClassifyParams::default()).unwrap_err();
         assert!(e.to_string().contains("800 bytes"), "{e}");
+    }
+
+    #[test]
+    fn tokenize_counts_as_prepare_does_and_past_the_limit() {
+        let b = builder(ClassifyTask::TextClassification);
+        let ids = |e: tokenizers::Encoding| e.get_ids().iter().map(|&u| u as i32).collect::<Vec<_>>();
+        let p = b.prepare(&words(30), &ClassifyParams::default()).unwrap();
+        assert_eq!(ids(b.tokenize(&words(30), true).unwrap()), p.ids, "at the limit");
+        // Past it, prepare's 400 names tokenize's count.
+        assert_eq!(b.tokenize(&words(31), true).unwrap().len(), 33);
+        assert_eq!(b.tokenize(&words(31), false).unwrap().len(), 31);
+        assert_eq!(b.tokenize(&words(300), true).unwrap().len(), 302, "not truncated");
+        // Pairs and zero-shot layouts aren't one text.
+        let e = builder(ClassifyTask::TextRanking).tokenize("a", true).unwrap_err();
+        assert!(e.to_string().contains("(query, document) pair"), "{e}");
+        let e = builder(ClassifyTask::ZeroShotClassification).tokenize("a", true).unwrap_err();
+        assert!(e.to_string().contains("in the laya format"), "{e}");
     }
 
     #[test]

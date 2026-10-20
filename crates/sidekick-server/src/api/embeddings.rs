@@ -36,15 +36,7 @@ pub async fn embeddings(
         )));
     }
 
-    let purpose = match req.input_type.as_deref() {
-        None | Some("document") | Some("passage") => EmbedPurpose::Document,
-        Some("query") => EmbedPurpose::Query,
-        Some(other) => {
-            return Err(ApiError::invalid(format!(
-                "unsupported input_type `{other}` (use `query` or `document`)"
-            )))
-        }
-    };
+    let purpose = purpose(req.input_type.as_deref())?;
 
     let as_base64 = match req.encoding_format.as_deref() {
         None | Some("float") => false,
@@ -126,6 +118,16 @@ pub async fn embeddings(
         })
         .into_response(),
     ))
+}
+
+/// `input_type` on /v1/embeddings, and on /tokenize for an embedder: which
+/// of the model's prompt prefixes applies. Absent, the document prefix.
+pub(super) fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
+    match input_type {
+        None | Some("document") | Some("passage") => Ok(EmbedPurpose::Document),
+        Some("query") => Ok(EmbedPurpose::Query),
+        Some(other) => Err(ApiError::invalid(format!("unsupported input_type `{other}` (use `query` or `document`)"))),
+    }
 }
 
 /// `truncate` on /v1/embeddings: /v2/embed's values in any case, or Hugging

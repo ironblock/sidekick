@@ -3021,6 +3021,71 @@ of its limit and the model's `max_seq_len` themselves. So under the new
 default, LFM2.5 refuses an input past 512 tokens like any other model.
 `END` still uses the tokenizer as shipped.
 
+## D44 — /tokenize and /detokenize count as the embedding path does
+A client deciding whether a document fits a model's limit counted tokens
+with its own tokenizer or estimated them from characters, and either can
+disagree with sidekick. A Hugging Face tokenizer's count usually misses
+the model's prompt prefix, which sidekick applies per `input_type`, and an
+estimate can be off in either direction. Since D43 refuses an over-length
+input, the client needs the number sidekick will compare with the limit.
+
+**Decision.** `POST /tokenize` and `POST /detokenize` serve vLLM's shapes
+(`{model, prompt, add_special_tokens, return_token_strs}` →
+`{count, max_model_len, tokens, token_strs?}`, and `{model, tokens}` →
+`{prompt}`) for embedders and text-classification models. They are not
+mounted under `/v1/`: vLLM and SGLang serve them at the root, and their
+clients call them there.
+
+- **The count is the embedding path's.** For an embedder, `/tokenize`
+  calls the code `/v1/embeddings` measures with under `truncate: NONE`
+  (`EmbedInput::tokenize`): the prompt prefix, the text, and the special
+  tokens the backend adds, by the tokenizer without its own truncation.
+  The static backend now shares that code too, where it had its own copy,
+  so no backend can count differently from `/tokenize`. `input_type` is
+  read by the same function as on `/v1/embeddings`, with the same default,
+  the document prefix. `add_special_tokens: false` leaves the special
+  tokens out, but the prefix stays: it is part of every input the model
+  sees. A static model's inputs carry no special tokens, so for one
+  `add_special_tokens` changes nothing.
+- **Nothing is truncated.** A text past the limit is counted in full, so a
+  client can see by how much it is over. That includes a model whose
+  tokenizer.json truncates on its own (LFM2.5-Embedding-350M's, at 512).
+  The only bound is the request body limit, 2 MiB, which `/v1/embeddings`
+  also relies on. NONE's byte bound (64 bytes per token of the limit)
+  doesn't apply, because it would refuse the long texts a client most
+  needs counted. That bound still applies on `/v1/embeddings`, so a text
+  fits when `count <= max_model_len` and it is within 64 bytes per token
+  of `max_model_len`. Only text that averages more than 64 bytes per token,
+  such as long runs of whitespace, can pass the first check and fail the
+  second.
+- **`max_model_len` is the limit the count is compared with.** That is
+  the model's `max_seq_len` as `/v1/models` lists it, after any cap (D33):
+  for a Core ML model, its largest bucket, as the issue proposed. The one
+  case where it can differ is a tokenizer.json that truncates at fewer
+  tokens than `max_seq_len`. `/v1/embeddings` enforces the tokenizer's
+  limit, but `/v1/models` doesn't read tokenizers to list models. There,
+  `max_model_len` reports the tokenizer's limit, because that is what the
+  count is compared with. No shipped model has this case: LFM2.5's
+  tokenizer limit and `max_seq_len` are both 512.
+- **Text classifiers count as `/v1/classify` does** without
+  `truncate_prompt_tokens`, by the same function, and `max_model_len` is
+  their `max_seq_len`. Rerankers and the zero-shot formats (laya, gliner2,
+  fev, agentjev, nli) are a 400. A reranker's input is a pair, and a
+  zero-shot format lays the text out with the request's labels and
+  instructions, then cuts the text to fit by design. A count of the text
+  alone wouldn't be compared with any limit, so returning one would
+  mislead. `/detokenize` takes any embedder or classifier, since decoding
+  doesn't depend on layout.
+- **The chat model and `messages` are 400s.** Foundation Models reports
+  token counts but not token ids, and counting for chat belongs with the
+  Responses and Messages token-count routes. `messages`, vLLM's chat form,
+  needs a chat template, which encoders don't have.
+- **The tokenizer loads without the model.** `/tokenize` uses a separate
+  pool of tokenizers, loaded from the manifest and the tokenizer.json and
+  dropped after the same idle time as models. A client that only counts
+  doesn't load any weights. `/detokenize` keeps special tokens, as
+  vLLM's does, and an id outside the vocabulary is a 400.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

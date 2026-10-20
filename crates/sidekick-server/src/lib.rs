@@ -10,6 +10,8 @@
 //!   and base64 support
 //! - `POST /v1/classify` — registry classifiers (Core ML/ANE):
 //!   text-classification and zero-shot, vLLM's `/classify` contract
+//! - `POST /tokenize`, `POST /detokenize` — an embedder's or
+//!   text-classification model's tokenizer, in vLLM's shape
 //! - `GET /v1/models`, `GET /health`
 //!
 //! The library form exists so integration tests (and embedders of the
@@ -22,7 +24,7 @@ pub mod state;
 
 pub use api::build_router;
 pub use config::Config;
-pub use pool::{ClassifierPool, EmbedderPool, ModelPool};
+pub use pool::{ClassifierPool, EmbedderPool, ModelPool, TokenizerPool};
 pub use state::AppState;
 
 use sidekick_core::{ChatBackend, EmbeddingBackendKind, ModelRegistry, ScanOptions};
@@ -61,6 +63,7 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         chat,
         embedders: Arc::new(EmbedderPool::embedders_with(registry.clone(), config.model_idle_ttl(), onnx_threads.clone())),
         classifiers: Arc::new(ClassifierPool::classifiers(registry.clone(), config.model_idle_ttl())),
+        tokenizers: Arc::new(TokenizerPool::tokenizers(registry.clone(), config.model_idle_ttl())),
         registry,
         classifiers_supported: sidekick_embed::CLASSIFIERS_SUPPORTED,
         chat_model: Default::default(),
