@@ -2778,10 +2778,11 @@ Measured on an M1 Max, macOS 27.0, ONNX Runtime 1.28.3:
   build, and 7.6e-12 at 600 tokens to 1.2e-11 at 4,096 on the long
   corpus, the truncated input included, with token ids equal to the
   reference pipeline's.
-- **Time** (8 threads, the machine's default, load average 4–10): a
-  median 0.85–0.90 s per input at 512 tokens and 12.9–14.2 s at 4,096 on
-  sidekick's own path (`examples/onnx_memory`, 8 runs), and 6.8–7.1 s at
-  2,400 from Python (`tools/bench_onnx.py`, onnxruntime 1.27, 2 runs). The
+- **Time** (8 threads, the machine's default): a median 0.85–0.90 s per
+  input at 512 tokens and 12.9–14.2 s at 4,096 on sidekick's own path
+  (`examples/onnx_memory`, 8 runs, load average 4–11), and 6.8–7.1 s at
+  2,400 from Python (`tools/bench_onnx.py`, onnxruntime 1.27, 2 runs on a
+  busier machine, load average 5.6–7.9 rising to about 27 during each). The
   export's attention is a MatMul, a Softmax and a MatMul per layer, which
   materializes the fp32 scores, so time grows faster than length. A fused
   attention kernel would cut time and memory; that is a follow-up.
@@ -2790,8 +2791,9 @@ Measured on an M1 Max, macOS 27.0, ONNX Runtime 1.28.3:
   after a 4,096-token one (+2,633 MB at 2,400, `tools/bench_memory.py`).
   Before the change, 69 more inputs of up to 512 tokens and 30 s idle
   left it at +4,146–4,156 MB (six runs). After it, the same inputs
-  brought it back to +1,838–1,883 MB in 6 of 7 runs; in one it stayed at
-  the peak, the allocator holding the pages. Short inputs' latency was the
+  brought it back to +1,838–1,883 MB in all six runs; a seventh, of a
+  variant that also called `malloc_zone_pressure_relief`, stayed at the
+  peak. Short inputs' latency was the
   same with and without the change (16 / 256 / 512 tokens: 37–40 /
   401–423 / 851–896 ms).
 - **Timeouts.** A request's inputs run one after another under one

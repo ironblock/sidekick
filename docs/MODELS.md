@@ -700,13 +700,15 @@ What a long input costs:
 - **Time.** One input at a time, warm, median per input on the M1 Max at
   8 threads (sidekick's default there):
   - sidekick's own path (`examples/onnx_memory`, ONNX Runtime 1.28.3; 20
-    passes after 3 warm-ups, 8 runs): 0.85–0.90 s at 512 tokens; one pass
-    per run at 4,096: 12.9–14.2 s;
+    passes after 3 warm-ups, 8 runs, load average 4–11, partly the
+    system's own indexing): 0.85–0.90 s at 512 tokens; one pass per run at
+    4,096: 12.9–14.2 s;
   - `tools/bench_onnx.py` (Python's onnxruntime 1.27; 10 passes after 3
-    warm-ups, 2 runs): 0.87–0.96 s at 512, 6.8–7.1 s at 2,400 and 15–17 s
-    at 4,096.
+    warm-ups, 2 runs, on a busier machine: load average 5.6–7.9 before each
+    run and about 27 by its end, partly the bench's own threads): 0.87–0.96
+    s at 512, 6.8–7.1 s at 2,400 and 15–17 s at 4,096.
 
-  Load averages were 4–10, partly the system's own indexing. Time grows
+  Time grows
   faster than length, since the export's attention computes the full
   matrix of scores: a long-input option for indexing in the background,
   not for interactive requests.
@@ -721,9 +723,11 @@ What a long input costs:
   arena give back what a run of 1,024 tokens or more grew it by, at the
   end of that run, and leaves shorter runs as they were (D40). On macOS
   the system allocator returns those pages lazily, as later inputs run,
-  not while the daemon is idle: the footprint was back to +1,838–1,883 MB
-  after the next 69 inputs in 6 of 7 runs, and in one it stayed at the
-  peak. Short inputs cost the same either way (16 / 256 / 512 tokens:
+  not while the daemon is idle: after the next 69 inputs the footprint was
+  back to +1,838–1,883 MB in all six runs of this change. (A seventh run,
+  of a variant that also called `malloc_zone_pressure_relief`, stayed at
+  the peak; that call released nothing, and sidekick doesn't make it.)
+  Short inputs cost the same either way (16 / 256 / 512 tokens:
   37–40 / 401–423 / 851–896 ms, two runs each). Leave about 2.4 GB above
   the model's loaded footprint for 4,096-token inputs.
 - **Timeouts.** A request's inputs run one after another, and
