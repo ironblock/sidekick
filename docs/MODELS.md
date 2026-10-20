@@ -6,7 +6,9 @@ and CPU (Apple Silicon), and ONNX Runtime on the CPU of any supported
 platform ([onnx-cpu](#onnx-runtime-on-the-cpu-onnx-cpu)). Every entry here
 was measured on real hardware: the Core ML entries on Apple Silicon (macOS
 26; ANE eligibility re-checked on macOS 27), each onnx-cpu entry on the
-machines its section names. Nothing is extrapolated from model cards.
+machines its section names. Nothing is extrapolated from model cards; the
+[benchmark scores](#benchmark-scores) that say how good each model is at
+a task are quoted from their sources, each named.
 
 How confident to be in each model on each compute path, graded on inputs
 chosen to break it, is in [Confidence grades](#confidence-grades-the-parity-suite)
@@ -1399,6 +1401,178 @@ for the document).
 - It ranks exactly as fp32 does, with no flips and no near-ties. That
   includes five near-duplicate documents with fp32 logits from 7.1 to 9.7,
   the closest two 0.24 apart.
+
+## Benchmark scores
+
+The grades above say how faithfully a sidekick build reproduces its model.
+They don't say whether the model is good at a task. This section puts
+published benchmark scores, by task category, beside each model's grades
+and its builds' `max_seq_len`, so the two can be weighed together: for
+example, a model that grades A on the ANE and does well at classification.
+The [comparison page](https://ironblock.github.io/sidekick/) can filter by
+them.
+
+**Sources.** [MTEB](https://github.com/embeddings-benchmark/mteb) scores
+come from the MTEB results repository (the per-task results behind the
+MTEB leaderboard), read at a pinned commit of its Hugging Face copy by
+[tools/fetch_benchmarks.py](../tools/fetch_benchmarks.py) into
+[benchmarks.mteb.json](data/benchmarks.mteb.json). They are aggregated as
+the leaderboard aggregates them: a category's score is the mean of its
+tasks' main metric, published only when every task in the category was
+run (otherwise the cell says how many were). Scores that only a model card
+reports are in [benchmarks.toml](data/benchmarks.toml), each with its
+source pinned to a revision, and get a table of their own.
+`tools/models_table.py --check` refuses a score without its benchmark and
+version, category, metric, source and the date it was read.
+
+<!-- generated: mteb-source -->
+MTEB results: [mteb/results at 3b0980076221](https://huggingface.co/datasets/mteb/results/tree/3b098007622127a024fb9065b23b6898aa936b34), benchmarks as mteb 2.26.14 defines them, read 2026-10-20.
+<!-- /generated -->
+
+**Reading them:**
+- **Compare within one benchmark.** MTEB(eng, v2), its 56-task
+  predecessor MTEB(eng, v1) and MTEB(Multilingual, v2) are different task
+  sets, and a model's scores on them aren't interchangeable. Nothing here
+  averages across benchmarks. Self-reported scores are each model's own
+  claim, usually on a benchmark no other model here reports.
+- **† marks training data.** †n: n of the category's tasks are in the
+  model's declared training data (MTEB's `trained_on` flag), so those
+  scores aren't zero-shot. F2LLM-v2-160M is trained on every MTEB(eng, v2)
+  classification and clustering task. On a self-reported score, † means
+  the model was trained on that benchmark's own training data. No † isn't
+  proof of zero-shot: the flag is only as good as what a model declares,
+  and LFM2.5-Embedding-350M declares nothing.
+- **Context.** The MTEB runs used each model's own context (the "MTEB
+  run" figure); sidekick's builds stop at their `max_seq_len`, most at 512
+  tokens. On tasks with long documents, mostly retrieval, a capped build
+  may score lower. That hasn't been measured.
+- **Prompts.** MTEB prompts many models per task: an instruction per task
+  (Qwen3-Embedding, F2LLM), a prompt per task type (EmbeddingGemma), or
+  query and document prefixes. sidekick applies one prefix per
+  `input_type`, written for retrieval. A client of `/v1/embeddings` that
+  doesn't send a task's instruction itself will see lower classification,
+  clustering and STS scores than these.
+- **Fidelity.** A grade-A path (worst cosine ≥ 0.9999) reproduces the
+  model closely enough for its score to carry over; a C, D or int8 path
+  may not. A task with large margins, such as a decision between
+  well-separated classes, may be fine on a C path; a fine-grained ranking
+  needs A.
+- **Revisions.** Most MTEB runs evaluated an earlier revision than the one
+  sidekick pins; the last column says whether the weight files are
+  identical. bge-small-en-v1.5 and e5-small-v2 complete some benchmarks
+  with tasks imported from their model cards, as the leaderboard does.
+- **Your data decides.** Benchmarks rank models in general. A few hundred
+  labelled examples from your own data decide.
+
+The grade column is the M1 Max's: the served Core ML path's and
+onnx-cpu's (fp32). Max tokens is each build's `max_seq_len`.
+
+### MTEB(eng, v2)
+
+The primary English benchmark: 41 tasks.
+
+<!-- generated: mteb-eng-v2 -->
+| model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | Classification | Clustering | PairClassification | Reranking | STS | Summarization | revision evaluated |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | ANE **A**, onnx-cpu **A** | 256 / 256 | none | 59.03 | 42.92 | 69.25 | 44.90 | 82.37 | 47.14 | 78.94 | 25.96 | another revision, same weights |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix (retrieval) | 64.30 | 53.86 | 76.56 | 47.02 | 84.95 | 46.94 | 81.28 | 28.92 | sidekick's revision; 8 of 41 tasks from the model card |
+| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes | 61.32 | 48.46 | 74.58 | 42.05 | 84.79 | 44.10 | 80.09 | 33.23 | another revision, same weights; 8 of 41 tasks from the model card |
+| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / 8,192 | none | (27 of 41 tasks) | (6 of 10 tasks) | 80.71 | | 85.94 | 47.63 | (8 of 9 tasks) | | another revision, same weights |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / 2,048 | a prompt per task type | 69.67 †2 | 55.69 †2 | 87.55 | 56.55 | 87.29 | 47.43 | 83.61 | 37.64 | another revision, weights not checked (gated) |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / 8,192 | a prompt per task type | 67.53 †2 | 51.33 †2 | 88.82 | 51.70 | 86.39 | 46.03 | 82.75 | 35.09 | sidekick's revision |
+| F2LLM-v2-160M | ANE **A**, onnx-cpu **A** | 512 / 8,192 | an instruction per task | 65.93 †23 | 49.33 †4 | 87.13 †8 | 52.55 †8 | 82.08 | 45.26 | 80.76 †3 | 28.63 | another revision, same weights |
+| LFM2.5-Embedding-350M | ANE **A** | 512 | | | | | | | | | | |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / 32,768 | an instruction per task | 70.47 †2 | 61.83 †2 | 84.58 | 54.05 | 84.37 | 48.18 | 86.57 | 33.43 | another revision, same weights |
+<!-- /generated -->
+
+### MTEB(Multilingual, v2)
+
+131 tasks in many languages. InstructionReranking is p-MRR, from −100 to
+100.
+
+<!-- generated: mteb-multilingual-v2 -->
+| model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | Classification | Clustering | PairClassification | Reranking | STS | BitextMining | MultilabelClassification | InstructionReranking | revision evaluated |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | ANE **A**, onnx-cpu **A** | 256 / 256 | none | 41.39 | 32.51 | 46.20 | 37.47 | 71.23 | 40.28 | 56.08 | 20.09 | 15.05 | -2.84 | another revision, same weights |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix (retrieval) | 43.76 †1 | 36.26 †1 | 47.37 | 39.93 | 71.56 | 45.89 | 59.73 | 23.63 | 17.01 | -1.86 | sidekick's revision |
+| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes | 44.47 | 39.38 | 48.07 | 37.53 | 72.13 | 44.44 | 59.87 | 28.04 | 15.14 | -2.85 | another revision, same weights |
+| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / 8,192 | none | (13 of 131 tasks) | (4 of 18 tasks) | (1 of 43 tasks) | | (2 of 11 tasks) | | (6 of 16 tasks) | | | | another revision, same weights |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / 2,048 | a prompt per task type | 61.14 †1 | 62.49 †1 | 60.90 | 51.17 | 81.40 | 63.22 | 74.73 | 64.40 | 24.66 | 5.61 | another revision, weights not checked (gated) |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / 8,192 | a prompt per task type | 60.52 †1 | 60.60 †1 | 62.30 | 47.58 | 78.70 | 62.32 | 73.89 | 65.48 | 25.23 | -0.61 | sidekick's revision |
+| F2LLM-v2-160M | ANE **A**, onnx-cpu **A** | 512 / 8,192 | an instruction per task | 57.98 †15 | 54.08 †3 | 58.86 †3 | 50.83 †5 | 76.02 †1 | 60.34 | 70.10 †3 | 65.59 | 23.05 | -3.39 | another revision, same weights |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / 32,768 | an instruction per task | 64.34 †1 | 64.65 †1 | 66.83 | 52.33 | 80.83 | 61.41 | 76.17 | 72.23 | 24.58 | 5.09 | another revision, same weights |
+<!-- /generated -->
+
+### MTEB(eng, v1)
+
+The 56-task English benchmark that v2 replaced. gte-modernbert-base is
+complete only here.
+
+<!-- generated: mteb-eng-v1 -->
+| model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | Classification | Clustering | PairClassification | Reranking | STS | Summarization | revision evaluated |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | ANE **A**, onnx-cpu **A** | 256 / 256 | none | 56.10 †2 | 41.95 †2 | 62.63 | 41.91 | 82.37 | 58.04 | 78.95 | 30.81 | another revision, same weights |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix (retrieval) | 61.75 †2 | 51.65 †1 | 72.18 †1 | 43.82 | 84.95 | 58.36 | 81.64 | 30.12 | sidekick's revision; 33 of 56 tasks from the model card |
+| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes | 59.32 †2 | 49.04 †2 | 69.96 | 39.94 | 84.79 | 54.33 | 80.46 | 31.16 | another revision, same weights; 26 of 56 tasks from the model card |
+| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / 8,192 | none | 64.36 †4 | 55.19 †4 | 77.00 | 46.47 | 85.94 | 59.24 | 81.58 | 30.69 | another revision, same weights |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / 2,048 | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 87.29 | (2 of 4 tasks) | (8 of 10 tasks) | | another revision, weights not checked (gated) |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / 8,192 | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 86.39 | (2 of 4 tasks) | (8 of 10 tasks) | | sidekick's revision |
+| F2LLM-v2-160M | ANE **A**, onnx-cpu **A** | 512 / 8,192 | an instruction per task | 63.41 †35 | 46.46 †9 | 85.96 †11 | 47.54 †11 | 82.08 | 53.71 †1 | 80.94 †3 | 29.25 | another revision, same weights |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / 32,768 | an instruction per task | 67.05 †4 | 55.52 †4 | 81.98 | 49.85 | 84.37 | 59.40 | 86.97 | 29.78 | another revision, same weights |
+<!-- /generated -->
+
+### NanoBEIR-multilingual
+
+A small multilingual retrieval benchmark, 13 tasks. LFM2.5-Embedding-350M
+has no score on the MTEB benchmarks above; this is the one it was run on.
+
+<!-- generated: nanobeir-multilingual -->
+| model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | revision evaluated |
+|---|---|---|---|---|---|---|
+| LFM2.5-Embedding-350M | ANE **A** | 512 / 128,000 | query and document prefixes | 57.62 | 57.62 | another revision, same weights |
+<!-- /generated -->
+
+### Self-reported scores
+
+What model cards, or their authors' documentation, report. Each is on its
+own benchmark, so compare a model with another only where both name the
+same benchmark and version, and even then the authors' setups may differ.
+Rerankers, NLI models and the bespoke classifiers have no MTEB results.
+
+<!-- generated: self-reported -->
+| model | grade (M1 Max) | max tokens | benchmark | category | metric | score | source | note |
+|---|---|---|---|---|---|---|---|---|
+| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 | MTEB(eng, v1) (56 tasks, as the card's table labels it) | Mean (task) | mean of the tasks' main metrics | 64.38 | [model card](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/blob/e7f32e3c00f91d699e8c43b53106206bcc72bb22/README.md), read 2026-10-20 | |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 | MTEB(eng, v2) (Mean(Task), 768 dimensions) | Mean (task) | mean of the tasks' main metrics | 68.46 | [model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md), read 2026-10-20 | Higher than the MTEB run of the same revision; the vendor's numbers use one instruction per task in bf16 |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 | MTEB(Multilingual, v2) (Mean(Task), 768 dimensions) | Mean (task) | mean of the tasks' main metrics | 61.36 | [model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md), read 2026-10-20 | Higher than the MTEB run of the same revision; the vendor's numbers use one instruction per task in bf16 |
+| LFM2.5-Embedding-350M | ANE **A** | 512 | NanoBEIR Multilingual Extended (LiquidAI/nanobeir-multilingual-extended, 11 languages, average) | Retrieval | ndcg_at_10 | 57.7 | [model card](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M/blob/f35ae2c91d687658dbf1f2b449382f0b019b9808/README.md), read 2026-10-20 | |
+| nlptown-sentiment | ANE **B** | 512 | nlptown product reviews (5,000 held-out English reviews) | Sentiment (1–5 stars) | accuracy (exact stars) | 67 † | [model card](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment/blob/8f6f4e3a8f70be4b65d3a4a8762b6d781cda240d/README.md), read 2026-10-20 | Held out from the model's own review data. Off by at most one star: 95%. Dutch, German, French, Italian and Spanish: 57–61% exact |
+| laya-en | ANE **C** | 512 | MASSIVE (intent, English) | Intent | accuracy | 78.3 | [model card](https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md), read 2026-10-20 | |
+| laya-en | ANE **C** | 512 | XNLI (English) | NLI | accuracy | 86 | [model card](https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md), read 2026-10-20 | |
+| laya-en | ANE **C** | 512 | typed-decisions (test split, 2,000 decisions) | Decisions | accuracy | 36.2 | [model card](https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md), read 2026-10-20 | Zero-shot; the card gives 0.318 for random and 0.461 for the majority class |
+| laya-typed-decisions | ANE **C** | 1,024 | typed-decisions (test split, 2,000 decisions) | Decisions | accuracy | 76.6 † | [model card](https://huggingface.co/convaiinnovations/laya-typed-decisions/blob/1a793eb568e6718f15941d08f85432581df534e3/README.md), read 2026-10-20 | Fine-tuned on the benchmark's own training split |
+| julia-1 | ANE **C** | 1,024 | typed-decisions (test split, 2,000 decisions) | Decisions | accuracy | 73.15 | [model card](https://huggingface.co/SupersonicLabs/Julia-1/blob/a85b127321d580d65176c89ced8273f305745d85/README.md), read 2026-10-20 | Measured in BF16 on an H200 |
+| gliner2.5-decide | GPU **A** | 512 | fast-decisions (17 domains, 300 held-out examples each, average) | Decisions | accuracy (exact match) | 60.2 | [model card](https://huggingface.co/fastino/GLiNER2.5-Decide/blob/5a7adf72a23b4d311abae6ce050d7f0012bb3416/README.md), read 2026-10-20 | |
+| lumma-fev-0.1b | ANE **B** | 2,048 | typed-decisions (as the card's comparison table reports it) | Decisions | accuracy | 49 | [model card](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b/blob/085f4705aa860a6404d6cc3ff17de8a2969ac0f4/README.md), read 2026-10-20 | The card's table labels this checkpoint's column Lumma-Fev-0.15B |
+| agent-jev | GPU **A** | 2,048 | AgentJev coding completion (executed coding pairs, 1,048 cases) | Coding completion | accuracy | 57.8 | [model card](https://huggingface.co/aimeigaoshou/agent-jev/blob/0e2593e6e6c0eade0700712ac13c4389aa7654cc/README.md), read 2026-10-20 | AUROC 0.589 |
+| ms-marco-minilm-l6-v2 | ANE **B** | 512 | MS MARCO Passage Reranking (dev set) | Reranking | mrr_at_10 | 39.01 † | [model card](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/README.md), read 2026-10-20 | Trained on the MS MARCO training set; dev is its held-out split |
+| ms-marco-minilm-l6-v2 | ANE **B** | 512 | TREC Deep Learning 2019 (passage reranking) | Reranking | ndcg_at_10 | 74.3 | [model card](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/README.md), read 2026-10-20 | |
+| nli-MiniLM2-L6-H768 | GPU **A** | 512 | MultiNLI (mismatched validation set) | NLI | accuracy | 86.89 † | [documentation](https://github.com/UKPLab/sentence-transformers/blob/072b4abf0ec89f47c2368f0702359edd4802b27b/docs/cross_encoder/pretrained_models.md), read 2026-10-20 | From the Sentence Transformers documentation, which the model card points to; it doesn't name the checkpoint revision |
+| nli-deberta-v3-xsmall | GPU **B** | 512 | MultiNLI (mismatched validation set) | NLI | accuracy | 87.77 † | [model card](https://huggingface.co/cross-encoder/nli-deberta-v3-xsmall/blob/a150876415327c80daeff35ca6f68f5ed8cf5c24/README.md), read 2026-10-20 | |
+| nli-deberta-v3-xsmall | GPU **B** | 512 | SNLI (test set) | NLI | accuracy | 91.64 † | [model card](https://huggingface.co/cross-encoder/nli-deberta-v3-xsmall/blob/a150876415327c80daeff35ca6f68f5ed8cf5c24/README.md), read 2026-10-20 | |
+| nli-deberta-v3-small | GPU **A** | 512 | MultiNLI (mismatched validation set) | NLI | accuracy | 87.55 † | [model card](https://huggingface.co/cross-encoder/nli-deberta-v3-small/blob/fa2804872c3b4bd748f38c0185cc85775361e735/README.md), read 2026-10-20 | |
+| nli-deberta-v3-small | GPU **A** | 512 | SNLI (test set) | NLI | accuracy | 91.65 † | [model card](https://huggingface.co/cross-encoder/nli-deberta-v3-small/blob/fa2804872c3b4bd748f38c0185cc85775361e735/README.md), read 2026-10-20 | |
+| nli-deberta-v3-base | GPU **B** | 512 | MultiNLI (mismatched validation set) | NLI | accuracy | 90.04 † | [model card](https://huggingface.co/cross-encoder/nli-deberta-v3-base/blob/6c749ce3425cd33b46d187e45b92bbf96ee12ec7/README.md), read 2026-10-20 | |
+| nli-deberta-v3-base | GPU **B** | 512 | SNLI (test set) | NLI | accuracy | 92.38 † | [model card](https://huggingface.co/cross-encoder/nli-deberta-v3-base/blob/6c749ce3425cd33b46d187e45b92bbf96ee12ec7/README.md), read 2026-10-20 | |
+| roberta-large-mnli | GPU **A** | 512 | MultiNLI (GLUE validation set, single model, single-task fine-tuning) | NLI | accuracy | 90.2 † | [model card](https://huggingface.co/FacebookAI/roberta-large-mnli/blob/2a8f12d27941090092df78e4ba6f0928eb5eac98/README.md), read 2026-10-20 | The card quotes the RoBERTa paper's fairseq result; it wasn't re-measured on this checkpoint. Matched or mismatched isn't stated |
+| nli-MiniLM2-L6-H768 (ANE build) | ANE **B** | 512 | MultiNLI (mismatched validation set) | NLI | accuracy | 86.89 † | [documentation](https://github.com/UKPLab/sentence-transformers/blob/072b4abf0ec89f47c2368f0702359edd4802b27b/docs/cross_encoder/pretrained_models.md), read 2026-10-20 | From the Sentence Transformers documentation, which the model card points to; it doesn't name the checkpoint revision |
+| deberta-v3-base-zeroshot-v2.0-c | GPU **A** | 512 | zeroshot-v2.0 evaluation (28 text-classification datasets, the card's 'all datasets mean' row) | Zero-shot classification | f1_macro | 61.9 | [model card](https://huggingface.co/MoritzLaurer/deberta-v3-base-zeroshot-v2.0-c/blob/bddf8c5411c34ac3565e16e04384fd68b2618dda/README.md), read 2026-10-20 | |
+| deberta-v3-large-zeroshot-v2.0-c | GPU **A** | 512 | zeroshot-v2.0 evaluation (28 text-classification datasets, the card's 'all datasets mean' row) | Zero-shot classification | f1_macro | 67.6 | [model card](https://huggingface.co/MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c/blob/b2730f16019076bb0009481121efbe4705e0e378/README.md), read 2026-10-20 | |
+| roberta-large-zeroshot-v2.0-c | GPU **B** | 512 | zeroshot-v2.0 evaluation (28 text-classification datasets, the card's 'all datasets mean' row) | Zero-shot classification | f1_macro | 62.2 | [model card](https://huggingface.co/MoritzLaurer/roberta-large-zeroshot-v2.0-c/blob/4c24ed4bba5af8d3162604abc2a141b9d2183ecc/README.md), read 2026-10-20 | |
+| bge-m3-zeroshot-v2.0-c | GPU **A** | 2,048 | zeroshot-v2.0 evaluation (28 text-classification datasets, the card's 'all datasets mean' row) | Zero-shot classification | f1_macro | 59 | [model card](https://huggingface.co/MoritzLaurer/bge-m3-zeroshot-v2.0-c/blob/705510dfe0f35d223a4bf6f5d2695ec5fd162341/README.md), read 2026-10-20 | |
+| ModernBERT-large-zeroshot-v2.0 | GPU **B** | 2,048 | ModernBERT-large-zeroshot-v2.0 training results (mean over the card's 36 datasets, NLI and text classification) | Zero-shot classification | f1_macro | 83.4 † | [model card](https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md), read 2026-10-20 | Measured on the evaluation splits of the datasets it was trained on, so not zero-shot and not comparable with the -c models' 28-dataset mean |
+| ModernBERT-large-zeroshot-v2.0 | GPU **B** | 2,048 | MultiNLI (mismatched validation set, the card's training results) | NLI | accuracy | 94.4 † | [model card](https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md), read 2026-10-20 | |
+<!-- /generated -->
 
 ## Incompatible / not integrated
 
