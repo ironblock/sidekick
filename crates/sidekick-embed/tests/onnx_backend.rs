@@ -185,6 +185,49 @@ fn the_product_path_tokenizes_then_runs_each_input_alone() {
 }
 
 #[test]
+fn a_run_that_shrinks_the_arena_gives_the_same_vectors() {
+    use sidekick_embed::onnx::{MemoryOptions, SHRINK_FROM_TOKENS};
+    if !have_runtime() {
+        return;
+    }
+    let dir = models_dir("shrink", "hidden.onnx", "cls", HIDDEN_IO);
+    let registry = ModelRegistry::scan(&dir).unwrap();
+    let model = registry.get("tiny").unwrap();
+    // 16 rows of 64 real tokens: 1,024, a run the default shrinks after.
+    let (rows, len) = (16usize, 64usize);
+    assert!(rows * len >= SHRINK_FROM_TOKENS);
+    let batch: Vec<Vec<i32>> = (0..rows)
+        .map(|r| {
+            let mut ids = vec![1];
+            ids.extend((0..len - 2).map(|i| 3 + ((r * 7 + i * 5) % 9) as i32));
+            ids.push(2);
+            ids
+        })
+        .collect();
+    let refs: Vec<&[i32]> = batch.iter().map(Vec::as_slice).collect();
+    let run = |memory: MemoryOptions| {
+        let m = OnnxEmbedder::load_with(model, 2, memory).unwrap();
+        // Twice: the second run allocates again after the first shrank.
+        let first = m.run_batch(&refs, len).unwrap();
+        assert_eq!(first, m.run_batch(&refs, len).unwrap(), "{memory:?}: a re-run after shrinking");
+        // A short run after the long one.
+        assert_eq!(m.run(&batch[0][..8]).unwrap(), m.run(&batch[0][..8]).unwrap());
+        first
+    };
+    let default = MemoryOptions::default();
+    assert!(default.cpu_arena && default.shrinks_after(rows * len), "the default shrinks after this run");
+    let never = run(MemoryOptions { shrink_from_tokens: None, ..default });
+    assert_eq!(run(default), never, "shrinking after long runs (the default)");
+    assert_eq!(run(MemoryOptions { shrink_from_tokens: Some(0), ..default }), never, "shrinking after every run");
+    // ONNX Runtime fails a run that asks to shrink an arena the session
+    // doesn't have: without one, no run asks.
+    let no_arena = MemoryOptions { cpu_arena: false, shrink_from_tokens: Some(0) };
+    assert!(!no_arena.shrinks_after(rows * len));
+    assert_eq!(run(no_arena), never, "no CPU arena");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn the_scan_time_check_reads_real_onnx_files() {
     // No runtime needed: the registry reads the graph's declarations.
     let dir = models_dir("scan-ok", "hidden.onnx", "cls", HIDDEN_IO);
