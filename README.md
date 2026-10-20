@@ -191,7 +191,7 @@ takes `/v2/embed`'s values in any case: `NONE` (the default) refuses,
 `END` keeps the start of the text, and `START` keeps its end. Hugging Face
 TEI's boolean works too: `true` is `END`, `false` is `NONE`. Anything
 else is a 400, and `null` is the default. Before 0.13.0, `END` was the
-default (D43). OpenAI's SDKs send it through `extra_body`, as in
+default (D43). OpenAI's Python SDK sends it through `extra_body`, as in
 `client.embeddings.create(..., extra_body={"truncate": "END"})`.
 
 `/v2/embed` keeps Cohere's default, `END`, and so do `libsidekick.dylib`'s

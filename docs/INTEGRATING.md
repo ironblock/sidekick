@@ -112,9 +112,9 @@ instead. A model whose own `tokenizer.json` truncates
 refused past that point too.
 
 To truncate instead, send `truncate: "END"` (or TEI's `truncate: true`;
-OpenAI's SDKs send it through `extra_body`): the input is cut to the limit
-and returns a normal vector, with nothing in the response to say so, so a
-long document embeds only its start. `truncate: "START"` keeps the end
+OpenAI's Python SDK sends it through `extra_body`): the input is cut to
+the limit and returns a normal vector, with nothing in the response to say
+so, so a long document embeds only its start. `truncate: "START"` keeps the end
 instead. Until 0.13.0, `END` was the default (D43). `/v2/embed` keeps
 Cohere's default, `END`.
 

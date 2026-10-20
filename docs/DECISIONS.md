@@ -2959,10 +2959,11 @@ default of the embedders' limits (`EmbedLimits::default()`, `END`) that
 the route passed through. A client that embeds long documents gets
 vectors for their openings and can't tell which. Issue #111 records one
 consumer's measurement: embedding a 2,355-document corpus through
-Qwen3-Embedding-0.6B's ONNX build, then limited to 512 tokens (4,096
-since D40's October amendment), 36% of the documents were over the limit,
+Qwen3-Embedding-0.6B at 512 tokens (its ONNX build now takes 4,096,
+D40's length-limit amendment), 36% of the documents were over the limit,
 and their vectors agreed with full-length ones only down to cosine 0.855.
-Every gate graded A, since each vector was a valid unit vector.
+Every gate graded A: their references truncate the same way, and no case
+went past about 520 tokens.
 
 That is the harm D10 already refuses for the output: a `dimensions`
 value a model wasn't trained to truncate to is a 400, not a best-effort
