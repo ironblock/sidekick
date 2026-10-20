@@ -56,8 +56,9 @@ pub async fn embeddings(
         }
     };
 
-    // By default an over-length input keeps its start (`END`); `NONE`
-    // refuses the request with a 400 naming the input.
+    // By default an over-length input refuses the request with a 400
+    // naming the input (`NONE`), as OpenAI's embeddings route does (D43);
+    // `END` and `START` truncate it.
     let limits = EmbedLimits { truncate: truncate(req.truncate.as_ref())?, max_tokens: None };
 
     // Loading isn't counted against the request timeout (api::deadline).
@@ -129,13 +130,15 @@ pub async fn embeddings(
 
 /// `truncate` on /v1/embeddings: /v2/embed's values in any case, or Hugging
 /// Face TEI's boolean, `true` truncating (`END`) and `false` refusing
-/// (`NONE`), so that clients built for either work here.
+/// (`NONE`), so that clients built for either work here. Absent (or
+/// `null`), it is `NONE`: unlike /v2/embed, whose Cohere contract defaults
+/// to `END`, this route refuses over-length input unless asked (D43).
 fn truncate(value: Option<&Value>) -> Result<Truncate, ApiError> {
     let unsupported =
         |v: String| ApiError::invalid(format!("unsupported truncate {v} (use NONE, START or END, or true or false)"));
     match value {
-        None | Some(Value::Bool(true)) => Ok(Truncate::End),
-        Some(Value::Bool(false)) => Ok(Truncate::Reject),
+        None | Some(Value::Bool(false)) => Ok(Truncate::Reject),
+        Some(Value::Bool(true)) => Ok(Truncate::End),
         Some(Value::String(s)) => {
             embed_v2::truncate(Some(&s.to_ascii_uppercase())).map_err(|_| unsupported(format!("`{s}`")))
         }

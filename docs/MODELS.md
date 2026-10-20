@@ -740,16 +740,18 @@ What a long input costs:
   `request_timeout_secs`.
 - **Vectors change.** Up to 0.12.0 this build cut inputs at 512 tokens, so
   an input longer than that now gets a different vector: one of its whole
-  text. The model's Core ML build still stops at 512 (cutting the input, or
-  refusing it with `truncate: "NONE"`), so the two builds of this model id
-  give different vectors for any text past 512 tokens.
+  text. The model's Core ML build still stops at 512: it refuses a longer
+  input (the default on `/v1/embeddings`), or embeds only its first 512
+  tokens (with `truncate: "END"`, and by default on `/v2/embed`). So for
+  any text past 512 tokens the two builds of this model id don't agree.
   Re-embed long documents after upgrading, and don't mix the two builds'
   vectors of long text in one index.
 - **Per-request limits.** `truncate` (`/v1/embeddings` and `/v2/embed`)
-  chooses which end is cut at the model's limit, or `NONE` to refuse an
-  over-long input; `max_tokens` on `/v2/embed` cuts at a lower limit of the
-  client's choosing (512, say, for vectors that match the earlier
-  releases' and the Core ML build's).
+  chooses whether an over-long input is refused (`NONE`, the default on
+  `/v1/embeddings`) or cut, and at which end (`END`, the default on
+  `/v2/embed`, or `START`); `max_tokens` on `/v2/embed` cuts at a lower
+  limit of the client's choosing (512, say, for vectors that match the
+  earlier releases' and the Core ML build's).
 
 ### Recommendations
 

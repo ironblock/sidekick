@@ -3,7 +3,8 @@
 //! /v2/embed serve it, /v1/models and the provenance headers say it runs
 //! on the CPU with no buckets, and /health reports the runtime and each
 //! model's threads. /v1/models lists its `max_seq_len`, past which
-//! `truncate: "NONE"` is a 400.
+//! /v1/embeddings is a 400 unless the request sends `truncate: "END"` or
+//! `"START"` (D43), and /v2/embed truncates by default.
 //!
 //! Needs `--features onnx` and ORT_DYLIB_PATH; skips without them unless
 //! SIDEKICK_REQUIRE_ONNX=1.
@@ -129,9 +130,21 @@ async fn an_onnx_model_lists_its_limit_and_truncate_none_refuses_past_it() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let message = body["error"]["message"].as_str().unwrap();
     assert!(message.starts_with("input 1: 20 tokens, over model `tiny`'s limit of 16 tokens"), "{message}");
-    // Without `truncate`, as with `END`, it is truncated.
+    // Without `truncate`, as with `NONE`, the same 400.
     let (status, default) = call(state.clone(), post_json("/v1/embeddings", json!({"model": "tiny", "input": batch}))).await;
-    assert_eq!(status, StatusCode::OK, "{default}");
-    let end = call(state, post_json("/v1/embeddings", json!({"model": "tiny", "input": batch, "truncate": "END"}))).await;
-    assert_eq!(end, (StatusCode::OK, default));
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{default}");
+    assert_eq!(default["error"]["message"], message);
+    // `END` and TEI's `true` truncate it, alike.
+    let (status, end) =
+        call(state.clone(), post_json("/v1/embeddings", json!({"model": "tiny", "input": batch, "truncate": "END"}))).await;
+    assert_eq!(status, StatusCode::OK, "{end}");
+    let tei = call(state.clone(), post_json("/v1/embeddings", json!({"model": "tiny", "input": batch, "truncate": true}))).await;
+    assert_eq!(tei, (StatusCode::OK, end.clone()));
+    // /v2/embed truncates without being asked, to the same vectors.
+    let v2 = json!({"model": "tiny", "texts": batch, "input_type": "search_document"});
+    let (status, v2) = call(state, post_json("/v2/embed", v2)).await;
+    assert_eq!(status, StatusCode::OK, "{v2}");
+    for i in 0..2 {
+        assert_eq!(v2["embeddings"]["float"][i], end["data"][i]["embedding"], "input {i}");
+    }
 }

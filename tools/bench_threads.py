@@ -49,6 +49,9 @@ def loadavg():
 
 
 def post(port, body):
+    # Truncate rather than refuse an input over a model's limit (D43), so
+    # every model times the same text.
+    body = {**body, "truncate": "END"}
     req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/embeddings", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=900) as r:
