@@ -407,7 +407,11 @@ backbone, head and gate texts, gated against the same fp32 references
   is graded there. Qwen3-Embedding-0.6B's Core ML buckets stop at 512 and
   its ONNX build takes 4,096, graded on the long-input parity corpus
   (`fixtures/parity/corpus_long.toml`; docs/MODELS.md). A cap past 512
-  should be graded on that corpus before it ships.
+  should be graded on that corpus before it ships, with its time and
+  memory at the cap measured (`examples/onnx_memory`,
+  `tools/bench_onnx.py`). Raising a cap changes the vectors of inputs
+  past the old one, which were cut there before, and makes the model's
+  two builds disagree on them: say so in the release notes.
 - **fp32, no rewrites.** A recipe's `rewrites=` don't run for an ONNX
   export: the precision and range rewrites exist for the ANE's fp16
   arithmetic, and the activation swaps for its coarse native ops (so

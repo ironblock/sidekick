@@ -550,10 +550,12 @@ column. The Core ML columns are the Apple paths from the table above.
   query), 1.1e-11 at 2,400, 1.2e-11 at 4,096, and 1.1e-11 for a
   4,284-token input truncated to 4,096, with token ids equal to the
   reference pipeline's. Its M1 Max row above is the 4,096-token build on
-  the main corpus, whose 700-token over-length cases it no longer
-  truncates; the other chips' rows, and the fp16-weight and int8 rows,
-  were graded on the 512-token build (the same graph). See Latency and
-  Memory for its cost at length.
+  the main corpus at 4 threads, like the other M1 Max rows (the vectors
+  are bit-identical at 8). That corpus's 700-token over-length cases are
+  no longer truncated for this build, so truncation is covered by the
+  long corpus's 4,284-token case. The other chips' rows, and the
+  fp16-weight and int8 rows, were graded on the 512-token build (the same
+  graph). [Long inputs](#long-inputs) gives its cost at length.
 
 Published ONNX exports, graded the same way: bge-small-en-v1.5's and
 gte-modernbert-base's fp32 exports match their checkpoints exactly
@@ -646,13 +648,8 @@ length in the smallest bucket that fits it, padded. ms per input:
 - Batching helps little on the CPU: a batch of 8 costs 0.9–1.0× per input
   at 256 tokens and 0.6–0.8× at 16.
 - x86-64 latency is from the thread table only.
-- **Long inputs (Qwen3-Embedding-0.6B, max_seq_len 4,096).** Same method,
-  8 threads, 10 passes, two runs on a machine running other work: a median
-  0.87–0.96 s per input at 512 tokens, 6.8–7.1 s at 2,400 and 15–17 s at
-  4,096. Past a few hundred tokens time grows faster than length: the
-  export's attention computes the full matrix of scores, so it is a
-  long-input option for indexing in the background, not for interactive
-  requests.
+- Latency past 512 tokens (Qwen3-Embedding-0.6B's ONNX build): see
+  [Long inputs](#long-inputs).
 
 ### Memory
 
@@ -691,11 +688,64 @@ range.
   at load, so Qwen3-Embedding's fp16-weight build holds more (+2.7 GB) than
   its fp32 one.
 - The table's footprints are after inputs of up to 256 tokens. Memory
-  grows with the input actually sent, since each input runs alone and
-  unpadded: Qwen3-Embedding-0.6B's peak footprint is +2,633 MB above its
-  pre-load footprint after one 2,400-token input and +4,089 MB after one of
-  4,096, against +1,704 MB loaded (three runs each, within 2 MB). Its
-  attention holds each layer's fp32 scores, 1 GiB at 4,096 tokens.
+  grows with the input actually sent; past 512 tokens, see
+  [Long inputs](#long-inputs).
+
+### Long inputs
+
+Qwen3-Embedding-0.6B's ONNX build takes 4,096 tokens (its Core ML build,
+512). It grades A at every length on the long-input corpus (see Accuracy).
+What a long input costs:
+
+- **Time.** One input at a time, warm, median per input on the M1 Max at
+  8 threads (sidekick's default there):
+  - sidekick's own path (`examples/onnx_memory`, ONNX Runtime 1.28.3; 20
+    passes after 3 warm-ups, 8 runs): 0.85–0.90 s at 512 tokens; one pass
+    per run at 4,096: 12.9–14.2 s;
+  - `tools/bench_onnx.py` (Python's onnxruntime 1.27; 10 passes after 3
+    warm-ups, 2 runs): 0.87–0.96 s at 512, 6.8–7.1 s at 2,400 and 15–17 s
+    at 4,096.
+
+  Load averages were 4–10, partly the system's own indexing. Time grows
+  faster than length, since the export's attention computes the full
+  matrix of scores: a long-input option for indexing in the background,
+  not for interactive requests.
+- **Memory.** The process's footprint above its pre-load footprint
+  (`examples/onnx_memory`): +1,777 MB loaded, +1,825 MB after a 512-token
+  input and +4,152 MB after a 4,096-token one (+2,633 MB at 2,400 from
+  `tools/bench_memory.py`, three runs). The attention holds each layer's
+  fp32 scores, 1 GiB at 4,096 tokens. A model's runs take turns, so its
+  peak is one input's. ONNX Runtime's CPU arena kept that peak for as long
+  as the model stayed loaded: +4,146–4,156 MB after 69 more inputs of up
+  to 512 tokens, and after 30 s idle (six runs). sidekick now has the
+  arena give back what a run of 1,024 tokens or more grew it by, at the
+  end of that run, and leaves shorter runs as they were (D40). On macOS
+  the system allocator returns those pages lazily, as later inputs run,
+  not while the daemon is idle: the footprint was back to +1,838–1,883 MB
+  after the next 69 inputs in 6 of 7 runs, and in one it stayed at the
+  peak. Short inputs cost the same either way (16 / 256 / 512 tokens:
+  37–40 / 401–423 / 851–896 ms, two runs each). Leave about 2.4 GB above
+  the model's loaded footprint for 4,096-token inputs.
+- **Timeouts.** A request's inputs run one after another, and
+  `request_timeout_secs` (default 60) bounds the whole request: four
+  4,096-token inputs in one request can pass it on an M1 Max, and five
+  do. The client
+  gets a 504, but the inputs still run to the end, and each holds the
+  model's session for its 13–17 s, so other requests to the model wait
+  behind them. Send long inputs one or two per request, or raise
+  `request_timeout_secs`.
+- **Vectors change.** Up to 0.12.0 this build cut inputs at 512 tokens, so
+  an input longer than that now gets a different vector: one of its whole
+  text. The model's Core ML build still stops at 512 (cutting the input, or
+  refusing it with `truncate: "NONE"`), so the two builds of this model id
+  give different vectors for any text past 512 tokens.
+  Re-embed long documents after upgrading, and don't mix the two builds'
+  vectors of long text in one index.
+- **Per-request limits.** `truncate` (`/v1/embeddings` and `/v2/embed`)
+  chooses which end is cut at the model's limit, or `NONE` to refuse an
+  over-long input; `max_tokens` on `/v2/embed` cuts at a lower limit of the
+  client's choosing (512, say, for vectors that match the earlier
+  releases' and the Core ML build's).
 
 ### Recommendations
 
@@ -773,8 +823,9 @@ range.
   halve the disk). Don't use int8 on ONNX Runtime. On Apple silicon its
   chunked Core ML build (D37) serves on the ANE instead, up to 512 tokens.
   The ONNX build takes up to 4,096 (graded A there), at seconds per input
-  and a peak footprint of 4.1 GB at 4,096 tokens (1.7 GB loaded); `max_tokens` on
-  `/v2/embed` caps a request's inputs where that matters.
+  and a footprint of +4.1 GB at 4,096 tokens (+1.8 GB loaded); see
+  [Long inputs](#long-inputs) for timeouts and for long texts' vectors
+  changing.
 
 ## Classifiers (`/v1/classify`)
 

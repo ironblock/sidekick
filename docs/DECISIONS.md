@@ -2741,8 +2741,14 @@ for the ONNX build, and no gate tested past it.
   whose `max_seq_len` reaches its shortest case, on the same paths as the
   main corpus, and reports it as the model's `long` section, absent for
   every other model, so their reports are unchanged. Its gate failures are
-  the model's; it has no floors yet. `tools/models_table.py` turns it into
-  a note on the model's row, whose grade stays the main corpus's.
+  the model's; it has no floors yet. A missing long reference fails a
+  model named with `--model` whose `max_seq_len` is past the main corpus's
+  longest case, as a missing main reference does, since nothing else
+  grades its long inputs; it is a warning where the main corpus already
+  reaches the limit (EmbeddingGemma-2's 2,048, which its over-length cases
+  fill) or the model wasn't named. A run with only `--external` results
+  says the long corpus went ungraded. `tools/models_table.py` turns it
+  into a note on the model's row, whose grade stays the main corpus's.
 - **An ONNX build with a longer limit needs its own main-corpus
   reference.** The suite checks that the reference's `max_seq_len` equals
   the build's, and at 4,096 corpus.toml's over-length cases (700 tokens)
@@ -2750,20 +2756,59 @@ for the ONNX build, and no gate tested past it.
   install directly, taking corpus.toml's bucket-relative lengths from the
   committed Core ML manifest, so both builds are graded on the same texts.
 
-Measured on an M1 Max (ONNX Runtime 1.28.3, 8 threads, the parity suite's
-native worker), the 4,096-token build grades A on both corpora: worst
-1 − cos 1.7e-11 on corpus.toml, unchanged from the 512-token build, and
-7.6e-12 at 600 tokens to 1.2e-11 at 4,096 on the long corpus, the
-truncated input included, with token ids equal to the reference
-pipeline's. It is slow and memory-hungry at length, because the export's
-attention is a MatMul, a Softmax and a MatMul per layer, which
-materializes the fp32 scores: one input took a median 6.8–7.1 s at 2,400
-tokens and 15–17 s at 4,096 (two runs, `tools/bench_onnx.py`, Python's
-onnxruntime 1.27 at 8 threads, on a machine running other work), against 0.87–0.96 s at 512.
-The process's peak footprint rose to 2.6 GB above its pre-load footprint
-at 2,400 tokens and 4.1 GB at 4,096, against 1.7 GB loaded
-(`tools/bench_memory.py`, three runs each, identical to within 2 MB). A fused attention kernel would cut both;
-that is a follow-up.
+- **The arena gives back a long run's memory.** ONNX Runtime's CPU arena
+  keeps every block a run grows it by, so one long input left the process
+  at its peak for as long as the model stayed loaded. `OnnxModel` now runs
+  an input of 1,024 tokens or more (`SHRINK_FROM_TOKENS`, rows × length)
+  with the run option `memory.enable_memory_arena_shrinkage = "cpu:0"`,
+  which frees the blocks that run grew the arena by when it ends; shorter
+  runs are unchanged. It applies to every onnx model; with every other
+  embedder's limit at 512 or below, it changes nothing for them.
+  Shrinking after every run, or no arena at all, cost short inputs nothing
+  measurable either, but neither returned memory any better, and both
+  change the path every short input takes. On macOS the system allocator
+  keeps the freed pages and returns them as later allocations run, not
+  while the process is idle; `malloc_zone_pressure_relief` released
+  nothing on macOS 27.0, so sidekick doesn't call it.
+
+Measured on an M1 Max, macOS 27.0, ONNX Runtime 1.28.3:
+- **Accuracy** (the parity suite's native worker, 4 threads as for the
+  other M1 Max rows; 8 gives bit-identical vectors): A on both corpora.
+  Worst 1 − cos 1.7e-11 on corpus.toml, unchanged from the 512-token
+  build, and 7.6e-12 at 600 tokens to 1.2e-11 at 4,096 on the long
+  corpus, the truncated input included, with token ids equal to the
+  reference pipeline's.
+- **Time** (8 threads, the machine's default, load average 4–10): a
+  median 0.85–0.90 s per input at 512 tokens and 12.9–14.2 s at 4,096 on
+  sidekick's own path (`examples/onnx_memory`, 8 runs), and 6.8–7.1 s at
+  2,400 from Python (`tools/bench_onnx.py`, onnxruntime 1.27, 2 runs). The
+  export's attention is a MatMul, a Softmax and a MatMul per layer, which
+  materializes the fp32 scores, so time grows faster than length. A fused
+  attention kernel would cut time and memory; that is a follow-up.
+- **Memory** (`examples/onnx_memory`, the footprint above the pre-load
+  one): +1,777 MB loaded, +1,825 MB after a 512-token input, +4,152 MB
+  after a 4,096-token one (+2,633 MB at 2,400, `tools/bench_memory.py`).
+  Before the change, 69 more inputs of up to 512 tokens and 30 s idle
+  left it at +4,146–4,156 MB (six runs). After it, the same inputs
+  brought it back to +1,838–1,883 MB in 6 of 7 runs; in one it stayed at
+  the peak, the allocator holding the pages. Short inputs' latency was the
+  same with and without the change (16 / 256 / 512 tokens: 37–40 /
+  401–423 / 851–896 ms).
+- **Timeouts.** A request's inputs run one after another under one
+  `request_timeout_secs` (default 60), so four 4,096-token inputs in one
+  request can pass it, and five do. The 504 abandons the wait, not the
+  work: the remaining inputs still run, each holding the model's session
+  for 13–17 s, and other requests to the model wait behind them.
+  docs/MODELS.md advises one or two long inputs per request, or a higher
+  timeout.
+- **Vectors change for long text.** Inputs past 512 tokens were cut at
+  512 by this build up to 0.12.0 and now embed whole, and the Core ML
+  build of the same id still stops at 512, so the two builds' vectors of
+  long text differ. Long documents need re-embedding, and the two builds'
+  long-text vectors don't belong in one index. A client that wants the old
+  vectors sends `max_tokens: 512` to `/v2/embed`; `truncate` on
+  `/v1/embeddings` and `/v2/embed` picks the end that is cut, or refuses
+  an over-long input.
 
 ## D41 — The nli format: NLI cross-encoders as zero-shot classifiers
 A natural-language-inference cross-encoder reads a (premise, hypothesis)
