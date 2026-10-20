@@ -27,12 +27,23 @@ Inputs:
   matching rows.
 - --threads: thread-scaling runs (sidekickd over HTTP), attached as
   latency per thread count.
+- each build's committed manifest (examples/manifests/, with an onnx.toml
+  beside it for an ONNX build that differs, and examples/classifiers/):
+  its `max_seq_len`, on every row of that build.
+- benchmark scores, published beside the rows as the results file's
+  `benchmarks`: docs/data/benchmarks.mteb.json (MTEB, collected by
+  tools/fetch_benchmarks.py) and docs/data/benchmarks.toml (curated,
+  mostly self-reported). Every score must name its benchmark and version,
+  category, metric, source (pinned to a revision) and the date it was
+  read; a category mean must cover all of its tasks. `--check` refuses one
+  that doesn't.
 
 It also writes the data tables in docs/MODELS.md from the results file
 (those between `<!-- generated: NAME -->` markers), and checks the
 hand-written classifier and reranker tables' grades against it, so the
 document and the page can't drift apart. To change a published number,
-change its input (a report, runs.toml or carried.toml) and rerun this.
+change its input (a report, runs.toml, carried.toml or a benchmarks file)
+and rerun this.
 
 Usage:
     python tools/models_table.py --reports DIR [--reports DIR ...]
@@ -41,14 +52,17 @@ Usage:
 
     --check: write nothing; fail if the output would differ from --out
              or from docs/MODELS.md
-    --docs:  only regenerate docs/MODELS.md's tables from --out, reading
-             no reports (what CI checks)
+    --docs:  regenerate docs/MODELS.md's tables, and the results file's
+             benchmark scores, from in-repo inputs, reading no reports
+             (what CI checks)
 
 Standard library only. The output is sorted and formatted the same way on
 every run, so a regenerated file diffs cleanly.
 """
 
 import argparse
+import datetime
+import decimal
 import json
 import math
 import re
@@ -72,7 +86,7 @@ FIELDS = [
     "gate_failed", "worst_case", "stress", "mean",
     "drift", "bias", "rank_flips", "matryoshka", "ms", "ms_source", "ms_idle", "ms_tokens", "latency",
     "footprint_mb", "footprint_range_mb", "footprint_measured", "peak_mb", "peak_measured", "disk_mb", "disk_measured",
-    "machine_mb", "machine_measured", "note", "source",
+    "machine_mb", "machine_measured", "max_seq_len", "note", "source",
 ]
 
 
@@ -481,6 +495,374 @@ def add_latency(row, *, tokens, batch, threads, ms, runtime, load_avg, source):
                             key=lambda e: (e["how"], e["threads"] or 0, e["batch"], e["tokens"]))
 
 
+# --- build caps --------------------------------------------------------------
+#
+# Each build's max_seq_len, from its committed manifest: the longest input it
+# takes. Benchmarks ran at the model's own context, which is often longer.
+
+MANIFESTS = REPO / "examples" / "manifests"
+CLASSIFIERS = REPO / "examples" / "classifiers"
+
+
+def build_caps(models):
+    """{model: {"coreml": n, "onnx": n}} from examples/manifests/<id>/
+    (onnx.toml overrides the ONNX build's) or examples/classifiers/<id>/."""
+    caps = {}
+    for mid in models:
+        embed, classify = MANIFESTS / mid / "manifest.toml", CLASSIFIERS / mid / "classifier.toml"
+        if embed.exists():
+            n = load_toml(embed).get("max_seq_len")
+            sidecar = embed.with_name("onnx.toml")
+            onnx = load_toml(sidecar).get("max_seq_len", n) if sidecar.exists() else n
+            caps[mid] = {"coreml": n, "onnx": onnx}
+        elif classify.exists():
+            caps[mid] = {"coreml": load_toml(classify).get("max_seq_len"), "onnx": None}
+    return caps
+
+
+def cap_of(row, caps):
+    c = caps.get(row["model"])
+    if c is None:
+        return None
+    return c["onnx"] if row["path"] == "onnx-cpu" else c["coreml"]
+
+
+# --- benchmark scores ---------------------------------------------------------
+#
+# Published as the results file's `benchmarks`, one record per (model,
+# benchmark, version, category, metric), from two inputs:
+# - docs/data/benchmarks.mteb.json, written by tools/fetch_benchmarks.py from
+#   the MTEB results repository at a pinned commit: per (model, benchmark),
+#   each category's mean over its tasks, null unless every task is present;
+# - docs/data/benchmarks.toml, curated by hand: what a model's card or its
+#   authors report.
+# Values are published on a 0–100 scale. Nothing is averaged here: a mean is
+# the benchmark's own (over its tasks), never one across benchmarks.
+
+BENCH_TOML = DATA / "benchmarks.toml"
+BENCH_MTEB = DATA / "benchmarks.mteb.json"
+MEAN = "Mean (task)"
+# Category order in the tables; others follow alphabetically.
+CATEGORIES = [MEAN, "Retrieval", "Classification", "Clustering", "PairClassification", "Reranking", "STS",
+              "Summarization", "BitextMining", "MultilabelClassification", "InstructionReranking"]
+SOURCE_KINDS = {
+    "mteb": "Run with the mteb package, from the MTEB results repository",
+    "mixed": "Run with the mteb package, from the MTEB results repository, with some tasks imported from the "
+             "model card (self-reported)",
+    "self-reported": "Reported by the model's authors",
+    "independent": "Measured by a third party",
+}
+CURATED_KINDS = ("self-reported", "independent")
+REQUIRED = ("model", "benchmark", "version", "category", "metric", "value", "scale", "source_kind", "source_url",
+            "read_on")
+OPTIONAL = ("trained_on", "note")
+NUMBER = re.compile(r"-?\d+(\.\d+)?$")
+SHA = r"[0-9a-f]{40}"
+# A model card, dataset or repository file, pinned to a revision or commit.
+PINNED = [
+    re.compile(rf"^https://huggingface\.co/(datasets/|spaces/)?[\w.-]+(/[\w.-]+)?/(blob|raw|resolve|tree)/{SHA}(/|$)"),
+    re.compile(rf"^https://github\.com/[\w.-]+/[\w.-]+/(blob|tree|commit)/{SHA}(/|$)"),
+    re.compile(rf"^https://raw\.githubusercontent\.com/[\w.-]+/[\w.-]+/{SHA}/"),
+]
+# A complete mean must agree with its categories to the file's rounding.
+MEAN_TOLERANCE = 1e-5
+
+
+def pinned(url):
+    """Whether a source URL names a fixed revision: a Hugging Face or
+    GitHub URL at a commit. Any other page can change under the number, so
+    it's refused too; cite the repository file it's built from instead."""
+    return isinstance(url, str) and any(p.match(url) for p in PINNED)
+
+
+def points_text(value, scale):
+    """A curated value, a string as the source writes it ("0.860", "74.30"),
+    on the 0–100 scale with the same precision ("86.0", "74.30")."""
+    d = decimal.Decimal(value)
+    return format(d.scaleb(2) if scale == "fraction" else d, "f")
+
+
+def check_value(where, value, category):
+    lo = -100 if category == "InstructionReranking" else 0      # p-MRR runs from -100 to 100
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not lo <= value <= 100:
+        return [f"{where}: value {value!r} isn't a number from {lo} to 100"]
+    return []
+
+
+def check_date(where, value):
+    """A read_on: an ISO date, not in the future."""
+    try:
+        day = datetime.date.fromisoformat(str(value))
+    except ValueError:
+        return [f"{where}: read_on {value!r} isn't a YYYY-MM-DD date"]
+    return [f"{where}: read_on {value} is in the future"] if day > datetime.date.today() else []
+
+
+def blank_text(v):
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
+def curated_problems(entries, models):
+    """docs/data/benchmarks.toml's entries: what --check refuses."""
+    problems = []
+    for i, e in enumerate(entries):
+        where = f"benchmarks.toml entry {i + 1} ({e.get('model')}, {e.get('benchmark')}, {e.get('category')})"
+        missing = [k for k in REQUIRED if blank_text(e.get(k)) or e.get(k) == []]
+        if missing:
+            problems.append(f"{where}: missing {', '.join(missing)}")
+            continue
+        ids = e["model"] if isinstance(e["model"], list) else [e["model"]]
+        for m in ids:
+            if not isinstance(m, str) or m not in models:
+                problems.append(f"{where}: model {m!r} isn't in docs/data/models.toml")
+        texts = [k for k in REQUIRED if k not in ("model", "read_on") and not isinstance(e[k], str)]
+        if texts:
+            problems.append(f"{where}: {', '.join(texts)} must be {'a string' if len(texts) == 1 else 'strings'} "
+                            "(a value as the source writes it, quoted)")
+            continue
+        if e["scale"] not in ("percent", "fraction"):
+            problems.append(f"{where}: scale {e['scale']!r} isn't percent or fraction")
+        elif not NUMBER.match(e["value"]):
+            problems.append(f"{where}: value {e['value']!r} isn't a decimal number")
+        else:
+            problems += check_value(where, float(points_text(e["value"], e["scale"])), e["category"])
+        if e["source_kind"] not in CURATED_KINDS:
+            problems.append(f"{where}: source_kind {e['source_kind']!r} isn't one of {', '.join(CURATED_KINDS)}")
+        if not pinned(e["source_url"]):
+            problems.append(f"{where}: source_url {e['source_url']} isn't pinned to a revision or commit")
+        problems += check_date(where, e["read_on"])
+        if "trained_on" in e and not isinstance(e["trained_on"], bool):
+            problems.append(f"{where}: trained_on {e['trained_on']!r} isn't true or false")
+        if "note" in e and (not isinstance(e["note"], str) or not e["note"].strip()):
+            problems.append(f"{where}: note is empty or not a string")
+        unknown = set(e) - set(REQUIRED) - set(OPTIONAL)
+        if unknown:
+            problems.append(f"{where}: unknown fields {', '.join(sorted(unknown))}")
+    return problems
+
+
+REVISION_MATCHES = ("exact", "same-weights", "unverified", "different", "model card only")
+CONTEXT_SOURCES = ("mteb loader", "sentence-transformers config", "advertised")
+
+
+def is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def is_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def mteb_type_problems(e):
+    """An MTEB entry's fields of the wrong JSON type, or outside their
+    closed sets."""
+    out = []
+    for k in ("model", "benchmark", "mteb_version", "task_set_hash", "source_kind", "source_url", "read_on",
+              "sidekick_revision"):
+        if not isinstance(e[k], str):
+            out.append(f"{k} {e[k]!r} isn't a string")
+    for k in ("n_tasks", "of"):
+        if not is_int(e[k]):
+            out.append(f"{k} {e[k]!r} isn't an integer")
+    for k in ("mean_task", "mean_task_type"):
+        if e.get(k) is not None and not is_number(e[k]):
+            out.append(f"{k} {e[k]!r} isn't a number")
+    revs = e["evaluated_revisions"]
+    if not isinstance(revs, dict) or not all(isinstance(r, str) and is_int(n) for r, n in revs.items()):
+        out.append("evaluated_revisions isn't a map of revision to task count")
+    if e.get("revision_match") is not None and e["revision_match"] not in REVISION_MATCHES:
+        out.append(f"revision_match {e['revision_match']!r} isn't one of {', '.join(REVISION_MATCHES)}")
+    if e.get("model_context") is not None and not is_int(e["model_context"]):
+        out.append(f"model_context {e['model_context']!r} isn't an integer")
+    if (e.get("model_context") is None) != (e.get("model_context_source") is None):
+        out.append("model_context and model_context_source must be given together")
+    elif e.get("model_context_source") is not None and e["model_context_source"] not in CONTEXT_SOURCES:
+        out.append(f"model_context_source {e['model_context_source']!r} isn't one of {', '.join(CONTEXT_SOURCES)}")
+    if e.get("prompting") is not None and not isinstance(e["prompting"], str):
+        out.append(f"prompting {e['prompting']!r} isn't a string")
+    if not isinstance(e["categories"], dict):
+        return out + ["categories isn't a map"]
+    for name, c in e["categories"].items():
+        if not isinstance(c, dict):
+            out.append(f"{name} isn't a map")
+            continue
+        if c.get("value") is not None and not is_number(c["value"]):
+            out.append(f"{name}: value {c['value']!r} isn't a number")
+        for k in ("n_tasks", "of", "n_trained_on", "n_model_card"):
+            if not is_int(c.get(k)):
+                out.append(f"{name}: {k} {c.get(k)!r} isn't an integer")
+        if not isinstance(c.get("metric"), str):
+            out.append(f"{name}: metric {c.get('metric')!r} isn't a string")
+    return out
+
+
+def mteb_problems(data, models):
+    """docs/data/benchmarks.mteb.json's entries: what --check refuses."""
+    problems = []
+    if data.get("scale") != "fraction":
+        problems.append("benchmarks.mteb.json: scale isn't fraction")
+    revision = (data.get("results") or {}).get("revision")
+    if not isinstance(revision, str) or not re.fullmatch(SHA, revision):
+        problems.append("benchmarks.mteb.json: no results revision")
+    problems += [f"benchmarks.mteb.json: {k} isn't a string" for k in ("mteb_version", "read_on")
+                 if not isinstance(data.get(k), str)]
+    benchmarks = data.get("benchmarks")
+    if not isinstance(benchmarks, dict) or not all(
+            isinstance(b, dict) and is_int(b.get("n_tasks")) and isinstance(b.get("task_set_hash"), str)
+            and isinstance(b.get("categories"), dict) and all(is_int(n) for n in b["categories"].values())
+            for b in benchmarks.values()):
+        return problems + ["benchmarks.mteb.json: `benchmarks` isn't a map of benchmark to its task set"]
+    if not isinstance(data.get("entries"), list):
+        return problems + ["benchmarks.mteb.json: `entries` isn't a list"]
+    for i, e in enumerate(data["entries"]):
+        if not isinstance(e, dict):
+            problems.append(f"benchmarks.mteb.json entry {i + 1} isn't an object")
+            continue
+        where = f"benchmarks.mteb.json entry {i + 1} ({e.get('model')}, {e.get('benchmark')})"
+        need = ("model", "benchmark", "mteb_version", "task_set_hash", "source_kind", "source_url", "read_on",
+                "sidekick_revision", "evaluated_revisions", "n_tasks", "of", "categories")
+        missing = [k for k in need if blank_text(e.get(k)) or e.get(k) == {}]
+        if missing:
+            problems.append(f"{where}: missing {', '.join(missing)}")
+            continue
+        wrong = mteb_type_problems(e)
+        if wrong:
+            problems += [f"{where}: {w}" for w in wrong]
+            continue
+        if sum(e["evaluated_revisions"].values()) != e["n_tasks"]:
+            problems.append(f"{where}: evaluated_revisions count {sum(e['evaluated_revisions'].values())} tasks, "
+                            f"not its {e['n_tasks']}")
+        if e["model"] not in models:
+            problems.append(f"{where}: model {e['model']!r} isn't in docs/data/models.toml")
+        b = benchmarks.get(e["benchmark"])
+        if b is None or b.get("task_set_hash") != e["task_set_hash"]:
+            problems.append(f"{where}: task set {e['task_set_hash']} isn't the file's {e['benchmark']}")
+            continue
+        if e["of"] != b["n_tasks"]:
+            problems.append(f"{where}: of {e['of']}, the benchmark has {b['n_tasks']} tasks")
+        if set(e["categories"]) != set(b["categories"]):
+            problems.append(f"{where}: categories {sorted(e['categories'])}, the benchmark's are "
+                            f"{sorted(b['categories'])}")
+        if e["source_kind"] not in ("mteb", "mixed"):
+            problems.append(f"{where}: source_kind {e['source_kind']!r} isn't mteb or mixed")
+        if not pinned(e["source_url"]):
+            problems.append(f"{where}: source_url {e['source_url']} isn't pinned to a revision or commit")
+        elif revision and revision not in e["source_url"]:
+            problems.append(f"{where}: source_url isn't the file's results revision {revision}")
+        problems += check_date(where, e["read_on"])
+        cats = e["categories"]
+        means = [(MEAN, e.get("mean_task"), e["n_tasks"], e["of"])]
+        card = 0
+        for name, c in cats.items():
+            cw = f"{where} {name}"
+            if not c.get("metric"):
+                problems.append(f"{cw}: no metric")
+            if b["categories"].get(name) != c.get("of"):
+                problems.append(f"{cw}: of {c.get('of')}, the benchmark has {b['categories'].get(name)}")
+            n = c.get("n_tasks")
+            for field in ("n_trained_on", "n_model_card"):
+                if not isinstance(c.get(field), int) or not 0 <= c[field] <= (n or 0):
+                    problems.append(f"{cw}: {field} {c.get(field)!r} isn't from 0 to its {n} tasks")
+            card += c.get("n_model_card") or 0
+            means.append((name, c.get("value"), n, c.get("of")))
+        if sum(c.get("n_tasks") or 0 for c in cats.values()) != e["n_tasks"]:
+            problems.append(f"{where}: its categories' tasks don't add up to its {e['n_tasks']}")
+        if (e["source_kind"] == "mixed") != (card > 0):
+            problems.append(f"{where}: source_kind {e['source_kind']} with {card} tasks from the model card")
+        any_score = False
+        for name, value, n, of in means:
+            if value is not None and n != of:
+                problems.append(f"{where} {name}: a score over {n} of {of} tasks; a mean needs every task")
+            elif value is None and n == of:
+                problems.append(f"{where} {name}: all {of} tasks present but no score")
+            elif value is not None:
+                any_score = True
+                problems += check_value(f"{where} {name}", value * 100, name)
+        values = [c.get("value") for c in cats.values()]
+        if e.get("mean_task") is not None and None not in values:
+            by_task = sum(c["value"] * c["of"] for c in cats.values()) / sum(c["of"] for c in cats.values())
+            if abs(by_task - e["mean_task"]) > MEAN_TOLERANCE:
+                problems.append(f"{where}: mean_task {e['mean_task']} isn't its categories' task-weighted mean "
+                                f"{by_task:.6f}")
+            by_type = sum(values) / len(values)
+            if e.get("mean_task_type") is None or abs(by_type - e["mean_task_type"]) > MEAN_TOLERANCE:
+                problems.append(f"{where}: mean_task_type {e.get('mean_task_type')} isn't its categories' mean "
+                                f"{by_type:.6f}")
+        elif e.get("mean_task_type") is not None:
+            problems.append(f"{where}: a mean_task_type without every category")
+        if any_score and not e.get("revision_match"):
+            problems.append(f"{where}: scores without a revision_match")
+    return problems
+
+
+def mteb_records(data):
+    """benchmarks.mteb.json as score records, one per category (and the
+    benchmark's mean over tasks)."""
+    out = []
+    for e in data["entries"]:
+        common = dict(model=e["model"], benchmark=e["benchmark"],
+                      version=f"mteb {e['mteb_version']}, task set {e['task_set_hash']}",
+                      source_kind=e["source_kind"], source_url=e["source_url"], read_on=e["read_on"],
+                      revision_match=e.get("revision_match"), evaluated_revisions=e["evaluated_revisions"],
+                      prompting=e.get("prompting"), model_context=e.get("model_context"),
+                      model_context_source=e.get("model_context_source"), note=None)
+        cats = [(MEAN, {"value": e.get("mean_task"), "n_tasks": e["n_tasks"], "of": e["of"],
+                        "metric": "mean of the tasks' main metrics",
+                        "n_trained_on": sum(c["n_trained_on"] for c in e["categories"].values()),
+                        "n_model_card": sum(c["n_model_card"] for c in e["categories"].values())})]
+        cats += sorted(e["categories"].items(), key=lambda kv: category_order(kv[0]))
+        for name, c in cats:
+            value = None if c["value"] is None else round(c["value"] * 100, 2)
+            out.append(dict(common, category=name, metric=c["metric"], value=value,
+                            value_text=None if value is None else f"{value:.2f}",
+                            n_tasks=c["n_tasks"], of=c["of"], trained_on=c["n_trained_on"],
+                            model_card_tasks=c["n_model_card"]))
+    return out
+
+
+def curated_records(entries):
+    out = []
+    for e in entries:
+        text = points_text(e["value"], e["scale"])
+        for m in e["model"] if isinstance(e["model"], list) else [e["model"]]:
+            out.append(dict(model=m, benchmark=e["benchmark"], version=e["version"], source_kind=e["source_kind"],
+                            source_url=e["source_url"], read_on=str(e["read_on"]), revision_match=None,
+                            evaluated_revisions=None, prompting=None, model_context=None,
+                            model_context_source=None, note=e.get("note"), category=e["category"],
+                            metric=e["metric"], value=float(text), value_text=text, n_tasks=None, of=None,
+                            trained_on=1 if e.get("trained_on") else 0, model_card_tasks=None))
+    return out
+
+
+def category_order(name):
+    return (CATEGORIES.index(name) if name in CATEGORIES else len(CATEGORIES), name)
+
+
+def benchmark_scores(models):
+    """The results file's `benchmarks`, after checking both inputs."""
+    curated = load_toml(BENCH_TOML).get("scores", [])
+    mteb = json.loads(BENCH_MTEB.read_text())
+    problems = curated_problems(curated, models) + mteb_problems(mteb, models)
+    if problems:
+        raise SystemExit("benchmark scores refused:\n  " + "\n  ".join(problems))
+    scores = mteb_records(mteb) + curated_records(curated)
+    keys = [(s["model"], s["benchmark"], s["version"], s["category"], s["metric"]) for s in scores]
+    dup = sorted({k for k in keys if keys.count(k) > 1})
+    if dup:
+        raise SystemExit("benchmark scores refused:\n  " + "\n  ".join(f"duplicate score: {k}" for k in dup))
+    order = list(models)
+    benchmarks = list(mteb["benchmarks"])
+    scores.sort(key=lambda s: (order.index(s["model"]), s["source_kind"] not in ("mteb", "mixed"),
+                               benchmarks.index(s["benchmark"]) if s["benchmark"] in benchmarks else len(benchmarks),
+                               s["benchmark"], category_order(s["category"]), s["metric"]))
+    return {
+        "mteb": {"results": mteb["results"], "mteb_version": mteb["mteb_version"], "read_on": mteb["read_on"],
+                 "benchmarks": mteb["benchmarks"]},
+        "source_kinds": SOURCE_KINDS,
+        "scores": scores,
+    }
+
+
 # --- docs/MODELS.md tables ---------------------------------------------------
 #
 # The data tables in docs/MODELS.md are generated from the results file. Each
@@ -673,14 +1055,115 @@ def classifier_scales(rows, models):
                     ["**F**", "—", "a hard gate failed"]])
 
 
+SHORT_PATH = {"coreml-ane": "ANE", "coreml-gpu": "GPU", "coreml-cpu": "CPU"}
+REVISION_TEXT = {"exact": "sidekick's revision", "same-weights": "another revision, same weights",
+                 "unverified": "another revision, weights not checked (gated)",
+                 "different": "another revision, different weights", "model card only": "model card only"}
+
+
+def build_grades(idx, model, models):
+    """A model's grade on its served Core ML path and on onnx-cpu (fp32),
+    on the M1 Max, with each build's max_seq_len."""
+    served = models[model]["served"]
+    core, onnx = idx.get((model, served, "fp16", M1)), idx.get((model, "onnx-cpu", "fp32", M1))
+    grades = ", ".join(([f"{SHORT_PATH[served]} **{core['grade']}**"] if core else [])
+                       + ([f"onnx-cpu **{onnx['grade']}**"] if onnx else []))
+    caps = [r["max_seq_len"] for r in (core, onnx) if r and r["max_seq_len"]]
+    if not caps:
+        return grades, ""
+    if len(set(caps)) == 1:
+        return grades, f"{caps[0]:,}"
+    return grades, f"{core['max_seq_len']:,} (onnx-cpu {onnx['max_seq_len']:,})"
+
+
+def score_text(s):
+    """A score as the tables print it (its value_text: 2 decimals for MTEB,
+    the source's own precision otherwise); † and a count for tasks in the
+    model's training data; for an incomplete MTEB category, how many of its
+    tasks there are."""
+    if s is None:
+        return ""
+    if s["value"] is None:
+        return f"({s['n_tasks']} of {s['of']} tasks)" if s["n_tasks"] else ""
+    text = s["value_text"]
+    if s["trained_on"]:
+        text += f" †{s['trained_on']}" if s["of"] is not None else " †"
+    return text
+
+
+def mteb_table(benchmark, every_embedder=False):
+    """One MTEB benchmark: each model's categories beside its grades and
+    caps. With every_embedder, embedders without a score get an empty row."""
+    def render(rows, models, bench):
+        idx = index(rows)
+        scores = [s for s in bench["scores"] if s["benchmark"] == benchmark and s["source_kind"] in ("mteb", "mixed")]
+        cats = sorted(bench["mteb"]["benchmarks"][benchmark]["categories"], key=category_order)
+        by = {(s["model"], s["category"]): s for s in scores}
+        have = {s["model"] for s in scores}
+        out = []
+        for model, m in models.items():
+            if model not in have and not (every_embedder and m["task"] == "embed"):
+                continue
+            grades, caps = build_grades(idx, model, models)
+            mean = by.get((model, MEAN))
+            context = ""
+            if mean and mean["model_context"]:
+                context = f"{mean['model_context']:,}"
+                if mean["model_context_source"] == "advertised":
+                    context = f"≤ {context} (advertised)"
+            revision = ""
+            if mean:
+                revision = REVISION_TEXT.get(mean["revision_match"], mean["revision_match"] or "")
+                if mean["model_card_tasks"]:
+                    revision += (f"; {mean['model_card_tasks']} of {mean['of']} tasks from the model card "
+                                 "(the authors' own runs, not mteb's)")
+            out.append([m["name"], grades, f"{caps} / {context}" if mean else caps,
+                        (mean["prompting"] or "") if mean else ""]
+                       + [score_text(by.get((model, c))) for c in [MEAN] + cats] + [revision])
+        return table(["model", "grade (M1 Max)", "max tokens: sidekick / MTEB run", "prompts in the MTEB run",
+                      "mean (task)"] + cats + ["revision evaluated"], out)
+    return render
+
+
+def self_reported(rows, models, bench):
+    """Scores from benchmarks.toml: each on its own benchmark."""
+    idx = index(rows)
+    out = []
+    for s in bench["scores"]:
+        if s["source_kind"] in ("mteb", "mixed"):
+            continue
+        grades, caps = build_grades(idx, s["model"], models)
+        where = "model card" if "huggingface.co" in s["source_url"] else "documentation"
+        kind = "" if s["source_kind"] == "self-reported" else f" ({s['source_kind']})"
+        out.append([models[s["model"]]["name"], grades, caps, f"{s['benchmark']} ({s['version']})",
+                    s["category"], s["metric"], score_text(s), f"[{where}]({s['source_url']}){kind}, read {s['read_on']}",
+                    s["note"] or ""])
+    return table(["model", "grade (M1 Max)", "max tokens", "benchmark", "category", "metric", "score", "source",
+                  "note"], out)
+
+
+def mteb_source(rows, models, bench):
+    """Where the MTEB scores came from, as a sentence."""
+    m = bench["mteb"]
+    return [f"MTEB results: [mteb/results at {m['results']['revision'][:12]}]({m['results']['url']}), "
+            f"benchmarks as mteb {m['mteb_version']} defines them, read {m['read_on']}."]
+
+
 TABLES = {"coreml-grades": coreml_grades, "onnx-accuracy": onnx_accuracy, "latency": latency,
           "threads": threads, "memory": memory, "cosine-scale": cosine_scale,
           "classifier-scales": classifier_scales}
-MARKER = re.compile(r"^( *)<!-- generated: ([a-z-]+) -->$")
+# Tables from the results file's benchmark scores.
+BENCH_TABLES = {"mteb-eng-v2": mteb_table("MTEB(eng, v2)", every_embedder=True),
+                "mteb-multilingual-v2": mteb_table("MTEB(Multilingual, v2)"),
+                "mteb-eng-v1": mteb_table("MTEB(eng, v1)"),
+                "nanobeir-multilingual": mteb_table("NanoBEIR-multilingual"),
+                "self-reported": self_reported, "mteb-source": mteb_source}
+MARKER = re.compile(r"^( *)<!-- generated: ([a-z0-9-]+) -->$")
 
 
-def render_docs(text, rows, models):
+def render_docs(text, rows, models, bench):
     """docs/MODELS.md with every generated table rewritten."""
+    tables = dict(TABLES, **{k: (lambda f: lambda r, m: f(r, m, bench))(f) for k, f in BENCH_TABLES.items()})
     lines, out, seen = text.split("\n"), [], set()
     i = 0
     while i < len(lines):
@@ -690,16 +1173,16 @@ def render_docs(text, rows, models):
         if not m:
             continue
         indent, name = m.groups()
-        if name not in TABLES:
+        if name not in tables:
             raise SystemExit(f"docs/MODELS.md: no generated table named {name!r}")
         end = next((j for j in range(i, len(lines)) if lines[j].strip() == "<!-- /generated -->"), None)
         if end is None:
             raise SystemExit(f"docs/MODELS.md: the {name} table has no end marker")
-        out += [indent + line for line in TABLES[name](rows, models)]
+        out += [indent + line for line in tables[name](rows, models)]
         i = end
         seen.add(name)
-    if seen != set(TABLES):
-        raise SystemExit(f"docs/MODELS.md: missing generated tables: {sorted(set(TABLES) - seen)}")
+    if seen != set(tables):
+        raise SystemExit(f"docs/MODELS.md: missing generated tables: {sorted(set(tables) - seen)}")
     return "\n".join(out)
 
 
@@ -794,12 +1277,29 @@ def check_grades(results, rows):
     return problems
 
 
+def check_caps(rows, caps):
+    """Every row's max_seq_len against its build's committed manifest."""
+    return [f"{r['model']} {r['path']} {r['chip']}: max_seq_len {r.get('max_seq_len')}, its manifest says "
+            f"{cap_of(r, caps)}: rerun tools/models_table.py with the reports"
+            for r in rows if r.get("max_seq_len") != cap_of(r, caps)]
+
+
 def docs(results, models, check):
-    data = json.loads(results.read_text())
+    """docs/MODELS.md's tables from the results file, and the results
+    file's benchmark scores from their inputs."""
+    text_json = results.read_text()
+    data = json.loads(text_json)
     rows = data["rows"]
+    bench = benchmark_scores(models)
+    if data.get("benchmarks") != bench:
+        if check:
+            raise SystemExit(f"{results}'s benchmark scores are out of date: rerun tools/models_table.py --docs")
+        data["benchmarks"] = bench
+        results.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
+        print(f"rewrote the benchmark scores in {results}")
     text = MODELS_MD.read_text()
-    new = render_docs(text, rows, models)
-    problems = check_grades(data, rows) + check_hand_written(new, rows)
+    new = render_docs(text, rows, models, bench)
+    problems = check_grades(data, rows) + check_hand_written(new, rows) + check_caps(rows, build_caps(models))
     if problems:
         raise SystemExit("docs/MODELS.md disagrees with the results file:\n  " + "\n  ".join(problems))
     if check:
@@ -845,8 +1345,10 @@ def main():
     missing = sorted(set(runs["runs"]) - set(used))
     if missing:
         print(f"note: runs.toml describes reports not found here: {', '.join(missing)}", file=sys.stderr)
+    caps = build_caps(models)
     for r in rows:
         r["served"] = served(r, models)
+        r["max_seq_len"] = cap_of(r, caps)
     rows.sort(key=order)
     keys = [(r["model"], r["path"], r["precision"], r["chip"], r["runtime"]) for r in rows]
     if len(keys) != len(set(keys)):
@@ -855,7 +1357,7 @@ def main():
     dates = sorted(d for d in (r["date"] for r in rows) if d)
     cargo = tomllib.loads((REPO / "Cargo.toml").read_text())
     out = {"sidekick": cargo["workspace"]["package"]["version"], "as_of": dates[-1] if dates else None,
-           "grades": grades, "fields": FIELDS, "rows": rows}
+           "grades": grades, "fields": FIELDS, "rows": rows, "benchmarks": benchmark_scores(models)}
     text = json.dumps(out, indent=1, ensure_ascii=False) + "\n"
     if args.check:
         if not args.out.exists() or args.out.read_text() != text:

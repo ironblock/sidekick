@@ -1,0 +1,409 @@
+# Benchmark scores that don't come from the MTEB results repository: what
+# a model's own card (or its authors' documentation) reports, copied by hand
+# with the page it came from. tools/models_table.py publishes them beside
+# each build's fidelity grade, styled as self-reported, and never averages
+# them with each other or with an MTEB score. MTEB scores are collected by
+# tools/fetch_benchmarks.py into benchmarks.mteb.json instead.
+#
+# Every entry records:
+# - `model`: the sidekick model id (docs/data/models.toml), or a list of ids
+#   that build the same checkpoint;
+# - `benchmark` and `version`: the benchmark, and which version, split or
+#   task set of it, as the source names them;
+# - `category`, `metric` and `value`: the value is a string, written as the
+#   source writes it ("0.860", "74.30"), so its precision is kept; `scale`
+#   says whether it's a "percent" (0–100) or a "fraction" (0–1);
+# - `source_kind`: "self-reported" (the model's authors) or "independent";
+# - `source_url`: the page, pinned to a revision or commit (a Hugging Face
+#   card at its `/blob/<revision>/`, a GitHub file at its commit);
+# - `read_on`: the date the value was read there.
+# Optional: `trained_on = true` when the source says the model was trained
+# on the benchmark's own training data (in-distribution, not zero-shot), and
+# `note`. tools/models_table.py --check refuses an entry missing a required
+# field, with a card or dataset URL that isn't pinned, or with a read_on that
+# isn't a date or is in the future.
+
+# --- Embedders: the model card's own MTEB numbers ---------------------------
+
+[[scores]]
+model = "gte-modernbert-base"
+benchmark = "MTEB(eng, v1)"
+version = "56 tasks, as the card's table labels it"
+category = "Mean (task)"
+metric = "mean of the tasks' main metrics"
+value = "64.38"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/Alibaba-NLP/gte-modernbert-base/blob/e7f32e3c00f91d699e8c43b53106206bcc72bb22/README.md"
+read_on = "2026-10-20"
+
+[[scores]]
+model = "embeddinggemma-2"
+benchmark = "MTEB(eng, v2)"
+version = "Mean(Task), 768 dimensions"
+category = "Mean (task)"
+metric = "mean of the tasks' main metrics"
+value = "68.46"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md"
+read_on = "2026-10-20"
+note = "Higher than the MTEB run of the same revision; the card doesn't say how it was measured"
+
+[[scores]]
+model = "embeddinggemma-2"
+benchmark = "MTEB(Multilingual, v2)"
+version = "Mean(Task), 768 dimensions"
+category = "Mean (task)"
+metric = "mean of the tasks' main metrics"
+value = "61.36"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md"
+read_on = "2026-10-20"
+note = "Higher than the MTEB run of the same revision; the card doesn't say how it was measured"
+
+[[scores]]
+model = "lfm2.5-embedding-350m"
+benchmark = "NanoBEIR Multilingual Extended"
+version = "LiquidAI/nanobeir-multilingual-extended, 11 languages, average"
+category = "Retrieval"
+metric = "ndcg_at_10"
+value = "0.577"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M/blob/f35ae2c91d687658dbf1f2b449382f0b019b9808/README.md"
+read_on = "2026-10-20"
+
+# --- Reranker ---------------------------------------------------------------
+
+[[scores]]
+model = "ms-marco-minilm-l6-v2"
+benchmark = "TREC Deep Learning 2019"
+version = "passage reranking"
+category = "Reranking"
+metric = "ndcg_at_10"
+value = "74.30"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/README.md"
+read_on = "2026-10-20"
+trained_on = true
+note = "Trained on the MS MARCO training set; TREC DL 2019 ranks passages of the same corpus for held-out queries"
+
+[[scores]]
+model = "ms-marco-minilm-l6-v2"
+benchmark = "MS MARCO Passage Reranking"
+version = "dev set"
+category = "Reranking"
+metric = "mrr_at_10"
+value = "39.01"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/README.md"
+read_on = "2026-10-20"
+trained_on = true
+note = "Trained on the MS MARCO training set; dev is its held-out split"
+
+# --- NLI cross-encoders -----------------------------------------------------
+
+[[scores]]
+model = ["nli-minilm2-l6-h768", "nli-minilm2-l6-h768-ane"]
+benchmark = "MultiNLI"
+version = "mismatched validation set"
+category = "NLI"
+metric = "accuracy"
+value = "86.89"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://github.com/UKPLab/sentence-transformers/blob/072b4abf0ec89f47c2368f0702359edd4802b27b/docs/cross_encoder/pretrained_models.md"
+read_on = "2026-10-20"
+trained_on = true
+note = "From the Sentence Transformers documentation, which the model card points to; it doesn't name the checkpoint revision"
+
+[[scores]]
+model = "nli-deberta-v3-xsmall"
+benchmark = "MultiNLI"
+version = "mismatched validation set"
+category = "NLI"
+metric = "accuracy"
+value = "87.77"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/cross-encoder/nli-deberta-v3-xsmall/blob/a150876415327c80daeff35ca6f68f5ed8cf5c24/README.md"
+read_on = "2026-10-20"
+trained_on = true
+
+[[scores]]
+model = "nli-deberta-v3-xsmall"
+benchmark = "SNLI"
+version = "test set"
+category = "NLI"
+metric = "accuracy"
+value = "91.64"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/cross-encoder/nli-deberta-v3-xsmall/blob/a150876415327c80daeff35ca6f68f5ed8cf5c24/README.md"
+read_on = "2026-10-20"
+trained_on = true
+
+[[scores]]
+model = "nli-deberta-v3-small"
+benchmark = "MultiNLI"
+version = "mismatched validation set"
+category = "NLI"
+metric = "accuracy"
+value = "87.55"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/cross-encoder/nli-deberta-v3-small/blob/fa2804872c3b4bd748f38c0185cc85775361e735/README.md"
+read_on = "2026-10-20"
+trained_on = true
+
+[[scores]]
+model = "nli-deberta-v3-small"
+benchmark = "SNLI"
+version = "test set"
+category = "NLI"
+metric = "accuracy"
+value = "91.65"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/cross-encoder/nli-deberta-v3-small/blob/fa2804872c3b4bd748f38c0185cc85775361e735/README.md"
+read_on = "2026-10-20"
+trained_on = true
+
+[[scores]]
+model = "nli-deberta-v3-base"
+benchmark = "MultiNLI"
+version = "mismatched validation set"
+category = "NLI"
+metric = "accuracy"
+value = "90.04"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/cross-encoder/nli-deberta-v3-base/blob/6c749ce3425cd33b46d187e45b92bbf96ee12ec7/README.md"
+read_on = "2026-10-20"
+trained_on = true
+
+[[scores]]
+model = "nli-deberta-v3-base"
+benchmark = "SNLI"
+version = "test set"
+category = "NLI"
+metric = "accuracy"
+value = "92.38"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/cross-encoder/nli-deberta-v3-base/blob/6c749ce3425cd33b46d187e45b92bbf96ee12ec7/README.md"
+read_on = "2026-10-20"
+trained_on = true
+
+[[scores]]
+model = "roberta-large-mnli"
+benchmark = "MultiNLI"
+version = "GLUE validation set, single model, single-task fine-tuning"
+category = "NLI"
+metric = "accuracy"
+value = "90.2"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/FacebookAI/roberta-large-mnli/blob/2a8f12d27941090092df78e4ba6f0928eb5eac98/README.md"
+read_on = "2026-10-20"
+trained_on = true
+note = "The card quotes the RoBERTa paper's fairseq result; it wasn't re-measured on this checkpoint. Matched or mismatched isn't stated"
+
+[[scores]]
+model = "deberta-v3-base-zeroshot-v2.0-c"
+benchmark = "zeroshot-v2.0 evaluation"
+version = "28 text-classification datasets, the card's 'all datasets mean' row"
+category = "Zero-shot classification"
+metric = "f1_macro"
+value = "0.619"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/MoritzLaurer/deberta-v3-base-zeroshot-v2.0-c/blob/bddf8c5411c34ac3565e16e04384fd68b2618dda/README.md"
+read_on = "2026-10-20"
+
+[[scores]]
+model = "deberta-v3-large-zeroshot-v2.0-c"
+benchmark = "zeroshot-v2.0 evaluation"
+version = "28 text-classification datasets, the card's 'all datasets mean' row"
+category = "Zero-shot classification"
+metric = "f1_macro"
+value = "0.676"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c/blob/b2730f16019076bb0009481121efbe4705e0e378/README.md"
+read_on = "2026-10-20"
+
+[[scores]]
+model = "roberta-large-zeroshot-v2.0-c"
+benchmark = "zeroshot-v2.0 evaluation"
+version = "28 text-classification datasets, the card's 'all datasets mean' row"
+category = "Zero-shot classification"
+metric = "f1_macro"
+value = "0.622"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/MoritzLaurer/roberta-large-zeroshot-v2.0-c/blob/4c24ed4bba5af8d3162604abc2a141b9d2183ecc/README.md"
+read_on = "2026-10-20"
+
+[[scores]]
+model = "bge-m3-zeroshot-v2.0-c"
+benchmark = "zeroshot-v2.0 evaluation"
+version = "28 text-classification datasets, the card's 'all datasets mean' row"
+category = "Zero-shot classification"
+metric = "f1_macro"
+value = "0.59"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/MoritzLaurer/bge-m3-zeroshot-v2.0-c/blob/705510dfe0f35d223a4bf6f5d2695ec5fd162341/README.md"
+read_on = "2026-10-20"
+
+[[scores]]
+model = "modernbert-large-zeroshot-v2.0"
+benchmark = "MultiNLI"
+version = "mismatched validation set, the card's training results"
+category = "NLI"
+metric = "accuracy, two-way (entailment vs not)"
+value = "0.944"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md"
+read_on = "2026-10-20"
+trained_on = true
+note = "A two-way model (entailment or not; chance 50%), so not comparable with the three-way NLI models' accuracy (chance 33%)"
+
+[[scores]]
+model = "modernbert-large-zeroshot-v2.0"
+benchmark = "ModernBERT-large-zeroshot-v2.0 training results"
+version = "mean over the card's 36 datasets, NLI and text classification"
+category = "Zero-shot classification"
+metric = "f1_macro"
+value = "0.834"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md"
+read_on = "2026-10-20"
+trained_on = true
+note = "Measured on the evaluation splits of the datasets it was trained on, so not zero-shot and not comparable with the -c models' 28-dataset mean"
+
+# --- Bespoke classifiers: each on its own benchmark --------------------------
+
+[[scores]]
+model = "nlptown-sentiment"
+benchmark = "nlptown product reviews"
+version = "5,000 held-out English reviews"
+category = "Sentiment (1–5 stars)"
+metric = "accuracy (exact stars)"
+value = "67"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment/blob/8f6f4e3a8f70be4b65d3a4a8762b6d781cda240d/README.md"
+read_on = "2026-10-20"
+trained_on = true
+note = "Held out from the model's own review data. Off by at most one star: 95%. Dutch, German, French, Italian and Spanish: 57–61% exact"
+
+[[scores]]
+model = "laya-en"
+benchmark = "MASSIVE"
+version = "intent, English"
+category = "Intent"
+metric = "accuracy"
+value = "0.783"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md"
+read_on = "2026-10-20"
+
+[[scores]]
+model = "laya-en"
+benchmark = "XNLI"
+version = "English"
+category = "NLI"
+metric = "accuracy"
+value = "0.860"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md"
+read_on = "2026-10-20"
+
+[[scores]]
+model = "laya-en"
+benchmark = "typed-decisions"
+version = "test split, 2,000 decisions"
+category = "Decisions"
+metric = "accuracy"
+value = "0.362"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md"
+read_on = "2026-10-20"
+note = "Zero-shot; the card gives 0.318 for random and 0.461 for the majority class"
+
+[[scores]]
+model = "laya-typed-decisions"
+benchmark = "typed-decisions"
+version = "test split, 2,000 decisions"
+category = "Decisions"
+metric = "accuracy"
+value = "0.766"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/convaiinnovations/laya-typed-decisions/blob/1a793eb568e6718f15941d08f85432581df534e3/README.md"
+read_on = "2026-10-20"
+trained_on = true
+note = "Fine-tuned on the benchmark's own training split"
+
+[[scores]]
+model = "julia-1"
+benchmark = "typed-decisions"
+version = "test split, 2,000 decisions"
+category = "Decisions"
+metric = "accuracy"
+value = "73.15"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/SupersonicLabs/Julia-1/blob/a85b127321d580d65176c89ced8273f305745d85/README.md"
+read_on = "2026-10-20"
+note = "Measured in BF16 on an H200"
+
+[[scores]]
+model = "gliner2.5-decide"
+benchmark = "fast-decisions"
+version = "17 domains, 300 held-out examples each, average"
+category = "Decisions"
+metric = "accuracy (exact match)"
+value = "60.2"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/fastino/GLiNER2.5-Decide/blob/5a7adf72a23b4d311abae6ce050d7f0012bb3416/README.md"
+read_on = "2026-10-20"
+
+[[scores]]
+model = "lumma-fev-0.1b"
+benchmark = "typed-decisions"
+version = "as the card's comparison table reports it"
+category = "Decisions"
+metric = "accuracy"
+value = "0.49"
+scale = "fraction"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/FrontiersMind/Lumma-fev-0.1b/blob/085f4705aa860a6404d6cc3ff17de8a2969ac0f4/README.md"
+read_on = "2026-10-20"
+note = "The card's table labels this checkpoint's column Lumma-Fev-0.15B"
+
+[[scores]]
+model = "agent-jev"
+benchmark = "AgentJev coding completion"
+version = "executed coding pairs, 1,048 cases"
+category = "Coding completion"
+metric = "accuracy"
+value = "57.8"
+scale = "percent"
+source_kind = "self-reported"
+source_url = "https://huggingface.co/aimeigaoshou/agent-jev/blob/0e2593e6e6c0eade0700712ac13c4389aa7654cc/README.md"
+read_on = "2026-10-20"
+trained_on = true
+note = "Held out from the coding-completion data it was trained on. AUROC 0.589"
