@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from sidekick_convert import onnx_export
+from sidekick_convert import manifest, onnx_export
 
 COREML_MANIFEST = """\
 # A Core ML artifact's description, which the ONNX manifest drops.
@@ -76,6 +76,32 @@ class ManifestTest(unittest.TestCase):
                                                     onnx_extra=extra))
         self.assertEqual(m["onnx"]["default_intra_op_threads"], 16)
         self.assertEqual(m["prefixes"]["query"], "q: ")
+
+    def test_onnx_build_has_its_own_max_seq_len(self):
+        extra = ("# Settings for the ONNX build only.\n\n"
+                 "# why the ONNX build takes longer inputs\nmax_seq_len = 64\n\n"
+                 "[onnx]\ndefault_intra_op_threads = 16\n")
+        text = onnx_export.manifest_text(COREML_MANIFEST, "last_token", onnx_export.TOKEN_OUTPUT, onnx_extra=extra)
+        m = tomllib.loads(text)
+        self.assertEqual(m["max_seq_len"], 64)
+        self.assertNotIn("buckets", m)
+        self.assertEqual(m["onnx"]["default_intra_op_threads"], 16)
+        # the reason travels with the value; the sidecar's description doesn't
+        self.assertIn("# why the ONNX build takes longer inputs\nmax_seq_len = 64\n", text)
+        self.assertNotIn("Settings for the ONNX build only", text)
+        self.assertEqual(text.count("max_seq_len"), 1)
+
+    def test_sidecar_sets_only_known_top_level_keys(self):
+        with self.assertRaises(SystemExit):
+            onnx_export.manifest_text(COREML_MANIFEST, "mean", onnx_export.TOKEN_OUTPUT, onnx_extra="dims = 8\n")
+
+    def test_onnx_view_for_the_checks(self):
+        m = tomllib.loads(COREML_MANIFEST)
+        view = manifest.onnx_view(m, "# about\n\nmax_seq_len = 64\n[onnx]\ndefault_intra_op_threads = 2\n")
+        self.assertEqual(view["max_seq_len"], 64)
+        self.assertNotIn("buckets", view)
+        self.assertNotIn("onnx", view)
+        self.assertEqual(manifest.onnx_view(m, "")["max_seq_len"], 16)
 
     def test_pooled_in_graph(self):
         m = tomllib.loads(onnx_export.manifest_text(COREML_MANIFEST, None, onnx_export.POOLED_OUTPUT))

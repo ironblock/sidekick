@@ -26,9 +26,92 @@ pub struct Reference {
     #[serde(default)]
     pub versions: BTreeMap<String, Option<String>>,
     pub cases: Vec<Case>,
+    /// The long corpus's cases past the model's max_seq_len, left out.
+    #[serde(default)]
+    pub skipped: Vec<String>,
     /// `[cases][dims]` per oracle, from reference.safetensors.
     #[serde(skip)]
     pub vectors: BTreeMap<String, Vec<Vec<f32>>>,
+    /// The corpus it was generated from.
+    #[serde(skip)]
+    pub corpus: Corpus,
+}
+
+/// A parity corpus, and the reference files tools/parity_reference.py
+/// writes for it (`--corpus`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Corpus {
+    /// fixtures/parity/corpus.toml: every embedder is graded on it.
+    #[default]
+    Main,
+    /// fixtures/parity/corpus_long.toml: inputs past 512 tokens, for a
+    /// model whose max_seq_len reaches its shortest case.
+    Long,
+}
+
+impl Corpus {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Main => "main",
+            Self::Long => "long",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        [Self::Main, Self::Long].into_iter().find(|c| c.name() == s)
+    }
+
+    /// The corpus's file name, in fixtures/parity.
+    pub fn file(self) -> &'static str {
+        match self {
+            Self::Main => "corpus.toml",
+            Self::Long => "corpus_long.toml",
+        }
+    }
+
+    /// The stem of its reference files: `<stem>.json`, `<stem>.safetensors`.
+    pub fn stem(self) -> &'static str {
+        match self {
+            Self::Main => "reference",
+            Self::Long => "reference-long",
+        }
+    }
+
+    pub fn path(self) -> PathBuf {
+        crate::fixtures::dir().join("parity").join(self.file())
+    }
+}
+
+/// The shortest integer `length` among a long corpus's cases: a model whose
+/// max_seq_len is below it has nothing to grade there.
+pub fn shortest_case(corpus_text: &str) -> Result<usize, String> {
+    #[derive(Deserialize)]
+    struct File {
+        case: Vec<LengthCase>,
+    }
+    #[derive(Deserialize)]
+    struct LengthCase {
+        length: toml::Value,
+    }
+    let file: File = toml::from_str(corpus_text).map_err(|e| e.to_string())?;
+    file.case
+        .iter()
+        .filter_map(|c| c.length.as_integer())
+        .filter_map(|n| usize::try_from(n).ok())
+        .min()
+        .ok_or_else(|| "no case with an integer length".into())
+}
+
+/// Whether the long corpus applies to a model of this max_seq_len. A
+/// fixtures directory without it (one copied from before it existed)
+/// grades the main corpus alone.
+pub fn long_corpus_reaches(max_seq_len: usize) -> Result<bool, String> {
+    let path = Corpus::Long.path();
+    if !path.exists() {
+        return Ok(false);
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(max_seq_len >= shortest_case(&text).map_err(|e| format!("{}: {e}", path.display()))?)
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,11 +140,6 @@ pub struct Case {
     pub ids: Vec<i32>,
 }
 
-/// The committed corpus the references were generated from.
-pub fn corpus_path() -> PathBuf {
-    crate::fixtures::dir().join("parity/corpus.toml")
-}
-
 pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -81,7 +159,11 @@ pub fn corpus_hash(text: &str) -> String {
 }
 
 pub fn corpus_sha256() -> Result<String, String> {
-    let path = corpus_path();
+    corpus_sha256_of(Corpus::Main)
+}
+
+pub fn corpus_sha256_of(corpus: Corpus) -> Result<String, String> {
+    let path = corpus.path();
     std::fs::read_to_string(&path).map(|text| corpus_hash(&text)).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -101,18 +183,24 @@ impl Reference {
 
     /// Load `dir/reference.{json,safetensors}`.
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let json = std::fs::read_to_string(dir.join("reference.json"))
-            .map_err(|e| format!("{}: {e}", dir.join("reference.json").display()))?;
-        let mut r: Reference =
-            serde_json::from_str(&json).map_err(|e| format!("reference.json: {e}"))?;
+        Self::load_corpus(dir, Corpus::Main)
+    }
+
+    /// Load the reference for `corpus`: `dir/<its stem>.{json,safetensors}`.
+    pub fn load_corpus(dir: &Path, corpus: Corpus) -> Result<Self, String> {
+        let stem = corpus.stem();
+        let json_path = dir.join(format!("{stem}.json"));
+        let json = std::fs::read_to_string(&json_path).map_err(|e| format!("{}: {e}", json_path.display()))?;
+        let mut r: Reference = serde_json::from_str(&json).map_err(|e| format!("{stem}.json: {e}"))?;
+        r.corpus = corpus;
         if r.format != FORMAT {
             return Err(format!(
                 "reference format {} (this suite reads {FORMAT})",
                 r.format
             ));
         }
-        let raw = std::fs::read(dir.join("reference.safetensors"))
-            .map_err(|e| format!("{}: {e}", dir.join("reference.safetensors").display()))?;
+        let st_path = dir.join(format!("{stem}.safetensors"));
+        let raw = std::fs::read(&st_path).map_err(|e| format!("{}: {e}", st_path.display()))?;
         let st =
             safetensors::SafeTensors::deserialize(&raw).map_err(|e| format!("safetensors: {e}"))?;
         for oracle in &r.oracles {
@@ -153,7 +241,7 @@ impl Reference {
         let m = &self.model;
         let mut why = Vec::new();
         if self.corpus_sha256 != corpus_sha256 {
-            why.push("fixtures/parity/corpus.toml changed".to_string());
+            why.push(format!("fixtures/parity/{} changed", self.corpus.file()));
         }
         if self.tokenizer_sha256 != tokenizer_sha256 {
             why.push("tokenizer.json changed".to_string());
@@ -164,8 +252,9 @@ impl Reference {
         if m.dims != manifest.dims {
             why.push(format!("dims {} != {}", m.dims, manifest.dims));
         }
-        // An onnx build of the model has no buckets (D40) and is graded
-        // against its Core ML build's reference: its length limit must match.
+        // An onnx build of the model has no buckets (D40). It is graded on
+        // its Core ML build's texts, but its own max_seq_len, which may be
+        // longer (Qwen3-Embedding-0.6B: 4,096 against 512), must match.
         let onnx = manifest.backend == sidekick_core::EmbeddingBackendKind::Onnx;
         if (!onnx && m.buckets != manifest.buckets) || m.max_seq_len != manifest.max_seq_len {
             why.push("buckets or max_seq_len changed".into());
@@ -175,12 +264,11 @@ impl Reference {
         {
             why.push("prefixes changed".into());
         }
-        (!why.is_empty()).then(|| {
-            format!(
-                "stale reference ({}); regenerate with tools/parity_reference.py",
-                why.join("; ")
-            )
-        })
+        let how = match self.corpus {
+            Corpus::Main => "tools/parity_reference.py".to_string(),
+            c => format!("tools/parity_reference.py --corpus {}", c.name()),
+        };
+        (!why.is_empty()).then(|| format!("stale reference ({}); regenerate with {how}", why.join("; ")))
     }
 }
 
@@ -199,5 +287,27 @@ mod tests {
             corpus_hash("a\n# c\n\nb"),
             "7e18f737311b2dc3b2f269dd78396b0351f14fb66efa879f768cb23181883c78"
         );
+    }
+
+    #[test]
+    fn each_corpus_has_its_own_files() {
+        assert_eq!((Corpus::Main.file(), Corpus::Main.stem()), ("corpus.toml", "reference"));
+        assert_eq!((Corpus::Long.file(), Corpus::Long.stem()), ("corpus_long.toml", "reference-long"));
+        assert_eq!(Corpus::parse("long"), Some(Corpus::Long));
+        assert_eq!(Corpus::parse("main"), Some(Corpus::Main));
+        assert_eq!(Corpus::parse("short"), None);
+    }
+
+    #[test]
+    fn the_long_corpus_applies_from_its_shortest_integer_case() {
+        let text = "[[case]]\nid = \"a\"\nlength = 1500\n[[case]]\nid = \"b\"\nlength = { beyond_max = 188 }\n\
+                    [[case]]\nid = \"c\"\nlength = 600\n[filler]\ntext = \"w\"\n";
+        assert_eq!(shortest_case(text), Ok(600));
+        assert!(shortest_case("[[case]]\nid = \"b\"\nlength = { beyond_max = 1 }\n").is_err());
+        // The committed corpus: past every 512-token model, reached by a
+        // 2,048- or 4,096-token one.
+        let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/parity/corpus_long.toml");
+        let shortest = shortest_case(&std::fs::read_to_string(committed).unwrap()).unwrap();
+        assert!(shortest > 512 && shortest <= 2048, "{shortest}");
     }
 }

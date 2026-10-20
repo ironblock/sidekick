@@ -1,6 +1,13 @@
-# Settings for the ONNX build only, appended to the manifest the ONNX export
+# Settings for the ONNX build only, applied to the manifest the ONNX export
 # installs (tools/sidekick_convert/onnx_export.py); the committed manifest
 # beside this file is the Core ML one, where an [onnx] table is refused.
+
+# max_seq_len 4096 for the ONNX build, against the Core ML build's 512. The
+# graph's sequence axis is dynamic and each input runs alone, unpadded, so
+# compute and memory follow the input actually sent, not this cap. 4,096 is
+# graded on the long-input parity corpus (fixtures/parity/corpus_long.toml);
+# the model itself takes up to 32k tokens.
+max_seq_len = 4096
 
 [onnx]
 # Qwen3-0.6B keeps getting faster past 8 threads where the machine has the cores

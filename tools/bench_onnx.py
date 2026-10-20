@@ -5,10 +5,11 @@ session load time, resident memory after load and after the runs (ps
 RSS), and the median and p90 latency of a forward pass at each length and
 batch size, after warm-up. Inputs are real token ids from the model's parity
 reference (its longest case, cut to each length), so the timing sees real
-attention patterns rather than padding.
+attention patterns rather than padding; `--corpus long` takes them from the
+long-input reference, for lengths past 512.
 
 Usage:
-    python tools/bench_onnx.py <model-dir> --refs <refs-dir> [--model-file F]
+    python tools/bench_onnx.py <model-dir> --refs <refs-dir> [--corpus main|long] [--model-file F]
         [--lengths 16,64,256] [--batches 1,8] [--threads 0,4,8] [--runs 30]
         [--json out.json]
 
@@ -26,6 +27,10 @@ import sys
 import time
 import tomllib
 from pathlib import Path
+
+
+# --corpus: the parity reference (tools/parity_reference.py) to take token ids from.
+REFERENCE = {"main": "reference.json", "long": "reference-long.json"}
 
 
 def rss_mb(pid):
@@ -54,7 +59,7 @@ def child(args):
     from sidekick_convert.onnx_export import Runner
     manifest = tomllib.loads((args.model_dir / "manifest.toml").read_text())
     pooling = None if manifest.get("pooling", "none") == "none" else manifest["pooling"]
-    ref = json.loads((args.refs / manifest["id"] / "reference.json").read_text())
+    ref = json.loads((args.refs / manifest["id"] / REFERENCE[args.corpus]).read_text())
     rows = [json.loads(c["ids"]) if isinstance(c["ids"], str) else c["ids"] for c in ref["cases"]]
     longest = max(rows, key=len)
     before = rss_mb(__import__("os").getpid())
@@ -89,6 +94,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("model_dir", type=Path)
     p.add_argument("--refs", type=Path, required=True)
+    p.add_argument("--corpus", choices=sorted(REFERENCE), default="main",
+                   help="the reference whose longest case is cut to each length: main (reference.json) or "
+                        "long (reference-long.json, for lengths past 512)")
     p.add_argument("--model-file", default=None)
     p.add_argument("--lengths", default="16,64,256")
     p.add_argument("--batches", default="1,8")
@@ -104,7 +112,7 @@ def main():
         return child(args)
     report = {"machine": machine(), "model_dir": args.model_dir.name, "model_file": args.model_file, "configs": []}
     for threads in [int(x) for x in args.threads.split(",")]:
-        cmd = [sys.executable, __file__, str(args.model_dir), "--refs", str(args.refs), "--child",
+        cmd = [sys.executable, __file__, str(args.model_dir), "--refs", str(args.refs), "--corpus", args.corpus, "--child",
                "--threads", str(threads), "--lengths", ",".join(map(str, args.lengths)),
                "--batches", ",".join(map(str, args.batches)), "--runs", str(args.runs)]
         if args.model_file:

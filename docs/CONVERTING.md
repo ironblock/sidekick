@@ -389,9 +389,29 @@ backbone, head and gate texts, gated against the same fp32 references
   (`mean`, `cls` or `last_token`), as it does a published export. A head that
   is more than pooling stays in the graph: EmbeddingGemma's mean, dense stack
   and L2 output `embedding`, with `pooling = "none"`.
-- **Buckets.** For `--format onnx` the bucket arguments only bound the
-  gate texts (the longest one is cut to the largest bucket); the installed
-  manifest drops them. Only embedder converters take `--format onnx`.
+- **Buckets and the length limit.** The installed manifest drops the
+  buckets, and the bucket arguments are ignored. The ONNX build's
+  `max_seq_len` is the Core ML manifest's unless the model's `onnx.toml`
+  sets its own (below); the gate texts are cut at it, and it is checked
+  against the checkpoint like the Core ML one (at most the position
+  embeddings, less any offset). Only embedder converters take `--format
+  onnx`.
+- **Bucket lists and ONNX caps are per-model decisions.** Nothing derives
+  them: each is chosen for its model and recorded, with the reason, in the
+  committed manifest or `onnx.toml`. A Core ML bucket is a program with its
+  own copy of the weights, and its attention scores grow with the square of
+  its length, so the bucket list is a cost the model's size sets (most
+  models stop at 512; EmbeddingGemma-2's reaches 2,048). The ONNX graph
+  runs each input at its own length, so its cap costs nothing until a long
+  input arrives, and can be the length the model was trained for, once it
+  is graded there. Qwen3-Embedding-0.6B's Core ML buckets stop at 512 and
+  its ONNX build takes 4,096, graded on the long-input parity corpus
+  (`fixtures/parity/corpus_long.toml`; docs/MODELS.md). A cap past 512
+  should be graded on that corpus before it ships, with its time and
+  memory at the cap measured (`examples/onnx_memory`,
+  `tools/bench_onnx.py`). Raising a cap changes the vectors of inputs
+  past the old one, which were cut there before, and makes the model's
+  two builds disagree on them: say so in the release notes.
 - **fp32, no rewrites.** A recipe's `rewrites=` don't run for an ONNX
   export: the precision and range rewrites exist for the ANE's fp16
   arithmetic, and the activation swaps for its coarse native ops (so
@@ -406,10 +426,12 @@ backbone, head and gate texts, gated against the same fp32 references
 - **Manifest.** The installed manifest is derived from the committed Core ML
   one (same id, tokenizer, dims, prefixes, Matryoshka), with backend
   `onnx`, artifact `model.onnx`, the pooling, and every extra graph input
-  named in `[io]`. Settings for the ONNX build alone (an `[onnx]` table,
-  such as `default_intra_op_threads`, which a Core ML manifest refuses)
-  live in an `onnx.toml` beside the committed manifest and are appended to
-  the installed one. Model ids are the same across backends, so compare the
+  named in `[io]`. Settings for the ONNX build alone live in an `onnx.toml`
+  beside the committed manifest: an `[onnx]` table (such as
+  `default_intra_op_threads`, which a Core ML manifest refuses), appended
+  to the installed manifest, and a top-level `max_seq_len`, which replaces
+  the Core ML manifest's, with the comment above it. No other top-level
+  key is accepted. Model ids are the same across backends, so compare the
   two side by side from separate models directories.
 - **`--onnx-weights fp16`** stores the weights in fp16 behind casts to fp32:
   half the file, the same fp32 arithmetic. It saves disk, not memory: ONNX
@@ -441,7 +463,11 @@ runtime library, and run it on a models directory holding the ONNX install:
 
 The fixtures (corpora, expectations) come from `--fixtures`,
 `$SIDEKICK_FIXTURES`, `./fixtures` or the checkout the suite was built
-from. `tools/onnx_parity.py` is a cross-check from Python: it writes the
+from. A model whose `max_seq_len` reaches the long-input corpus
+(`fixtures/parity/corpus_long.toml`, 600 tokens and up) is graded on it
+too, once it has that reference (`tools/parity_reference.py --corpus
+long`); the suite reports it as a section of its own, and warns when the
+reference is missing. `tools/onnx_parity.py` is a cross-check from Python: it writes the
 suite's worker result for the same model, which `parity --external
 result.json` grades beside the native run. An int8 build fails the floors
 by design. `tools/bench_onnx.py` measures load time, resident memory and

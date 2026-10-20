@@ -10,7 +10,10 @@ Inputs:
   --reports, searched recursively. A report is read only if
   docs/data/runs.toml describes it (by file name): the report records the
   chip and results, runs.toml the runtime, OS, precision, date and whether
-  the machine was idle.
+  the machine was idle. An embedder graded on the long-input corpus
+  (fixtures/parity/corpus_long.toml, the report's `long` section) gets
+  that result as a note on the same row; the row's grade is the main
+  corpus's, and a gate failed on long inputs fails it.
 - docs/data/carried.toml: Core ML results that so far exist only as
   docs/MODELS.md tables.
 - fixtures/parity/expectations.toml `[grades]`: the letter scales, which
@@ -249,9 +252,13 @@ def from_reports(dirs, runs, models, grades):
                                matryoshka={k: rounded(1 - v) for k, v in sorted(p["matryoshka"].items(), key=lambda kv: -int(kv[0]))}
                                if p.get("matryoshka") else None)
                     grading_ms(row, p, meta)
-                    row["note"] = join_notes(notes.get(f"{f.name}:{m['id']}:{row['path']}"), failures_note(p, m))
+                    long, long_failed = long_note(m, p["path"], grades, f.name)
+                    row["gate_failed"] = row["gate_failed"] or long_failed
+                    row["note"] = join_notes(notes.get(f"{f.name}:{m['id']}:{row['path']}"), long,
+                                             failures_note(p, m))
                     row["threads"] = runs.get("threads", {}).get(f"{f.name}:{m['id']}", row["threads"])
-                    finish(row, grades, p["letter"])
+                    # a gate failed on long inputs fails the row (F), whatever the main corpus's letter
+                    finish(row, grades, None if long_failed else p["letter"])
                     rows.append(row)
             for c in report.get("classifiers", []):
                 for p in c["paths"]:
@@ -267,6 +274,29 @@ def from_reports(dirs, runs, models, grades):
                     finish(row, grades, p["letter"])
                     rows.append(row)
     return rows, used
+
+
+def long_note(m, path, grades, source):
+    """An embedder's result on the long-input corpus (the report's `long`
+    section, fixtures/parity/corpus_long.toml) for one path, as a note, and
+    whether it failed a gate. The row's own grade stays the main corpus's,
+    which every model is graded on; a failed gate here fails the row."""
+    p = next((g for g in (m.get("long") or {}).get("paths", []) if g["path"] == path), None)
+    if p is None:
+        return None, False
+    tokens = [c["tokens"] for c in m["long"]["cases"]]
+    worst = finite(p.get("worst"))
+    failed = bool(p.get("failures"))
+    error = publish_error(grades, "1-cos", 1 - worst) if worst is not None else None
+    letter = "F" if failed or error is None else absolute_letter(grades, "1-cos", error)
+    if letter != p["letter"]:
+        raise SystemExit(f"{source}: {m['id']} {path}: the long corpus's grade {p['letter']} isn't what its "
+                         f"numbers earn under [grades] ({letter})")
+    text = (f"Long inputs ({len(tokens)} cases of {min(tokens):,}–{max(tokens):,} tokens, "
+            f"fixtures/parity/corpus_long.toml): {letter}, worst cosine {cosine(error) if error is not None else 'non-finite'}")
+    for f in p.get("failures") or []:
+        text += f"; gate failed: {f}"
+    return text, failed
 
 
 def one_minus(cos):

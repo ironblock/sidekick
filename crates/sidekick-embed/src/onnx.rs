@@ -24,6 +24,8 @@ pub const SUPPORTED: bool = cfg!(feature = "onnx");
 
 #[cfg(feature = "onnx")]
 pub use backend::OnnxEmbedder;
+#[cfg(feature = "onnx")]
+pub use sidekick_onnx::{MemoryOptions, SHRINK_FROM_TOKENS};
 
 #[cfg(feature = "onnx")]
 mod backend {
@@ -31,7 +33,7 @@ mod backend {
     use crate::pooling::{degenerate, normalize_in_place, pool};
     use sidekick_core::manifest::ResolvedModel;
     use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder, Error, Pooling, Result};
-    use sidekick_onnx::OnnxModel;
+    use sidekick_onnx::{MemoryOptions, OnnxModel};
 
     /// An embedding model on ONNX Runtime's CPU.
     pub struct OnnxEmbedder {
@@ -49,6 +51,12 @@ mod backend {
     impl OnnxEmbedder {
         /// Load with `intra_op_threads` inference threads.
         pub fn load(model: &ResolvedModel, intra_op_threads: usize) -> Result<Self> {
+            Self::load_with(model, intra_op_threads, MemoryOptions::default())
+        }
+
+        /// [`load`](Self::load) with other memory options (measurements).
+        #[doc(hidden)]
+        pub fn load_with(model: &ResolvedModel, intra_op_threads: usize, memory: MemoryOptions) -> Result<Self> {
             let m = &model.manifest;
             Ok(Self {
                 id: m.id.clone(),
@@ -57,7 +65,7 @@ mod backend {
                 pooling: m.pooling,
                 max_seq_len: m.max_seq_len,
                 input: EmbedInput::load(model)?,
-                model: OnnxModel::load(&model.dir.join(&m.artifact), &m.id, &m.io, intra_op_threads)?,
+                model: OnnxModel::load_with(&model.dir.join(&m.artifact), &m.id, &m.io, intra_op_threads, memory)?,
                 output: m.io.output.clone(),
                 intra_op_threads,
             })

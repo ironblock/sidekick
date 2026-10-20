@@ -96,7 +96,10 @@ def main():
         model_id=model_id, src=args.src, buckets=args.buckets, backbone=backbone, head=Pool("last_token"),
         tok=tok, texts=[full(s, q) for s, q in zip(PARITY_SENTENCES, QUERY_FLAGS)], calibration=calibration,
         rewrites=[qwen3.precision_rewrite(calibration, tok, silu=activations.StableSilu, mlp_down=True)], strict_max_seq_len=False,
-        truncate=True,   # the long text is 520 tokens: gate the server's truncation, which keeps the EOS
+        # the long text is 520 tokens: the Core ML build gates the server's
+        # truncation at 512, which keeps the EOS; the ONNX build (max_seq_len
+        # 4,096, onnx.toml) takes it whole
+        truncate=True,
         timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)
 

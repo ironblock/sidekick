@@ -2712,6 +2712,106 @@ says which model backends it serves: `sidekickd --version` ends with
 always there; `coreml` needs the `coreml` feature on macOS, and `onnx`
 the `onnx` feature.
 
+**Amendment (October 2026): an ONNX build's own length limit, and a
+long-input corpus.** Qwen3-Embedding-0.6B takes 32k tokens, but both of
+its builds stopped at 512. That was the converter's default bucket list,
+which the ONNX export inherited as its `max_seq_len`; nobody had chosen it
+for the ONNX build, and no gate tested past it.
+- **Its own setting.** An `onnx.toml` beside the committed Core ML
+  manifest may set a top-level `max_seq_len` for the ONNX build. The export
+  checks it against the checkpoint as it checks the Core ML one (at most
+  the position embeddings, less any offset), cuts its gate texts at it,
+  and writes it into the installed manifest with the comment above it.
+  No other top-level key is accepted. The Core ML bucket list doesn't
+  change: a bucket is a program with its own copy of the weights (about
+  1.1 GiB for this model in fp16), and attention at 4,096 tokens would
+  hold about 0.5 GiB of fp16 scores per layer. Core ML buckets past 512
+  stay out of scope until there's demand.
+- **Qwen3-Embedding-0.6B's ONNX build takes 4,096.** Its graph's
+  sequence axis is dynamic and each input runs alone, unpadded, so a
+  short input costs what it did at 512; only a long one pays.
+- **A long-input corpus,** `fixtures/parity/corpus_long.toml`: about 600,
+  1,500 (a document and a query), 2,400 and 4,096 tokens of ordinary text
+  in varied registers, and one input 188 tokens past `max_seq_len`, which
+  truncation must cut keeping its final token. It has its own hash and its
+  own references (`reference-long.*`, from `tools/parity_reference.py
+  --corpus long`), so adding it changed neither `corpus.toml`'s hash nor
+  any model's existing references. A reference holds only the cases that
+  fit the model's `max_seq_len`. The parity suite grades it for a model
+  whose `max_seq_len` reaches its shortest case, on the same paths as the
+  main corpus, and reports it as the model's `long` section, absent for
+  every other model, so their reports are unchanged. Its gate failures are
+  the model's; it has no floors yet. A missing long reference fails a
+  model named with `--model` whose `max_seq_len` is past the main corpus's
+  longest case, as a missing main reference does, since nothing else
+  grades its long inputs; it is a warning where the main corpus already
+  reaches the limit (EmbeddingGemma-2's 2,048, which its over-length cases
+  fill) or the model wasn't named. A run with only `--external` results
+  says the long corpus went ungraded. `tools/models_table.py` turns it
+  into a note on the model's row, whose grade stays the main corpus's.
+- **An ONNX build with a longer limit needs its own main-corpus
+  reference.** The suite checks that the reference's `max_seq_len` equals
+  the build's, and at 4,096 corpus.toml's over-length cases (700 tokens)
+  are no longer truncated. `tools/parity_reference.py` now reads an onnx
+  install directly, taking corpus.toml's bucket-relative lengths from the
+  committed Core ML manifest, so both builds are graded on the same texts.
+
+- **The arena gives back a long run's memory.** ONNX Runtime's CPU arena
+  keeps every block a run grows it by, so one long input left the process
+  at its peak for as long as the model stayed loaded. `OnnxModel` now runs
+  an input of 1,024 tokens or more (`SHRINK_FROM_TOKENS`, rows × length)
+  with the run option `memory.enable_memory_arena_shrinkage = "cpu:0"`,
+  which frees the blocks that run grew the arena by when it ends; shorter
+  runs are unchanged. It applies to every onnx model; with every other
+  embedder's limit at 512 or below, it changes nothing for them.
+  Shrinking after every run, or no arena at all, cost short inputs nothing
+  measurable either, but neither returned memory any better, and both
+  change the path every short input takes. On macOS the system allocator
+  keeps the freed pages and returns them as later allocations run, not
+  while the process is idle; `malloc_zone_pressure_relief` released
+  nothing on macOS 27.0, so sidekick doesn't call it.
+
+Measured on an M1 Max, macOS 27.0, ONNX Runtime 1.28.3:
+- **Accuracy** (the parity suite's native worker, 4 threads as for the
+  other M1 Max rows; 8 gives bit-identical vectors): A on both corpora.
+  Worst 1 − cos 1.7e-11 on corpus.toml, unchanged from the 512-token
+  build, and 7.6e-12 at 600 tokens to 1.2e-11 at 4,096 on the long
+  corpus, the truncated input included, with token ids equal to the
+  reference pipeline's.
+- **Time** (8 threads, the machine's default): a median 0.85–0.90 s per
+  input at 512 tokens and 12.9–14.2 s at 4,096 on sidekick's own path
+  (`examples/onnx_memory`, 8 runs, load average 4–11), and 6.8–7.1 s at
+  2,400 from Python (`tools/bench_onnx.py`, onnxruntime 1.27, 2 runs on a
+  busier machine, load average 5.6–7.9 rising to about 27 during each). The
+  export's attention is a MatMul, a Softmax and a MatMul per layer, which
+  materializes the fp32 scores, so time grows faster than length. A fused
+  attention kernel would cut time and memory; that is a follow-up.
+- **Memory** (`examples/onnx_memory`, the footprint above the pre-load
+  one): +1,777 MB loaded, +1,825 MB after a 512-token input, +4,152 MB
+  after a 4,096-token one (+2,633 MB at 2,400, `tools/bench_memory.py`).
+  Before the change, 69 more inputs of up to 512 tokens and 30 s idle
+  left it at +4,146–4,156 MB (six runs). After it, the same inputs
+  brought it back to +1,838–1,883 MB in all six runs; a seventh, of a
+  variant that also called `malloc_zone_pressure_relief`, stayed at the
+  peak. Short inputs' latency was the
+  same with and without the change (16 / 256 / 512 tokens: 37–40 /
+  401–423 / 851–896 ms).
+- **Timeouts.** A request's inputs run one after another under one
+  `request_timeout_secs` (default 60), so four 4,096-token inputs in one
+  request can pass it, and five do. The 504 abandons the wait, not the
+  work: the remaining inputs still run, each holding the model's session
+  for 13–17 s, and other requests to the model wait behind them.
+  docs/MODELS.md advises one or two long inputs per request, or a higher
+  timeout.
+- **Vectors change for long text.** Inputs past 512 tokens were cut at
+  512 by this build up to 0.12.0 and now embed whole, and the Core ML
+  build of the same id still stops at 512, so the two builds' vectors of
+  long text differ. Long documents need re-embedding, and the two builds'
+  long-text vectors don't belong in one index. A client that wants the old
+  vectors sends `max_tokens: 512` to `/v2/embed`; `truncate` on
+  `/v1/embeddings` and `/v2/embed` picks the end that is cut, or refuses
+  an over-long input.
+
 ## D41 — The nli format: NLI cross-encoders as zero-shot classifiers
 A natural-language-inference cross-encoder reads a (premise, hypothesis)
 pair and says whether the premise entails, contradicts or is neutral

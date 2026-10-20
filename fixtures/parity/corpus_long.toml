@@ -1,0 +1,298 @@
+# Long-input parity corpus: inputs past 512 tokens, for models whose
+# max_seq_len reaches them.
+#
+# It is separate from fixtures/parity/corpus.toml so that adding it changed
+# neither that corpus's hash nor any model's references: a model graded on
+# it has a second reference beside its first (reference-long.json and
+# reference-long.safetensors), written by
+#
+#     python tools/parity_reference.py <model-dir> --source <hf-id> --corpus long [--out DIR]
+#
+# and checked against this file's hash, computed as for corpus.toml. The
+# parity suite (crates/sidekick-embed/examples/parity) grades it for every
+# model whose max_seq_len reaches the shortest case here, as a section of
+# its own in the report. A case longer than the model's max_seq_len is left
+# out of that model's reference, and recorded as skipped there.
+#
+# Every case is a `length`: a total token count, prefix and special tokens
+# included, reached by taking words from [filler] until the tokenizer
+# reports exactly that many, as in corpus.toml. `length` is an integer, or
+# { beyond_max = n }: the model's max_seq_len + n, which the pipeline
+# truncates to max_seq_len, keeping the final token that last-token pooling
+# reads. `start` is the filler word to begin at (default 0), wrapping
+# around, so the cases don't all share one opening. `purpose` defaults to
+# "document".
+#
+# Tags, as in corpus.toml:
+#   long          deep accumulation over thousands of tokens: attention
+#                 over long contexts, rotary positions far past 512.
+#   query         the query prefix path.
+#   over-length   longer than max_seq_len: truncation keeps the final token.
+#
+# Changing this file invalidates every long-input reference (the suite
+# checks its hash); regenerate them with tools/parity_reference.py.
+
+[[case]]
+id = "long-600"
+length = 600
+tags = ["long"]
+
+[[case]]
+id = "long-1500"
+length = 1500
+start = 880
+tags = ["long"]
+
+[[case]]
+id = "long-query-1500"
+purpose = "query"
+length = 1500
+start = 1760
+tags = ["long", "query"]
+
+[[case]]
+id = "long-2400"
+length = 2400
+start = 1320
+tags = ["long"]
+
+[[case]]
+id = "long-4096"
+length = 4096
+start = 420
+tags = ["long"]
+
+[[case]]
+id = "long-over-length"
+length = { beyond_max = 188 }
+start = 2200
+tags = ["long", "over-length"]
+
+# --- filler ----------------------------------------------------------------------------------
+
+# Words for the cases, taken in order from `start` (wrapping around).
+# Eleven unrelated passages of ordinary text in different registers (field
+# notes, an incident report, a letter, history, a recipe, a story with
+# dialogue, meeting minutes, an explanation, a study's abstract, a diary, a
+# gallery guide), with numbers and dates but no special tokens, so lengths
+# are predictable. Together they are longer than the longest case (about
+# 4,450 tokens with Qwen3's tokenizer), so no case repeats itself.
+[filler]
+text = """
+Field notes, upper estuary, late October. The tide turned at 06:40 and by eight the mudflats below the old
+ferry landing were wide open, glittering where the low sun caught the standing water. I counted 214 dunlin
+in one tight flock, wheeling over the channel and settling again within a few meters of where they had
+risen, as if the whole maneuver had been a rehearsal. Further out, beyond the line of marker posts, a
+group of curlews worked the softer mud with their long, curved bills, each bird probing, pausing, and
+probing again with the patience of a craftsman. Two grey herons stood motionless at the edge of the reed
+bed. A kingfisher crossed the creek twice, low and fast, a streak of blue that was gone before the
+binoculars came up. The wind was light from the southwest, the temperature about nine degrees, and the
+visibility excellent until a bank of mist drifted in from the sea shortly after ten. Under the mist the
+sounds changed: the calls of the redshanks carried further, sharper and more anxious, and the distant
+traffic on the coast road disappeared altogether. When it lifted again, a little before noon, most of the
+waders had moved upstream toward the salt marsh, following the flooding tide as it crept back over the
+flats. I noted three black-tailed godwits among them, still showing traces of their rusty breeding
+plumage, and a single greenshank that called repeatedly as it flew, three clear notes falling in pitch.
+The survey route is the same every month: from the landing along the sea wall to the sluice gate, then
+inland along the drainage ditch to the bird hide, a distance of a little under four kilometers. Keeping
+the route fixed matters more than any single count, because the value of the record lies in comparison.
+Over eleven years the numbers of wintering dunlin here have fallen by roughly a third, while little egrets,
+once a rarity worth a telephone call, are now present in every month of the year.
+
+Incident report: delayed order processing, 14 March. Summary: between 09:12 and 11:47 UTC, orders placed
+through the web shop were accepted and paid for but not passed to the warehouse system. About 3,800 orders
+were affected. No payment data was lost, and every delayed order had shipped by the end of the following
+day. Timeline: at 08:55 a routine configuration change raised the connection limit on the message queue
+from 200 to 500. At 09:12 the order service began logging timeouts when publishing to the queue. At 09:31
+the on-call engineer was paged by the alert for an unusually low rate of warehouse acknowledgements. At
+10:05 the configuration change was identified as a likely cause and rolled back, but the timeouts
+continued. At 11:20 the team found that the queue's disk had filled: the higher connection limit had
+allowed a batch reporting job to open hundreds of idle consumers, each holding unacknowledged messages
+that could not be cleared. At 11:47, after the reporting job was stopped and its consumers closed, the
+backlog drained in eleven minutes. Root cause: the reporting job created a new consumer for each report
+instead of reusing one, a defect present for months but harmless while the connection limit capped it.
+What went well: the alert fired within twenty minutes, and the order service never dropped a message. What
+went poorly: the dashboard for the queue showed connections but not disk usage, so the first hour was
+spent on the wrong hypothesis. Actions: fix the reporting job to reuse its consumer; add disk usage and
+unacknowledged message counts to the queue dashboard with alerts at seventy and ninety percent; require
+a second reviewer for changes to shared infrastructure limits; and rehearse the rollback procedure for the
+queue, which took longer than expected because its documentation referred to a host that no longer exists.
+
+Dear Marta, the boxes are finally unpacked, or at least the ones that matter, and I am writing to you
+from the kitchen table, which faces a window onto a narrow courtyard where somebody grows tomatoes in
+old paint tins. You asked what the city is like after a month. It is louder than I expected in the
+mornings and quieter than I expected at night. The trams start at five, and the first one makes a long
+squeal as it takes the corner by the bakery, which I have decided to treat as an alarm clock rather than
+a nuisance. The bakery itself is the best discovery so far: a tiny place run by two brothers who argue
+constantly about the right temperature for the oven and agree about nothing else, except that the rye
+loaf must rest for a whole day before it is sold. Work is going well, though the office is enormous and I
+still get lost on the way to the meeting rooms on the fourth floor. My colleagues are kind and a little
+formal; nobody uses first names until they have shared a lunch, which is apparently a serious ritual
+involving soup, bread and an hour of conversation about anything except work. I have joined a choir that
+rehearses on Thursday evenings in the hall of a primary school. We sit on chairs designed for
+eight-year-olds, our knees around our ears, and sing surprisingly difficult music. The conductor is a
+retired engineer who explains harmony with diagrams of bridges. I miss the hills around home, and the
+way the light went gold over the reservoir in the evenings. There is a river here, broad and brown and
+busy with barges, and on Sundays I walk along it as far as the old customs house and back. Come in the
+spring if you can. The spare room is small, but the window opens onto the tomatoes, and the brothers have
+promised to bake something special for any visitor who can settle their argument about the oven.
+
+The canal was begun in 1792 and finished, after two bankruptcies and a change of engineer, in 1816. Its
+promoters had promised that it would halve the price of coal in the market towns along its route, and for
+a generation it did. Building it meant cutting through forty kilometers of clay, sandstone and peat with
+little more than picks, shovels, wheelbarrows and gunpowder. The workers, many of them laborers who had
+walked from distant counties in search of wages, lived in temporary camps beside the cutting and moved
+with it as it advanced. The most difficult section was the summit, where the canal had to cross a ridge
+of hard rock. The first engineer proposed a tunnel nearly two kilometers long; his successor, worried by
+the cost and by flooding in the trial shafts, instead built a flight of twenty-one locks that carried the
+canal over the ridge in a series of steps. The locks needed a reliable supply of water at the top, so a
+reservoir was dug in the hills above, fed by streams that had previously turned the wheels of several
+mills. The millers sued, and the dispute was settled only when the canal company agreed to pay them an
+annual sum for the water they had lost, an arrangement that lasted more than a century. Once open, the
+canal carried coal, lime, grain, timber and building stone. Boats were pulled by horses walking along
+the towpath, and a journey from one end to the other took about three days. The arrival of the railway
+in the 1840s brought a slow decline. Traffic fell, the locks were neglected, and by the middle of the
+twentieth century long stretches had silted up or been filled in. Restoration began in the 1970s, led by
+volunteers who spent their weekends clearing mud and rebuilding lock gates by hand, and the whole route
+reopened to boats in 2002. Today it carries holidaymakers rather than coal, and the old lock keepers'
+cottages are cafes, workshops and a small museum.
+
+To make the stew for six people, start the evening before by soaking 300 grams of dried white beans in
+plenty of cold water. The next day, drain and rinse them, cover them with fresh water in a large pot,
+bring them to a boil, and let them simmer gently for about an hour, until they are tender but not yet
+falling apart. Meanwhile, chop two onions, three carrots and two sticks of celery into small, even dice,
+and slice four cloves of garlic thinly. Warm three tablespoons of olive oil in a heavy casserole over a
+moderate heat, add the onions with a pinch of salt, and cook them slowly for ten minutes, stirring now
+and then, until they are soft and golden but not browned. Add the carrots, celery and garlic and cook for
+another five minutes. Stir in a tablespoon of tomato paste, a teaspoon of smoked paprika and two bay
+leaves, and let the paste darken slightly against the bottom of the pan. Pour in a tin of chopped
+tomatoes and half a liter of vegetable stock, scraping up anything that has stuck. Drain the beans,
+keeping a cup of their cooking water, and add them to the casserole with a sprig of rosemary. Simmer,
+partly covered, for forty minutes, adding some of the reserved bean water if the stew becomes too thick.
+In the last ten minutes, stir in a large handful of chopped kale or spinach and let it wilt. Taste and
+season with salt, black pepper and a squeeze of lemon juice, which brightens the whole dish. Serve it in
+warm bowls with a drizzle of good olive oil and thick slices of toasted bread rubbed with garlic. The
+stew keeps well for three days in the refrigerator and, like most dishes of its kind, tastes better on
+the second day, when the beans have absorbed more of the flavor.
+
+The bus was forty minutes late, and by the time it arrived the shelter had filled with people shaking
+rain from their umbrellas. Ines found a seat near the back, beside an elderly man who was holding a
+cardboard box on his knees with great care. Halfway up the hill the box made a small scratching sound.
+"It's a hen," the man said, before she could ask. "Her name is Dorothy. She is going to live with my
+daughter, who has a garden." Ines said that seemed like a good arrangement for Dorothy. "It is," he
+agreed. "But she does not know that yet, and she is not a hen who enjoys surprises." The bus lurched
+around a corner, and the box gave an indignant cluck. A boy across the aisle laughed and then tried to
+pretend he hadn't. "Where does your daughter live?" Ines asked. "At the end of this line, past the
+reservoir. Forty minutes, if the driver is in a good mood." He lifted one flap of the box an inch, and
+a bright, suspicious eye looked out at them. "She was the best layer in the street for six years," he
+said. "Now she is retired, like me. We are both moving somewhere quieter." At the next stop a woman
+with two shopping bags got on and stood swaying in the aisle, and Ines offered her the seat, so the rest
+of the conversation happened over her shoulder, in fragments. She learned that the man had been a
+printer, that he had once set the type for an entire book of poems by hand, and that Dorothy disliked
+thunder, red umbrellas and the postman, in that order. When Ines reached her own stop she wished them
+both luck. "Thank you," said the man, very seriously. "We will need it. My daughter has a cat." The
+doors closed behind her, and as the bus pulled away she thought she heard, above the noise of the
+engine, one last protesting cluck.
+
+Minutes of the library committee, second meeting of the year. Present: the chair, the treasurer, four
+members and the head librarian; two apologies. The minutes of the previous meeting were approved without
+changes. The head librarian reported that visits rose by twelve percent over the winter, driven mostly
+by the homework club and the new Saturday morning story sessions, and that loans of audiobooks have
+overtaken loans of printed fiction for adults for the first time. The treasurer presented the budget for
+the coming year. Income from the town council is unchanged in cash terms, which means a small cut once
+inflation is taken into account; a grant of 18,000 for the digitization of the local newspaper archive has
+been confirmed. After discussion, the committee agreed to keep the current opening hours, to reduce the
+budget for new periodicals by a fifth, and to ask the friends of the library to fund a replacement for the
+broken microfilm reader. A member raised the condition of the roof above the reading room, where a leak
+appeared again after the storms in February. The head librarian confirmed that the affected shelves have
+been emptied and their contents moved to the store, and that a surveyor will inspect the roof next month.
+The committee discussed a proposal to lend tools, such as drills, ladders and sewing machines, alongside
+books. Several members supported the idea; others were concerned about insurance, storage and the time
+staff would spend checking returned items. It was agreed that the head librarian would visit a library in
+a neighboring town that has run a similar scheme for two years and report back. Any other business: the
+annual book sale will take place on the first weekend of June, and volunteers are needed to sort
+donations. The meeting closed at 20:35. Next meeting: the second Tuesday of next month, in the
+upstairs meeting room, subject to the roof.
+
+A bicycle's gears let a rider keep pedaling at a comfortable rate while the road changes beneath them.
+The pedals turn a chainring, and the chain carries that motion to a sprocket fixed to the rear wheel.
+The ratio between the number of teeth on the chainring and the number on the sprocket decides how far the
+bicycle travels for each turn of the pedals. With a chainring of 48 teeth and a sprocket of 12, one turn
+of the pedals turns the wheel four times, which is fast on a flat road but exhausting on a steep hill.
+With the same chainring and a sprocket of 32 teeth, the wheel turns only one and a half times for each
+turn of the pedals: much slower, but far easier to push uphill. A derailleur moves the chain from one
+sprocket to the next. It is a small, spring-loaded cage that the rider shifts with a cable, and it pushes
+the chain sideways while the pedals are turning, so the chain climbs onto a larger sprocket or drops onto
+a smaller one. Because it only works while the chain is moving, a rider who stops on a hill in a high
+gear has to start again in that gear, which is why experienced cyclists shift down before they stop.
+Hub gears take a different approach. The mechanism sits inside the rear hub, sealed from rain and mud,
+and uses small planetary gear sets to change the ratio. They can shift while the bicycle is standing
+still and need very little maintenance, which makes them popular on city bicycles, but they are heavier
+and offer a narrower range than a derailleur system. Whatever the mechanism, the principle is the same.
+Human legs produce power most efficiently within a fairly narrow range of pedaling speeds, around sixty to
+ninety turns a minute for most riders, and gears exist to keep the legs in that range while the bicycle's
+speed varies from a crawl up a mountain pass to a rush down the other side.
+
+Abstract. We studied how the time of day at which secondary school students sit an examination relates
+to their results, using records of 41,250 written papers taken over six academic years in nineteen
+schools. Examinations were scheduled by a central office according to room availability rather than by
+subject or student, which allowed us to compare the same students across sittings held at different
+hours. After adjusting for subject, year, school and each student's average performance, papers sat in
+the early afternoon scored on average 1.8 percentage points lower than papers sat between nine and
+eleven in the morning, and the difference was larger for students in the youngest year group. Papers sat
+after a break of at least twenty minutes scored higher than papers sat immediately after another
+examination, regardless of the time of day. We found no meaningful difference between examinations held
+on Mondays and those held later in the week. The effects are small for any individual paper but
+accumulate across a full examination season, and they fall unevenly, since some subjects were scheduled
+in the afternoon far more often than others. We discuss possible explanations, including fatigue,
+attention and the timing of meals, and the limits of an observational design: schools could not be
+randomized to schedules, and students who were unwell on the day of an examination are missing from the
+records. We recommend that schools which control their own timetables place the most demanding papers
+in the morning where possible, and that every schedule include a genuine break between consecutive
+examinations. Data on room bookings were obtained from the central office under a data sharing
+agreement, and all student records were anonymized before analysis. The analysis code and summary
+tables are available from the authors on request.
+
+Orchard diary, the year in brief. January: pruned the old apple trees on dry, still days, taking out
+crossing branches and opening the centers to light and air, and burned the prunings that showed canker.
+February: mulched around the young pear trees with compost from the heap behind the shed and replaced two
+broken stakes after a gale. March: the first blossom on the plum by the gate, three weeks earlier than in
+the year we planted it; frost on two nights afterward, but most of the flowers survived. April: grafted
+scions of an old local apple variety, given to us by a neighbor whose grandfather planted the original
+tree, onto four rootstocks in the nursery bed. Mowed the grass between the rows for the first time and
+left the strips under the trees long for the wildflowers. May: blossom everywhere, and bees from the
+hives on the hill working the apples from early morning. Hung traps for codling moth. June: thinned the
+fruitlets on the heaviest trees, leaving one or two in each cluster, which feels wasteful every year and
+pays off every autumn in larger, healthier fruit. July: dry and hot; watered the young trees twice a
+week from the rain tanks, which were empty by the end of the month. August: picked the early plums and
+the first summer apples, which do not keep and went to the village shop and the school kitchen. September:
+the main harvest began. Pickers from the village came on two weekends, and we pressed juice in the barn
+with the old hand press, about three hundred liters in all. October: picked the late keeping apples and
+stored them in wooden trays in the cool cellar, checking them weekly and removing any with bruises. Two of
+the four grafts have taken and put on a hand's length of growth. November: planted three new trees to
+replace losses, a quince, a medlar and another of the old local apples. December: a quiet month. Mended
+the ladders, sharpened the saws, sorted the seed catalogs, and wrote this summary by the stove.
+
+Gallery guide, room seven. The large painting in front of you shows a harbor town on a winter morning,
+seen from the deck of a ship that is about to come alongside the quay. It was painted around 1870 by an
+artist who spent most of her working life in the town and who, unusually for her time, sold enough
+pictures to live from her work. Notice first the light. The sun is low and behind the buildings, so the
+facades facing us are in shadow, while the rigging of the ships and the tops of the chimneys catch a
+pale, almost pink glow. The snow on the roofs is not white at all when you look closely: it is made of
+blues, greys and lilacs, with only a few strokes of pure white where the light falls directly on it.
+Now look at the people on the quay. On the left, two porters are rolling a barrel toward a cart, and a
+boy is running beside them, probably hoping to be paid for helping. In the center, a woman in a dark
+coat stands quite still, looking out toward the ship, toward us. Visitors often ask who she is. Letters
+from the artist suggest that she painted her sister, who waited on this quay each winter for her husband
+to return from the fishing grounds in the north. Whether he arrived on this particular morning, the
+painting does not tell us. On the right, almost hidden by a stack of crates, a customs officer is
+writing in a ledger, his breath visible in the cold air. The artist made dozens of pencil studies for
+these figures, some of which you can see in the case beside the window, and in several of them the
+woman in the dark coat is shown with a child, who was left out of the finished painting. Conservators
+cleaned the canvas in 2011, removing a layer of yellowed varnish that had darkened the sky for more than
+a century. The cleaning revealed the pink light on the rigging, which earlier visitors had never seen,
+and also a small dog, curled up asleep on a coil of rope near the bottom edge, that nobody alive had
+known was there. When you are ready, continue through the doorway on your left to room eight, where
+the same harbor appears in summer, painted by the same artist twenty years later from the hill above
+the town.
+"""
