@@ -61,6 +61,8 @@ every run, so a regenerated file diffs cleanly.
 """
 
 import argparse
+import datetime
+import decimal
 import json
 import math
 import re
@@ -553,7 +555,8 @@ SOURCE_KINDS = {
 CURATED_KINDS = ("self-reported", "independent")
 REQUIRED = ("model", "benchmark", "version", "category", "metric", "value", "scale", "source_kind", "source_url",
             "read_on")
-DATE = re.compile(r"\d{4}-\d{2}-\d{2}$")
+OPTIONAL = ("trained_on", "note")
+NUMBER = re.compile(r"-?\d+(\.\d+)?$")
 SHA = r"[0-9a-f]{40}"
 # A model card, dataset or repository file, pinned to a revision or commit.
 PINNED = [
@@ -561,18 +564,22 @@ PINNED = [
     re.compile(rf"^https://github\.com/[\w.-]+/[\w.-]+/(blob|tree|commit)/{SHA}(/|$)"),
     re.compile(rf"^https://raw\.githubusercontent\.com/[\w.-]+/[\w.-]+/{SHA}/"),
 ]
+# A complete mean must agree with its categories to the file's rounding.
+MEAN_TOLERANCE = 1e-5
 
 
 def pinned(url):
     """Whether a source URL names a fixed revision: a Hugging Face or
     GitHub URL at a commit. Any other page can change under the number, so
     it's refused too; cite the repository file it's built from instead."""
-    return any(p.match(url) for p in PINNED)
+    return isinstance(url, str) and any(p.match(url) for p in PINNED)
 
 
-def points(value, scale):
-    """A value on the 0–100 scale."""
-    return value * 100 if scale == "fraction" else value
+def points_text(value, scale):
+    """A curated value, a string as the source writes it ("0.860", "74.30"),
+    on the 0–100 scale with the same precision ("86.0", "74.30")."""
+    d = decimal.Decimal(value)
+    return format(d.scaleb(2) if scale == "fraction" else d, "f")
 
 
 def check_value(where, value, category):
@@ -582,30 +589,53 @@ def check_value(where, value, category):
     return []
 
 
+def check_date(where, value):
+    """A read_on: an ISO date, not in the future."""
+    try:
+        day = datetime.date.fromisoformat(str(value))
+    except ValueError:
+        return [f"{where}: read_on {value!r} isn't a YYYY-MM-DD date"]
+    return [f"{where}: read_on {value} is in the future"] if day > datetime.date.today() else []
+
+
+def blank_text(v):
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
 def curated_problems(entries, models):
     """docs/data/benchmarks.toml's entries: what --check refuses."""
     problems = []
     for i, e in enumerate(entries):
         where = f"benchmarks.toml entry {i + 1} ({e.get('model')}, {e.get('benchmark')}, {e.get('category')})"
-        missing = [k for k in REQUIRED if e.get(k) in (None, "")]
+        missing = [k for k in REQUIRED if blank_text(e.get(k)) or e.get(k) == []]
         if missing:
             problems.append(f"{where}: missing {', '.join(missing)}")
             continue
         ids = e["model"] if isinstance(e["model"], list) else [e["model"]]
-        problems += [f"{where}: model {m!r} isn't in docs/data/models.toml" for m in ids if m not in models]
+        for m in ids:
+            if not isinstance(m, str) or m not in models:
+                problems.append(f"{where}: model {m!r} isn't in docs/data/models.toml")
+        texts = [k for k in REQUIRED if k not in ("model", "read_on") and not isinstance(e[k], str)]
+        if texts:
+            problems.append(f"{where}: {', '.join(texts)} must be {'a string' if len(texts) == 1 else 'strings'} "
+                            "(a value as the source writes it, quoted)")
+            continue
         if e["scale"] not in ("percent", "fraction"):
             problems.append(f"{where}: scale {e['scale']!r} isn't percent or fraction")
-        elif not isinstance(e["value"], bool) and isinstance(e["value"], (int, float)):
-            problems += check_value(where, points(e["value"], e["scale"]), e["category"])
+        elif not NUMBER.match(e["value"]):
+            problems.append(f"{where}: value {e['value']!r} isn't a decimal number")
         else:
-            problems.append(f"{where}: value {e['value']!r} isn't a number")
+            problems += check_value(where, float(points_text(e["value"], e["scale"])), e["category"])
         if e["source_kind"] not in CURATED_KINDS:
             problems.append(f"{where}: source_kind {e['source_kind']!r} isn't one of {', '.join(CURATED_KINDS)}")
         if not pinned(e["source_url"]):
             problems.append(f"{where}: source_url {e['source_url']} isn't pinned to a revision or commit")
-        if not DATE.match(str(e["read_on"])):
-            problems.append(f"{where}: read_on {e['read_on']!r} isn't a YYYY-MM-DD date")
-        unknown = set(e) - set(REQUIRED) - {"trained_on", "note"}
+        problems += check_date(where, e["read_on"])
+        if "trained_on" in e and not isinstance(e["trained_on"], bool):
+            problems.append(f"{where}: trained_on {e['trained_on']!r} isn't true or false")
+        if "note" in e and (not isinstance(e["note"], str) or not e["note"].strip()):
+            problems.append(f"{where}: note is empty or not a string")
+        unknown = set(e) - set(REQUIRED) - set(OPTIONAL)
         if unknown:
             problems.append(f"{where}: unknown fields {', '.join(sorted(unknown))}")
     return problems
@@ -616,12 +646,15 @@ def mteb_problems(data, models):
     problems = []
     if data.get("scale") != "fraction":
         problems.append("benchmarks.mteb.json: scale isn't fraction")
+    revision = (data.get("results") or {}).get("revision")
+    if not revision or not re.fullmatch(SHA, revision):
+        problems.append("benchmarks.mteb.json: no results revision")
     benchmarks = data.get("benchmarks") or {}
     for i, e in enumerate(data.get("entries", [])):
         where = f"benchmarks.mteb.json entry {i + 1} ({e.get('model')}, {e.get('benchmark')})"
         need = ("model", "benchmark", "mteb_version", "task_set_hash", "source_kind", "source_url", "read_on",
                 "sidekick_revision", "evaluated_revisions", "n_tasks", "of", "categories")
-        missing = [k for k in need if e.get(k) in (None, "", {})]
+        missing = [k for k in need if blank_text(e.get(k)) or e.get(k) == {}]
         if missing:
             problems.append(f"{where}: missing {', '.join(missing)}")
             continue
@@ -630,22 +663,38 @@ def mteb_problems(data, models):
         b = benchmarks.get(e["benchmark"])
         if b is None or b.get("task_set_hash") != e["task_set_hash"]:
             problems.append(f"{where}: task set {e['task_set_hash']} isn't the file's {e['benchmark']}")
-        elif e["of"] != b["n_tasks"]:
+            continue
+        if e["of"] != b["n_tasks"]:
             problems.append(f"{where}: of {e['of']}, the benchmark has {b['n_tasks']} tasks")
+        if set(e["categories"]) != set(b["categories"]):
+            problems.append(f"{where}: categories {sorted(e['categories'])}, the benchmark's are "
+                            f"{sorted(b['categories'])}")
         if e["source_kind"] not in ("mteb", "mixed"):
             problems.append(f"{where}: source_kind {e['source_kind']!r} isn't mteb or mixed")
         if not pinned(e["source_url"]):
             problems.append(f"{where}: source_url {e['source_url']} isn't pinned to a revision or commit")
-        if not DATE.match(str(e["read_on"])):
-            problems.append(f"{where}: read_on {e['read_on']!r} isn't a YYYY-MM-DD date")
-        means = [("mean_task", e.get("mean_task"), e["n_tasks"], e["of"])]
-        for name, c in e["categories"].items():
+        elif revision and revision not in e["source_url"]:
+            problems.append(f"{where}: source_url isn't the file's results revision {revision}")
+        problems += check_date(where, e["read_on"])
+        cats = e["categories"]
+        means = [(MEAN, e.get("mean_task"), e["n_tasks"], e["of"])]
+        card = 0
+        for name, c in cats.items():
             cw = f"{where} {name}"
             if not c.get("metric"):
                 problems.append(f"{cw}: no metric")
-            if b is not None and b.get("categories", {}).get(name) != c.get("of"):
-                problems.append(f"{cw}: of {c.get('of')}, the benchmark has {b.get('categories', {}).get(name)}")
-            means.append((name, c.get("value"), c.get("n_tasks"), c.get("of")))
+            if b["categories"].get(name) != c.get("of"):
+                problems.append(f"{cw}: of {c.get('of')}, the benchmark has {b['categories'].get(name)}")
+            n = c.get("n_tasks")
+            for field in ("n_trained_on", "n_model_card"):
+                if not isinstance(c.get(field), int) or not 0 <= c[field] <= (n or 0):
+                    problems.append(f"{cw}: {field} {c.get(field)!r} isn't from 0 to its {n} tasks")
+            card += c.get("n_model_card") or 0
+            means.append((name, c.get("value"), n, c.get("of")))
+        if sum(c.get("n_tasks") or 0 for c in cats.values()) != e["n_tasks"]:
+            problems.append(f"{where}: its categories' tasks don't add up to its {e['n_tasks']}")
+        if (e["source_kind"] == "mixed") != (card > 0):
+            problems.append(f"{where}: source_kind {e['source_kind']} with {card} tasks from the model card")
         any_score = False
         for name, value, n, of in means:
             if value is not None and n != of:
@@ -655,6 +704,18 @@ def mteb_problems(data, models):
             elif value is not None:
                 any_score = True
                 problems += check_value(f"{where} {name}", value * 100, name)
+        values = [c.get("value") for c in cats.values()]
+        if e.get("mean_task") is not None and None not in values:
+            by_task = sum(c["value"] * c["of"] for c in cats.values()) / sum(c["of"] for c in cats.values())
+            if abs(by_task - e["mean_task"]) > MEAN_TOLERANCE:
+                problems.append(f"{where}: mean_task {e['mean_task']} isn't its categories' task-weighted mean "
+                                f"{by_task:.6f}")
+            by_type = sum(values) / len(values)
+            if e.get("mean_task_type") is None or abs(by_type - e["mean_task_type"]) > MEAN_TOLERANCE:
+                problems.append(f"{where}: mean_task_type {e.get('mean_task_type')} isn't its categories' mean "
+                                f"{by_type:.6f}")
+        elif e.get("mean_task_type") is not None:
+            problems.append(f"{where}: a mean_task_type without every category")
         if any_score and not e.get("revision_match"):
             problems.append(f"{where}: scores without a revision_match")
     return problems
@@ -669,15 +730,17 @@ def mteb_records(data):
                       version=f"mteb {e['mteb_version']}, task set {e['task_set_hash']}",
                       source_kind=e["source_kind"], source_url=e["source_url"], read_on=e["read_on"],
                       revision_match=e.get("revision_match"), evaluated_revisions=e["evaluated_revisions"],
-                      prompting=e.get("prompting"), model_context=e.get("model_context"), note=None)
+                      prompting=e.get("prompting"), model_context=e.get("model_context"),
+                      model_context_source=e.get("model_context_source"), note=None)
         cats = [(MEAN, {"value": e.get("mean_task"), "n_tasks": e["n_tasks"], "of": e["of"],
                         "metric": "mean of the tasks' main metrics",
                         "n_trained_on": sum(c["n_trained_on"] for c in e["categories"].values()),
                         "n_model_card": sum(c["n_model_card"] for c in e["categories"].values())})]
         cats += sorted(e["categories"].items(), key=lambda kv: category_order(kv[0]))
         for name, c in cats:
-            out.append(dict(common, category=name, metric=c["metric"],
-                            value=None if c["value"] is None else round(c["value"] * 100, 2),
+            value = None if c["value"] is None else round(c["value"] * 100, 2)
+            out.append(dict(common, category=name, metric=c["metric"], value=value,
+                            value_text=None if value is None else f"{value:.2f}",
                             n_tasks=c["n_tasks"], of=c["of"], trained_on=c["n_trained_on"],
                             model_card_tasks=c["n_model_card"]))
     return out
@@ -686,12 +749,13 @@ def mteb_records(data):
 def curated_records(entries):
     out = []
     for e in entries:
+        text = points_text(e["value"], e["scale"])
         for m in e["model"] if isinstance(e["model"], list) else [e["model"]]:
             out.append(dict(model=m, benchmark=e["benchmark"], version=e["version"], source_kind=e["source_kind"],
                             source_url=e["source_url"], read_on=str(e["read_on"]), revision_match=None,
-                            evaluated_revisions=None, prompting=None, model_context=None, note=e.get("note"),
-                            category=e["category"], metric=e["metric"],
-                            value=round(points(e["value"], e["scale"]), 4), n_tasks=None, of=None,
+                            evaluated_revisions=None, prompting=None, model_context=None,
+                            model_context_source=None, note=e.get("note"), category=e["category"],
+                            metric=e["metric"], value=float(text), value_text=text, n_tasks=None, of=None,
                             trained_on=1 if e.get("trained_on") else 0, model_card_tasks=None))
     return out
 
@@ -705,11 +769,13 @@ def benchmark_scores(models):
     curated = load_toml(BENCH_TOML).get("scores", [])
     mteb = json.loads(BENCH_MTEB.read_text())
     problems = curated_problems(curated, models) + mteb_problems(mteb, models)
-    scores = mteb_records(mteb) + curated_records(curated)
-    keys = [(s["model"], s["benchmark"], s["version"], s["category"], s["metric"]) for s in scores]
-    problems += [f"duplicate benchmark score: {k}" for k in sorted({k for k in keys if keys.count(k) > 1})]
     if problems:
         raise SystemExit("benchmark scores refused:\n  " + "\n  ".join(problems))
+    scores = mteb_records(mteb) + curated_records(curated)
+    keys = [(s["model"], s["benchmark"], s["version"], s["category"], s["metric"]) for s in scores]
+    dup = sorted({k for k in keys if keys.count(k) > 1})
+    if dup:
+        raise SystemExit("benchmark scores refused:\n  " + "\n  ".join(f"duplicate score: {k}" for k in dup))
     order = list(models)
     benchmarks = list(mteb["benchmarks"])
     scores.sort(key=lambda s: (order.index(s["model"]), s["source_kind"] not in ("mteb", "mixed"),
@@ -937,14 +1003,15 @@ def build_grades(idx, model, models):
 
 
 def score_text(s):
-    """A score as the tables print it: 2 decimals for MTEB, as the source
-    wrote it otherwise; † and a count for tasks in the model's training data;
-    for an incomplete MTEB category, how many of its tasks there are."""
+    """A score as the tables print it (its value_text: 2 decimals for MTEB,
+    the source's own precision otherwise); † and a count for tasks in the
+    model's training data; for an incomplete MTEB category, how many of its
+    tasks there are."""
     if s is None:
         return ""
     if s["value"] is None:
         return f"({s['n_tasks']} of {s['of']} tasks)" if s["n_tasks"] else ""
-    text = f"{s['value']:.2f}" if s["of"] is not None else f"{s['value']:g}"
+    text = s["value_text"]
     if s["trained_on"]:
         text += f" †{s['trained_on']}" if s["of"] is not None else " †"
     return text
@@ -965,7 +1032,11 @@ def mteb_table(benchmark, every_embedder=False):
                 continue
             grades, caps = build_grades(idx, model, models)
             mean = by.get((model, MEAN))
-            context = f"{mean['model_context']:,}" if mean and mean["model_context"] else ""
+            context = ""
+            if mean and mean["model_context"]:
+                context = f"{mean['model_context']:,}"
+                if mean["model_context_source"] == "advertised":
+                    context = f"≤ {context} (advertised)"
             revision = ""
             if mean:
                 revision = REVISION_TEXT.get(mean["revision_match"], mean["revision_match"] or "")

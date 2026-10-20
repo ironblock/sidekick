@@ -154,7 +154,7 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     </div>
     <div>
       <h2>Reading a score</h2>
-      <p>Benchmarks ran at the model's own context, and each build stops at its max tokens. MTEB prompts per task; a client of <code>/v1/embeddings</code> that doesn't send those instructions sees lower classification, clustering and STS. A grade-A path reproduces the model closely enough for its score to carry over; C, D or int8 may not. A few hundred labelled examples from your own data decide. More in <a href="https://github.com/ironblock/sidekick/blob/main/docs/MODELS.md#benchmark-scores">docs/MODELS.md</a>.</p>
+      <p>A benchmark may have run on longer inputs than a build takes: each score's tooltip gives the run's context, and each row its build's max tokens. MTEB prompts many models per task, and sidekick always adds its own prefix: for EmbeddingGemma and (outside retrieval) e5-small-v2 a client can't reproduce the run's prompts, and should expect lower classification, clustering and STS. A grade-A path reproduces the model closely enough for its score to carry over (embedders: worst cosine ≥ 0.9999; classifiers: worst Δp ≤ 0.001 or within 1.25× the fp16 ceiling); C, D or int8 may not. A few hundred labelled examples from your own data decide. More in <a href="https://github.com/ironblock/sidekick/blob/main/docs/MODELS.md#benchmark-scores">docs/MODELS.md</a>.</p>
     </div>
   </section>
 
@@ -433,7 +433,9 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
       "The model was trained on this benchmark's own training data.");
     if (s.revision_match) parts.push("Evaluated " + (REVISION[s.revision_match] || s.revision_match) + ".");
     if (s.prompting) parts.push("Prompts in the run: " + s.prompting + ".");
-    if (s.model_context) parts.push("Run at up to " + s.model_context.toLocaleString() + " tokens" +
+    if (s.model_context) parts.push((s.model_context_source === "advertised" ?
+      "The model's advertised context, an upper bound on the run's: " : "Run at up to ") +
+      s.model_context.toLocaleString() + " tokens" +
       (cap ? "; this build stops at " + cap.toLocaleString() : "") + ".");
     if (s.note) parts.push(s.note + ".");
     parts.push("Source: " + s.source_url + ", read " + s.read_on + ".");
@@ -443,7 +445,7 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     var td = el("td", { "class":"num score" });
     if (!s) { td.textContent = "–"; td.classList.add("dim"); return td; }
     td.appendChild(el("span", { "class":"prov" + (s.source_kind === "self-reported" ? " self" : ""), title:scoreTitle(s, cap) },
-      s.of != null ? s.value.toFixed(2) : String(s.value)));
+      s.value_text));
     if (s.trained_on) td.appendChild(el("sup", { title:"In the model's training data: not zero-shot" }, "†" + (s.of != null ? s.trained_on : "")));
     return td;
   }
@@ -452,18 +454,22 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     var labels = {}, order = Object.keys(b.mteb.benchmarks);
     b.scores.forEach(function (s) {
       if (s.value == null) return;
-      var key = [s.benchmark, s.version, s.category, s.metric].join("\u0001");
+      var mtebRun = s.source_kind === "mteb" || s.source_kind === "mixed";
+      // MTEB scores group by version (the task set); self-reported ones by
+      // benchmark, with each score's version in its tooltip.
+      var key = [s.benchmark, mtebRun ? s.version : "", s.category, s.metric].join("\u0001");
       scoreBy[s.model + "\u0000" + key] = s;
-      if (comboByKey[key]) return;
+      if (comboByKey[key]) { comboByKey[key].versions[s.version] = 1; return; }
       var mteb = s.source_kind === "mteb" || s.source_kind === "mixed";
       var c = { key:key, benchmark:s.benchmark, version:s.version, category:s.category, metric:s.metric, mteb:mteb,
-        label:mteb ? s.category : s.benchmark + " · " + s.category };
+        label:mteb ? s.category : s.benchmark + " · " + s.category, versions:{} };
       if (!mteb) labels[c.label] = (labels[c.label] || 0) + 1;
+      c.versions[s.version] = 1;
       comboByKey[key] = c;
       combos.push(c);
     });
-    // One benchmark reported in two versions: say which is which.
-    combos.forEach(function (c) { if (labels[c.label] > 1) c.label += " (" + c.version + ")"; });
+    // Two metrics or categories under one label: name the metric.
+    combos.forEach(function (c) { if (labels[c.label] > 1) c.label += " (" + c.metric + ")"; });
     var rank = function (c) { return c.mteb ? order.indexOf(c.benchmark) : order.length; };
     combos.sort(function (x, y) { return rank(x) - rank(y) || (x.mteb ? 0 : x.label.localeCompare(y.label)); });
     var sel = document.getElementById("bench"), groups = {};
@@ -488,7 +494,10 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     document.querySelector('#head th[data-key="score"]').hidden = !state.bench;
     var benchnote = document.getElementById("benchnote"), combo = comboByKey[state.bench];
     benchnote.hidden = !combo;
-    benchnote.textContent = combo ? combo.benchmark + " (" + combo.version + "), " + combo.category + ", " + combo.metric +
+    var versions = combo ? Object.keys(combo.versions) : [];
+    benchnote.textContent = combo ? combo.benchmark + (versions.length === 1 ? " (" + versions[0] + ")" : "") + ", " +
+      combo.category + ", " + combo.metric + (versions.length > 1 ? ". The models' sources describe it differently (" +
+      versions.join("; ") + "): see each score's tooltip, and compare with care" : "") +
       ". Showing only models with this score, on every path with its grade and max tokens. The score is the model's, not the path's: " +
       "how well it carries over depends on the grade." : "";
     var list = rows.filter(passes);

@@ -28,14 +28,20 @@ were imported from the model card, and how many are flagged `trained_on`
 
 For a revision other than sidekick's pin, the weights are compared by the
 Hugging Face LFS hashes of the weight files both revisions carry
-(`same-weights`, `different`, or `unverified` when the repository can't be
-read, such as a gated one).
+(`same-weights`, `different`, or `unverified` when the repository is gated).
+Each entry also records the longest input the run embedded
+(`model_context`) and where that figure comes from: the mteb loader's
+setting or the evaluated revision's sentence-transformers config, or,
+where neither states it, the model's advertised context (an upper bound).
 
 Usage (needs mteb and duckdb, in a Python 3.12 virtualenv):
     python -I tools/fetch_benchmarks.py [--results SHA] [--out docs/data/benchmarks.mteb.json]
         [--read-on YYYY-MM-DD] [--cross-check]
 
     --results:     the mteb/results dataset commit to read
+    --read-on:     the date recorded as read; by default the existing
+                   file's when --results is the pin it records (so a rerun
+                   at the same pin writes the same bytes), else today
     --cross-check: also compare each complete mean with the live MTEB
                    leaderboard's (not pinned, so a difference after a newer
                    pin is expected); prints, changes nothing
@@ -74,13 +80,13 @@ TASKS = ("embed", "rerank")
 # input_type may not reproduce. From each model's mteb implementation.
 PROMPTING = {
     "sentence-transformers/all-MiniLM-L6-v2": "none",
-    "BAAI/bge-small-en-v1.5": "query prefix (retrieval)",
-    "intfloat/e5-small-v2": "query and passage prefixes",
+    "BAAI/bge-small-en-v1.5": "query prefix, retrieval only",
+    "intfloat/e5-small-v2": "query and passage prefixes, retrieval only",
     "Alibaba-NLP/gte-modernbert-base": "none",
     "google/embeddinggemma-300m": "a prompt per task type",
     "google/embeddinggemma-2": "a prompt per task type",
     "codefuse-ai/F2LLM-v2-160M": "an instruction per task",
-    "LiquidAI/LFM2.5-Embedding-350M": "query and document prefixes",
+    "LiquidAI/LFM2.5-Embedding-350M": "query and document prefixes, retrieval only",
     "Qwen/Qwen3-Embedding-0.6B": "an instruction per task",
     "cross-encoder/ms-marco-MiniLM-L6-v2": "none",
 }
@@ -170,14 +176,30 @@ def aggregate(rows, cells, pin):
     }
 
 
-def hf_tree(repo, rev):
-    """{file: LFS sha256} for a revision's top-level weight files, or None
-    if the repository can't be read."""
-    url = f"https://huggingface.co/api/models/{repo}/tree/{rev}"
+GATED = (401, 403)
+
+
+def hf_json(url, missing_ok=False):
+    """A Hugging Face JSON resource, or None if the repository is gated
+    (401/403), or the file is absent (404) and missing_ok. Any other failure
+    (a timeout, DNS, a server error) stops the run: publishing it as
+    "unverified" would hide it."""
     try:
         with urllib.request.urlopen(url, timeout=30) as r:
-            files = json.load(r)
-    except (urllib.error.URLError, TimeoutError):
+            return json.load(r)
+    except urllib.error.HTTPError as err:
+        if err.code in GATED or (missing_ok and err.code == 404):
+            return None
+        raise SystemExit(f"{url}: HTTP {err.code}")
+    except (urllib.error.URLError, TimeoutError) as err:
+        raise SystemExit(f"{url}: {err}")
+
+
+def hf_tree(repo, rev):
+    """{file: LFS sha256} for a revision's top-level weight files, or None
+    if the repository is gated."""
+    files = hf_json(f"https://huggingface.co/api/models/{repo}/tree/{rev}")
+    if files is None:
         return None
     # A gated repository answers with masked hashes ("****..."): unreadable.
     return {f["path"]: f["lfs"]["oid"] for f in files
@@ -209,16 +231,27 @@ def revision_match(repo, pin, revisions, cache):
             return v
 
 
-def model_context(mteb, name):
-    """The context the MTEB run used: the mteb loader's max_seq_length
-    where it sets one, else the model's advertised max_tokens."""
+def model_context(mteb, name, revisions):
+    """The longest input the MTEB run embedded, and where that comes from.
+    mteb's wrappers load text models with sentence-transformers, which
+    truncates at the max_seq_length the mteb loader passes, else at the one
+    in the evaluated revision's sentence_bert_config.json. Where neither
+    states one (no such config, or a gated repository), the figure is the
+    model's advertised max_tokens, labelled "advertised": an upper bound,
+    not necessarily what the run used."""
     try:
         meta = mteb.get_model_meta(name)
     except Exception:
-        return None
+        return None, None
     kw = getattr(meta, "loader_kwargs", None) or {}
-    n = kw.get("max_seq_length") or meta.max_tokens
-    return int(n) if n else None
+    if kw.get("max_seq_length"):
+        return int(kw["max_seq_length"]), "mteb loader"
+    run = [r for r, _ in sorted(revisions.items(), key=lambda kv: -kv[1]) if r not in MODEL_CARD]
+    if run:
+        config = hf_json(f"https://huggingface.co/{name}/raw/{run[0]}/sentence_bert_config.json", missing_ok=True)
+        if config and config.get("max_seq_length"):
+            return int(config["max_seq_length"]), "sentence-transformers config"
+    return (int(meta.max_tokens), "advertised") if meta.max_tokens else (None, None)
 
 
 def cross_check(entries):
@@ -249,9 +282,15 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--results", default=RESULTS, help="mteb/results dataset commit")
     p.add_argument("--out", type=Path, default=DATA / "benchmarks.mteb.json")
-    p.add_argument("--read-on", default=datetime.date.today().isoformat())
+    p.add_argument("--read-on", help="the date to record as read (default: the existing file's when --results "
+                                      "is its pin, so a rerun at the same pin is byte-identical; otherwise today)")
     p.add_argument("--cross-check", action="store_true")
     args = p.parse_args()
+
+    if args.read_on is None:
+        old = json.loads(args.out.read_text()) if args.out.exists() else {}
+        same = old.get("results", {}).get("revision") == args.results
+        args.read_on = old["read_on"] if same else datetime.date.today().isoformat()
 
     logging.disable(logging.WARNING)
     import duckdb
@@ -278,7 +317,11 @@ def main():
     source_url = f"https://huggingface.co/datasets/mteb/results/tree/{args.results}"
     trees, entries = {}, []
     for repo in sorted(pins):
-        context = model_context(mteb, repo)
+        evaluated = collections.Counter()
+        for (b, name), found in by.items():
+            if name == repo:
+                evaluated.update(r[3] for r in found)
+        context, context_source = model_context(mteb, repo, evaluated)
         for mid, pin in pins[repo]:
             for b in BENCHMARKS:
                 found = by.get((b, repo))
@@ -293,7 +336,8 @@ def main():
                     "mteb_version": mteb.__version__, "task_set_hash": hashes[b],
                     "sidekick_revision": pin,
                     "revision_match": revision_match(repo, pin, agg["evaluated_revisions"], trees),
-                    "prompting": PROMPTING.get(repo), "model_context": context,
+                    "prompting": PROMPTING.get(repo),
+                    "model_context": context, "model_context_source": context_source,
                     "source_kind": "mixed" if card else "mteb",
                     "source_url": source_url, "read_on": args.read_on,
                     **agg,

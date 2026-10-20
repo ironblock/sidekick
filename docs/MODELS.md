@@ -1442,21 +1442,41 @@ MTEB results: [mteb/results at 3b0980076221](https://huggingface.co/datasets/mte
   the model was trained on that benchmark's own training data. No † isn't
   proof of zero-shot: the flag is only as good as what a model declares,
   and LFM2.5-Embedding-350M declares nothing.
-- **Context.** The MTEB runs used each model's own context (the "MTEB
-  run" figure); sidekick's builds stop at their `max_seq_len`, most at 512
-  tokens. On tasks with long documents, mostly retrieval, a capped build
-  may score lower. That hasn't been measured.
-- **Prompts.** MTEB prompts many models per task: an instruction per task
+- **Context.** The "MTEB run" figure is the longest input the run
+  embedded, where mteb's loader or the evaluated revision's
+  sentence-transformers config states it; marked "advertised", it is the
+  model's advertised context, an upper bound on what the run used.
+  sidekick's builds stop at their `max_seq_len`, most at 512 tokens. On
+  tasks with long documents, mostly retrieval, a build capped below the
+  run may score lower. That hasn't been measured.
+- **Prompts.** MTEB prompts many models: an instruction per task
   (Qwen3-Embedding, F2LLM), a prompt per task type (EmbeddingGemma), or
-  query and document prefixes. sidekick applies one prefix per
-  `input_type`, written for retrieval. A client of `/v1/embeddings` that
-  doesn't send a task's instruction itself will see lower classification,
-  clustering and STS scores than these.
-- **Fidelity.** A grade-A path (worst cosine ≥ 0.9999) reproduces the
-  model closely enough for its score to carry over; a C, D or int8 path
-  may not. A task with large margins, such as a decision between
-  well-separated classes, may be fine on a C path; a fine-grained ranking
-  needs A.
+  query and document prefixes on retrieval tasks only. sidekick always
+  adds the manifest's prefix for the request's `input_type` (the document
+  prefix when none is given), so whether a client can reproduce the run's
+  prompts depends on the model:
+  - all-MiniLM-L6-v2, gte-modernbert-base: no prompts in either.
+  - bge-small-en-v1.5, Qwen3-Embedding-0.6B, F2LLM-v2-160M: yes. Their
+    document prefix is empty, so send the run's instruction in the text
+    with `input_type: "document"` (bge's `query` prefix is its retrieval
+    query prompt).
+  - LFM2.5-Embedding-350M: its one score is retrieval, where sidekick's
+    query and document prefixes are the run's.
+  - e5-small-v2: only on retrieval. Its runs used no prefix on other
+    tasks, and sidekick always adds `query: ` or `passage: `.
+  - embeddinggemma-300m, embeddinggemma-2: no. Every input gets a prefix
+    (`title: none | text: ` for documents), so a task-type prompt such as
+    `task: classification | query: ` sent by a client ends up inside it.
+
+  Without the run's prompts, expect lower classification, clustering and
+  STS scores than these.
+- **Fidelity.** A grade-A path reproduces the model closely enough for its
+  score to carry over: for embedders, a worst cosine ≥ 0.9999 against
+  fp32; for classifiers and rerankers, a worst |Δp| ≤ 0.001 or a p99 |Δp|
+  within 1.25× the model's fp16 ceiling (the scales above). A C, D or int8
+  path may not carry it over. A task with large margins, such as a
+  decision between well-separated classes, may be fine on a C path; a
+  fine-grained ranking needs A.
 - **Revisions.** Most MTEB runs evaluated an earlier revision than the one
   sidekick pins; the last column says whether the weight files are
   identical. bge-small-en-v1.5 and e5-small-v2 complete some benchmarks
@@ -1475,14 +1495,14 @@ The primary English benchmark: 41 tasks.
 | model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | Classification | Clustering | PairClassification | Reranking | STS | Summarization | revision evaluated |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | ANE **A**, onnx-cpu **A** | 256 / 256 | none | 59.03 | 42.92 | 69.25 | 44.90 | 82.37 | 47.14 | 78.94 | 25.96 | another revision, same weights |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix (retrieval) | 64.30 | 53.86 | 76.56 | 47.02 | 84.95 | 46.94 | 81.28 | 28.92 | sidekick's revision; 8 of 41 tasks from the model card |
-| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes | 61.32 | 48.46 | 74.58 | 42.05 | 84.79 | 44.10 | 80.09 | 33.23 | another revision, same weights; 8 of 41 tasks from the model card |
-| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / 8,192 | none | (27 of 41 tasks) | (6 of 10 tasks) | 80.71 | | 85.94 | 47.63 | (8 of 9 tasks) | | another revision, same weights |
-| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / 2,048 | a prompt per task type | 69.67 †2 | 55.69 †2 | 87.55 | 56.55 | 87.29 | 47.43 | 83.61 | 37.64 | another revision, weights not checked (gated) |
-| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / 8,192 | a prompt per task type | 67.53 †2 | 51.33 †2 | 88.82 | 51.70 | 86.39 | 46.03 | 82.75 | 35.09 | sidekick's revision |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix, retrieval only | 64.30 | 53.86 | 76.56 | 47.02 | 84.95 | 46.94 | 81.28 | 28.92 | sidekick's revision; 8 of 41 tasks from the model card |
+| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes, retrieval only | 61.32 | 48.46 | 74.58 | 42.05 | 84.79 | 44.10 | 80.09 | 33.23 | another revision, same weights; 8 of 41 tasks from the model card |
+| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / ≤ 8,192 (advertised) | none | (27 of 41 tasks) | (6 of 10 tasks) | 80.71 | | 85.94 | 47.63 | (8 of 9 tasks) | | another revision, same weights |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / ≤ 2,048 (advertised) | a prompt per task type | 69.67 †2 | 55.69 †2 | 87.55 | 56.55 | 87.29 | 47.43 | 83.61 | 37.64 | another revision, weights not checked (gated) |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / ≤ 8,192 (advertised) | a prompt per task type | 67.53 †2 | 51.33 †2 | 88.82 | 51.70 | 86.39 | 46.03 | 82.75 | 35.09 | sidekick's revision |
 | F2LLM-v2-160M | ANE **A**, onnx-cpu **A** | 512 / 8,192 | an instruction per task | 65.93 †23 | 49.33 †4 | 87.13 †8 | 52.55 †8 | 82.08 | 45.26 | 80.76 †3 | 28.63 | another revision, same weights |
 | LFM2.5-Embedding-350M | ANE **A** | 512 | | | | | | | | | | |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / 32,768 | an instruction per task | 70.47 †2 | 61.83 †2 | 84.58 | 54.05 | 84.37 | 48.18 | 86.57 | 33.43 | another revision, same weights |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / ≤ 32,768 (advertised) | an instruction per task | 70.47 †2 | 61.83 †2 | 84.58 | 54.05 | 84.37 | 48.18 | 86.57 | 33.43 | another revision, same weights |
 <!-- /generated -->
 
 ### MTEB(Multilingual, v2)
@@ -1494,13 +1514,13 @@ The primary English benchmark: 41 tasks.
 | model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | Classification | Clustering | PairClassification | Reranking | STS | BitextMining | MultilabelClassification | InstructionReranking | revision evaluated |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | ANE **A**, onnx-cpu **A** | 256 / 256 | none | 41.39 | 32.51 | 46.20 | 37.47 | 71.23 | 40.28 | 56.08 | 20.09 | 15.05 | -2.84 | another revision, same weights |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix (retrieval) | 43.76 †1 | 36.26 †1 | 47.37 | 39.93 | 71.56 | 45.89 | 59.73 | 23.63 | 17.01 | -1.86 | sidekick's revision |
-| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes | 44.47 | 39.38 | 48.07 | 37.53 | 72.13 | 44.44 | 59.87 | 28.04 | 15.14 | -2.85 | another revision, same weights |
-| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / 8,192 | none | (13 of 131 tasks) | (4 of 18 tasks) | (1 of 43 tasks) | | (2 of 11 tasks) | | (6 of 16 tasks) | | | | another revision, same weights |
-| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / 2,048 | a prompt per task type | 61.14 †1 | 62.49 †1 | 60.90 | 51.17 | 81.40 | 63.22 | 74.73 | 64.40 | 24.66 | 5.61 | another revision, weights not checked (gated) |
-| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / 8,192 | a prompt per task type | 60.52 †1 | 60.60 †1 | 62.30 | 47.58 | 78.70 | 62.32 | 73.89 | 65.48 | 25.23 | -0.61 | sidekick's revision |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix, retrieval only | 43.76 †1 | 36.26 †1 | 47.37 | 39.93 | 71.56 | 45.89 | 59.73 | 23.63 | 17.01 | -1.86 | sidekick's revision |
+| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes, retrieval only | 44.47 | 39.38 | 48.07 | 37.53 | 72.13 | 44.44 | 59.87 | 28.04 | 15.14 | -2.85 | another revision, same weights |
+| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / ≤ 8,192 (advertised) | none | (13 of 131 tasks) | (4 of 18 tasks) | (1 of 43 tasks) | | (2 of 11 tasks) | | (6 of 16 tasks) | | | | another revision, same weights |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / ≤ 2,048 (advertised) | a prompt per task type | 61.14 †1 | 62.49 †1 | 60.90 | 51.17 | 81.40 | 63.22 | 74.73 | 64.40 | 24.66 | 5.61 | another revision, weights not checked (gated) |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / ≤ 8,192 (advertised) | a prompt per task type | 60.52 †1 | 60.60 †1 | 62.30 | 47.58 | 78.70 | 62.32 | 73.89 | 65.48 | 25.23 | -0.61 | sidekick's revision |
 | F2LLM-v2-160M | ANE **A**, onnx-cpu **A** | 512 / 8,192 | an instruction per task | 57.98 †15 | 54.08 †3 | 58.86 †3 | 50.83 †5 | 76.02 †1 | 60.34 | 70.10 †3 | 65.59 | 23.05 | -3.39 | another revision, same weights |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / 32,768 | an instruction per task | 64.34 †1 | 64.65 †1 | 66.83 | 52.33 | 80.83 | 61.41 | 76.17 | 72.23 | 24.58 | 5.09 | another revision, same weights |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / ≤ 32,768 (advertised) | an instruction per task | 64.34 †1 | 64.65 †1 | 66.83 | 52.33 | 80.83 | 61.41 | 76.17 | 72.23 | 24.58 | 5.09 | another revision, same weights |
 <!-- /generated -->
 
 ### MTEB(eng, v1)
@@ -1512,13 +1532,13 @@ complete only here.
 | model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | Classification | Clustering | PairClassification | Reranking | STS | Summarization | revision evaluated |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | all-MiniLM-L6-v2 | ANE **A**, onnx-cpu **A** | 256 / 256 | none | 56.10 †2 | 41.95 †2 | 62.63 | 41.91 | 82.37 | 58.04 | 78.95 | 30.81 | another revision, same weights |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix (retrieval) | 61.75 †2 | 51.65 †1 | 72.18 †1 | 43.82 | 84.95 | 58.36 | 81.64 | 30.12 | sidekick's revision; 33 of 56 tasks from the model card |
-| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes | 59.32 †2 | 49.04 †2 | 69.96 | 39.94 | 84.79 | 54.33 | 80.46 | 31.16 | another revision, same weights; 26 of 56 tasks from the model card |
-| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / 8,192 | none | 64.36 †4 | 55.19 †4 | 77.00 | 46.47 | 85.94 | 59.24 | 81.58 | 30.69 | another revision, same weights |
-| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / 2,048 | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 87.29 | (2 of 4 tasks) | (8 of 10 tasks) | | another revision, weights not checked (gated) |
-| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / 8,192 | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 86.39 | (2 of 4 tasks) | (8 of 10 tasks) | | sidekick's revision |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | 512 / 512 | query prefix, retrieval only | 61.75 †2 | 51.65 †1 | 72.18 †1 | 43.82 | 84.95 | 58.36 | 81.64 | 30.12 | sidekick's revision; 33 of 56 tasks from the model card |
+| e5-small-v2 | ANE **A** | 512 / 512 | query and passage prefixes, retrieval only | 59.32 †2 | 49.04 †2 | 69.96 | 39.94 | 84.79 | 54.33 | 80.46 | 31.16 | another revision, same weights; 26 of 56 tasks from the model card |
+| gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 / ≤ 8,192 (advertised) | none | 64.36 †4 | 55.19 †4 | 77.00 | 46.47 | 85.94 | 59.24 | 81.58 | 30.69 | another revision, same weights |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / ≤ 2,048 (advertised) | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 87.29 | (2 of 4 tasks) | (8 of 10 tasks) | | another revision, weights not checked (gated) |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / ≤ 8,192 (advertised) | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 86.39 | (2 of 4 tasks) | (8 of 10 tasks) | | sidekick's revision |
 | F2LLM-v2-160M | ANE **A**, onnx-cpu **A** | 512 / 8,192 | an instruction per task | 63.41 †35 | 46.46 †9 | 85.96 †11 | 47.54 †11 | 82.08 | 53.71 †1 | 80.94 †3 | 29.25 | another revision, same weights |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / 32,768 | an instruction per task | 67.05 †4 | 55.52 †4 | 81.98 | 49.85 | 84.37 | 59.40 | 86.97 | 29.78 | another revision, same weights |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / ≤ 32,768 (advertised) | an instruction per task | 67.05 †4 | 55.52 †4 | 81.98 | 49.85 | 84.37 | 59.40 | 86.97 | 29.78 | another revision, same weights |
 <!-- /generated -->
 
 ### NanoBEIR-multilingual
@@ -1529,7 +1549,7 @@ has no score on the MTEB benchmarks above; this is the one it was run on.
 <!-- generated: nanobeir-multilingual -->
 | model | grade (M1 Max) | max tokens: sidekick / MTEB run | prompts in the MTEB run | mean (task) | Retrieval | revision evaluated |
 |---|---|---|---|---|---|---|
-| LFM2.5-Embedding-350M | ANE **A** | 512 / 128,000 | query and document prefixes | 57.62 | 57.62 | another revision, same weights |
+| LFM2.5-Embedding-350M | ANE **A** | 512 / 512 | query and document prefixes, retrieval only | 57.62 | 57.62 | another revision, same weights |
 <!-- /generated -->
 
 ### Self-reported scores
@@ -1543,20 +1563,20 @@ Rerankers, NLI models and the bespoke classifiers have no MTEB results.
 | model | grade (M1 Max) | max tokens | benchmark | category | metric | score | source | note |
 |---|---|---|---|---|---|---|---|---|
 | gte-modernbert-base | ANE **A**, onnx-cpu **A** | 512 | MTEB(eng, v1) (56 tasks, as the card's table labels it) | Mean (task) | mean of the tasks' main metrics | 64.38 | [model card](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/blob/e7f32e3c00f91d699e8c43b53106206bcc72bb22/README.md), read 2026-10-20 | |
-| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 | MTEB(eng, v2) (Mean(Task), 768 dimensions) | Mean (task) | mean of the tasks' main metrics | 68.46 | [model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md), read 2026-10-20 | Higher than the MTEB run of the same revision; the vendor's numbers use one instruction per task in bf16 |
-| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 | MTEB(Multilingual, v2) (Mean(Task), 768 dimensions) | Mean (task) | mean of the tasks' main metrics | 61.36 | [model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md), read 2026-10-20 | Higher than the MTEB run of the same revision; the vendor's numbers use one instruction per task in bf16 |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 | MTEB(eng, v2) (Mean(Task), 768 dimensions) | Mean (task) | mean of the tasks' main metrics | 68.46 | [model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md), read 2026-10-20 | Higher than the MTEB run of the same revision; the card doesn't say how it was measured |
+| embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 | MTEB(Multilingual, v2) (Mean(Task), 768 dimensions) | Mean (task) | mean of the tasks' main metrics | 61.36 | [model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md), read 2026-10-20 | Higher than the MTEB run of the same revision; the card doesn't say how it was measured |
 | LFM2.5-Embedding-350M | ANE **A** | 512 | NanoBEIR Multilingual Extended (LiquidAI/nanobeir-multilingual-extended, 11 languages, average) | Retrieval | ndcg_at_10 | 57.7 | [model card](https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M/blob/f35ae2c91d687658dbf1f2b449382f0b019b9808/README.md), read 2026-10-20 | |
 | nlptown-sentiment | ANE **B** | 512 | nlptown product reviews (5,000 held-out English reviews) | Sentiment (1–5 stars) | accuracy (exact stars) | 67 † | [model card](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment/blob/8f6f4e3a8f70be4b65d3a4a8762b6d781cda240d/README.md), read 2026-10-20 | Held out from the model's own review data. Off by at most one star: 95%. Dutch, German, French, Italian and Spanish: 57–61% exact |
 | laya-en | ANE **C** | 512 | MASSIVE (intent, English) | Intent | accuracy | 78.3 | [model card](https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md), read 2026-10-20 | |
-| laya-en | ANE **C** | 512 | XNLI (English) | NLI | accuracy | 86 | [model card](https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md), read 2026-10-20 | |
+| laya-en | ANE **C** | 512 | XNLI (English) | NLI | accuracy | 86.0 | [model card](https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md), read 2026-10-20 | |
 | laya-en | ANE **C** | 512 | typed-decisions (test split, 2,000 decisions) | Decisions | accuracy | 36.2 | [model card](https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md), read 2026-10-20 | Zero-shot; the card gives 0.318 for random and 0.461 for the majority class |
 | laya-typed-decisions | ANE **C** | 1,024 | typed-decisions (test split, 2,000 decisions) | Decisions | accuracy | 76.6 † | [model card](https://huggingface.co/convaiinnovations/laya-typed-decisions/blob/1a793eb568e6718f15941d08f85432581df534e3/README.md), read 2026-10-20 | Fine-tuned on the benchmark's own training split |
 | julia-1 | ANE **C** | 1,024 | typed-decisions (test split, 2,000 decisions) | Decisions | accuracy | 73.15 | [model card](https://huggingface.co/SupersonicLabs/Julia-1/blob/a85b127321d580d65176c89ced8273f305745d85/README.md), read 2026-10-20 | Measured in BF16 on an H200 |
 | gliner2.5-decide | GPU **A** | 512 | fast-decisions (17 domains, 300 held-out examples each, average) | Decisions | accuracy (exact match) | 60.2 | [model card](https://huggingface.co/fastino/GLiNER2.5-Decide/blob/5a7adf72a23b4d311abae6ce050d7f0012bb3416/README.md), read 2026-10-20 | |
 | lumma-fev-0.1b | ANE **B** | 2,048 | typed-decisions (as the card's comparison table reports it) | Decisions | accuracy | 49 | [model card](https://huggingface.co/FrontiersMind/Lumma-fev-0.1b/blob/085f4705aa860a6404d6cc3ff17de8a2969ac0f4/README.md), read 2026-10-20 | The card's table labels this checkpoint's column Lumma-Fev-0.15B |
-| agent-jev | GPU **A** | 2,048 | AgentJev coding completion (executed coding pairs, 1,048 cases) | Coding completion | accuracy | 57.8 | [model card](https://huggingface.co/aimeigaoshou/agent-jev/blob/0e2593e6e6c0eade0700712ac13c4389aa7654cc/README.md), read 2026-10-20 | AUROC 0.589 |
+| agent-jev | GPU **A** | 2,048 | AgentJev coding completion (executed coding pairs, 1,048 cases) | Coding completion | accuracy | 57.8 † | [model card](https://huggingface.co/aimeigaoshou/agent-jev/blob/0e2593e6e6c0eade0700712ac13c4389aa7654cc/README.md), read 2026-10-20 | Held out from the coding-completion data it was trained on. AUROC 0.589 |
 | ms-marco-minilm-l6-v2 | ANE **B** | 512 | MS MARCO Passage Reranking (dev set) | Reranking | mrr_at_10 | 39.01 † | [model card](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/README.md), read 2026-10-20 | Trained on the MS MARCO training set; dev is its held-out split |
-| ms-marco-minilm-l6-v2 | ANE **B** | 512 | TREC Deep Learning 2019 (passage reranking) | Reranking | ndcg_at_10 | 74.3 | [model card](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/README.md), read 2026-10-20 | |
+| ms-marco-minilm-l6-v2 | ANE **B** | 512 | TREC Deep Learning 2019 (passage reranking) | Reranking | ndcg_at_10 | 74.30 † | [model card](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/README.md), read 2026-10-20 | Trained on the MS MARCO training set; TREC DL 2019 ranks passages of the same corpus for held-out queries |
 | nli-MiniLM2-L6-H768 | GPU **A** | 512 | MultiNLI (mismatched validation set) | NLI | accuracy | 86.89 † | [documentation](https://github.com/UKPLab/sentence-transformers/blob/072b4abf0ec89f47c2368f0702359edd4802b27b/docs/cross_encoder/pretrained_models.md), read 2026-10-20 | From the Sentence Transformers documentation, which the model card points to; it doesn't name the checkpoint revision |
 | nli-deberta-v3-xsmall | GPU **B** | 512 | MultiNLI (mismatched validation set) | NLI | accuracy | 87.77 † | [model card](https://huggingface.co/cross-encoder/nli-deberta-v3-xsmall/blob/a150876415327c80daeff35ca6f68f5ed8cf5c24/README.md), read 2026-10-20 | |
 | nli-deberta-v3-xsmall | GPU **B** | 512 | SNLI (test set) | NLI | accuracy | 91.64 † | [model card](https://huggingface.co/cross-encoder/nli-deberta-v3-xsmall/blob/a150876415327c80daeff35ca6f68f5ed8cf5c24/README.md), read 2026-10-20 | |
