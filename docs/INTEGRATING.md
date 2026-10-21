@@ -305,7 +305,8 @@ or SGLang works unchanged. What a host needs to know beyond that:
   keyed by the listing's `nli_classes`. Three-way models give
   `entailment`, `neutral` and `contradiction`; the two-way zeroshot-v2.0
   models give `entailment` and `not_entailment`, and can't make that
-  distinction (D47).
+  distinction (D47). It needs sidekickd 0.15.0 or later, and a manifest
+  that names the model's classes.
 - **Over-length input.** A text-classification input longer than the
   model's maximum is a 400 unless you send `truncate_prompt_tokens` (`-1`
   truncates to the model's maximum). laya-format models (laya, Julia-1),

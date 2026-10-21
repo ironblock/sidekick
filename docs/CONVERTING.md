@@ -344,6 +344,17 @@ manifest's `compute_units`, not always for the ANE. A bucket whose plan was
 unreadable is left out. Daemons up to 0.5 ignore the table: their manifest
 structs don't deny unknown fields.
 
+**Convert for a matching daemon.** The installed manifest is the
+checkout's committed one, so it can carry keys only the matching daemon
+knows. Most manifest sections refuse unknown keys, and a daemon that
+meets one skips the whole model, with only a warning in its log: the
+model is missing from `/v1/models`. For example, the nli manifests'
+`[classify.nli] classes` (D47) needs sidekickd 0.15.0 or later. Convert
+with a checkout no newer than the daemon that will serve the model, or
+upgrade the daemon first. To enable a newer key on a model already
+installed, add the key to the installed manifest rather than copying the
+committed one over it, which would drop its `[placement]` table.
+
 ## Converters
 
 | converter | backbone | head | notes |

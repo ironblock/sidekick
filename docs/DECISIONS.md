@@ -2928,7 +2928,8 @@ land.
 drop neutral, so they can't tell a contradicted label from an
 unmentioned one. D47 adds an opt-in `nli_probs`, each pair's softmax
 over the model's own classes, named by a new optional `[classify.nli]
-classes`. The scores and every default are unchanged.
+classes` (sidekickd 0.15.0 or later). The scores and every default are
+unchanged.
 
 ## D42 — AVX-512 for ONNX Runtime on Intel Macs
 ONNX Runtime's CPU kernels (MLAS) are chosen once per process, on the
@@ -3510,8 +3511,9 @@ format:
   output isn't a contradiction but not_entailment; naming every output
   says what each one is without inferring it. The registry checks the
   list against `n_classes`, that its names are distinct and nonempty,
-  and that `entailment` points at an entailment class, so a list in the
-  wrong order is refused. The converter and the reference generator
+  that `entailment` points at an entailment class, and that
+  `contradiction` points at `contradiction` or `not_entailment`, so a
+  list in the wrong order is refused. The converter and the reference generator
   check it against the checkpoint's config. `/v1/models` lists it as
   `nli_classes`, and lists `nli_probs` in `extensions` exactly when it is
   present.
@@ -3529,14 +3531,31 @@ The first six are three-way. The zeroshot-v2.0 models are two-way and
 can't separate contradicted from unmentioned: their `nli_probs` says so
 by its keys.
 
-**Compatibility.** `classes` is optional, so a manifest installed before
-this release still loads. Such a model doesn't list `nli_probs`, and a
-request for it is a 400 naming the missing key. Copying the current
-example manifest over the installed one adds it; the artifacts don't
-change, and parity references stay current (they record only the
-indices, count and template). `[classify.nli]` refuses unknown keys, so
-a daemon before this release skips a manifest that has `classes`, with
-a warning (D28).
+**Compatibility.** `classes` needs sidekickd 0.15.0 or later; older
+daemons skip the model. `[classify.nli]` refuses unknown keys, so a
+daemon before 0.15.0 given a manifest with `classes` drops the whole
+model (D28): it is missing from `/v1/models`, and the only signal is a
+warning in the log. Nothing writes `classes` into an installed manifest
+except a conversion: converters install the committed example manifest,
+so a conversion from a checkout with this change needs a daemon of
+0.15.0 or later to serve it (docs/CONVERTING.md says so).
+
+The other direction is safe. `classes` is optional, so a manifest
+installed before 0.15.0 still loads on it. Such a model doesn't list
+`nli_probs`, and a request for it is a 400 naming the missing key. To
+enable it, add the model's single `classes = [...]` line under
+`[classify.nli]` in the installed manifest (each model's line is in
+docs/design/classify.md). Don't copy the example manifest over it: an
+installed manifest carries the `[placement]` table its conversion
+recorded, which the example lacks. The artifacts don't change, and
+parity references stay current (they record only the indices, count
+and template).
+
+*Proposed, not implemented here:* an unknown key that only adds
+information, as `classes` does, should produce a warning rather than
+skip the model, so that a new manifest degrades on an older daemon
+instead of disappearing. That needs a rule for which keys are additive
+and is left to its own issue.
 
 **Validation.** Unit tests check the softmax per pair (sums to 1, equal
 to the softmax of the logits, keys in output order), the per-label
@@ -3551,7 +3570,9 @@ daemon, on nli-minilm2-l6-h768, deberta-v3-base-zeroshot-v2.0-c and
 roberta-large-mnli (on the GPU, as served; 9 pairs each, requested with
 and without `multi_label`): `probs` identical with and without the
 field, `nli_probs` within 1.8e-3 of fp32 torch's softmax, and the same
-argmax on every pair.
+argmax on every pair. A side-by-side review on four installed nli
+models found 1,296 requests identical to the previous release's once
+`nli_probs` was removed.
 
 ## Hardware verification status
 

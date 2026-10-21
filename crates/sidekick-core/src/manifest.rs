@@ -674,6 +674,16 @@ fn check_nli_classes(classes: &[String], nli: &NliSection) -> std::result::Resul
             nli.entailment, classes[nli.entailment]
         ));
     }
+    // What a lone label is weighed against: an MNLI model's contradiction,
+    // or a two-way model's not_entailment.
+    let against = classes[nli.contradiction].to_lowercase();
+    if against != "contradiction" && against != "not_entailment" {
+        return Err(format!(
+            "`[classify.nli] classes` names output {} `{}`, but `contradiction` points there; \
+             it must be `contradiction` or `not_entailment`",
+            nli.contradiction, classes[nli.contradiction]
+        ));
+    }
     Ok(())
 }
 
@@ -2118,6 +2128,8 @@ output = "logits"
             ("classes-blank", with_classes(r#"["contradiction", "entailment", " "]"#), "nonempty"),
             ("classes-repeat", with_classes(r#"["contradiction", "entailment", "entailment"]"#), "distinct"),
             ("classes-order", with_classes(r#"["entailment", "contradiction", "neutral"]"#), "output 1 `contradiction`"),
+            ("classes-against", with_classes(r#"["neutral", "entailment", "contradiction"]"#), "output 0 `neutral`, but `contradiction`"),
+            ("classes-unnamed", with_classes(r#"["label_0", "entailment", "label_2"]"#), "must be `contradiction` or `not_entailment`"),
             ("marker-io", NLI.replace("output = ", "marker_pos = \"m\"\noutput = "), "token_type_ids and output only"),
             ("multi-label", NLI.replace("max_batch = 8", "max_batch = 8\nproblem_type = \"multi_label\""), "`multi_label`"),
             ("calibration", format!("{NLI}\n[classify.calibration]\n\"choice:2\" = 1.0\n"), "isn't supported by the nli"),

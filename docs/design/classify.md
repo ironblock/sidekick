@@ -42,7 +42,7 @@ POST /v1/classify
 | `instructions` (str) | extension, laya, gliner2, fev and agentjev formats | laya: the question text, with the manifest's per-type default when absent; required by a model whose manifest has none (Julia-1). gliner2: the task prompt (below), with the manifest's default when absent. fev: the question text; absent, the question is empty, as fev's own API sends it. agentjev: the question text, required and nonempty, as AgentJev's API requires |
 | `multi_label` (bool, default false) | extension (HF zero-shot's name), gliner2 and nli formats | `true` (gliner2 and nli only; a 400 elsewhere) scores each label independently: `probs` are per-label sigmoids instead of a softmax, and one candidate label is allowed. `false`, the default, is accepted on every model, as Hugging Face clients send it |
 | `hypothesis_template` (str) | extension (HF zero-shot's name), nli format | the hypothesis each label is put into, with exactly one `{}` for the label and no other brace; the manifest's when absent (Hugging Face's default, `This example is {}.`, unless the manifest says otherwise) |
-| `nli_probs` (bool, default false) | extension, nli format | `true` adds `nli_probs` to each result: per candidate label, the pair's softmax over the model's own classes (`entailment`, `neutral`, `contradiction`, or a two-way model's `entailment`, `not_entailment`), keyed by class name; see [The nli format](#the-nli-format). `probs` and `label` are unchanged. A 400 on other formats, and on an nli model whose manifest names no `classes`; `false` is accepted on every model |
+| `nli_probs` (bool, default false) | extension, nli format (sidekickd 0.15.0 or later) | `true` adds `nli_probs` to each result: per candidate label, the pair's softmax over the model's own classes (`entailment`, `neutral`, `contradiction`, or a two-way model's `entailment`, `not_entailment`), keyed by class name; see [The nli format](#the-nli-format). `probs` and `label` are unchanged. A 400 on other formats, and on an nli model whose manifest names no `classes`; `false` is accepted on every model |
 
 Any other top-level field is ignored, as D22 already does. Extension fields
 unsupported by the model's task are a 400.
@@ -958,19 +958,24 @@ never mentions can score alike. A request that sends `nli_probs: true`
 also gets each pair's full distribution (D47):
 
 ```json
-{"model": "nli-deberta-v3-base", "input": "All 214 tests passed in 3.2 seconds.",
- "candidate_labels": ["the build passed", "some tests failed", "the docs were updated"],
+{"model": "nli-deberta-v3-base", "input": "The config sets port 8080 and enables TLS.",
+ "candidate_labels": ["the port is 8080", "the port is 9090", "the server logs to a file"],
  "hypothesis_template": "{}.", "nli_probs": true}
 ```
 
+Measured on nli-deberta-v3-base, rounded:
+
 ```json
-{"index": 0, "label": "the build passed", "probs": [0.93, 0.01, 0.06], "num_classes": 3,
- "nli_probs": [{"contradiction": 0.01, "entailment": 0.95, "neutral": 0.04},
-               {"contradiction": 0.97, "entailment": 0.01, "neutral": 0.02},
-               {"contradiction": 0.05, "entailment": 0.08, "neutral": 0.87}]}
+{"index": 0, "label": "the port is 8080", "probs": [0.9995, 0.0003, 0.0002], "num_classes": 3,
+ "nli_probs": [{"contradiction": 0.0001, "entailment": 0.9968, "neutral": 0.0031},
+               {"contradiction": 0.9999, "entailment": 0.0000, "neutral": 0.0001},
+               {"contradiction": 0.0010, "entailment": 0.0001, "neutral": 0.9990}]}
 ```
 
-(values illustrative)
+nli-minilm2-l6-h768 and roberta-large-mnli favor the same class for each
+label. Asked about only the last two labels, the default `probs` is
+`[0.55, 0.45]`: it can't tell the contradicted label from the
+unmentioned one.
 - One object per candidate label, in `probs` order; one result per input,
   as always. Each object is the softmax over that pair's logits, keyed by
   the manifest's `classes` in output order, so its values sum to 1.
@@ -988,10 +993,29 @@ also gets each pair's full distribution (D47):
   same logits, so it is unchanged by the field.
 
 `classes` is config.json's `id2label`, lowercased, which the converter
-checks against the checkpoint. It's optional so that manifests written
-before it still load; such a model doesn't list `nli_probs` among its
-`extensions` and answers it with a 400. Copying the current example
-manifest over the installed one adds it; the artifacts don't change.
+checks against the checkpoint. The registry also checks that
+`entailment` points at an entailment class and `contradiction` at
+`contradiction` or `not_entailment`.
+
+**Versions.** `classes` needs sidekickd 0.15.0 or later. `[classify.nli]`
+refuses unknown keys, so an older daemon skips a manifest that has it:
+the model is missing from `/v1/models`, with only a warning in the log.
+The key is optional, so manifests installed before it still load on
+0.15.0. Such a model doesn't list `nli_probs` among its `extensions` and
+answers it with a 400.
+
+**Enabling `nli_probs` on an installed model.** Add the model's one line
+under `[classify.nli]` in its installed `classifier.toml`; the artifacts
+don't change and nothing needs reconverting. Don't copy the example
+manifest over the installed one: the installed file carries a
+`[placement]` table the converter recorded on your machine, which the
+example lacks.
+
+| model | line to add under `[classify.nli]` |
+|---|---|
+| nli-deberta-v3-xsmall, nli-deberta-v3-small, nli-deberta-v3-base, nli-minilm2-l6-h768, nli-minilm2-l6-h768-ane | `classes = ["contradiction", "entailment", "neutral"]` |
+| roberta-large-mnli | `classes = ["contradiction", "neutral", "entailment"]` |
+| deberta-v3-base-zeroshot-v2.0-c, deberta-v3-large-zeroshot-v2.0-c, roberta-large-zeroshot-v2.0-c, bge-m3-zeroshot-v2.0-c, modernbert-large-zeroshot-v2.0 | `classes = ["entailment", "not_entailment"]` |
 
 ## Fixtures and references (frozen formats)
 
