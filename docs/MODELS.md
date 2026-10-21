@@ -344,7 +344,8 @@ the median per input, ANE (CPU).
     cosine 0.999986, which rounds to the 0.99999 above, as on the M1 Max)
     and A on the GPU (0.999997).
   - The unchunked program compiled for fp32 is healthy on the CPU, and so
-    is onnx-cpu there: A, 29 ms per input with ONNX Runtime's SME kernels.
+    is onnx-cpu there: A, 26 ms per input at 4 threads, with ONNX
+    Runtime's SME kernels (see [onnx-cpu](#onnx-runtime-on-the-cpu-onnx-cpu)).
   - On the M1 Max under macOS 27.0, the CPU path is healthy (B above).
   - sidekick refuses an all-zero embedding rather than serve it, so a
     `cpu_only` override on such a machine fails loudly. Serve this model
@@ -502,25 +503,25 @@ grades it as the `onnx-cpu` path.
 ### Accuracy
 
 Graded natively on the shipped runtimes, 51-case corpus: ONNX Runtime
-1.28.3 on an Apple M1 Max (macOS, arm64), an AMD Ryzen 7 5800X and an AMD
-Threadripper 3970X (Linux, x86-64), and 1.23.2 on an Intel Xeon W-3235
-(macOS, x86-64), there with ONNX Runtime's AVX-512 kernels (D42).
+1.28.3 on an Apple M1 Max and an Apple M4 Max (macOS, arm64), an AMD
+Ryzen 7 5800X and an AMD Threadripper 3970X (Linux, x86-64), and 1.23.2
+on an Intel Xeon W-3235 (macOS, x86-64), there with ONNX Runtime's AVX-512 kernels (D42).
 onnx-cpu cells give 1 − the worst-case cosine; the
 Threadripper's grades match the Ryzen's bit for bit, so they share a
 column. The Core ML columns are the Apple paths from the table above.
 
 <!-- generated: onnx-accuracy -->
-| model | onnx-cpu, M1 Max | onnx-cpu, Ryzen 7 5800X and Threadripper 3970X | onnx-cpu, Xeon W-3235 | Core ML CPU | Core ML GPU | Core ML ANE |
-|---|---|---|---|---|---|---|
-| all-MiniLM-L6-v2 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99992 | A 0.999998 | A 0.99992 |
-| bge-small-en-v1.5 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99993 | A 0.999999 | A 0.99997 |
-| gte-modernbert-base | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | B 0.99951 | A 0.99999 | A 0.99992 |
-| embeddinggemma-300m | **A** 1 − 3e-12 | **A** 1 − 3e-12 | **A** 1 − 3e-12 | B 0.99989 | A 0.999998 | A 0.99999 |
-| embeddinggemma-2 | **A** 1 − 2e-12 | | **A** 1 − 1e-12 | F 0.99993 | A 0.9999993 | A 0.999995 |
-| F2LLM-v2-160M | **A** 1 − 5e-12 | **A** 1 − 4e-12 | **A** 1 − 4e-12 | B 0.99986 | A 0.999999 | A 0.99999 |
-| Qwen3-Embedding-0.6B | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | B 0.99968 | A 0.999997 | A 0.99999 |
-| Qwen3-Embedding-0.6B, fp16 weights | **A** 1 − 2e-11 | | **A** 1 − 2e-11 | | | |
-| Qwen3-Embedding-0.6B, int8 | **D** 0.406 | | **D** 0.404 | | | |
+| model | onnx-cpu, M1 Max | onnx-cpu, M4 Max | onnx-cpu, Ryzen 7 5800X and Threadripper 3970X | onnx-cpu, Xeon W-3235 | Core ML CPU | Core ML GPU | Core ML ANE |
+|---|---|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99992 | A 0.999998 | A 0.99992 |
+| bge-small-en-v1.5 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | A 0.99993 | A 0.999999 | A 0.99997 |
+| gte-modernbert-base | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | B 0.99951 | A 0.99999 | A 0.99992 |
+| embeddinggemma-300m | **A** 1 − 3e-12 | **A** 1 − 2e-12 | **A** 1 − 3e-12 | **A** 1 − 3e-12 | B 0.99989 | A 0.999998 | A 0.99999 |
+| embeddinggemma-2 | **A** 1 − 2e-12 | **A** 1 − 2e-12 | | **A** 1 − 1e-12 | F 0.99993 | A 0.9999993 | A 0.999995 |
+| F2LLM-v2-160M | **A** 1 − 5e-12 | **A** 1 − 4e-12 | **A** 1 − 4e-12 | **A** 1 − 4e-12 | B 0.99986 | A 0.999999 | A 0.99999 |
+| Qwen3-Embedding-0.6B | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | **A** 1 − 2e-11 | B 0.99968 | A 0.999997 | A 0.99999 |
+| Qwen3-Embedding-0.6B, fp16 weights | **A** 1 − 2e-11 | **A** 1 − 2e-11 | | **A** 1 − 2e-11 | | | |
+| Qwen3-Embedding-0.6B, int8 | **D** 0.406 | | | **D** 0.404 | | | |
 <!-- /generated -->
 
 - onnx-cpu is fp32, so it reproduces the reference to rounding: no rank
@@ -555,9 +556,17 @@ column. The Core ML columns are the Apple paths from the table above.
   the main corpus at 4 threads, like the other M1 Max rows (the vectors
   are bit-identical at 8). That corpus's 700-token over-length cases are
   no longer truncated for this build, so truncation is covered by the
-  long corpus's 4,284-token case. The other chips' rows, and the
-  fp16-weight and int8 rows, were graded on the 512-token build (the same
-  graph). [Long inputs](#long-inputs) gives its cost at length.
+  long corpus's 4,284-token case. The M4 Max's rows, fp32 and fp16
+  weights, are the 4,096-token build too, and both also grade A on the
+  long-input corpus there (1 − cosine at most 1.3e-11 and 1.2e-11). The
+  other chips' rows, and the M1 Max's fp16-weight and int8 rows, were
+  graded on the 512-token build (the same graph). [Long
+  inputs](#long-inputs) gives its cost at length.
+- **On the M4 Max (macOS 26.5.2)** every exported embedder grades A, as
+  on the other chips: all seven fp32 builds, with no rank flips, and
+  EmbeddingGemma-2 also grades A on the long-input corpus (cases up to its
+  2,048-token cap). Graded at 4 threads on a machine that wasn't idle, so
+  its timings are provisional.
 
 Published ONNX exports, graded the same way: bge-small-en-v1.5's and
 gte-modernbert-base's fp32 exports match their checkpoints exactly
@@ -607,7 +616,7 @@ length in the smallest bucket that fits it, padded. ms per input:
   physical cores elsewhere, never SMT siblings), capped at 8 unless a model
   asks for more (D40).
   Fewer threads leave room for a primary model on the same machine, at a
-  cost. Median ms for one long input by intra-op threads, on four
+  cost. Median ms for one long input by intra-op threads, on five
   machines, measured through sidekickd's HTTP API by
   `tools/bench_threads.py`:
 
@@ -617,6 +626,7 @@ length in the smallest bucket that fits it, padded. ms per input:
   | M1 Max (8P + 2E), gte-modernbert-base | 580 | 320 | 169 | 119 | 103 | 239 | | | | |
   | M1 Max, embeddinggemma-300m | 547 | 291 | 158 | 113 | 104 | 235 | | | | |
   | M1 Max, Qwen3-Embedding-0.6B | 2,125 | 1,114 | 584 | 427 | 358 | 638 | | | | |
+  | M4 Max (12P + 4E), Qwen3-Embedding-0.6B | 208 | 124 | 142 | | 140 | | 132 | 213 | | |
   | Ryzen 7 5800X (8 cores, 16 threads), gte-modernbert-base | 514 | 267 | 144 | 104 | 85 | | 101 | 87 | | |
   | Ryzen 7 5800X, embeddinggemma-300m | 476 | 256 | 140 | 99 | 83 | | 100 | 86 | | |
   | Ryzen 7 5800X, Qwen3-Embedding-0.6B | 1,861 | 947 | 501 | 358 | 277 | | 370 | 298 | | |
@@ -631,22 +641,57 @@ length in the smallest bucket that fits it, padded. ms per input:
   Every row is sidekickd's onnx-cpu path through the HTTP API
   (`/v1/embeddings`, one request at a time, the median of 15) on a
   1,160-byte input, about 290 tokens by sidekickd's estimate of four bytes
-  per token. The M1 Max (macOS 27.0) and the Ryzen 5800X and Threadripper
-  3970X (Linux, load average under 6) ran ONNX Runtime 1.28.3; the Xeon
-  W-3235 (macOS, otherwise idle) ran 1.23.2 with its AVX-512 kernels
-  (D42). Without them, the Xeon was 1.2–1.7× slower at every setting up
+  per token. The M1 Max (macOS 27.0), the M4 Max (macOS 26.5.2) and the
+  Ryzen 5800X and Threadripper 3970X (Linux, load average under 6) ran
+  ONNX Runtime 1.28.3; the Xeon W-3235 (macOS, otherwise idle) ran 1.23.2
+  with its AVX-512 kernels (D42). Without them, the Xeon was 1.2–1.7× slower at every setting up
   to 12 threads. On the M1 Max the load average
   read 20–70 throughout, inflated by another user session's waiting threads
   while the CPU stayed about 80% idle; re-running 6, 8 and 10 threads
-  reproduced the numbers to within 7%.
+  reproduced the numbers to within 7%. The M4 Max wasn't idle either
+  (load average 9–12 during its run), so its row is provisional.
 
-  Latency roughly halves with each doubling up to 4–8 threads, then
-  flattens, even with 32 cores. Simultaneous multithreading adds nothing,
-  and more threads than fast cores make it worse: on the M1 Max, 10 threads
+  Except on the M4 Max (below), latency roughly halves with each doubling
+  up to 4–8 threads, then flattens, even with 32 cores. Simultaneous
+  multithreading adds nothing, and more threads than fast cores make it worse: on the M1 Max, 10 threads
   (adding its two efficiency cores, ONNX Runtime's own default) is twice as
   slow as 8, and the Xeon at 24 threads is 2.5–3.4× slower. Only a model as large as
   Qwen3-Embedding keeps gaining past 8 threads on a machine with more fast
   cores (Threadripper: 277 ms at 16 threads against 335 at 8).
+- **SME on the M4 Max.** The M4's CPU has SME2, and on it ONNX Runtime
+  1.28.3 ran onnx-cpu's fp32 matrix multiplies on KleidiAI's SME2 kernels
+  rather than its own MLAS kernels. In a 10 s `sample` of sidekickd serving
+  Qwen3-Embedding-0.6B a stream of long documents (about 2,400 tokens
+  each), KleidiAI's SME2 fp32 matmul kernel
+  (`kai_run_matmul_clamp_f32_f32p2vlx1_f32p2vlx1biasf32_sme2_mopa`) took
+  about 47% of the samples in ONNX Runtime's library, KleidiAI's SME
+  packing kernels ran beside it, and no MLAS frame appeared in the whole
+  capture. One thread through sidekickd embeds the ~290-token input above
+  in 208 ms, against 2,125 ms on the M1 Max.
+- **Threads on the M4 Max** don't follow the other machines' pattern.
+  Median ms through sidekickd, short (16 tokens) / long (~290 tokens), the
+  same method as the table above:
+
+  | model | 1 | 2 | 4 | 8 | 12 | 16 |
+  |---|---|---|---|---|---|---|
+  | Qwen3-Embedding-0.6B | 36.1 / 208 | 22.7 / **124** | 20.4 / 142 | **17.1** / 140 | 21.3 / 132 | 30.3 / 213 |
+  | bge-small-en-v1.5 | 3.7 / 25.6 | 3.0 / 16.2 | 2.6 / 13.0 | **2.6** / **10.1** | 3.2 / 12.5 | 5.9 / 23.0 |
+
+  - Qwen3-Embedding's long input was fastest at 2 threads, 6–15% ahead of
+    4, 8 and 12. A second run reproduced that (128 ms at 2, 154–217 at
+    4–12). Its short input was fastest at 8.
+  - bge-small-en-v1.5 was fastest at 8 threads at both lengths, like the
+    M1 Max's best.
+  - 16 threads, which adds the four efficiency cores, was the slowest
+    multi-threaded setting for both models.
+  - sidekickd's default there is 12 threads for Qwen3-Embedding (its 12
+    performance cores, under the model's raised cap) and 8 for the
+    others. In this run 12 threads were 6% slower than the best on the
+    long input and 25% on the short one.
+  - The machine wasn't idle: load average 9–12 during this run, and 10–24
+    during the second, whose settings above 2 threads were slower. Treat
+    these timings as provisional, and measure on your own machine
+    (`tools/bench_threads.py`) before choosing a thread count there.
 - Batching helps little on the CPU: a batch of 8 costs 0.9–1.0× per input
   at 256 tokens and 0.6–0.8× at 16.
 - x86-64 latency is from the thread table only.
@@ -827,6 +872,10 @@ What a long input costs:
   flattens. Qwen3-Embedding's manifest raises its cap to 16 (`[onnx]
   default_intra_op_threads`), which pays only on machines with more than 8
   fast cores (Threadripper 3970X: 277 ms at 16 threads against 335 at 8).
+  On an M4 Max the fastest count depended on the model and the input's
+  length (2 threads for Qwen3-Embedding's long inputs, 8 for its short
+  ones and for bge-small-en-v1.5; see Latency): measure there with
+  `tools/bench_threads.py`.
 - **Qwen3-Embedding-0.6B on onnx-cpu:** serve fp32 (or fp16 weights to
   halve the disk). Don't use int8 on ONNX Runtime. On Apple silicon its
   chunked Core ML build (D37) serves on the ANE instead, up to 512 tokens.
