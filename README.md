@@ -210,7 +210,9 @@ Another name is a 400 that lists the model's, and so is a request that
 sends `prompt_name` with any `input_type`, `"none"` included. On
 `/v2/embed`, whose Cohere clients always send `input_type`, a
 `prompt_name` overrides Cohere's names (`search_query`,
-`search_document`, `classification`, `clustering`). A named prompt is
+`search_document`, `classification`, `clustering`), and `/tokenize`
+does the same, so a `/v2/embed` request's fields count as it embeds.
+`/v1/embeddings` doesn't take Cohere's names. A named prompt is
 sidekick's, so `truncate: "START"` keeps it whole.
 Qwen3-Embedding and F2LLM take a free-text instruction per task instead:
 send it with `input_type: "none"`, in the model's format

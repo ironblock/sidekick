@@ -129,7 +129,15 @@ async fn a_name_with_an_input_type_or_not_the_models_is_refused() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert!(message(&body).starts_with("send input_type or prompt_name, not both"), "{body}");
     }
-    // /v1/embeddings doesn't take Cohere's names, so they conflict too.
+    // An input_type the route doesn't take is refused as such, name or not.
+    for route in ["/v1/embeddings", "/v2/embed", "/tokenize"] {
+        let body = json!({"model": "named", "input": "hello", "texts": ["hello"], "prompt": "hello",
+                          "input_type": "bogus", "prompt_name": "STS"});
+        let (status, body) = post(&state, route, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{route}: {body}");
+        assert!(message(&body).starts_with("unsupported input_type `bogus`"), "{route}: {body}");
+    }
+    // /v1/embeddings doesn't take Cohere's names, so they're refused too.
     let body = json!({"model": "named", "input": "hello", "input_type": "search_query", "prompt_name": "STS"});
     assert_eq!(post(&state, "/v1/embeddings", body).await.0, StatusCode::BAD_REQUEST);
     // /v2/embed and /tokenize: sidekick's own names conflict.

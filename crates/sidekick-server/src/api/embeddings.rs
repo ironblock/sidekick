@@ -161,6 +161,8 @@ pub(super) fn prompt(
         return Ok(Prompt { by_type: parse(input_type)?, name: None });
     };
     if let Some(t) = input_type.filter(|t| !overridden.contains(t)) {
+        // A value the route doesn't take is refused as such first.
+        parse(input_type)?;
         let overrides = if overridden.is_empty() {
             String::new()
         } else {
