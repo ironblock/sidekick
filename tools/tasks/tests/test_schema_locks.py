@@ -174,7 +174,8 @@ class Claims(unittest.TestCase):
 
 
 def current_set() -> str:
-    return f"review-{load('corpus.toml').get('batch', 2)}"
+    corpus = load('corpus.toml')
+    return corpus.get('set', f"review-{corpus.get('batch', 2)}")
 
 
 def derived_nm_kind(t: dict) -> str:
@@ -198,10 +199,14 @@ class SetLock(unittest.TestCase):
         self.assertEqual(lock["source_commit"], "3c59ef7561eeadacac3a2d479bdae08450c537cf")
 
     def test_a_historical_set_says_how_to_regenerate_it(self):
-        with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit) as ctx:
-            gen.main(["--set", "review", "--out", d, "--check"])
-        self.assertEqual(str(ctx.exception),
-                         "review: historical set, validated at 3c59ef7; check out that commit to regenerate")
+        for name, commit in (("review", "3c59ef7"), ("review-3", "81576f9")):
+            with self.subTest(set=name), tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit) as ctx:
+                gen.main(["--set", name, "--out", d, "--check"])
+            self.assertEqual(str(ctx.exception),
+                             f"{name}: historical set, validated at {commit}; check out that commit to regenerate")
+        lock = canon.read_json(FIX / "verification-review-3.lock.json")
+        schema.validate(lock, "lock")
+        self.assertEqual(lock["set_sha256"], "6c93d2fc76fe4b5600172a9b7d6f097bcfce326bf85517c843ec1541fd1f8469")
 
     def test_review_lock_is_consistent(self):
         lock = canon.read_json(FIX / f"verification-{current_set()}.lock.json")

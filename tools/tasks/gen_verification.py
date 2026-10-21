@@ -242,7 +242,13 @@ def block_body(text: str) -> str:
 
 def split3(s: str, c: str, nm: str) -> list:
     """Split three versions of a block into fixed text and slots, by lines:
-    each slot is a maximal run where any variant differs from s."""
+    each slot is a maximal run where any variant differs from s. When NOT
+    MENTIONED drops the whole block, the block is still cut where s and c
+    differ, so each of CONTRADICTED's edits keeps a slot of its own (a
+    two-slot mechanism needs its winner and loser apart)."""
+    if s and not nm and c != s:
+        return [{"s": p, "c": p, "nm": ""} if isinstance(p, str) else {**p, "nm": ""}
+                for p in split3(s, c, s)]
     sl, cl, nl = (x.splitlines(keepends=True) for x in (s, c, nm))
     ops = {k: difflib.SequenceMatcher(None, sl, other, autojunk=False).get_opcodes()
            for k, other in (("c", cl), ("nm", nl))}
@@ -567,12 +573,18 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
     # Render into tagged pieces: (item index, str | slot).
     pieces, layout, slot_roles, bodies_spec = [], [], [], []
     emptied = False  # a call NOT MENTIONED keeps with no output and a nonzero exit
+    closed_world = False  # a whole file view kept with the key removed (only by declaration)
     for n, ((kind, p), call) in enumerate(zip(order, calls)):
         if kind in ("needle", "repeat"):
             spec = specs[p]
             texts = {v: block_text(spec, v, caps, call) for v in VARIANTS}
             if "capture" in spec and texts["nm"] and texts["s"]:
                 emptied |= nm_emptied_call(texts["s"], texts["nm"])
+                if caps[spec["capture"]]["kind"] in FILE_VIEW_KINDS and texts["nm"] != texts["s"]:
+                    if not spec.get("nm_closed_world"):
+                        raise Refusal(f"{claim['id']}: NOT MENTIONED shows {spec['capture']} whole with the claimed "
+                                      "key removed, so its absence reads as a contradiction; drop the file view")
+                    closed_world = True
             texts = {v: (t + "\n" if t else "") for v, t in texts.items()}
             for piece in split3(texts["s"], texts["c"], texts["nm"]):
                 if isinstance(piece, dict):
@@ -686,19 +698,28 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
 
     # Every `[call cN]` pointer, in the claim and in each variant's notes,
     # resolves to a call that variant shows, running the pointed capture.
-    # (The claim's own pointer must resolve in SUPPORTED and CONTRADICTED.)
+    # (The claim's own pointer must resolve in SUPPORTED and CONTRADICTED.) A
+    # note comes after the call it cites, as a note written about a call does.
     pointed = {s["call"]: caps[s["capture"]]["cmd"] for s in specs if "call" in s and "capture" in s}
     for v in VARIANTS:
         text = ev[v].text
-        refs = set(POINTER_RE.findall("".join(text[a:b] for a, b, _ in ev[v].slots)))
+        refs = {}
+        for a, b, _ in ev[v].slots:
+            for pm in POINTER_RE.finditer(text, a, b):
+                if text[pm.end():pm.end() + 3] != " $ ":  # a pointer, not a call's own header
+                    refs.setdefault(pm.group(1), pm.start())
         if v in ("s", "c"):
-            refs |= set(POINTER_RE.findall(claim["text"]))
-        for ref in sorted(refs):
+            for ref in POINTER_RE.findall(claim["text"]):
+                refs.setdefault(ref, None)
+        for ref, note_at in sorted(refs.items(), key=lambda kv: kv[0]):
             m = re.search(r"^\[call " + re.escape(ref) + r"\] \$ (.*)$", text, re.M)
             if not m:
                 raise Refusal(f"{claim['id']}: {v}: [call {ref}] is pointed to but not in the haystack")
             if ref in pointed and m.group(1) != pointed[ref]:
                 raise Refusal(f"{claim['id']}: {v}: [call {ref}] runs {m.group(1)!r}, not the pointed capture")
+            if note_at is not None and m.start() > note_at:
+                raise Refusal(f"{claim['id']}: {v}: a note points forward to [call {ref}]; "
+                              "a note must follow the call it cites")
 
     problems = hazards.check(claim, ev, slot_roles)
     if problems:
@@ -722,7 +743,8 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
         "haystack_kind": caps[first]["kind"] if first else "notes",
         "worked": bool(claim.get("worked")),
         "position_at": round(at, 3),
-        "nm_kind": "empty-output-nonzero-exit" if emptied else "removed",
+        "nm_kind": ("closed-world-absence" if closed_world else
+                    "empty-output-nonzero-exit" if emptied else "removed"),
         "tokens": {v: canon.approx_tokens(ev[v].text) for v in VARIANTS},
         "length_unit": canon.LENGTH_UNIT,
         "segments": segments,
@@ -830,7 +852,7 @@ def generate(captures: Path, out: Path, set_name: str, claims_path: Path, corpus
         corpus["filler"]["exclude_worlds"] = list(corpus["filler"].get("exclude_worlds", [])) + no_filler
     claims = load_claims(claims_path, corpus["max_per_shape"], corpus.get("max_per_fact", 2))
     caps = load_captures(captures, captures_lock)
-    if not re.fullmatch(r"review(-\d+)?", set_name):
+    if not re.fullmatch(r"review(-\d+[a-z]?)?", set_name):
         raise SystemExit(f"unknown set {set_name!r}")
     triples, pending, refused = [], [], []
     for claim, cfg in review_plan(claims, corpus):
@@ -905,7 +927,8 @@ def line_of(text: str, offset: int) -> int:
 def export_review(triples: list[dict], out: Path, set_name: str) -> None:
     d = out / "review"
     d.mkdir(parents=True, exist_ok=True)
-    for old in [*d.glob("[0-9][0-9][0-9]-*.md"), d / f"{set_name}.md", d / f"{set_name}.jsonl"]:
+    for old in [*d.glob(f"{set_name}-[0-9][0-9][0-9]-*.md"), d / f"{set_name}.md", d / f"{set_name}.jsonl",
+                d / f"{set_name}-compact.md"]:
         old.unlink(missing_ok=True)  # a previous export's files
     index = [f"# Verification triples for review: `{set_name}`\n",
              "Each triple is one claim and three haystacks (SUPPORTED, CONTRADICTED, NOT MENTIONED) that are "
@@ -914,7 +937,7 @@ def export_review(triples: list[dict], out: Path, set_name: str) -> None:
              "|---|---|---|---|---|---|---|---|---|---|---|"]
     rows = []
     for n, t in enumerate(sorted(triples, key=lambda t: (not t["worked"], t["claim"]["type"], t["id"])), 1):
-        name = f"{n:03d}-{t['id']}.md"
+        name = f"{set_name}-{n:03d}-{t['id']}.md"
         index.append(f"| {n} | [{t['id']}]({name}) | {t['claim']['type']} | {t['claim']['mechanism']} | "
                      f"{', '.join(t['obstacles']) or '-'} | {t['edit']} | {t['nm_kind']} | {t['config']['length']} | "
                      f"{t['config']['position']} | {t['tokens']['s']} | {t['split']} |")
@@ -943,12 +966,13 @@ def export_review(triples: list[dict], out: Path, set_name: str) -> None:
         for v in VARIANTS:
             md += ["", f"## Haystack: {GOLD[v]} ({v})\n", "~~~~text", texts[v].rstrip("\n"), "~~~~"]
         (d / name).write_text("\n".join(md) + "\n", encoding="utf-8")
-        rows.append({"id": t["id"], "claim": t["claim"], "config": t["config"], "obstacles": t["obstacles"],
+        rows.append({"n": n, "id": t["id"], "claim": t["claim"], "config": t["config"], "obstacles": t["obstacles"],
                      "edit": t["edit"], "nm_kind": t["nm_kind"], "position_at": t["position_at"],
                      "gold": t["gold"], "evidence": texts, "slots": t["slots"], "layout": t["layout"]})
     (d / f"{set_name}.md").write_text("\n".join(index) + "\n", encoding="utf-8")
-    canon.write_jsonl(d / f"{set_name}.jsonl", rows)
-    export_compact(triples, d / "review-compact.md", set_name)
+    # In triple-number order (the index's), each row canonical.
+    (d / f"{set_name}.jsonl").write_text("".join(canon.canonical_line(r) for r in rows), encoding="utf-8")
+    export_compact(triples, d / f"{set_name}-compact.md", set_name)
 
 
 def _fence(text: str, max_lines: int = 40) -> list[str]:
@@ -1034,7 +1058,8 @@ def main(argv=None) -> int:
         import os
         os.environ["SIDEKICK_SCAN_STRICT"] = "1"
     if not a.set:
-        a.set = f"review-{load_toml(a.corpus).get('batch', 2)}"
+        corpus_toml = load_toml(a.corpus)
+        a.set = corpus_toml.get("set", f"review-{corpus_toml.get('batch', 2)}")
     lock_path = a.lock or FIXTURES / f"verification-{a.set}.lock.json"
     if lock_path.exists() and "source_commit" in canon.read_json(lock_path):
         raise SystemExit(historical_message(canon.read_json(lock_path)))

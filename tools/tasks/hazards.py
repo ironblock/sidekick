@@ -155,6 +155,24 @@ def _parse_body(kind: str, body: str) -> str | None:
     return None
 
 
+def mechanism_exempt(claim: dict, e: Evidence, slot_roles: list[str | None]) -> list[tuple[int, int]]:
+    """Spans of a variant where the claim's mechanism places its value on
+    purpose, as the side that loses: losing slots (sequence, precedence,
+    timestamp), `was:` lines (supersede belief), blocks scoped to another
+    version (version)."""
+    mech = claim.get("mechanism", "plain")
+    spans = []
+    if mech in ("sequence", "precedence", "timestamp"):
+        spans += [(s, t) for s, t, i in e.slots if slot_roles[i] == "loser"]
+    if mech == "supersede" and claim.get("role") == "belief":
+        for m in MARKER_RE.finditer(e.text):
+            end = e.text.find("\n", m.start())
+            spans.append((m.start(), len(e.text) if end < 0 else end))
+    if mech == "version":
+        spans += list(e.scoped)
+    return spans
+
+
 def check(claim: dict, ev: dict[str, Evidence], slot_roles: list[str | None]) -> list[str]:
     """Return every hazard the triple breaks (empty when it is well-defined)."""
     problems: list[str] = []
@@ -201,19 +219,21 @@ def check(claim: dict, ev: dict[str, Evidence], slot_roles: list[str | None]) ->
     # CONTRADICTED must not still state the claim's value, slots included: an
     # edit like "use --force (or --allow-backwards)" keeps it true. The value
     # is `value` and every guard literal but the replacement, plus any
-    # `c_forbid` patterns. A claim may allow one with a reason (`c_allow`).
-    if mech in ("plain", "version"):
-        allowed = {a["text"] for a in claim.get("c_allow", [])}
-        lits = {x for x in [claim.get("value"), *claim.get("guard", [])] if x} - {claim.get("value_c")} - allowed
-        for lit in sorted(lits):
-            for m in _guard_pattern(lit).finditer(ev["c"].text):
-                if mech == "version" and _inside((m.start(), m.end()), ev["c"].scoped):
-                    continue
+    # `c_forbid` patterns. The mechanism exempts the one place it puts the
+    # value on purpose: the losing slot of a sequence, precedence or timestamp
+    # item, a `was:` line of a supersede belief, a block scoped to another
+    # version. A claim may also allow a text with a reason (`c_allow`).
+    allowed = {a["text"] for a in claim.get("c_allow", [])}
+    c_exempt = mechanism_exempt(claim, ev["c"], slot_roles)
+    lits = {x for x in [claim.get("value"), *claim.get("guard", [])] if x} - {claim.get("value_c")} - allowed
+    for lit in sorted(lits):
+        for m in _guard_pattern(lit).finditer(ev["c"].text):
+            if not _inside((m.start(), m.end()), c_exempt):
                 problems.append(f"restatement: c: the claim's value {lit!r} is still stated")
-        for p in claim.get("c_forbid", []):
-            for m in re.finditer(p, ev["c"].text, re.M):
-                if m.group(0) not in allowed:
-                    problems.append(f"restatement: c: {m.group(0)[:80]!r} still states the claim")
+    for p in claim.get("c_forbid", []):
+        for m in re.finditer(p, ev["c"].text, re.M):
+            if m.group(0) not in allowed and not _inside((m.start(), m.end()), c_exempt):
+                problems.append(f"restatement: c: {m.group(0)[:80]!r} still states the claim")
 
     # Distractors are near misses: they match `near`, never the claim.
     for v in VARIANTS:

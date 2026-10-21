@@ -8,6 +8,7 @@
   "schema": "sidekick-verification-lock/1",
   "set": "review-3",
   "set_sha256": "6c93d2fc76fe4b5600172a9b7d6f097bcfce326bf85517c843ec1541fd1f8469",
+  "source_commit": "81576f99b5b1dae8be945749685364294b3f9337",
   "triples": [
     {
       "evidence_sha256": {
@@ -495,5 +496,6 @@
       "id": "users-csv-four-records.1k.middle.none",
       "sha256": "d1c69865d2b8af80e033cfbee3729cea8ba91b8364f9788b9052c6cee1ad46ee"
     }
-  ]
+  ],
+  "validated": "host project review of review-3: 54 PASS, 0 FIX, 0 REJECT"
 }

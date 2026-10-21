@@ -288,22 +288,22 @@ capture = "old.jj.version"
 c_drop = true
 nm_drop = true
 [[shape.claim.block]]
+capture = "jj.version"
+call = "c41"
+s_drop = true
+nm_drop = true
+[[shape.claim.block]]
 notes = []
 c_notes = [
   "- was: the installed jj is 0.30.0 (held at 9/10), wrong because jj --version now prints 0.46.0 [call c41]",
   "- fact: jj 0.46.0 is installed",
 ]
-[[shape.claim.block]]
-capture = "jj.version"
-call = "c41"
-s_drop = true
-nm_drop = true
 
 # jj's documented config precedence (a config file, then environment
 # overrides such as $JJ_EMAIL, then --config-file on the command line): the
 # value `jj config get` prints decides, and the winning source is shown
 # first, so a reader that trusts the last value shown is wrong. Introduced
-# for review batch 3.
+# for review round 3.
 [[shape]]
 id = "environment.config-precedence"
 type = "environment"
@@ -455,12 +455,12 @@ repeat = 0
 probes.support = ['ports 5173, 5180 and 5181 are already in use']
 probes.contradict = ['ports 5173, 5180 and 5181 are free']
 probes.mention = ['5181']
-edit_note = "c: the config comment says those ports are free; nm: the comment line is removed."
+edit_note = "c: the config comment says those ports are free; nm: the file view is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "gen.service.cat"
 edit = [
   { find = "ports 5173, 5180 and 5181 are already in use on this host", c = "ports 5173, 5180 and 5181 are free on this host" },
-  { find = "# service settings; ports 5173, 5180 and 5181 are already in use on this host\n", nm = "" },
 ]
 
 # ========================================================== file facts
@@ -479,11 +479,11 @@ probes.support = ['^name = "worker"\nreplicas = 5$', '"name": "worker",\n\s+"rep
 probes.contradict = ['^name = "worker"\nreplicas = 6$', '"name": "worker",\n\s+"replicas": 6,']
 probes.mention = ['\[\[services\]\]', '"replicas"', 'replicas = ']
 invariants = [{ type = "sum", items = '^replicas = (\d+)$', total = '''sum\(services\.map\(replicas\)\.\.\.\)' < app\.toml\n(\d+)\n''' }]
-edit_note = "c: the worker runs 6 replicas, and the sum (10) and JSON view come from rerunning dasel on that file; nm: app.toml has no [[services]] tables (the [database] section stays) and the derived views are removed."
+edit_note = "c: the worker runs 6 replicas, and the sum (10) and JSON view come from rerunning dasel on that file; nm: every view of app.toml (the file, the sum, the JSON) is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "dasel.cat.app-toml"
 c_from = "dasel.worker6.cat.app-toml"
-nm_from = "dasel.noservices.cat.app-toml"
 [[shape.claim.block]]
 capture = "dasel.sum-replicas"
 c_from = "dasel.worker6.sum-replicas"
@@ -523,12 +523,12 @@ probes.mention = ['\[database\.pool\]', 'database\.pool\.max']
 probes.near = ['^    max: 20$']
 distractor = [{ capture = "dasel.cat.defaults-yaml" }]
 repeat = 0
-edit_note = "c: max = 25; nm: the [database.pool] table is removed."
+edit_note = "c: max = 25; nm: the file view is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "dasel.cat.app-toml"
 edit = [
   { find = "max = 20\n", c = "max = 25\n", count = 1 },
-  { find = "[database.pool]\nmin = 2\nmax = 20\n\n", nm = "" },
 ]
 
 [[shape.claim]]
@@ -544,10 +544,11 @@ probes.mention = ['port = 518\d']
 probes.near = ['^port = 5432$']
 distractor = [{ capture = "dasel.cat.app-toml" }]
 repeat = 0
-edit_note = "c: port = 5184; nm: the port line is removed."
+edit_note = "c: port = 5184; nm: the file view is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "gen.service.cat"
-edit = [{ find = "port = 5182\n", c = "port = 5184\n", nm = "" }]
+edit = [{ find = "port = 5182\n", c = "port = 5184\n" }]
 
 [[shape.claim]]
 id = "service-toml-api-timeout"
@@ -559,12 +560,12 @@ guard = ["3000"]
 probes.support = ['path = "/api"\ntimeout_ms = 3000$']
 probes.contradict = ['path = "/api"\ntimeout_ms = 300$']
 probes.mention = ['"/api"']
-edit_note = "c: timeout_ms = 300; nm: the /api route table is removed."
+edit_note = "c: timeout_ms = 300; nm: the file view is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "gen.service.cat"
 edit = [
   { find = "timeout_ms = 3000\n", c = "timeout_ms = 300\n" },
-  { find = "\n[[routes]]\npath = \"/api\"\ntimeout_ms = 3000\n", nm = "" },
 ]
 
 [[shape]]
@@ -583,12 +584,12 @@ probes.contradict = ['"lint": "oxlint \.']
 probes.mention = ['"lint"']
 exclude = ["gen.package.script-names"]
 repeat = 0
-edit_note = "c: the script starts with oxlint; nm: the lint script is removed (the JSON stays valid)."
+edit_note = "c: the script starts with oxlint; nm: the file view is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "gen.package.cat"
 edit = [
   { find = "\"lint\": \"eslint . &&", c = "\"lint\": \"oxlint . &&" },
-  { find = "    \"lint\": \"eslint . && tsc --noEmit -p a && tsc --noEmit -p b && tsc --noEmit -p c\",\n", nm = "" },
 ]
 
 [[shape]]
@@ -606,10 +607,11 @@ value_c = "pnpm@9.12.4"
 probes.support = ['"packageManager": "pnpm@9\.15\.4"']
 probes.contradict = ['"packageManager": "pnpm@9\.12\.4"']
 probes.mention = ['packageManager']
-edit_note = "c: pnpm@9.12.4; nm: the field is removed."
+edit_note = "c: pnpm@9.12.4; nm: the file view is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "gen.package.cat"
-edit = [{ find = "  \"packageManager\": \"pnpm@9.15.4\",\n", c = "  \"packageManager\": \"pnpm@9.12.4\",\n", nm = "" }]
+edit = [{ find = "  \"packageManager\": \"pnpm@9.15.4\",\n", c = "  \"packageManager\": \"pnpm@9.12.4\",\n" }]
 
 [[shape.claim]]
 id = "package-node-engine"
@@ -620,12 +622,12 @@ repeat = 0
 probes.support = ['"engines": \{ "node": ">=22" \}']
 probes.contradict = ['"engines": \{ "node": ">=20" \}']
 probes.mention = ['"engines"']
-edit_note = "c: >=20; nm: the engines field is removed (the JSON stays valid)."
+edit_note = "c: >=20; nm: the file view is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "gen.package.cat"
 edit = [
   { find = "\">=22\"", c = "\">=20\"" },
-  { find = "  },\n  \"engines\": { \"node\": \">=22\" }\n", nm = "  }\n" },
 ]
 
 [[shape]]
@@ -694,23 +696,23 @@ touch = ['\bport\b']
 probes.support = ['^  port: 6432$', '"port": 6432']
 probes.contradict = ['^  port: 5432$', '"port": 5432']
 probes.mention = ['^  port: \d+$', '"port": \d+']
-edit_note = "s: override.yaml sets port 6432 and defaults.yaml 5432, and dasel's merge of the two prints 6432; c: the files' values swap and the merge prints 5432; nm: neither file sets it and the merge has none (all real output from sibling fixtures)."
+edit_note = "s: override.yaml sets port 6432 and defaults.yaml 5432, and dasel's merge of the two prints 6432; c: the files' values swap and the merge prints 5432; nm: the three calls are removed (c is real output from sibling fixtures)."
 [[shape.claim.block]]
+nm_drop = true
 capture = "dasel.cat.override-yaml"
 c_from = "dasel.merge-swap.cat.override-yaml"
-nm_from = "dasel.merge-noport.cat.override-yaml"
 role = "winner"
 group = "a"
 [[shape.claim.block]]
+nm_drop = true
 capture = "dasel.cat.defaults-yaml"
 c_from = "dasel.merge-swap.cat.defaults-yaml"
-nm_from = "dasel.merge-noport.cat.defaults-yaml"
 role = "loser"
 group = "b"
 [[shape.claim.block]]
+nm_drop = true
 capture = "dasel.merge"
 c_from = "dasel.merge-swap.merge"
-nm_from = "dasel.merge-noport.merge"
 role = "winner"
 group = "b"
 
@@ -722,23 +724,23 @@ touch = ['\bpool\b', '\bmax\b']
 probes.support = ['^    max: 40$', '"max": 40']
 probes.contradict = ['^    max: 20$', '"max": 20']
 probes.mention = ['^    max: \d+$', '"max": \d+', '^max = \d+$']
-edit_note = "s: override.yaml sets pool max 40 and defaults.yaml 20, and dasel's merge of the two prints 40; c: the files' values swap and the merge prints 20; nm: neither file sets it and the merge has none (all real output from sibling fixtures)."
+edit_note = "s: override.yaml sets pool max 40 and defaults.yaml 20, and dasel's merge of the two prints 40; c: the files' values swap and the merge prints 20; nm: the three calls are removed (c is real output from sibling fixtures)."
 [[shape.claim.block]]
+nm_drop = true
 capture = "dasel.cat.override-yaml"
 c_from = "dasel.merge-swap-pool.cat.override-yaml"
-nm_from = "dasel.merge-nopool.cat.override-yaml"
 role = "winner"
 group = "a"
 [[shape.claim.block]]
+nm_drop = true
 capture = "dasel.cat.defaults-yaml"
 c_from = "dasel.merge-swap-pool.cat.defaults-yaml"
-nm_from = "dasel.merge-nopool.cat.defaults-yaml"
 role = "loser"
 group = "b"
 [[shape.claim.block]]
+nm_drop = true
 capture = "dasel.merge"
 c_from = "dasel.merge-swap-pool.merge"
-nm_from = "dasel.merge-nopool.merge"
 role = "winner"
 group = "b"
 
@@ -805,12 +807,6 @@ capture = "dasel.sum-replicas"
 c_drop = true
 nm_drop = true
 [[shape.claim.block]]
-notes = []
-c_notes = [
-  "- was: the services' replicas sum to 9 (held at 8/10), wrong because app.toml now gives the worker 6 replicas and dasel sums them to 10 [call c27]",
-  "- fact: the replicas now sum to 10",
-]
-[[shape.claim.block]]
 capture = "dasel.worker6.cat.app-toml"
 s_drop = true
 nm_drop = true
@@ -819,6 +815,12 @@ capture = "dasel.worker6.sum-replicas"
 call = "c27"
 s_drop = true
 nm_drop = true
+[[shape.claim.block]]
+notes = []
+c_notes = [
+  "- was: the services' replicas sum to 9 (held at 8/10), wrong because app.toml now gives the worker 6 replicas and dasel sums them to 10 [call c27]",
+  "- fact: the replicas now sum to 10",
+]
 
 [[shape]]
 id = "result.selection"
@@ -891,13 +893,13 @@ text = "learned: abandoning 'tweak dressing' rebased one descendant commit."
 touch = ['\bmenu\b', 'tweak dressing', 'descendant']
 probes.support = ['^Rebased 1 descendant commits onto parents']
 probes.contradict = ['^Rebased 2 descendant commits onto parents']
-probes.mention = ['descendant commits onto parents']
+probes.mention = ['descendant commits onto parents', 'Working copy  \(@\) now at', 'Parent commit \(@-\)']
 exclude = ["jj.log", "jj.status", "jj.log.json", "jj.log.menu-oneline", "jj.op-log", "jj.abandon.log", "jj.bookmark-list"]
-edit_note = "c: two descendants rebased (jj's output for the same abandon on a copy with one more commit on top); nm: the line is removed."
+edit_note = "c: two descendants rebased (jj's output for the same abandon on a copy with one more commit on top); nm: the rebase line is removed with the working-copy, parent and file-count lines that would show a rebase happened."
 [[shape.claim.block]]
 capture = "jj.abandon.tweak"
 c_from = "jj.abandon-two.tweak"
-edit = [{ find = "Rebased 1 descendant commits onto parents of abandoned commits.\n", nm = "" }]
+edit = [{ find = "Rebased 1 descendant commits onto parents of abandoned commits.\nWorking copy  (@) now at: wqnwkozp 4db99e75 (no description set)\nParent commit (@-)      : zsuskuln 211033a3 add salad\nAdded 0 files, modified 1 files, removed 0 files\n", nm = "" }]
 
 [[shape]]
 id = "result.failure-site"
@@ -978,13 +980,13 @@ time_re = '"ts":"[^"]+"'
 probes.support = ['"job":"build-7","status":"passed"']
 probes.contradict = ['"job":"build-7","status":"failed"']
 probes.mention = ['"job":"build-7"']
-edit_note = "s: w2's 12:00:09 record says passed and appears before w1's 12:00:04 failed; c: the two statuses swap; nm: every build-7 record is removed."
+edit_note = "s: w2's 12:00:09 record says passed and appears before w1's 12:00:04 failed; c: the two statuses swap; nm: the job log is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "gen.jobs.cat"
 edit = [
-  { find = "{\"ts\":\"2026-10-01T12:00:01Z\",\"worker\":\"w1\",\"job\":\"build-7\",\"status\":\"started\"}\n", nm = "" },
-  { find = "{\"ts\":\"2026-10-01T12:00:09Z\",\"worker\":\"w2\",\"job\":\"build-7\",\"status\":\"passed\"}\n", c = "{\"ts\":\"2026-10-01T12:00:09Z\",\"worker\":\"w2\",\"job\":\"build-7\",\"status\":\"failed\"}\n", nm = "", role = "winner" },
-  { find = "{\"ts\":\"2026-10-01T12:00:04Z\",\"worker\":\"w1\",\"job\":\"build-7\",\"status\":\"failed\"}\n", c = "{\"ts\":\"2026-10-01T12:00:04Z\",\"worker\":\"w1\",\"job\":\"build-7\",\"status\":\"passed\"}\n", nm = "", role = "loser" },
+  { find = "{\"ts\":\"2026-10-01T12:00:09Z\",\"worker\":\"w2\",\"job\":\"build-7\",\"status\":\"passed\"}\n", c = "{\"ts\":\"2026-10-01T12:00:09Z\",\"worker\":\"w2\",\"job\":\"build-7\",\"status\":\"failed\"}\n", role = "winner" },
+  { find = "{\"ts\":\"2026-10-01T12:00:04Z\",\"worker\":\"w1\",\"job\":\"build-7\",\"status\":\"failed\"}\n", c = "{\"ts\":\"2026-10-01T12:00:04Z\",\"worker\":\"w1\",\"job\":\"build-7\",\"status\":\"passed\"}\n", role = "loser" },
 ]
 
 # ========================================================== refutations
@@ -1087,17 +1089,17 @@ probes.contradict = ['^- fact: jj templates have an `id` keyword']
 probes.mention = ['`id` keyword', 'Keyword `id`']
 edit_note = "s: the belief is marked refuted beside its call c17; c: the belief is a live fact and the call is absent; nm: neither."
 [[shape.claim.block]]
+capture = "jj.err.id-keyword"
+call = "c17"
+c_drop = true
+nm_drop = true
+[[shape.claim.block]]
 notes = [
   "- was: jj templates have an `id` keyword; `id.short()` prints a commit's short id (held at 8/10), wrong because jj rejected it: Keyword `id` doesn't exist [call c17]",
   "- fact: the commit id keyword in jj templates is `commit_id`",
 ]
 c_notes = ["- fact: jj templates have an `id` keyword; `id.short()` prints a commit's short id"]
 nm_notes = []
-[[shape.claim.block]]
-capture = "jj.err.id-keyword"
-call = "c17"
-c_drop = true
-nm_drop = true
 
 [[shape.claim]]
 id = "dasel-sum-needs-arguments-reason"
@@ -1109,15 +1111,14 @@ probes.contradict = ['^- fact: `services\.map\(replicas\)\.sum\(\)` adds up the 
 probes.mention = ['func "sum"', '\.sum\(\)']
 edit_note = "s: the belief is marked refuted beside its call c11; c: the belief is a live fact and the call is absent; nm: neither."
 [[shape.claim.block]]
+capture = "dasel.err.method-sum"
+call = "c11"
+c_drop = true
+nm_drop = true
+[[shape.claim.block]]
 notes = [
   "- was: `services.map(replicas).sum()` adds up the replicas (held at 5/10), wrong because dasel answered func \"sum\" expects at least 1 arguments, got 0 [call c11]",
   "- fact: `sum(services.map(replicas)...)` adds them up",
 ]
 c_notes = ["- fact: `services.map(replicas).sum()` adds up the replicas"]
 nm_notes = []
-[[shape.claim.block]]
-capture = "dasel.err.method-sum"
-call = "c11"
-c_drop = true
-nm_drop = true
-

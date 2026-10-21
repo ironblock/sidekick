@@ -116,9 +116,9 @@ def belief_claim():
                    "mention": [r"^port = \d+$"]},
         "block": [
             {"capture": "demo.cat.old", "c_drop": True, "nm_drop": True},
+            {"capture": "demo.cat.new", "call": "c9", "s_drop": True, "nm_drop": True},
             {"notes": [],
              "c_notes": ["- was: port.txt sets port = 7000 (held at 6/10), wrong because a later read shows 7001 [call c9]"]},
-            {"capture": "demo.cat.new", "call": "c9", "s_drop": True, "nm_drop": True},
         ],
     }
 
@@ -230,9 +230,9 @@ class Assembly(unittest.TestCase):
                 "guard": [],
                 "probes": {"support": ["unknown flag --version"], "contradict": [r"\[call c8\] \$ demo --version\n8\n"],
                            "mention": ["unknown flag"]},
-                "block": [{"notes": ["- was: demo --version prints the version, wrong because unknown flag [call c8]"],
-                           "c_notes": [], "nm_notes": []},
-                          {"capture": "demo.err.version", "call": "c8", "c_from": "demo.sum", "nm_drop": True}]}
+                "block": [{"capture": "demo.err.version", "call": "c8", "c_from": "demo.sum", "nm_drop": True},
+                          {"notes": ["- was: demo --version prints the version, wrong because unknown flag [call c8]"],
+                           "c_notes": [], "nm_notes": []}]}
 
     def test_monotonic_call_ids_and_pointers(self):
         corpus = {**CORPUS, "monotonic_calls": True}
@@ -373,9 +373,8 @@ class Hazards(unittest.TestCase):
             "id": "demo-json-port", "shape": "file.json-port", "type": "file", "mechanism": "plain",
             "text": "fact: app.json sets port 7001.", "guard": [],
             "probes": {"support": ['"port": 7001'], "contradict": ['"port": 7002'], "mention": ['"port"']},
-            "block": [{"capture": "demo.cat.json", "edit": [
-                {"find": '"port": 7001,', "c": '"port": 7002,'},
-                {"find": '  "port": 7001,\n', "nm": '  "port": ,\n'}]}],
+            "block": [{"capture": "demo.cat.json", "nm_drop": True, "edit": [
+                {"find": '"port": 7001,', "c": '"port": ,'}]}],
         }
         self.refused(c, why="no longer parses")
 
@@ -397,13 +396,13 @@ class Hazards(unittest.TestCase):
 
     def test_supersede_belief_cannot_stay_live(self):
         c = belief_claim()
-        c["block"][1]["c_notes"] = ["- fact: port.txt sets port = 7000"]
+        c["block"][2]["c_notes"] = ["- fact: port.txt sets port = 7000"]
         self.refused(c, why="restatement")
 
     def test_notes_are_never_the_only_support(self):
         c = belief_claim()
         c["block"][0]["capture"] = "demo.sum"  # SUPPORTED's tool output no longer states it
-        c["block"][1]["notes"] = ["- fact: port.txt sets port = 7000"]
+        c["block"][2]["notes"] = ["- fact: port.txt sets port = 7000"]
         self.refused(c, why="rests only on notes")
 
     def test_nm_must_not_keep_an_exit_status_the_claim_states(self):
@@ -419,11 +418,58 @@ class Hazards(unittest.TestCase):
         c = {"id": "demo-yaml-pool", "shape": "f.y", "type": "file", "mechanism": "plain", "fact": "dy",
              "text": "fact: app.yaml sets the pool max to 4.", "guard": [],
              "probes": {"support": ["^    max: 4$"], "contradict": ["^    max: 5$"], "mention": ["max:"]},
-             "block": [{"capture": "demo.cat.yaml", "edit": [{"find": "    max: 4\n", "c": "    max: 5\n", "nm": ""}]}]}
+             "block": [{"capture": "demo.cat.yaml", "nm_closed_world": "a test of the declared shape",
+                        "edit": [{"find": "    max: 4\n", "c": "    max: 5\n", "nm": ""}]}]}
         self.refused(c, why="empty container")
         c["block"][0]["edit"] = [{"find": "    max: 4\n", "c": "    max: 5\n"},
                                  {"find": "  pool:\n    max: 4\n", "nm": ""}]
-        gen.build(c, dict(CFG), self.caps, CORPUS)
+        self.assertEqual(gen.build(c, dict(CFG), self.caps, CORPUS)["nm_kind"], "closed-world-absence")
+
+    def test_nm_may_not_keep_a_file_with_the_key_removed(self):
+        c = {"id": "demo-yaml-pool", "shape": "f.y", "type": "file", "mechanism": "plain", "fact": "dy",
+             "text": "fact: app.yaml sets the pool max to 4.", "guard": [],
+             "probes": {"support": ["^    max: 4$"], "contradict": ["^    max: 5$"], "mention": ["max:"]},
+             "block": [{"capture": "demo.cat.yaml", "edit": [{"find": "    max: 4\n", "c": "    max: 5\n"},
+                                                              {"find": "  pool:\n    max: 4\n", "nm": ""}]}]}
+        self.refused(c, why="whole with the claimed key removed")
+        del c["block"][0]["edit"][1]
+        c["block"][0]["nm_drop"] = True
+        self.assertEqual(gen.build(c, dict(CFG), self.caps, CORPUS)["nm_kind"], "removed")
+
+    def test_a_note_must_follow_the_call_it_cites(self):
+        c = belief_claim()
+        c["block"][1], c["block"][2] = c["block"][2], c["block"][1]
+        self.refused(c, why="points forward")
+
+    def test_the_mechanism_exempts_the_losing_slot_from_the_value_rule(self):
+        # sequence: the claimed value (7001) sits in the losing (early) slot of C
+        c = sequence_claim()
+        c["value"], c["value_c"] = "7001", "7000"
+        c["guard"] = ["7001"]
+        t = gen.build(c, dict(CFG), self.caps, CORPUS)
+        self.assertIn("port = 7001", gen.expand(t, "c"))
+        # the same value outside the losing slot is refused
+        c["c_forbid"] = ["^port = 7001$"]
+        c["block"].append({"capture": "demo.cat.new"})  # a fixed, third read showing 7001
+        with self.assertRaises(gen.Refusal):
+            gen.build(c, dict(CFG), self.caps, CORPUS)
+        # supersede belief: the value on a `was:` line of C is the refutation itself
+        b = belief_claim()
+        b["value"], b["value_c"] = "7000", "7001"
+        b["guard"] = ["7000"]
+        self.assertIn("was: port.txt sets port = 7000", gen.expand(gen.build(b, dict(CFG), self.caps, CORPUS), "c"))
+
+    def test_review_export_is_named_after_the_set_and_ordered_by_number(self):
+        triples = [gen.build(flag_claim(), dict(CFG), self.caps, CORPUS),
+                   gen.build(sum_claim(), {**CFG, "position": "end"}, self.caps, CORPUS)]
+        with tempfile.TemporaryDirectory() as d:
+            gen.export_review(triples, Path(d), "review-9z")
+            names = sorted(p.name for p in (Path(d) / "review").iterdir())
+            rows = [json.loads(x) for x in (Path(d) / "review" / "review-9z.jsonl").read_text().splitlines()]
+        self.assertIn("review-9z.md", names)
+        self.assertIn("review-9z-compact.md", names)
+        self.assertTrue(all(n.startswith("review-9z") for n in names))
+        self.assertEqual([r["n"] for r in rows], list(range(1, len(rows) + 1)))
 
     def test_contradicted_may_not_still_state_the_value(self):
         c = flag_claim()
