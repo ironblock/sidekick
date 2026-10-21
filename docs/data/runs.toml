@@ -11,6 +11,7 @@
 # page shows them: by model, never by machine.
 [chips]
 "Apple M1 Max" = "Apple M1 Max"
+"Apple M4 Max" = "Apple M4 Max"
 "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz" = "Intel Xeon W-3235"
 "AMD Ryzen 7 5800X 8-Core Processor" = "AMD Ryzen 7 5800X"
 "AMD Ryzen Threadripper 3970X 32-Core Processor" = "AMD Ryzen Threadripper 3970X"
@@ -193,14 +194,85 @@ os = "macOS 27.0"
 precision = "int8"
 date = "2026-10-10"
 idle = false
+sidekick = "0.8.0 pre-release (commit 571c7d3)"
+threads = 4
+
+# onnx-cpu on an Apple M4 Max (12 performance and 4 efficiency cores),
+# ONNX Runtime 1.28.3, the parity suite's native worker, 4 threads. The
+# machine wasn't idle: system services ran throughout (load average 9-24).
+# Each Qwen3-Embedding report is the 4,096-token build (its onnx.toml),
+# graded on the main corpus and the long-input corpus; the fp16-weight one
+# is the same graph exported with --onnx-weights fp16.
+[runs."native-arm64-m4max-all-minilm-l6-v2.json"]
+runtime = "ONNX Runtime 1.28.3"
+os = "macOS 26.5.2"
+precision = "fp32"
+date = "2026-10-21"
+idle = false
+sidekick = "0.14.0 (commit 65561fc)"
+threads = 4
+[runs."native-arm64-m4max-bge-small-en-v1.5.json"]
+runtime = "ONNX Runtime 1.28.3"
+os = "macOS 26.5.2"
+precision = "fp32"
+date = "2026-10-21"
+idle = false
+sidekick = "0.14.0 (commit 65561fc)"
+threads = 4
+[runs."native-arm64-m4max-gte-modernbert-base.json"]
+runtime = "ONNX Runtime 1.28.3"
+os = "macOS 26.5.2"
+precision = "fp32"
+date = "2026-10-21"
+idle = false
+sidekick = "0.14.0 (commit 65561fc)"
+threads = 4
+[runs."native-arm64-m4max-embeddinggemma-300m.json"]
+runtime = "ONNX Runtime 1.28.3"
+os = "macOS 26.5.2"
+precision = "fp32"
+date = "2026-10-21"
+idle = false
+sidekick = "0.14.0 (commit 65561fc)"
+threads = 4
+[runs."native-arm64-m4max-embeddinggemma-2.json"]
+runtime = "ONNX Runtime 1.28.3"
+os = "macOS 26.5.2"
+precision = "fp32"
+date = "2026-10-21"
+idle = false
+sidekick = "0.14.0 (commit 65561fc)"
+threads = 4
+[runs."native-arm64-m4max-f2llm-v2-160m.json"]
+runtime = "ONNX Runtime 1.28.3"
+os = "macOS 26.5.2"
+precision = "fp32"
+date = "2026-10-21"
+idle = false
+sidekick = "0.14.0 (commit 65561fc)"
+threads = 4
+[runs."native-arm64-m4max-qwen3-embedding-0.6b-4096.json"]
+runtime = "ONNX Runtime 1.28.3"
+os = "macOS 26.5.2"
+precision = "fp32"
+date = "2026-10-21"
+idle = false
+sidekick = "0.14.0 (commit 65561fc)"
+threads = 4
+[runs."native-arm64-m4max-qwen3-embedding-0.6b-fp16w.json"]
+runtime = "ONNX Runtime 1.28.3"
+os = "macOS 26.5.2"
+precision = "fp16 weights"
+date = "2026-10-21"
+idle = false
+sidekick = "0.14.0 (commit 65561fc)"
+threads = 4
 
 # An Intel Xeon W-3235 Mac: onnx-cpu on ONNX Runtime 1.23.2 (the last
 # release built for Intel macOS) and Core ML. The fp32 onnx-cpu runs use
 # ONNX Runtime's AVX-512 kernels (D42) on an otherwise idle machine; the
 # fp16-weight and int8 Qwen3 runs predate D42 (AVX2 kernels) and ran while
 # other work did.
-sidekick = "0.8.0 pre-release (commit 571c7d3)"
-threads = 4
 [runs."native-x86_64-avx512-all-minilm-l6-v2.json"]
 runtime = "ONNX Runtime 1.23.2, AVX-512 kernels"
 os = "macOS 26.6.2"

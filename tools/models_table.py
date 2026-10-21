@@ -1065,6 +1065,7 @@ def benchmark_scores(models):
 
 MODELS_MD = REPO / "docs" / "MODELS.md"
 M1 = "Apple M1 Max"
+M4 = "Apple M4 Max"
 RYZEN, THREADRIPPER = "AMD Ryzen 7 5800X", "AMD Ryzen Threadripper 3970X"
 XEON = "Intel Xeon W-3235"
 COREML = [("coreml-cpu", "Core ML CPU"), ("coreml-gpu", "Core ML GPU"), ("coreml-ane", "Core ML ANE")]
@@ -1146,9 +1147,9 @@ def onnx_accuracy(rows, models):
             core = [grade_cell(idx.get((r["model"], p, "fp16", M1))) for p, _ in COREML]
         else:
             core = ["not converted"] * 3
-        out.append([label(r), grade_cell(r, bold=True), amd.pop() if amd else "",
-                    grade_cell(idx.get(key + (XEON,)), bold=True)] + core)
-    return table(["model", "onnx-cpu, M1 Max", "onnx-cpu, Ryzen 7 5800X and Threadripper 3970X",
+        out.append([label(r), grade_cell(r, bold=True), grade_cell(idx.get(key + (M4,)), bold=True),
+                    amd.pop() if amd else "", grade_cell(idx.get(key + (XEON,)), bold=True)] + core)
+    return table(["model", "onnx-cpu, M1 Max", "onnx-cpu, M4 Max", "onnx-cpu, Ryzen 7 5800X and Threadripper 3970X",
                   "onnx-cpu, Xeon W-3235"] + [h for _, h in COREML], out)
 
 
@@ -1174,7 +1175,7 @@ def latency(rows, models):
     return table(["model", "tokens", "onnx-cpu (fp32)", "Core ML CPU (fp16)", "Core ML GPU", "Core ML ANE"], out)
 
 
-THREAD_CHIPS = [(M1, "M1 Max", "8P + 2E"), (RYZEN, "Ryzen 7 5800X", "8 cores, 16 threads"),
+THREAD_CHIPS = [(M1, "M1 Max", "8P + 2E"), (M4, "M4 Max", "12P + 4E"), (RYZEN, "Ryzen 7 5800X", "8 cores, 16 threads"),
                 (THREADRIPPER, "Threadripper 3970X", "32 cores"), (XEON, "Xeon W-3235", "12 cores, 24 threads")]
 THREAD_MODELS = ["gte-modernbert-base", "embeddinggemma-300m", "qwen3-embedding-0.6b"]
 
