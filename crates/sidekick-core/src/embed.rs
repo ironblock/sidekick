@@ -1,12 +1,20 @@
 use crate::Result;
 
-/// What the caller will do with the vectors. Models like EmbeddingGemma use
-/// different prompt prefixes for queries vs. documents; backends apply them.
+/// What the caller will do with the vectors, which picks the prompt prefix
+/// a backend puts before each text. Models like EmbeddingGemma use
+/// different prompts for queries and documents (the manifest's
+/// `[prefixes]`, D9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EmbedPurpose {
+    /// The manifest's document prefix: the default.
     #[default]
     Document,
+    /// The manifest's query prefix.
     Query,
+    /// No prefix: the text exactly as sent, for a caller that brings its
+    /// own prompt (the daemon's `input_type: "none"`). The tokenizer's
+    /// special tokens are still added.
+    Raw,
 }
 
 /// Which end of an over-long input to keep (Cohere's `truncate`).

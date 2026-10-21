@@ -169,8 +169,29 @@ for constrained output that means the JSON may be missing properties.
 
 `POST /v1/embeddings` is OpenAI's embeddings route: `input` (one string or
 up to 256), `dimensions` for Matryoshka models, and `encoding_format:
-"base64"`. `input_type: "query"` applies a model's query prompt instead of
-its document prompt.
+"base64"`.
+
+Most embedders were trained with a prompt before each input, so sidekick
+puts the model's own prompt before every input, chosen by `input_type`:
+- **No `input_type`, `"document"` or `"passage"`:** the model's document
+  prompt, such as e5-small-v2's `passage: ` or EmbeddingGemma's `title:
+  none | text: `. This is the default.
+- **`"query"`:** the model's query prompt, for the search side of
+  retrieval.
+- **`"none"`:** no prompt. The text is embedded exactly as sent, with the
+  tokenizer's special tokens. Send it when your text already carries a
+  prompt, such as an MTEB task prompt or a Qwen3 or F2LLM instruction for
+  a symmetric task. Otherwise sidekick's prompt goes before yours, and the
+  model sees a prompt it was never trained on. Under `truncate: "START"`,
+  sidekick keeps its own prompt whole but can't tell yours from the text,
+  so it may cut yours: with `none`, use `END`, or keep inputs within the
+  limit.
+
+Some models have no prompt for one side or both, and then that
+`input_type` is the same as `"none"`. Each model's prompts are in
+[docs/MODELS.md](docs/MODELS.md#prompts-input_type), and `/v1/models`
+lists each installed model's as `prompts` (`{"query": "…", "document":
+"…"}`, `""` for none). D9 records the choice.
 
 An input longer than the model's limit is a 400 `invalid_request_error`.
 OpenAI's `/v1/embeddings` refuses it too, and Hugging Face TEI returns an
@@ -236,7 +257,8 @@ is refused by a Core ML or ONNX model that adds no special tokens.
 `count` is the number `/v1/embeddings` compares with the limit. It
 includes the special tokens and the prompt prefix, which `input_type`
 chooses by `/v1/embeddings`' names or `/v2/embed`'s (`query` or
-`search_query`; `document`, the default, `passage` or `search_document`).
+`search_query`; `document`, the default, `passage` or `search_document`;
+or `none`, no prompt).
 The text is never truncated, so a text over the limit is counted in full.
 `max_model_len` is that limit: the model's `max_seq_len` from
 `/v1/models`, or lower when the model's own `tokenizer.json` truncates
@@ -331,7 +353,7 @@ leaves the texts out.
 `POST /v2/rerank` takes Cohere's v2 request and truncates long documents,
 as Cohere does, keeping the query whole. Its response parses as both
 Cohere's and vLLM's. `POST /v2/embed` serves the embedders in Cohere's v2
-shape: `input_type` (`search_query` / `search_document`),
+shape: `input_type` (`search_query` / `search_document`, or `none`),
 `embedding_types` (`float`, `base64`, `binary`, `ubinary`),
 `output_dimension`, and `truncate`. The full contract is in
 [docs/design/rerank.md](docs/design/rerank.md).

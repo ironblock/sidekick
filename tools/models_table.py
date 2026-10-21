@@ -29,7 +29,8 @@ Inputs:
   latency per thread count.
 - each build's committed manifest (examples/manifests/, with an onnx.toml
   beside it for an ONNX build that differs, and examples/classifiers/):
-  its `max_seq_len`, on every row of that build.
+  its `max_seq_len`, on every row of that build, and an embedder's
+  `[prefixes]`, for docs/MODELS.md's prompts table.
 - benchmark scores, published beside the rows as the results file's
   `benchmarks`: docs/data/benchmarks.mteb.json (MTEB, collected by
   tools/fetch_benchmarks.py) and docs/data/benchmarks.toml (curated,
@@ -1142,6 +1143,25 @@ def self_reported(rows, models, bench):
                   "note"], out)
 
 
+def prompts(rows, models):
+    """Each embedder's prompts by `input_type`, from its committed manifest's
+    [prefixes]: what sidekick puts before every input (D9)."""
+    def cell(prompt):
+        if not prompt:
+            return "none"
+        # A code span shows the prompt's characters, its trailing space
+        # included; a newline is shown escaped, and a pipe escaped for the table.
+        return "`" + prompt.replace("\n", "\\n").replace("|", "\\|") + "`"
+    out = []
+    for mid, m in models.items():
+        manifest = MANIFESTS / mid / "manifest.toml"
+        if m.get("task") != "embed" or not manifest.exists():
+            continue
+        p = load_toml(manifest).get("prefixes", {})
+        out.append([m["name"], cell(p.get("query", "")), cell(p.get("document", ""))])
+    return table(["model", "`query`", "`document`, and no `input_type`"], out)
+
+
 def mteb_source(rows, models, bench):
     """Where the MTEB scores came from, as a sentence."""
     m = bench["mteb"]
@@ -1151,7 +1171,7 @@ def mteb_source(rows, models, bench):
 
 TABLES = {"coreml-grades": coreml_grades, "onnx-accuracy": onnx_accuracy, "latency": latency,
           "threads": threads, "memory": memory, "cosine-scale": cosine_scale,
-          "classifier-scales": classifier_scales}
+          "classifier-scales": classifier_scales, "prompts": prompts}
 # Tables from the results file's benchmark scores.
 BENCH_TABLES = {"mteb-eng-v2": mteb_table("MTEB(eng, v2)", every_embedder=True),
                 "mteb-multilingual-v2": mteb_table("MTEB(Multilingual, v2)"),

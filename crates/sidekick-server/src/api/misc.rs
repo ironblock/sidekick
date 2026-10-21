@@ -36,6 +36,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
                 .filter(|m| m.backend == EmbeddingBackendKind::Coreml)
                 .map(|m| m.compute_units_source.name()),
             seq_cap: m.and_then(|m| m.seq_cap.clone()),
+            prompts: m.map(|m| Prompts { query: m.prefixes.query.clone(), document: m.prefixes.document.clone() }),
             // Effective values: the registry has already applied any cap (D33).
             max_seq_len: m.map(|m| m.max_seq_len),
             buckets: m.filter(|m| m.backend == EmbeddingBackendKind::Coreml).map(|m| m.buckets.clone()),
