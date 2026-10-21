@@ -298,7 +298,15 @@ or SGLang works unchanged. What a host needs to know beyond that:
   number of labels. One label is a yes/no question, scored against
   contradiction, with or without `multi_label`. The text is truncated to
   fit; send `truncation_side: left` to keep its end, as tool output and
-  stack traces want.
+  stack traces want. That score can't tell a claim the text contradicts
+  from one it never mentions. To check a claim against evidence, send
+  `nli_probs: true` (where `extensions` lists it): each result gains
+  `nli_probs`, per label, the model's probabilities over its own classes,
+  keyed by the listing's `nli_classes`. Three-way models give
+  `entailment`, `neutral` and `contradiction`; the two-way zeroshot-v2.0
+  models give `entailment` and `not_entailment`, and can't make that
+  distinction (D47). It needs sidekickd 0.15.0 or later, and a manifest
+  that names the model's classes.
 - **Over-length input.** A text-classification input longer than the
   model's maximum is a 400 unless you send `truncate_prompt_tokens` (`-1`
   truncates to the model's maximum). laya-format models (laya, Julia-1),

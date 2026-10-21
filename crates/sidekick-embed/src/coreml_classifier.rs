@@ -519,4 +519,12 @@ impl Classifier for CoremlClassifier {
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {
         self.run_in(prepared, prepared.bucket, &[])
     }
+
+    fn run_nli(&self, prepared: &Prepared) -> Result<Vec<Vec<f32>>> {
+        let Some(nli) = &prepared.nli else {
+            return Err(Error::Inference(format!("model `{}` isn't in the nli format", self.manifest.id)));
+        };
+        // Each pair in its own bucket, as `run` runs it.
+        nli.pairs.iter().map(|pair| self.run_nli_pair(pair, pair.bucket, &[])).collect()
+    }
 }

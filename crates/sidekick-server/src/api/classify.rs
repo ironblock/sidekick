@@ -17,10 +17,10 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::Value;
-use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat};
+use sidekick_core::manifest::{ClassifierManifest, ClassifyFormat, NliSection};
 use sidekick_core::{
-    activate, check_hypothesis_template, ClassifyParams, ClassifyTask, Error, ProblemType, QuestionType,
-    TruncationSide, UnavailableReason,
+    activate, check_hypothesis_template, nli_value, ClassifyParams, ClassifyTask, Error, Prepared, ProblemType,
+    QuestionType, TruncationSide, UnavailableReason,
 };
 
 pub async fn classify(
@@ -46,6 +46,8 @@ pub async fn classify(
     let request = parse_params(&req, &manifest)?;
     let (params, temperature, use_activation) = (request.params, request.temperature, request.use_activation);
     let multi_label = request.multi_label;
+    let nli_classes = request.nli_classes;
+    let nli_probs = nli_classes.is_some();
     let k = match manifest.task {
         ClassifyTask::TextClassification | ClassifyTask::TextRanking => manifest.classify.labels.len(),
         ClassifyTask::ZeroShotClassification => params.candidate_labels.len(),
@@ -60,6 +62,7 @@ pub async fn classify(
     };
 
     let (loaded_tx, loaded) = tokio::sync::oneshot::channel();
+    let nli_section = manifest.classify.nli.clone();
     let task = {
         let classifier = classifier.clone();
         let batch = inputs.len() > 1;
@@ -81,7 +84,17 @@ pub async fn classify(
             let _ = loaded_tx.send(classifier.load_buckets(&buckets)?);
             prepared
                 .iter()
-                .map(|p| Ok((p.tokens(), p.bucket, classifier.run(p)?)))
+                .map(|p| {
+                    if !nli_probs {
+                        return Ok((p.tokens(), p.bucket, classifier.run(p)?, None));
+                    }
+                    // The pairs' class logits, from which the values `run`
+                    // would return are derived as it derives them: one
+                    // prediction per pair serves both (D47).
+                    let pairs = classifier.run_nli(p)?;
+                    let values = nli_values(&pairs, p, nli_section.as_ref())?;
+                    Ok((p.tokens(), p.bucket, values, Some(pairs)))
+                })
                 .collect::<Result<Vec<_>, Error>>()
         })
     };
@@ -90,7 +103,7 @@ pub async fn classify(
     let mut prompt_tokens = 0;
     let mut data = Vec::with_capacity(results.len());
     let mut buckets = Vec::with_capacity(results.len());
-    for (index, (tokens, bucket, logits)) in results.into_iter().enumerate() {
+    for (index, (tokens, bucket, logits, pairs)) in results.into_iter().enumerate() {
         prompt_tokens += tokens;
         buckets.push(bucket);
         if logits.len() != k || logits.iter().any(|x| !x.is_finite()) {
@@ -116,7 +129,11 @@ pub async fn classify(
             .iter()
             .enumerate()
             .fold(0, |best, (i, &p)| if p > probs[best] { i } else { best });
-        data.push(ClassifyData { index, label: labels[best].clone(), probs, num_classes: k });
+        let nli_probs = match (pairs, &nli_classes) {
+            (Some(pairs), Some(classes)) => Some(class_probs(&req.model, &pairs, classes, use_activation)?),
+            _ => None,
+        };
+        data.push(ClassifyData { index, label: labels[best].clone(), probs, num_classes: k, nli_probs });
     }
 
     let provenance = Provenance {
@@ -135,6 +152,47 @@ pub async fn classify(
         })
         .into_response(),
     ))
+}
+
+/// The values `run` returns for an nli input, from its pairs' class logits
+/// (`Classifier::run_nli`): [`nli_value`] of each, so `probs` is the same
+/// with or without `nli_probs`.
+fn nli_values(pairs: &[Vec<f32>], p: &Prepared, nli: Option<&NliSection>) -> Result<Vec<f32>, Error> {
+    let (Some(input), Some(nli)) = (&p.nli, nli) else {
+        return Err(Error::Inference("an nli input was prepared without its pairs".into()));
+    };
+    if pairs.len() != input.pairs.len() {
+        return Err(Error::Inference(format!("{} pairs returned {} results", input.pairs.len(), pairs.len())));
+    }
+    pairs
+        .iter()
+        .map(|logits| {
+            if logits.len() != nli.n_classes {
+                return Err(Error::Inference(format!(
+                    "a pair returned {} values for {} classes",
+                    logits.len(),
+                    nli.n_classes
+                )));
+            }
+            Ok(nli_value(logits, nli.entailment, nli.contradiction, input.per_label))
+        })
+        .collect()
+}
+
+/// `nli_probs`: each pair's softmax over the model's classes, keyed by
+/// class name in output order; the logits themselves with
+/// `use_activation: false`, as `probs` then carries logits.
+fn class_probs(model: &str, pairs: &[Vec<f32>], classes: &[String], use_activation: bool) -> Result<Vec<ClassProbs>, ApiError> {
+    pairs
+        .iter()
+        .map(|logits| {
+            if logits.iter().any(|x| !x.is_finite()) {
+                return Err(Error::Inference(format!("model `{model}` returned non-finite class logits")).into());
+            }
+            let values = if use_activation { activate(ProblemType::SingleLabel, logits, None) } else { logits.clone() };
+            Ok(ClassProbs(classes.iter().cloned().zip(values).collect()))
+        })
+        .collect()
 }
 
 fn qtype_name(q: QuestionType) -> &'static str {
@@ -185,6 +243,8 @@ struct Parsed {
     /// gliner2 and nli: sigmoid per label instead of the model's softmax.
     /// For nli, also a request with one label, as Hugging Face scores it.
     multi_label: bool,
+    /// nli with `nli_probs: true`: the model's classes, which key them.
+    nli_classes: Option<Vec<String>>,
 }
 
 /// Every other field, checked against the model's task and format before
@@ -271,6 +331,23 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
     let multi_label = match (req.multi_label, gliner2 || nli) {
         (Some(true), false) => return Err(unsupported("multi_label")),
         (value, _) => value.unwrap_or(false),
+    };
+    // `nli_probs: false`, the default, is accepted everywhere, as
+    // `multi_label: false` is; `true` needs an nli model that names its
+    // classes (D47).
+    let nli_classes = match (req.nli_probs, nli) {
+        (None | Some(false), _) => None,
+        (Some(true), false) => return Err(unsupported("nli_probs")),
+        (Some(true), true) => match m.classify.nli.as_ref().and_then(|n| n.classes.clone()) {
+            Some(classes) => Some(classes),
+            None => {
+                return Err(ApiError::invalid(format!(
+                    "`nli_probs` isn't supported by model `{}`: its manifest doesn't name its classes \
+                     (`[classify.nli] classes`)",
+                    m.id
+                )))
+            }
+        },
     };
     let hypothesis_template = match (&req.hypothesis_template, nli) {
         (Some(t), true) => {
@@ -381,5 +458,82 @@ fn parse_params(req: &ClassifyRequest, m: &ClassifierManifest) -> Result<Parsed,
         multi_label,
         hypothesis_template,
     };
-    Ok(Parsed { params, temperature, use_activation, multi_label: per_label })
+    Ok(Parsed { params, temperature, use_activation, multi_label: per_label, nli_classes })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sidekick_core::{NliPair, NliPairs};
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn section(entailment: usize, contradiction: usize, classes: &[&str]) -> NliSection {
+        NliSection {
+            entailment,
+            contradiction,
+            n_classes: classes.len(),
+            classes: Some(names(classes)),
+            hypothesis_template: "This example is {}.".into(),
+        }
+    }
+
+    fn prepared(k: usize, per_label: bool) -> Prepared {
+        let pair = NliPair { ids: vec![1, 2, 3], type_ids: vec![], bucket: 16 };
+        Prepared {
+            ids: vec![],
+            type_ids: vec![],
+            markers: vec![],
+            qtype: None,
+            decide_pos: None,
+            seg: vec![],
+            position_ids: vec![],
+            nli: Some(NliPairs { pairs: vec![pair; k], per_label }),
+            bucket: 16,
+        }
+    }
+
+    #[test]
+    fn class_probs_are_each_pairs_softmax_keyed_in_output_order() {
+        // nli-deberta-v3's order, and a two-way model's.
+        let three = names(&["contradiction", "entailment", "neutral"]);
+        let pairs = vec![vec![0.5f32, 2.0, 0.1], vec![-1.0, -2.0, 3.0]];
+        let got = class_probs("m", &pairs, &three, true).unwrap();
+        for (dist, logits) in got.iter().zip(&pairs) {
+            let softmax = activate(ProblemType::SingleLabel, logits, None);
+            let sum: f32 = dist.0.iter().map(|(_, p)| p).sum();
+            assert!((sum - 1.0).abs() < 1e-6, "{dist:?}");
+            for ((class, p), (want_class, want)) in dist.0.iter().zip(three.iter().zip(&softmax)) {
+                assert_eq!((class, p), (want_class, want));
+            }
+        }
+        // By hand: e^2 / (e^0.5 + e^2 + e^0.1).
+        let e = |x: f32| x.exp();
+        assert!((got[0].0[1].1 - e(2.0) / (e(0.5) + e(2.0) + e(0.1))).abs() < 1e-6);
+        // A JSON object, its keys in the model's output order.
+        let json = serde_json::to_string(&ClassProbs(vec![("entailment".into(), 0.25), ("not_entailment".into(), 0.75)]))
+            .unwrap();
+        assert_eq!(json, r#"{"entailment":0.25,"not_entailment":0.75}"#);
+        // Raw logits with `use_activation: false`; non-finite ones are a 500.
+        let raw = class_probs("m", &pairs, &three, false).unwrap();
+        assert_eq!(raw[1].0.iter().map(|(_, v)| *v).collect::<Vec<_>>(), pairs[1]);
+        assert!(class_probs("m", &[vec![f32::NAN, 0.0, 0.0]], &three, true).is_err());
+    }
+
+    #[test]
+    fn nli_values_are_what_the_classifier_returns_from_the_same_logits() {
+        let pairs = vec![vec![0.5f32, 0.1, 2.0], vec![1.5, 0.3, -0.5]];
+        // roberta-large-mnli's order: entailment 2, contradiction 0.
+        let mnli = section(2, 0, &["contradiction", "neutral", "entailment"]);
+        assert_eq!(nli_values(&pairs, &prepared(2, false), Some(&mnli)).unwrap(), vec![2.0, -0.5]);
+        assert_eq!(nli_values(&pairs, &prepared(2, true), Some(&mnli)).unwrap(), vec![1.5, -2.0]);
+        // A two-way model: entailment 0 against not_entailment 1.
+        let two = section(0, 1, &["entailment", "not_entailment"]);
+        assert_eq!(nli_values(&[vec![1.0, 4.0]], &prepared(1, true), Some(&two)).unwrap(), vec![-3.0]);
+        // The wrong width, or a pair missing, is the model's fault.
+        assert!(nli_values(&[vec![1.0, 4.0]], &prepared(1, true), Some(&mnli)).is_err());
+        assert!(nli_values(&pairs, &prepared(3, false), Some(&mnli)).is_err());
+    }
 }

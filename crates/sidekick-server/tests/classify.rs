@@ -436,6 +436,178 @@ async fn nli_requests_are_validated_against_the_format() {
     .await;
 }
 
+/// A data item's `nli_probs`: per label, class name to value.
+fn nli_probs(d: &Value) -> Vec<std::collections::BTreeMap<String, f32>> {
+    d["nli_probs"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no nli_probs in {d}"))
+        .iter()
+        .map(|o| o.as_object().unwrap().iter().map(|(k, v)| (k.clone(), v.as_f64().unwrap() as f32)).collect())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nli_probs_leave_every_existing_output_unchanged() {
+    let bodies = [
+        json!({"model": "nli-decider", "input": "a refund for the damaged parcel", "candidate_labels": ["refund", "damaged", "cancel"]}),
+        json!({"model": "nli-decider", "input": "a refund for the damaged parcel", "candidate_labels": ["refund", "cancel"], "multi_label": true}),
+        json!({"model": "nli-decider", "input": "a refund, not cancel", "candidate_labels": ["cancel"]}),
+        json!({"model": "nli-decider", "input": ["a refund", "not refund"], "candidate_labels": ["refund", "cancel"],
+               "truncation_side": "left", "truncate_prompt_tokens": 32}),
+        json!({"model": "nli-decider", "input": "a refund", "candidate_labels": ["refund", "cancel"], "use_activation": false}),
+        json!({"model": "nli-two-way", "input": "a refund, not cancel", "candidate_labels": ["refund", "cancel", "shipping"]}),
+        json!({"model": "nli-two-way", "input": "a refund, not cancel", "candidate_labels": ["refund", "cancel"], "multi_label": true}),
+    ];
+    for body in bodies {
+        let absent = classify_ok(body.clone()).await;
+        let mut off = body.clone();
+        off["nli_probs"] = json!(false);
+        let mut on = body.clone();
+        on["nli_probs"] = json!(true);
+        let (off, on) = (classify_ok(off).await, classify_ok(on).await);
+        // Without the field, or with `false`, the response is what it was:
+        // vLLM's four fields and nothing else.
+        assert_eq!(absent["data"], off["data"], "{body}");
+        for d in absent["data"].as_array().unwrap() {
+            let mut keys: Vec<&str> = d.as_object().unwrap().keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            assert_eq!(keys, ["index", "label", "num_classes", "probs"], "{body}");
+        }
+        assert_eq!(absent["usage"], on["usage"], "{body}");
+        // With `true`, the same values beside the class probabilities.
+        for (a, b) in absent["data"].as_array().unwrap().iter().zip(on["data"].as_array().unwrap()) {
+            for field in ["index", "label", "num_classes", "probs"] {
+                assert_eq!(a[field], b[field], "{body}: {field}");
+            }
+            assert_eq!(nli_probs(b).len(), a["num_classes"].as_u64().unwrap() as usize, "one per label: {body}");
+        }
+    }
+    // The values D41 pinned, unchanged: a softmax of the entailment logits
+    // (3, 3, 0), a per-label sigmoid of entailment − contradiction, and a
+    // lone label against a `not` (−3).
+    let d = &classify_ok(json!({"model": "nli-decider", "input": "a refund for the damaged parcel",
+                                 "candidate_labels": ["refund", "damaged", "cancel"], "nli_probs": true}))
+    .await["data"][0];
+    assert_eq!(probs(d), activate(ProblemType::SingleLabel, &[3.0, 3.0, 0.0], None));
+    let d = &classify_ok(json!({"model": "nli-decider", "input": "a refund, not cancel", "candidate_labels": ["cancel"],
+                                 "nli_probs": true}))
+    .await["data"][0];
+    assert_eq!(probs(d), activate(ProblemType::MultiLabel, &[-3.0], None));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nli_probs_are_each_pairs_softmax_over_the_models_classes() {
+    let text = "refund approved, not cancel";
+    let labels = ["refund", "cancel", "shipping"];
+    // (model, its classes in output order, entailment, contradiction, the
+    // class each label's pair favors)
+    let models = [
+        ("nli-decider", vec!["contradiction", "neutral", "entailment"], 2, 0, ["entailment", "contradiction", "neutral"]),
+        ("nli-two-way", vec!["entailment", "not_entailment"], 0, 1, ["entailment", "not_entailment", ""]),
+    ];
+    for (model, classes, entailment, contradiction, favored) in models {
+        for multi in [false, true] {
+            let body = json!({"model": model, "input": [text, text], "candidate_labels": labels,
+                              "multi_label": multi, "nli_probs": true});
+            let value = classify_ok(body).await;
+            assert_eq!(value["data"].as_array().unwrap().len(), 2, "each input its own");
+            for d in value["data"].as_array().unwrap() {
+                let per_label = nli_probs(d);
+                assert_eq!(per_label.len(), labels.len(), "{model}: one per label, in candidate_labels order");
+                for ((label, dist), want) in labels.iter().zip(&per_label).zip(favored) {
+                    let mut keys: Vec<&str> = dist.keys().map(String::as_str).collect();
+                    let mut names = classes.clone();
+                    keys.sort_unstable();
+                    names.sort_unstable();
+                    assert_eq!(keys, names, "{model}: keyed by the model's classes");
+                    // A distribution: the softmax of the pair's class logits,
+                    // whatever `multi_label` does to `probs`.
+                    let sum: f32 = dist.values().sum();
+                    assert!((sum - 1.0).abs() < 1e-6, "{model} {label}: sums to {sum}");
+                    let logits = mock_nli_logits(text, label, entailment, contradiction, classes.len());
+                    let softmax = activate(ProblemType::SingleLabel, &logits, None);
+                    for (i, class) in classes.iter().enumerate() {
+                        assert_eq!(dist[*class], softmax[i], "{model} {label} {class}");
+                    }
+                    // The label mapping: the class the logits favor.
+                    let best = dist.iter().fold(("", f32::MIN), |b, (k, &v)| if v > b.1 { (k.as_str(), v) } else { b });
+                    if want.is_empty() {
+                        // A two-way model has no neutral: an unrelated label
+                        // is an even split.
+                        assert!(dist.values().all(|&v| (v - 0.5).abs() < 1e-6), "{model} {label}: {dist:?}");
+                    } else {
+                        assert_eq!(best.0, want, "{model} {label}: {dist:?}");
+                    }
+                }
+            }
+        }
+    }
+    // Contradicted and unmentioned differ on a three-way model, where the
+    // default scores can't tell them apart: one label each, scored alone.
+    let one = |label: &str| {
+        json!({"model": "nli-decider", "input": text, "candidate_labels": [label], "nli_probs": true})
+    };
+    let cancel = classify_ok(one("cancel")).await;
+    let shipping = classify_ok(one("shipping")).await;
+    let (c, s) = (&nli_probs(&cancel["data"][0])[0], &nli_probs(&shipping["data"][0])[0]);
+    assert!(c["contradiction"] > 0.9 && s["neutral"] > 0.7, "{c:?} {s:?}");
+    assert!(probs(&cancel["data"][0])[0] < 0.1 && (probs(&shipping["data"][0])[0] - 0.5).abs() < 1e-6);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nli_probs_follow_use_activation_and_the_requests_settings() {
+    // `use_activation: false`: the class logits, as `probs` then holds
+    // logits.
+    let body = json!({"model": "nli-decider", "input": "a refund", "candidate_labels": ["refund", "cancel"],
+                      "nli_probs": true, "use_activation": false});
+    let d = &classify_ok(body).await["data"][0];
+    let raw = nli_probs(d);
+    assert_eq!(raw[0]["entailment"], 3.0);
+    assert_eq!((raw[1]["neutral"], raw[1]["entailment"], raw[1]["contradiction"]), (2.0, 0.0, 0.0));
+    assert_eq!(probs(d), vec![3.0, 0.0], "the entailment logits, as before");
+
+    // Truncation and the template reach every pair as without the field.
+    let p = test_state_full(true, None);
+    let body = json!({"model": "nli-decider", "input": ["short", "a refund"], "candidate_labels": ["a", "b"],
+                      "hypothesis_template": "It is about {}.", "truncation_side": "left",
+                      "truncate_prompt_tokens": 32, "nli_probs": true});
+    let (status, headers, value) = call_with_headers(p.state, classify(body)).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(headers["sidekick-buckets"], "64,64");
+    let seen = p.seen.lock().unwrap();
+    for params in seen.iter() {
+        assert_eq!(params.hypothesis_template.as_deref(), Some("It is about {}."));
+        assert_eq!(params.truncation_side, TruncationSide::Left);
+        assert_eq!(params.truncate_prompt_tokens, Some(32));
+    }
+    // One prediction per input serves `probs` and `nli_probs` alike.
+    assert_eq!(p.runs.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nli_probs_are_the_nli_formats_and_need_the_models_classes() {
+    // `false` is accepted everywhere, as `multi_label: false` is.
+    for body in [
+        json!({"model": "sentiment", "input": "x", "nli_probs": false}),
+        json!({"model": "decider", "input": "x", "candidate_labels": ["a", "b"], "question_type": "choice", "nli_probs": false}),
+        json!({"model": "nli-unnamed", "input": "x", "candidate_labels": ["a", "b"], "nli_probs": false}),
+    ] {
+        classify_ok(body).await;
+    }
+    classify_400(json!({"model": "sentiment", "input": "x", "nli_probs": true}), "`nli_probs` isn't supported").await;
+    classify_400(
+        json!({"model": "schema-decider", "input": "x", "candidate_labels": ["a", "b"], "nli_probs": true}),
+        "`nli_probs` isn't supported by model `schema-decider` (a zero-shot model in the gliner2 format)",
+    )
+    .await;
+    // A manifest written before D47 names no classes: nothing to key them by.
+    classify_400(
+        json!({"model": "nli-unnamed", "input": "x", "candidate_labels": ["a", "b"], "nli_probs": true}),
+        "doesn't name its classes",
+    )
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn gliner2_requests_are_validated_against_the_format() {
     let base = || json!({"model": "schema-decider", "input": "x", "candidate_labels": ["a", "b"]});
@@ -691,11 +863,19 @@ async fn listings_are_task_aware() {
     assert_eq!(j["required"], json!(["candidate_labels", "question_type", "instructions"]));
     assert_eq!(j["compute_units"], "cpu_and_gpu");
     let n = model("nli-decider");
-    assert_eq!(n["extensions"], json!(["candidate_labels", "hypothesis_template", "multi_label"]));
+    assert_eq!(n["extensions"], json!(["candidate_labels", "hypothesis_template", "multi_label", "nli_probs"]));
     assert_eq!(n["required"], json!(["candidate_labels"]));
     assert_eq!(n["hypothesis_template"], "This example is {}.");
     assert_eq!(n["max_labels"], 4);
+    // Each nli model's classes, in output order: what keys `nli_probs`.
+    assert_eq!(n["nli_classes"], json!(["contradiction", "neutral", "entailment"]));
+    assert_eq!(model("nli-two-way")["nli_classes"], json!(["entailment", "not_entailment"]));
+    // A manifest without them offers no `nli_probs`.
+    let u = model("nli-unnamed");
+    assert!(u.get("nli_classes").is_none());
+    assert_eq!(u["extensions"], json!(["candidate_labels", "hypothesis_template", "multi_label"]));
     assert!(model("decider").get("hypothesis_template").is_none());
+    assert!(model("decider").get("nli_classes").is_none() && model("sentiment").get("nli_classes").is_none());
     // Each classifier's configured compute units: the default, or its own.
     assert_eq!(model("sentiment")["compute_units"], "cpu_and_ne");
     assert_eq!(g["compute_units"], "cpu_and_gpu");
@@ -704,8 +884,8 @@ async fn listings_are_task_aware() {
     assert_eq!(
         health["classifiers"]["models"],
         json!([
-            "chunked", "cpu-capped", "decider", "fev-decider", "jev-decider", "julia", "nli-decider", "placed", "placed-gpu",
-            "placed-stale",
+            "chunked", "cpu-capped", "decider", "fev-decider", "jev-decider", "julia", "nli-decider", "nli-two-way",
+            "nli-unnamed", "placed", "placed-gpu", "placed-stale",
             "reranker", "schema-decider", "sentiment", "sigmoid-reranker"
         ])
     );

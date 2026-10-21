@@ -145,7 +145,9 @@ fn close(a: &[f32], b: &[f32], tol: f32) -> bool {
 fn nli_scores_match_huggingfaces_pipeline_on_bert_and_roberta_pairs() {
     let expected: BTreeMap<String, Model> =
         serde_json::from_str(&std::fs::read_to_string(fixtures().join("expected.json")).unwrap()).unwrap();
-    for (name, manifest, roberta) in [("bert", BERT.to_string(), false), ("roberta", roberta_manifest(), true)] {
+    for (name, manifest, roberta, indices) in
+        [("bert", BERT.to_string(), false, (2, 0)), ("roberta", roberta_manifest(), true, (0, 1))]
+    {
         let dir = model_dir(name, &manifest, name, roberta);
         let clf = load(&dir).unwrap();
         for case in &expected[name].cases {
@@ -173,6 +175,19 @@ fn nli_scores_match_huggingfaces_pipeline_on_bert_and_roberta_pairs() {
             // scores: a softmax across labels, or each label alone (asked,
             // or the only one).
             let values = clf.run(&prepared).unwrap();
+            // The pairs' class logits (`nli_probs`, D47) are torch's, and
+            // the values `run` returns are derived from exactly them.
+            let classes = clf.run_nli(&prepared).unwrap();
+            assert_eq!(classes.len(), case.labels.len());
+            for (logits, theirs) in classes.iter().zip(&case.pairs) {
+                assert!(close(logits, &theirs.logits, 2e-2), "{name}: {logits:?} vs {:?}", theirs.logits);
+                let (ours, torch) = (activate(ProblemType::SingleLabel, logits, None), activate(ProblemType::SingleLabel, &theirs.logits, None));
+                assert!(close(&ours, &torch, 1e-2) && (ours.iter().sum::<f32>() - 1.0).abs() < 1e-5, "{name}: {ours:?}");
+            }
+            let (entailment, contradiction) = indices;
+            let derived: Vec<f32> =
+                classes.iter().map(|l| sidekick_core::nli_value(l, entailment, contradiction, nli.per_label)).collect();
+            assert_eq!(derived, values, "{name}");
             let problem = if nli.per_label { ProblemType::MultiLabel } else { ProblemType::SingleLabel };
             assert_eq!(nli.per_label, case.multi_label || case.labels.len() == 1);
             let probs = activate(problem, &values, None);

@@ -302,6 +302,10 @@ pub struct ClassifyRequest {
     /// for the label. The name Hugging Face's zero-shot pipeline uses.
     #[serde(default)]
     pub hypothesis_template: Option<String>,
+    /// nli format: also report each (input, label) pair's probabilities
+    /// over the model's own classes (`nli_probs`, D47).
+    #[serde(default)]
+    pub nli_probs: Option<bool>,
 }
 
 /// vLLM's pooling fields that classify and rerank share
@@ -349,6 +353,27 @@ pub struct ClassifyData {
     pub label: String,
     pub probs: Vec<f32>,
     pub num_classes: usize,
+    /// Extension, nli format with `nli_probs: true`: per candidate label, in
+    /// `probs` order, the softmax over the model's classes (D47).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nli_probs: Option<Vec<ClassProbs>>,
+}
+
+/// One (input, label) pair's values by class name, a JSON object in the
+/// model's output order: `{"contradiction": …, "entailment": …, "neutral":
+/// …}`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassProbs(pub Vec<(String, f32)>);
+
+impl Serialize for ClassProbs {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = s.serialize_map(Some(self.0.len()))?;
+        for (class, p) in &self.0 {
+            map.serialize_entry(class, p)?;
+        }
+        map.end()
+    }
 }
 
 // ---------- rerank ----------
@@ -586,6 +611,11 @@ pub struct ModelObject {
     /// it sends none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hypothesis_template: Option<String>,
+    /// Extension, nli format: the model's classes in output order, which
+    /// key a request's `nli_probs` (two for a two-way model, three for an
+    /// MNLI one); absent when its manifest doesn't name them (D47).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nli_classes: Option<Vec<String>>,
     /// Extension, embedders: the prompt put before each input, by
     /// `input_type` (`""` for none). `document`'s is the default, applied
     /// when a request sends no `input_type`; `input_type: "none"` applies
@@ -661,6 +691,7 @@ impl ModelObject {
             labels: None,
             max_labels: None,
             hypothesis_template: None,
+            nli_classes: None,
             prompts: None,
             named_prompts: None,
             max_batch: None,

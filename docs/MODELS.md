@@ -994,6 +994,16 @@ runs into a limitation), and premises past 512 tokens truncated on the right
 and, for logs and traces, on the left (one past 2,048 tokens). Each
 reference is checked against the pipeline's own scores (agreement within
 1e-7).
+- **Classes:** the cross-encoder/nli-* models and roberta-large-mnli are
+  three-way (entailment, neutral, contradiction); the zeroshot-v2.0
+  models are two-way (entailment, not_entailment), so they can't tell a
+  contradicted claim from an unmentioned one. `nli_probs: true` returns
+  each pair's probabilities over these classes (D47; sidekickd 0.15.0 or
+  later, whose manifests name them in `[classify.nli] classes`; older
+  daemons skip a manifest that does). `/v1/models` lists them as
+  `nli_classes`. For a model installed earlier, add its one line from
+  docs/design/classify.md ("Class probabilities") to the installed
+  manifest.
 - **Grades:** every model grades A or B on the GPU, where all five are
   served, at 4.0 (MiniLM2), 4.2 (DeBERTa-v3-xsmall), 4.0 (small), 6.7
   (base) and 15.6 ms (RoBERTa-large) per request. On the ANE four of the

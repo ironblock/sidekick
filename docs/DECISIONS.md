@@ -2924,6 +2924,13 @@ above, so the existing softmax and multi-label grading apply unchanged.
 The converted models' grades are recorded in docs/MODELS.md as they
 land.
 
+**Amendment (October 2026): the classes themselves.** The scores above
+drop neutral, so they can't tell a contradicted label from an
+unmentioned one. D47 adds an opt-in `nli_probs`, each pair's softmax
+over the model's own classes, named by a new optional `[classify.nli]
+classes` (sidekickd 0.15.0 or later). The scores and every default are
+unchanged.
+
 ## D42 — AVX-512 for ONNX Runtime on Intel Macs
 ONNX Runtime's CPU kernels (MLAS) are chosen once per process, on the
 first thread that needs them. The AVX-512 kernels are taken only when the
@@ -3452,6 +3459,120 @@ generated for each bucket list.
   - A cap that differs by compute path, as D33's does and the ANE cap
     above would, is reported by the runtime, and the docs give each
     path's limit beside its grade.
+
+## D47 — An NLI model's class probabilities, on request (`nli_probs`)
+D41 scores an NLI model's labels as Hugging Face's zero-shot pipeline
+does, and both of its scores reduce a pair's classes to one number:
+- **Several labels:** a softmax across labels of their entailment logits.
+- **One label, or `multi_label`:** the softmax over [contradiction,
+  entailment], which is sigmoid(entailment − contradiction).
+
+Neither reports neutral. A low score can mean the text contradicts the
+claim or never mentions it, and a claim the text ignores (neutral high,
+entailment and contradiction low and close) scores near 0.5 alone, as a
+weakly supported one does. To check a claim against evidence, the
+distinction is the point: a contradicted claim is worse than an
+unsupported one (#134). The verification corpus
+(#133) scores its CONTRADICTED and NOT MENTIONED variants apart, and
+needs that from sidekick.
+
+**Decision.** An opt-in request field, `nli_probs: true`, on the nli
+format:
+- **Response.** Each result gains `nli_probs`, parallel to `probs`: per
+  candidate label, an object from each of the model's classes to that
+  pair's softmax over its logits, in output order:
+  `{"contradiction": 0.97, "entailment": 0.01, "neutral": 0.02}`. One per
+  (input, label) pair, for any number of labels, with or without
+  `multi_label`, which changes `probs` only. With `use_activation: false`
+  the values are the class logits, as `probs` then carries logits.
+  Truncation and batching are unchanged: the pairs are the ones `probs`
+  is computed from.
+- **Defaults unchanged.** Without the field, or with `false`, a response
+  is byte for byte what it was. With it, `probs` and `label` are too:
+  `Classifier::run_nli` returns each pair's class logits, and the server
+  derives the per-label values from them with the same `nli_value` the
+  classifier's `run` uses, so one prediction per pair serves both fields.
+- **The name.** sidekick's `/v1/classify` follows vLLM's, whose `probs`
+  are a classifier's activated class values; `nli_probs` is the same for
+  an nli pair's own classes, and its prefix scopes it to the format, as
+  the response field it adds is scoped. `nli_scores`, the issue's working
+  name, was set aside because Hugging Face's pipeline calls its reduced
+  per-label values `scores`, which `probs` already carries. The
+  text-classification pipeline's `top_k=None` (formerly
+  `return_all_scores`) returns every class of one classifier, but would
+  read as changing `probs` itself. Like `multi_label: false`,
+  `nli_probs: false` is accepted on every model; `true` elsewhere is a
+  400.
+- **The classes come from the manifest.** `[classify.nli] classes` lists
+  config.json's `id2label` in output order, lowercased, so
+  roberta-large-mnli's `ENTAILMENT` and the cross-encoders' `entailment`
+  key alike. A `neutral` index beside `entailment` and `contradiction`
+  was the alternative. A two-way model has no neutral, and its second
+  output isn't a contradiction but not_entailment; naming every output
+  says what each one is without inferring it. The registry checks the
+  list against `n_classes`, that its names are distinct and nonempty,
+  that `entailment` points at an entailment class, and that
+  `contradiction` points at `contradiction` or `not_entailment`, so a
+  list in the wrong order is refused. The converter and the reference generator
+  check it against the checkpoint's config. `/v1/models` lists it as
+  `nli_classes`, and lists `nli_probs` in `extensions` exactly when it is
+  present.
+
+The example manifests' classes, from each checkpoint's config.json at
+its pinned revision:
+
+| model | classes, in output order |
+|---|---|
+| nli-deberta-v3-xsmall, -small, -base; nli-minilm2-l6-h768 (and its ANE build) | contradiction, entailment, neutral |
+| roberta-large-mnli | contradiction, neutral, entailment |
+| deberta-v3-base-zeroshot-v2.0-c, deberta-v3-large-zeroshot-v2.0-c, roberta-large-zeroshot-v2.0-c, bge-m3-zeroshot-v2.0-c, modernbert-large-zeroshot-v2.0 | entailment, not_entailment |
+
+The first six are three-way. The zeroshot-v2.0 models are two-way and
+can't separate contradicted from unmentioned: their `nli_probs` says so
+by its keys.
+
+**Compatibility.** `classes` needs sidekickd 0.15.0 or later; older
+daemons skip the model. `[classify.nli]` refuses unknown keys, so a
+daemon before 0.15.0 given a manifest with `classes` drops the whole
+model (D28): it is missing from `/v1/models`, and the only signal is a
+warning in the log. Nothing writes `classes` into an installed manifest
+except a conversion: converters install the committed example manifest,
+so a conversion from a checkout with this change needs a daemon of
+0.15.0 or later to serve it (docs/CONVERTING.md says so).
+
+The other direction is safe. `classes` is optional, so a manifest
+installed before 0.15.0 still loads on it. Such a model doesn't list
+`nli_probs`, and a request for it is a 400 naming the missing key. To
+enable it, add the model's single `classes = [...]` line under
+`[classify.nli]` in the installed manifest (each model's line is in
+docs/design/classify.md). Don't copy the example manifest over it: an
+installed manifest carries the `[placement]` table its conversion
+recorded, which the example lacks. The artifacts don't change, and
+parity references stay current (they record only the indices, count
+and template).
+
+*Proposed, not implemented here:* an unknown key that only adds
+information, as `classes` does, should produce a warning rather than
+skip the model, so that a new manifest degrades on an older daemon
+instead of disappearing. That needs a rule for which keys are additive
+and is left to its own issue.
+
+**Validation.** Unit tests check the softmax per pair (sums to 1, equal
+to the softmax of the logits, keys in output order), the per-label
+values derived from the same logits, and the manifest rules. Server
+tests, on mock three-way and two-way models, pin the existing responses
+with and without the field, check each label's distribution and the
+class it favors (entailed, contradicted, unmentioned), `use_activation:
+false`, truncation, batching, the 400s and the listing. On the tiny Core
+ML cross-encoders, the class logits match fp32 torch and the values
+`run` returns are exactly those derived from them. Live, through the
+daemon, on nli-minilm2-l6-h768, deberta-v3-base-zeroshot-v2.0-c and
+roberta-large-mnli (on the GPU, as served; 9 pairs each, requested with
+and without `multi_label`): `probs` identical with and without the
+field, `nli_probs` within 1.8e-3 of fp32 torch's softmax, and the same
+argmax on every pair. A side-by-side review on four installed nli
+models found 1,296 requests identical to the previous release's once
+`nli_probs` was removed.
 
 ## Hardware verification status
 

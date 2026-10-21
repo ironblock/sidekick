@@ -638,10 +638,53 @@ pub struct NliSection {
     /// The output's width: 3 for MNLI models, 2 for entailment vs
     /// not_entailment.
     pub n_classes: usize,
+    /// The classes in output order: config.json's `id2label`, lowercased
+    /// (`["contradiction", "entailment", "neutral"]`, or `["entailment",
+    /// "not_entailment"]` for a two-way model). They name a request's
+    /// `nli_probs` (D47); a manifest without them can't serve that field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classes: Option<Vec<String>>,
     /// The hypothesis a label is put into when a request sends none:
     /// exactly one `{}`, which the label replaces.
     #[serde(default = "default_hypothesis_template")]
     pub hypothesis_template: String,
+}
+
+/// `[classify.nli] classes`: one distinct, nonempty name per output, and
+/// the entailment index names an entailment class, as the pipeline finds
+/// it, so a list in the wrong order is refused.
+fn check_nli_classes(classes: &[String], nli: &NliSection) -> std::result::Result<(), String> {
+    if classes.len() != nli.n_classes {
+        return Err(format!(
+            "`[classify.nli] classes` names {} classes for `n_classes = {}`",
+            classes.len(),
+            nli.n_classes
+        ));
+    }
+    if classes.iter().any(|c| c.trim().is_empty()) {
+        return Err("`[classify.nli] classes` must be nonempty names".into());
+    }
+    if classes.iter().enumerate().any(|(i, c)| classes[..i].contains(c)) {
+        return Err("`[classify.nli] classes` must be distinct".into());
+    }
+    if !classes[nli.entailment].to_lowercase().starts_with("entail") {
+        return Err(format!(
+            "`[classify.nli] classes` names output {} `{}`, but `entailment` points there; \
+             list config.json's id2label in output order",
+            nli.entailment, classes[nli.entailment]
+        ));
+    }
+    // What a lone label is weighed against: an MNLI model's contradiction,
+    // or a two-way model's not_entailment.
+    let against = classes[nli.contradiction].to_lowercase();
+    if against != "contradiction" && against != "not_entailment" {
+        return Err(format!(
+            "`[classify.nli] classes` names output {} `{}`, but `contradiction` points there; \
+             it must be `contradiction` or `not_entailment`",
+            nli.contradiction, classes[nli.contradiction]
+        ));
+    }
+    Ok(())
 }
 
 /// Hugging Face's zero-shot pipeline default.
@@ -801,7 +844,13 @@ impl ClassifierManifest {
             Some(ClassifyFormat::Gliner2) => fields.extend(["instructions", "multi_label"]),
             Some(ClassifyFormat::Fev) => fields.extend(["question_type", "instructions"]),
             Some(ClassifyFormat::Agentjev) => fields.extend(["question_type", "instructions"]),
-            Some(ClassifyFormat::Nli) => fields.extend(["hypothesis_template", "multi_label"]),
+            Some(ClassifyFormat::Nli) => {
+                fields.extend(["hypothesis_template", "multi_label"]);
+                // The class probabilities need the classes' names (D47).
+                if self.classify.nli.as_ref().is_some_and(|n| n.classes.is_some()) {
+                    fields.push("nli_probs");
+                }
+            }
             None => {}
         }
         fields
@@ -1706,6 +1755,9 @@ fn validate_classifier(m: &ClassifierManifest) -> std::result::Result<(), String
                     if nli.entailment == nli.contradiction {
                         return Err("`[classify.nli] entailment` and `contradiction` must differ".into());
                     }
+                    if let Some(classes) = &nli.classes {
+                        check_nli_classes(classes, nli)?;
+                    }
                     crate::classify::check_hypothesis_template(&nli.hypothesis_template)
                         .map_err(|e| format!("`[classify.nli] hypothesis_template`: {e}"))?;
                     if io.marker_pos.is_some() || io.qtype.is_some() {
@@ -2004,6 +2056,36 @@ output = "logits"
 "#;
 
     #[test]
+    fn every_example_nli_manifest_names_its_classes() {
+        // The committed manifests, as the converter installs them: each
+        // nli model's classes are its config.json id2label, lowercased.
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/classifiers");
+        let reg = ModelRegistry::scan(&dir).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped());
+        let mut three_way = 0;
+        let mut two_way = 0;
+        for c in reg.classifiers() {
+            let Some(nli) = &c.manifest.classify.nli else { continue };
+            let id = &c.manifest.id;
+            let classes = nli.classes.as_ref().unwrap_or_else(|| panic!("{id} names no classes"));
+            assert_eq!(classes[nli.entailment], "entailment", "{id}");
+            match nli.n_classes {
+                3 => {
+                    assert_eq!(classes[nli.contradiction], "contradiction", "{id}");
+                    assert!(classes.iter().any(|c| c == "neutral"), "{id}");
+                    three_way += 1;
+                }
+                2 => {
+                    assert_eq!(classes[nli.contradiction], "not_entailment", "{id}");
+                    two_way += 1;
+                }
+                n => panic!("{id}: {n} classes"),
+            }
+        }
+        assert_eq!((three_way, two_way), (6, 5), "the nli models in examples/classifiers");
+    }
+
+    #[test]
     fn nli_classifiers_and_what_they_refuse() {
         let tmp = tmp_dir("nli");
         write_classifier(&tmp, "n", NLI);
@@ -2013,9 +2095,23 @@ output = "logits"
         assert_eq!(m.classify.format, Some(ClassifyFormat::Nli));
         let nli = m.classify.nli.as_ref().unwrap();
         assert_eq!((nli.entailment, nli.contradiction, nli.n_classes), (1, 0, 3));
+        assert_eq!(nli.classes, None, "optional: a manifest written before D47 still loads");
         assert_eq!(nli.hypothesis_template, DEFAULT_HYPOTHESIS_TEMPLATE, "Hugging Face's default");
+        // Without its classes, a model can't report their probabilities.
         assert_eq!(m.extension_fields(), vec!["candidate_labels", "hypothesis_template", "multi_label"]);
         assert_eq!(m.required_fields(), vec!["candidate_labels"]);
+        std::fs::remove_dir_all(&tmp).unwrap();
+
+        // The classes, in output order, name the class probabilities (D47).
+        let with_classes = |list: &str| NLI.replace("n_classes = 3\n", &format!("n_classes = 3\nclasses = {list}\n"));
+        let tmp = tmp_dir("nli-classes");
+        write_classifier(&tmp, "n", &with_classes(r#"["contradiction", "entailment", "neutral"]"#));
+        let reg = ModelRegistry::scan(&tmp).unwrap();
+        assert!(reg.skipped().is_empty(), "{:?}", reg.skipped());
+        let m = &reg.classifier("nli-deberta-v3-base").unwrap().manifest;
+        let classes = m.classify.nli.as_ref().unwrap().classes.clone().unwrap();
+        assert_eq!(classes, ["contradiction", "entailment", "neutral"]);
+        assert_eq!(m.extension_fields(), vec!["candidate_labels", "hypothesis_template", "multi_label", "nli_probs"]);
         std::fs::remove_dir_all(&tmp).unwrap();
 
         // A BERT NLI model names token_type_ids; a custom template is fine.
@@ -2028,6 +2124,12 @@ output = "logits"
             ("one-class", NLI.replace("n_classes = 3", "n_classes = 1"), "at least 2"),
             ("template", NLI.replace("n_classes = 3\n", "n_classes = 3\nhypothesis_template = \"{} {}\"\n"), "exactly one `{}`"),
             ("unknown-key", NLI.replace("n_classes = 3\n", "n_classes = 3\nneutral = 2\n"), "unknown field"),
+            ("classes-count", with_classes(r#"["contradiction", "entailment"]"#), "names 2 classes for `n_classes = 3`"),
+            ("classes-blank", with_classes(r#"["contradiction", "entailment", " "]"#), "nonempty"),
+            ("classes-repeat", with_classes(r#"["contradiction", "entailment", "entailment"]"#), "distinct"),
+            ("classes-order", with_classes(r#"["entailment", "contradiction", "neutral"]"#), "output 1 `contradiction`"),
+            ("classes-against", with_classes(r#"["neutral", "entailment", "contradiction"]"#), "output 0 `neutral`, but `contradiction`"),
+            ("classes-unnamed", with_classes(r#"["label_0", "entailment", "label_2"]"#), "must be `contradiction` or `not_entailment`"),
             ("marker-io", NLI.replace("output = ", "marker_pos = \"m\"\noutput = "), "token_type_ids and output only"),
             ("multi-label", NLI.replace("max_batch = 8", "max_batch = 8\nproblem_type = \"multi_label\""), "`multi_label`"),
             ("calibration", format!("{NLI}\n[classify.calibration]\n\"choice:2\" = 1.0\n"), "isn't supported by the nli"),

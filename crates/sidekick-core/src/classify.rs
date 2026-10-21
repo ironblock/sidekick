@@ -260,6 +260,15 @@ pub trait Classifier: Send + Sync {
     /// `labels().len()` or `candidate_labels.len()`; 1 for a reranker).
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>>;
 
+    /// nli format: each pair's class logits, in label order, one per class
+    /// of `[classify.nli]` (`n_classes`). `run` returns [`nli_value`] of
+    /// each, so one call serves both a request's `probs` and its
+    /// `nli_probs` (D47). Other formats have no pairs.
+    fn run_nli(&self, prepared: &Prepared) -> Result<Vec<Vec<f32>>> {
+        let _ = prepared;
+        Err(crate::Error::Inference(format!("model `{}` isn't in the nli format", self.id())))
+    }
+
     /// Load the programs for `buckets` unless they're resident, without
     /// running anything. Returns the buckets this call waited on a load
     /// for, its own or a concurrent caller's; empty when all were resident.

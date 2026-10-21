@@ -35,6 +35,7 @@ max_labels = 16
 entailment = 2
 contradiction = 0
 n_classes = 3
+classes = ["contradiction", "neutral", "entailment"]   # config.json's id2label, lowercased
 hypothesis_template = "This example is {}."
 
 [classify.io]

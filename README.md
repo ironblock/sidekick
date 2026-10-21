@@ -344,6 +344,35 @@ statement hold: labels `false`, `true`). `probs` then follows
  "candidate_labels": ["billing: invoices and refunds", "account: login and passwords", "other"]}
 ```
 
+NLI cross-encoders (`nli-deberta-v3-*`, `roberta-large-mnli`, the
+zeroshot-v2.0 models) put each label into a hypothesis and score it as
+Hugging Face's zero-shot pipeline does. That score reduces the model's
+classes to one number, so a claim the text contradicts and one it never
+mentions can look alike. `nli_probs: true` adds each label's
+probabilities over the model's own classes:
+
+```json
+{"model": "nli-deberta-v3-base", "input": "The config sets port 8080 and enables TLS.",
+ "candidate_labels": ["the port is 9090", "the server logs to a file"],
+ "hypothesis_template": "{}.", "nli_probs": true}
+```
+
+Measured on nli-deberta-v3-base: `probs` is `[0.55, 0.45]`, which
+can't tell the two labels apart, but `nli_probs` can:
+
+```json
+"nli_probs": [{"contradiction": 0.9999, "entailment": 0.0000, "neutral": 0.0001},
+              {"contradiction": 0.0010, "entailment": 0.0001, "neutral": 0.9990}]
+```
+
+One object per label, beside the unchanged `probs`. The three-way (MNLI)
+models report `entailment`, `neutral` and `contradiction`. The two-way
+zeroshot-v2.0 models report `entailment` and `not_entailment`, so they
+can't separate contradicted from unmentioned (deberta-v3-base-zeroshot-v2.0-c
+gives both labels not_entailment 0.9996). `/v1/models` lists each one's
+`nli_classes`. `nli_probs` needs sidekickd 0.15.0 or later, and so do
+the nli manifests from this release on: older daemons skip the model.
+
 `calibration: "model"` applies the temperature the model declares for the
 question type and label count; `/v1/models` lists each classifier's
 temperatures, labels or `max_labels`, `max_batch`, and the extension fields
