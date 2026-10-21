@@ -212,7 +212,9 @@ class Assembly(unittest.TestCase):
             self.assertEqual(t["config"]["position"], pos)
 
     def test_nm_kind_labels_empty_output_with_nonzero_exit(self):
-        self.assertEqual(self.build(flag_claim())["nm_kind"], "removed")
+        self.assertEqual(self.build(sum_claim())["nm_kind"], "removed")
+        # NOT MENTIONED keeps the refused command and its exit 1, with no output
+        self.assertEqual(self.build(flag_claim())["nm_kind"], "empty-output-nonzero-exit")
         c = {"id": "demo-version-refuted", "shape": "r.p", "type": "refutation", "mechanism": "plain", "fact": "dv",
              "text": "was: demo --version prints the version (held at 6/10), wrong because it is an unknown flag [call c8]",
              "guard": [],
@@ -422,6 +424,31 @@ class Hazards(unittest.TestCase):
         c["block"][0]["edit"] = [{"find": "    max: 4\n", "c": "    max: 5\n"},
                                  {"find": "  pool:\n    max: 4\n", "nm": ""}]
         gen.build(c, dict(CFG), self.caps, CORPUS)
+
+    def test_contradicted_may_not_still_state_the_value(self):
+        c = flag_claim()
+        c["block"][0]["edit"][0] = {"find": "Hint: pass --allow-back\n", "c": "Hint: pass --force (or --allow-back)\n"}
+        self.refused(c, why="the claim's value '--allow-back' is still stated")
+        c["c_allow"] = [{"text": "--allow-back", "reason": "a test of the opt-out"}]
+        gen.build(c, dict(CFG), self.caps, CORPUS)
+        c = flag_claim()
+        c["c_forbid"] = ["Allow moving the marker back"]  # the help's description stays in C
+        self.refused(c, why="still states the claim")
+
+    def test_nm_must_drop_every_conjunct(self):
+        c = flag_claim()
+        c["conjuncts"] = ["^\\[exit 1\\]$"]  # a conjunct NOT MENTIONED keeps
+        self.refused(c, why="conjunct still matches")
+
+    def test_a_state_changing_command_is_never_repeated(self):
+        corpus = {**CORPUS, "_mutating": {"demo.err.move"}}
+        with self.assertRaises(gen.Refusal) as ctx:
+            gen.build(flag_claim(), {**CFG, "obstacle": "repeated"}, self.caps, corpus)
+        self.assertIn("state-changing", str(ctx.exception))
+        plan = gen.review_plan([flag_claim()], {**corpus, "review": {
+            "per_type": 3, "lengths": ["1k"], "positions": ["start", "middle", "end"],
+            "worked": {"length": "1k", "position": "middle", "obstacle": "none"}}})
+        self.assertNotIn("repeated", {cfg["obstacle"] for _, cfg in plan})
 
     def test_unedited_find_is_refused(self):
         c = flag_claim()

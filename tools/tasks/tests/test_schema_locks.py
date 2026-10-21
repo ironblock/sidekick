@@ -173,9 +173,31 @@ class Claims(unittest.TestCase):
                 gen.load_claims(Path(d) / "c.toml", 3)
 
 
+def current_set() -> str:
+    return f"review-{load('corpus.toml').get('batch', 2)}"
+
+
+def derived_nm_kind(t: dict) -> str:
+    """nm_kind from the diff alone: a call that SUPPORTED shows with output
+    and NOT MENTIONED keeps with none and a nonzero exit."""
+    call = re.compile(r"^\[call (c\d+)\] \$ .*\n((?:(?!\[call c\d+\] \$ |\[exit ).*\n)*)\[exit (-?\d+)\]$", re.M)
+    s = {m.group(1): m.group(2) for m in call.finditer(gen.expand(t, "s"))}
+    for m in call.finditer(gen.expand(t, "nm")):
+        if m.group(2) == "" and m.group(3) != "0" and s.get(m.group(1)):
+            return "empty-output-nonzero-exit"
+    return "removed"
+
+
 class SetLock(unittest.TestCase):
-    def test_review_lock_is_consistent(self):
+    def test_validated_batch_2_lock_is_kept(self):
+        """Batch 2's lock stays as validated by the host project; it records
+        the inputs it was built from (in git history), not today's."""
         lock = canon.read_json(FIX / "verification-review.lock.json")
+        schema.validate(lock, "lock")
+        self.assertEqual(lock["set_sha256"], "8db0030b10bca4c849dcfb4b54291aef2cec1ea7eb83500abab1f0033ca4803b")
+
+    def test_review_lock_is_consistent(self):
+        lock = canon.read_json(FIX / f"verification-{current_set()}.lock.json")
         schema.validate(lock, "lock")
         ids = [t["id"] for t in lock["triples"]]
         self.assertEqual(ids, sorted(ids))
@@ -191,12 +213,17 @@ class SetLock(unittest.TestCase):
             self.assertIn(tid.split(".")[0], claim_ids)
 
     def test_regenerates_the_committed_review_set(self):
-        """`gen_verification.py --check` on the committed captures: the set is
-        rebuilt byte for byte (a few seconds; pure Python)."""
+        """`gen_verification.py --check` on the committed captures: the current
+        set is rebuilt byte for byte (a few seconds; pure Python), and every
+        triple's nm_kind matches the shape of its NOT MENTIONED diff."""
         with tempfile.TemporaryDirectory() as d:
-            _, _, lock = gen.generate(FIX / "captures.jsonl", Path(d), "review", FIX / "claims.toml",
-                                      FIX / "corpus.toml", FIX / "captures.lock.json")
-        self.assertEqual(gen.compare(lock, canon.read_json(FIX / "verification-review.lock.json")), [])
+            triples, _, lock = gen.generate(FIX / "captures.jsonl", Path(d), current_set(), FIX / "claims.toml",
+                                            FIX / "corpus.toml", FIX / "captures.lock.json")
+        self.assertEqual(gen.compare(lock, canon.read_json(FIX / f"verification-{current_set()}.lock.json")), [])
+        for t in triples:
+            self.assertEqual(t["nm_kind"], derived_nm_kind(t), t["id"])
+            at = t["position_at"]
+            self.assertEqual(t["config"]["position"], "start" if at < 1 / 3 else "middle" if at < 2 / 3 else "end")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,9 @@
 # Capture recipes for the verification corpus (stage 1; tools/tasks/capture.py).
 #
+# A capture marked `mutates = true` changes the state it runs in (an abandon,
+# a sync, a rebase, a mkdir, a first build): running it again would print
+# something else, so the generator never repeats it.
+#
 # Every world is built from the files written here, by the pinned tools in
 # tools.lock.toml, under that file's fixed environment. A capture is one
 # command's stdout, stderr and exit status. `kind` names the haystack kind:
@@ -72,14 +76,76 @@ text = "2026-03-25"
 reason = "rustc 1.94.1's build date, part of its fixed version string"
 
 [[scan.allow]]
+capture = "old.gh.version"
+text = "2026-06-10"
+reason = "gh 2.94.0's release date, part of its fixed version string"
+
+[[scan.allow]]
 capture = "gh.version"
 text = "2026-06-17"
 reason = "gh's release date, part of its fixed version string"
 
+# jj names a remote bookmark by joining bookmark and remote with an at sign;
+# its documentation's examples look like a bare user at a host, but are not.
 [[scan.allow]]
-capture = "gh.help.gist"
-text = "com/OWNER/5b0e0062eb8e9654adad7bb1d81cc75f"
-reason = "a placeholder gist URL in gh's documentation, not a credential"
+capture = "jj.help.*"
+text = "main@origin"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "main@upstream"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "mybookmark@origin"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "push-123@origin"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "push-123@upstream"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "push-xyz@origin"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "release@origin"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "repushed@private"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "stuff@upstream"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "your-bookmark@your-remote"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.help.*"
+text = "BOOKMARK@REMOTE"
+reason = "jj's remote-bookmark syntax (bookmark, at sign, remote) in its documentation"
+
+[[scan.allow]]
+capture = "jj.op-log*"
+text = "fixture@fixture-host"
+reason = "the operation user and host the frame's jj.toml pins, not a real machine"
 
 # ------------------------------------------------------------------ jj 0.46.0
 # A small recipe book with three bookmarks and a side branch, plus a working
@@ -224,7 +290,7 @@ dir = "jj/abandon"
 from = "jj/book"
 seed_env = "JJ_RANDOMNESS_SEED"
 capture = [
-  { id = "jj.abandon.tweak", cmd = "jj abandon 'description(substring:\"tweak dressing\")'", kind = "stderr", exit = 0 },
+  { id = "jj.abandon.tweak", cmd = "jj abandon 'description(substring:\"tweak dressing\")'", kind = "stderr", exit = 0, mutates = true },
   { id = "jj.abandon.log", cmd = "jj log", kind = "log", exit = 0 },
   { id = "jj.abandon.bookmark-list", cmd = "jj bookmark list", kind = "stdout", exit = 0 },
 ]
@@ -237,7 +303,7 @@ dir = "jj/abandon-retain"
 from = "jj/book"
 seed_env = "JJ_RANDOMNESS_SEED"
 capture = [
-  { id = "jj.abandon-retain.tweak", cmd = "jj abandon --retain-bookmarks 'description(substring:\"tweak dressing\")'", kind = "stderr", exit = 0 },
+  { id = "jj.abandon-retain.tweak", cmd = "jj abandon --retain-bookmarks 'description(substring:\"tweak dressing\")'", kind = "stderr", exit = 0, mutates = true },
   { id = "jj.abandon-retain.bookmark-list", cmd = "jj bookmark list", kind = "stdout", exit = 0 },
 ]
 
@@ -252,7 +318,7 @@ steps = [
   { run = "jj commit -m 'salt the soup'" },
 ]
 capture = [
-  { id = "jj.abandon-two.tweak", cmd = "jj abandon 'description(substring:\"tweak dressing\")'", kind = "stderr", exit = 0 },
+  { id = "jj.abandon-two.tweak", cmd = "jj abandon 'description(substring:\"tweak dressing\")'", kind = "stderr", exit = 0, mutates = true },
 ]
 
 # Moving menu back to stable with the override flag.
@@ -263,7 +329,7 @@ dir = "jj/move-back"
 from = "jj/book"
 seed_env = "JJ_RANDOMNESS_SEED"
 capture = [
-  { id = "jj.move-back.allowed", cmd = "jj bookmark move menu --to stable --allow-backwards", kind = "stderr", exit = 0 },
+  { id = "jj.move-back.allowed", cmd = "jj bookmark move menu --to stable --allow-backwards", kind = "stderr", exit = 0, mutates = true },
 ]
 
 # ---------------------------------------------------------------- dasel 3.11.2
@@ -296,6 +362,7 @@ capture = [
   { id = "dasel.merge", cmd = "dasel -i yaml -o json --var o=yaml:file:./override.yaml 'merge($this, $o)' < defaults.yaml", kind = "json", exit = 0 },
   { id = "dasel.put-pool-max", cmd = "dasel -i toml --root 'database.pool.max = 50' < app.toml", kind = "toml", exit = 0 },
   { id = "dasel.err.hash-filter", cmd = "dasel -i toml 'services.filter(#.replicas >= 3)' < app.toml", kind = "stderr", exit = 1 },
+  { id = "dasel.err.hash-filter-names", cmd = "dasel -i toml -o yaml 'services.filter(#.replicas >= 3).map(name)' < app.toml", kind = "stderr", exit = 1 },
   { id = "dasel.err.method-sum", cmd = "dasel -i toml 'services.map(replicas).sum()' < app.toml", kind = "stderr", exit = 1 },
   { id = "dasel.app-json", cmd = "dasel -i toml -o json < app.toml", kind = "json", exit = 0 },
   { id = "dasel.users-yaml", cmd = "dasel -i csv -o yaml < users.csv", kind = "yaml", exit = 0 },
@@ -456,7 +523,7 @@ capture = [
   { id = "gh.git-branch", cmd = "git branch -vv", kind = "stdout", exit = 0 },
   { id = "gh.git-show-stat", cmd = "git show --stat HEAD", kind = "log", exit = 0 },
   { id = "gh.git-log-stat", cmd = "git log --stat --oneline main..tests", kind = "log", exit = 0 },
-  { id = "gh.stack.sync", cmd = "gh stack sync", kind = "stderr" },
+  { id = "gh.stack.sync", cmd = "gh stack sync", kind = "stderr", mutates = true },
 ]
 
 # A copy of G3 checked out one layer up, on routes.
@@ -494,7 +561,7 @@ steps = [
 ]
 capture = [
   { id = "gh.g5.git-log", cmd = "git log --oneline --decorate --graph --all", kind = "log", exit = 0 },
-  { id = "gh.g5.stack.rebase", cmd = "gh stack rebase", kind = "stderr" },
+  { id = "gh.g5.stack.rebase", cmd = "gh stack rebase", kind = "stderr", mutates = true },
   { id = "gh.g5.git-status", cmd = "git status --short", kind = "stdout" },
   { id = "gh.g5.git-diff", cmd = "git diff", kind = "stdout" },
 ]
@@ -522,7 +589,7 @@ steps = [
   { run = "git commit -qam 'Tune retries to 4'" },
 ]
 capture = [
-  { id = "gh.g5r.stack.rebase", cmd = "gh stack rebase", kind = "stderr" },
+  { id = "gh.g5r.stack.rebase", cmd = "gh stack rebase", kind = "stderr", mutates = true },
 ]
 
 # Filler: gh and gh stack help pages.
@@ -711,24 +778,24 @@ capture = [
   { id = "gen.env.command-v", cmd = "command -v nosuchtool", kind = "stdout", exit = 1 },
   { id = "gen.env.command-v-jq", cmd = "command -v jq", kind = "stdout", exit = 0 },
   { id = "gen.env.mkdir-ro", cmd = "mkdir ro/scratch", kind = "stderr", exit = 1 },
-  { id = "gen.env.mkdir-local", cmd = "mkdir .scratch && ls -A", kind = "listing", exit = 0 },
+  { id = "gen.env.mkdir-local", cmd = "mkdir .scratch && ls -A", kind = "listing", exit = 0, mutates = true },
 ]
 
-# World edits for the sandbox: a nosuchtool on PATH that isn't executable,
-# and an ro directory that is writable after all.
+# World edits for the sandbox: a nosuchtool installed on PATH, and an ro
+# directory that is writable after all.
 [[world]]
-id = "gen/env-noexec"
+id = "gen/env-installed"
 host_tools = ["sh"]
 tool = "shell"
 dir = "gen/tools"
 env = { PATH = "{W}/gen/tools/bin:{W}/bin:/usr/bin:/bin" }
 steps = [
   { write = "bin/nosuchtool", content = "#!/bin/sh\necho ok\n" },
-  { chmod = "bin/nosuchtool", mode = "644" },
+  { chmod = "bin/nosuchtool", mode = "755" },
 ]
 capture = [
-  { id = "gen.env-noexec.missing-tool", cmd = "nosuchtool --check", kind = "stderr" },
-  { id = "gen.env-noexec.command-v", cmd = "command -v nosuchtool", kind = "stdout" },
+  { id = "gen.env-installed.run-tool", cmd = "nosuchtool --check", kind = "stdout", exit = 0 },
+  { id = "gen.env-installed.command-v", cmd = "command -v nosuchtool", kind = "stdout", exit = 0 },
 ]
 
 [[world]]
@@ -740,7 +807,7 @@ steps = [
   { run = "mkdir ro" },
 ]
 capture = [
-  { id = "gen.env-rw.mkdir-ro", cmd = "mkdir ro/scratch", kind = "stderr", exit = 0 },
+  { id = "gen.env-rw.mkdir-ro", cmd = "mkdir ro/scratch", kind = "stderr", exit = 0, mutates = true },
 ]
 
 # ------------------------------------------------------- older tool versions
@@ -788,7 +855,7 @@ steps = [
 capture = [
   { id = "gen.cargo.versions", cmd = "cargo --version; rustc --version", kind = "stdout", exit = 0 },
   { id = "gen.cargo.lib-rs", cmd = "cat src/lib.rs", kind = "source", exit = 0 },
-  { id = "gen.cargo.test", cmd = "cargo test --offline 2>&1", kind = "stdout", exit = 101 },
+  { id = "gen.cargo.test", cmd = "cargo test --offline 2>&1", kind = "stdout", exit = 101, mutates = true },
 ]
 
 # The same crate whose wrong assertion expects 7 instead of 5.
@@ -804,7 +871,7 @@ steps = [
   { run = "sed -i '' 's/assert_eq!(clamp_pct(-5), 5)/assert_eq!(clamp_pct(-5), 7)/' src/lib.rs" },
 ]
 capture = [
-  { id = "gen.cargo-7.test", cmd = "cargo test --offline 2>&1", kind = "stdout", exit = 101 },
+  { id = "gen.cargo-7.test", cmd = "cargo test --offline 2>&1", kind = "stdout", exit = 101, mutates = true },
 ]
 
 # npm with an empty cache and no network: install fails with ENOTCACHED.
@@ -822,6 +889,30 @@ capture = [
   { id = "gen.npm.run-missing", cmd = "npm run nope", kind = "stderr", exit = 1 },
   { id = "gen.npm.run-build", cmd = "npm run build", kind = "trace", exit = 1 },
   { id = "gen.npm.pnpm-install-offline", cmd = "pnpm install --offline", kind = "stderr" },
+]
+
+# ----------------------------------------- the releases before the pinned ones
+# Their real version lines, for CONTRADICTED variants of "the installed X is
+# version N" claims. Never filler.
+
+[[world]]
+id = "old/gh-2.94"
+tool = "gh"
+dir = "old/gh"
+filler = false
+env = { PATH = "{W}/old/gh-2.94.0:{W}/bin:/usr/bin:/bin" }
+capture = [
+  { id = "old.gh.version", cmd = "gh --version", kind = "stdout", exit = 0 },
+]
+
+[[world]]
+id = "old/dasel-3.10"
+tool = "dasel"
+dir = "old/dasel3"
+filler = false
+env = { PATH = "{W}/old/dasel-3.10.1:{W}/bin:/usr/bin:/bin" }
+capture = [
+  { id = "old.dasel3.version", cmd = "dasel version", kind = "stdout", exit = 0 },
 ]
 
 # ------------------------------------------------- jj config precedence

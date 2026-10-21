@@ -8,6 +8,12 @@
 
 schema = "sidekick-verification-corpus/1"
 seed = 133
+# Sets are reviewed by hand in numbered rounds ("batches"): `batch` is the
+# round this corpus builds (its set is `review-<batch>`). A claim added for a
+# later round carries `since` and stays out of earlier rounds' sets.
+batch = 3
+# Call ids increase through each haystack; the claim's pointers follow.
+monotonic_calls = true
 max_per_shape = 3      # instances of one claim shape
 max_per_fact = 2       # claims about one underlying fact (claims.toml `fact`)
 dev_share = 0.2        # share of shapes, by seeded hash, in the dev split
@@ -19,7 +25,7 @@ dev_share = 0.2        # share of shapes, by seeded hash, in the dev split
 exclude_worlds = ["jj/abandon", "jj/abandon-retain", "jj/abandon-two", "jj/move-back",
                   "dasel/worker6", "dasel/noservices", "dasel/pool25", "dasel/filter-swap", "dasel/merge-swap",
                   "dasel/merge-noport", "dasel/merge-swap-pool", "dasel/merge-nopool",
-                  "gh/G3-routes", "gh/G5-readme", "gen/service-5180", "gen/trace-shift", "gen/env-noexec",
+                  "gh/G3-routes", "gh/G5-readme", "gen/service-5180", "gen/trace-shift", "gen/env-installed",
                   "gen/env-rw", "gen/cargo-7", "old/jj-0.30", "old/dasel-2"]
 # Filler is command output first, up to this share of the filler's tokens,
 # then documentation (help pages and topics), then more output if short.
@@ -36,8 +42,8 @@ start = 0.05
 middle = 0.5
 end = 0.95
 
-# The first review batch: the worked triples, then `per_type` triples per
-# claim type, spread over lengths, positions and obstacles. A config whose
+# The review plan for each round: the worked triples, then `per_type` triples
+# per claim type, spread over lengths, positions and obstacles. A config whose
 # needle is too long for its length moves up to the next length.
 [review]
 per_type = 10

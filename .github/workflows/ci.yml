@@ -21,10 +21,12 @@ jobs:
         run: python3 tools/models_table.py --docs --check
 
   task-corpora:
-    # The verification corpus's committed recipe, claims and locks, its
-    # scrubber's refusal scan, and its generator's determinism and hazard
-    # checks on a synthetic capture set (tools/tasks). Standard library
-    # only: no captures, tools or network.
+    # The verification corpus (tools/tasks): its committed recipe, claims,
+    # captures and locks; the refusal scan over every committed fixture;
+    # the hazard checks and determinism on a synthetic capture set; and a
+    # full regeneration of the current review set from the committed
+    # captures, checked against its lock. Standard library only: no tools
+    # run and nothing is downloaded.
     name: Task corpus tools
     runs-on: ubuntu-24.04
     steps:

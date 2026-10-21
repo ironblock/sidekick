@@ -1,8 +1,12 @@
 """The scrubber and the refusal scan: planted identifiers must be refused,
 documented placeholders must pass."""
 
+import json
+import os
+import tempfile
 import tomllib
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tasks import scrub
@@ -64,6 +68,34 @@ class RefusalScan(unittest.TestCase):
         self.assertIn("secret:entropy", rules("key Zq8Lp3Xv9Rt2Mw7Kd4Hs6Bn1Cf5\n"))
         self.assertEqual(rules("commit 43daa37ce0f9716cdf6fb65a29cbcae74a3160ae\n"), set())
 
+    def test_refuses_obfuscated_and_platform_paths(self):
+        for planted in ("/users/alice/x", "/Volumes/Work/repo", "/opt/homebrew/bin/jq", "/tmp/501/T/x",
+                        '{"path":"\\/Users\\/alice\\/x"}', "file%3A%2F%2F%2FUsers%2Falice%2Fx",
+                        "\uff0fUsers\uff0falice"):
+            with self.subTest(planted=planted):
+                self.assertIn("path", rules(planted + "\n"))
+
+    def test_refuses_hosts_users_and_trailers(self):
+        self.assertIn("host", rules("ssh alice-mbp.local\n"))
+        self.assertIn("user@host", rules("logged in as alice@mbp\n"))
+        self.assertIn("email", rules("mail to bo@b\u00fccher.de\n"))
+        self.assertIn("trailer", rules("Signed-off-by: Alice Real <alice@corp.dev>\n"))
+        self.assertEqual(rules("Signed-off-by: Test User <test@example.com>\n"), set())
+
+    def test_refuses_more_secrets(self):
+        self.assertIn("secret:slack", rules("xoxb-1234567890-abcdefghij\n"))
+        self.assertIn("secret:hex-key", rules('api_key = "3fa94e1c0b7d4a2f8e6c5b9a1d0e7f3c"\n'))
+        self.assertEqual(rules("commit 3fa94e1c0b7d4a2f8e6c5b9a1d0e7f3c0a1b2c3d\n"), set())
+
+    def test_denylist_from_the_environment(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "deny.txt")
+            with open(path, "w") as f:
+                f.write("# local names\nProjectFalcon\n")
+            with mock.patch.dict(os.environ, {"SIDEKICK_SCAN_DENYLIST": path}):
+                found = scrub.scan("notes for projectfalcon\n", scrub.machine_identity())
+        self.assertIn("denylist", {f.rule for f in found})
+
     def test_allowlist_needs_a_matching_capture(self):
         found = scrub.scan("mail foo@bar.com\n", IDENTITY)
         allow = [{"capture": "doc.page", "text": "foo@bar.com", "reason": "a placeholder"}]
@@ -79,10 +111,27 @@ class RefusalScan(unittest.TestCase):
         self.assertGreater(len(files), 5)
         for path in files:
             with self.subTest(file=path.name):
-                # No machine identity: these files are checked wherever the tests
-                # run; the capture stage scanned with the capturing machine's.
-                found = scrub.unallowed(scrub.scan(path.read_text(), {}, clock), allow, "*")
+                # The machine's identity when run locally; none in CI, where the
+                # runner's names are common words (scrub.local_identity).
+                found = scrub.unallowed(scrub.scan(path.read_text(), scrub.local_identity(), clock), allow, "*")
                 self.assertEqual([str(f) for f in found], [])
+
+    def test_every_allowlist_entry_is_used(self):
+        with open(RECIPES, "rb") as f:
+            recipes = tomllib.load(f)
+        caps = [json.loads(x) for x in (RECIPES.parent / "captures.jsonl").read_text().splitlines()]
+        clock = tuple(recipes["scan"]["clock"])
+        found = {}
+        for c in caps:
+            text = "\n".join((c["cmd"], c["stdout"], c["stderr"]))
+            for f in scrub.scan(text, {}, clock):
+                found.setdefault(f.text, set()).add(c["id"])
+        for a in recipes["scan"]["allow"]:
+            scope = a["capture"]
+            ids = found.get(a["text"], set())
+            hit = {i for i in ids if i == scope or (scope.endswith("*") and i.startswith(scope[:-1]))}
+            with self.subTest(text=a["text"]):
+                self.assertTrue(hit, f"allowlist entry {a['text']!r} ({scope}) matches no finding")
 
     def test_every_committed_allowlist_entry_has_a_reason(self):
         with open(RECIPES, "rb") as f:

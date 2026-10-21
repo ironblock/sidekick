@@ -198,6 +198,23 @@ def check(claim: dict, ev: dict[str, Evidence], slot_roles: list[str | None]) ->
                 if _slot_of((m.start(), m.end()), e) is None:
                     problems.append(f"uniqueness: {v}: guard literal {lit!r} outside the needle")
 
+    # CONTRADICTED must not still state the claim's value, slots included: an
+    # edit like "use --force (or --allow-backwards)" keeps it true. The value
+    # is `value` and every guard literal but the replacement, plus any
+    # `c_forbid` patterns. A claim may allow one with a reason (`c_allow`).
+    if mech in ("plain", "version"):
+        allowed = {a["text"] for a in claim.get("c_allow", [])}
+        lits = {x for x in [claim.get("value"), *claim.get("guard", [])] if x} - {claim.get("value_c")} - allowed
+        for lit in sorted(lits):
+            for m in _guard_pattern(lit).finditer(ev["c"].text):
+                if mech == "version" and _inside((m.start(), m.end()), ev["c"].scoped):
+                    continue
+                problems.append(f"restatement: c: the claim's value {lit!r} is still stated")
+        for p in claim.get("c_forbid", []):
+            for m in re.finditer(p, ev["c"].text, re.M):
+                if m.group(0) not in allowed:
+                    problems.append(f"restatement: c: {m.group(0)[:80]!r} still states the claim")
+
     # Distractors are near misses: they match `near`, never the claim.
     for v in VARIANTS:
         for d in ev[v].distractors:
@@ -215,6 +232,11 @@ def check(claim: dict, ev: dict[str, Evidence], slot_roles: list[str | None]) ->
                     problems.append(f"version: {v}: the scoped block must name another version than {own}")
             if own and not re.search(re.escape(own), ev[v].text):
                 problems.append(f"version: {v}: the haystack never states version {own}")
+
+    # NOT MENTIONED: no conjunct of a compound claim survives.
+    for p in claim.get("conjuncts", []):
+        for m in re.finditer(p, ev["nm"].text, re.M):
+            problems.append(f"nm: a conjunct still matches: {m.group(0)[:80]!r}")
 
     # NOT MENTIONED: nothing about the claim anywhere.
     for kind, spans in (("support", sup["nm"]), ("contradiction", con["nm"]),

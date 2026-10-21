@@ -87,16 +87,16 @@ type = "tool"
 id = "dasel-filter-hash-placeholder"
 fact = "dasel-filter-hash"
 text = "fact: dasel 3 rejects a `#` placeholder in a filter: the selector fails to tokenize."
-touch = ['filter\(']
+touch = ['filter\(', 'unexpected token']
 probes.near = ['func "sum" expects']
 distractor = [{ capture = "dasel.err.method-sum" }]
 repeat = 0
 probes.support = ['unexpected token: # at position']
-probes.contradict = ['''filter\(#\.replicas >= 3\)' < app\.toml\n- api''']
+probes.contradict = ['''filter\(#\.replicas >= 3\)\.map\(name\)' < app\.toml\n- api\n- worker\n''']
 probes.mention = ['unexpected token: #', 'filter\(#']
-edit_note = "c: the same command prints the filtered names (the output of the working bare-field filter); nm: the call is removed."
+edit_note = "c: the same command prints the filtered names (dasel's output for the bare-field filter with the same -o yaml and .map(name)); nm: the call is removed."
 [[shape.claim.block]]
-capture = "dasel.err.hash-filter"
+capture = "dasel.err.hash-filter-names"
 c_from = "dasel.filter-replicas"
 nm_drop = true
 
@@ -111,6 +111,10 @@ text = "fact: jj file show picks the revision to read with -r/--revision."
 value = "--revision"
 value_c = "--source"
 guard = ["--source"]
+# Other jj commands document their own -r, --revision (the near-miss
+# distractor is one); only jj file show's options must lose it.
+c_allow = [{ text = "--revision", reason = "other jj commands' help, such as the jj file list distractor, documents its own -r, --revision" }]
+c_forbid = ['(?s)Usage: jj file show \[OPTIONS\](?:(?!Global Options:).)*?--revision']
 probes.support = ['(?s)Usage: jj file show \[OPTIONS\].{0,120}?^  -r, --revision <REVSET>\n {10}The revision to get the file contents from']
 probes.contradict = ['(?s)Usage: jj file show \[OPTIONS\].{0,120}?^  -s, --source <REVSET>']
 probes.mention = ['The revision to get the file contents from']
@@ -132,12 +136,12 @@ type = "tool"
 [[shape.claim]]
 id = "jj-abandon-deletes-bookmarks"
 fact = "jj-abandon-bookmarks"
-text = "gotcha: jj abandon deletes the bookmarks on the abandoned commit; it does not move them to the parent."
+text = "gotcha: jj abandon deletes the bookmarks that point at the abandoned commit."
+conjuncts = ['^Deleted bookmarks: menu$']
 touch = ['\bmenu\b', 'retain-bookmarks', 'Do not delete bookmarks']
 probes.support = ['^Deleted bookmarks: menu$']
 probes.contradict = ['^menu: zsuskuln 211033a3 add salad$', 'Parent commit \(@-\)      : zsuskuln 211033a3 menu \| add salad']
 probes.mention = ['bookmarks: menu', '^menu: ']
-repeat = 0
 edit_note = "c: the abandon leaves menu on the parent and the bookmark list shows it there (jj's own output for the same abandon run with --retain-bookmarks on a copy, under the plain command line); nm: the deletion line and the bookmark list are removed."
 [[shape.claim.block]]
 capture = "jj.abandon.tweak"
@@ -181,6 +185,7 @@ edit = [{ find = "By default, `\"path\"` is parsed as a `prefix-glob:` pattern, 
 id = "dasel-3-version-flag-unknown"
 fact = "dasel-version-flag"
 text = "fact: in dasel 3.11.2, --version is not a flag; dasel rejects it as unknown."
+touch = ['unknown flag']
 version = "3.11.2"
 scope_re = 'dasel \d+\.\d+\.\d+'
 probes.support = ['dasel: error: unknown flag --version']
@@ -231,14 +236,14 @@ probes.near = ['^jj 0\.46\.0-']
 distractor = [{ capture = "jj.version" }]
 repeat = 0
 value = "3.11.2"
-value_c = "3.10.2"
+value_c = "v3.10.1"
 probes.support = ['''\$ dasel version\n3\.11\.2\n''']
-probes.contradict = ['''\$ dasel version\n3\.10\.2\n''']
+probes.contradict = ['''\$ dasel version\nv3\.10\.1\n''']
 probes.mention = ['''\$ dasel version\n''']
-edit_note = "c: dasel version prints 3.10.2; nm: the call is removed."
+edit_note = "c: dasel version prints v3.10.1 (the real output of that release); nm: the call is removed."
 [[shape.claim.block]]
 capture = "dasel.version"
-edit = [{ find = "\n3.11.2\n", c = "\n3.10.2\n" }]
+c_from = "old.dasel3.version"
 nm_drop = true
 
 [[shape.claim]]
@@ -254,10 +259,10 @@ value_c = "2.94.0"
 probes.support = ['gh version 2\.95\.0', 'tag/v2\.95\.0']
 probes.contradict = ['gh version 2\.94\.0', 'tag/v2\.94\.0']
 probes.mention = ['gh version \d']
-edit_note = "c: both the version line and the release URL say 2.94.0; nm: the call is removed."
+edit_note = "c: gh --version reports 2.94.0 with its own release date (the real output of that release); nm: the call is removed."
 [[shape.claim.block]]
 capture = "gh.version"
-edit = [{ find = "2.95.0", c = "2.94.0", count = 2 }]
+c_from = "old.gh.version"
 nm_drop = true
 
 # A belief a later call superseded: SUPPORTED shows the tool output that
@@ -312,7 +317,7 @@ text = "fact: jj's effective user.email here is ana@example.com."
 touch = ['user\.email', 'JJ_EMAIL', '@example\.com"']
 probes.support = ['^ana@example\.com$', 'email = "ana@example\.com"']
 probes.contradict = ['^bo@example\.com$', 'email = "bo@example\.com"']
-probes.mention = ['ana@example', 'bo@example', 'JJ_EMAIL', 'user\.email']
+probes.mention = ['ana@example\.com', 'bo@example\.com', 'JJ_EMAIL', 'user\.email']
 edit_note = "s: $JJ_EMAIL is ana, config.toml says bo, and jj config get prints ana; c: the two values swap and jj prints bo (real output with the values swapped); nm: all three calls are removed."
 [[shape.claim.block]]
 capture = "jj.cfg-env.printenv"
@@ -341,7 +346,7 @@ text = "fact: with --config-file flags.toml, jj's effective user.email is cy@exa
 touch = ['user\.email', 'JJ_EMAIL', '@example\.com"']
 probes.support = ['^cy@example\.com$', 'email = "cy@example\.com"']
 probes.contradict = ['^ana@example\.com$', 'email = "ana@example\.com"']
-probes.mention = ['ana@example', 'bo@example', 'cy@example', 'JJ_EMAIL', 'user\.email']
+probes.mention = ['ana@example\.com', 'bo@example\.com', 'cy@example\.com', 'JJ_EMAIL', 'user\.email']
 edit_note = "s: flags.toml says cy, $JJ_EMAIL is ana, config.toml says bo, and jj --config-file flags.toml config get prints cy; c: flags.toml and $JJ_EMAIL swap and jj prints ana (real output); nm: all four calls are removed."
 [[shape.claim.block]]
 capture = "jj.cfg-flag.cat-flags"
@@ -379,16 +384,17 @@ touch = ['nosuchtool']
 probes.near = ['command -v jq']
 distractor = [{ capture = "gen.env.command-v-jq" }]
 repeat = 0
-probes.support = ['nosuchtool: command not found']
-probes.contradict = ['nosuchtool: Permission denied']
+probes.support = ['nosuchtool: command not found', '''\$ command -v nosuchtool\n\[exit 1\]''']
+probes.contradict = ['''\$ nosuchtool --check\nok\n''', '''\$ command -v nosuchtool\n/work/gen/tools/bin/nosuchtool''']
 probes.mention = ['nosuchtool']
-edit_note = "c: a nosuchtool is on PATH but not executable, so the shell says Permission denied (exit 126; the shell's own output with such a file in place); nm: both calls are removed."
+edit_note = "c: nosuchtool is installed: command -v finds it and it runs (the shell's own output with the tool on PATH); nm: both calls are removed."
 [[shape.claim.block]]
 capture = "gen.env.missing-tool"
-c_from = "gen.env-noexec.missing-tool"
+c_from = "gen.env-installed.run-tool"
 nm_drop = true
 [[shape.claim.block]]
 capture = "gen.env.command-v"
+c_from = "gen.env-installed.command-v"
 nm_drop = true
 
 [[shape]]
@@ -751,13 +757,14 @@ touch = ['clamps_', 'cargo test']
 probes.support = ['^  left: 0\n right: 5$']
 probes.contradict = ['^  left: 0\n right: 7$']
 probes.mention = ['^  left: 0$', 'tests::clamps_low stdout']
+conjuncts = ['tests::clamps_low \.\.\. FAILED', '^  left: 0$', '^ right: 5$']
 invariants = [{ type = "count", items = '^test tests::\w+ \.\.\. ok$', total = 'test result: \w+\. (\d+) passed;' }]
 exclude = ["gen.cargo.lib-rs"]
-edit_note = "c: right: 7 (cargo's own output for the same crate whose assertion expects 7; the source is not shown); nm: the clamps_low stdout block and the failures list are removed, so only left/right loses support; the FAILED marker and the counts stay."
+edit_note = "c: right: 7 (cargo's own output for the same crate whose assertion expects 7; the source is not shown); nm: the cargo test run is removed, so neither conjunct (that clamps_low failed, and its left and right values) is shown."
 [[shape.claim.block]]
 capture = "gen.cargo.test"
 c_from = "gen.cargo-7.test"
-edit = [{ find = "failures:\n\n---- tests::clamps_low stdout ----\n\nthread 'tests::clamps_low' panicked at src/lib.rs:7:31:\nassertion `left == right` failed\n  left: 0\n right: 5\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::clamps_low\n\n", nm = "" }]
+nm_drop = true
 
 [[shape]]
 id = "result.scalar-output"
@@ -792,7 +799,7 @@ touch = ['replicas', 'sum to \d+']
 probes.support = ['''sum\(services\.map\(replicas\)\.\.\.\)' < app\.toml\n9\n''', 'replicas sum to 9']
 probes.contradict = ['''sum\(services\.map\(replicas\)\.\.\.\)' < app\.toml\n10\n''']
 probes.mention = ['replicas']
-edit_note = "s: dasel sums the replicas to 9; c: that belief is marked refuted beside a later sum printing 10 (dasel rerun after the worker went to 6 replicas); nm: neither."
+edit_note = "s: dasel sums the replicas to 9; c: that belief is marked refuted beside the file as it now reads (worker 6 replicas) and a sum printing 10, both real output of the changed file; nm: neither."
 [[shape.claim.block]]
 capture = "dasel.sum-replicas"
 c_drop = true
@@ -800,9 +807,13 @@ nm_drop = true
 [[shape.claim.block]]
 notes = []
 c_notes = [
-  "- was: the services' replicas sum to 9 (held at 8/10), wrong because after the worker went to 6 replicas dasel sums them to 10 [call c27]",
+  "- was: the services' replicas sum to 9 (held at 8/10), wrong because app.toml now gives the worker 6 replicas and dasel sums them to 10 [call c27]",
   "- fact: the replicas now sum to 10",
 ]
+[[shape.claim.block]]
+capture = "dasel.worker6.cat.app-toml"
+s_drop = true
+nm_drop = true
 [[shape.claim.block]]
 capture = "dasel.worker6.sum-replicas"
 call = "c27"
@@ -878,7 +889,6 @@ id = "jj-abandon-rebased-one"
 fact = "jj-abandon-rebase-count"
 text = "learned: abandoning 'tweak dressing' rebased one descendant commit."
 touch = ['\bmenu\b', 'tweak dressing', 'descendant']
-repeat = 0
 probes.support = ['^Rebased 1 descendant commits onto parents']
 probes.contradict = ['^Rebased 2 descendant commits onto parents']
 probes.mention = ['descendant commits onto parents']
@@ -914,7 +924,6 @@ id = "gh-stack-rebase-conflict-file"
 fact = "gh-stack-rebase-conflict"
 text = "learned: gh stack rebase hit a conflict in config.txt."
 touch = ['config\.txt', 'gh stack rebase', 'retry-c']
-repeat = 0
 probes.support = ['^  C config\.txt \(lines']
 probes.contradict = ['^  C README\.md \(lines']
 probes.mention = ['Conflicted files']
@@ -1010,6 +1019,7 @@ c_drop = true
 id = "dasel-version-flag-refuted"
 fact = "dasel-version-flag"
 text = "was: dasel --version prints the version (held at 6/10), wrong because it printed the usage and \"unknown flag --version\" and exited 80 [call c8]"
+touch = ['unknown flag']
 probes.near = ['failed to tokenize']
 distractor = [{ capture = "dasel.err.hash-filter" }]
 probes.support = ['dasel: error: unknown flag --version\n\[exit 80\]']

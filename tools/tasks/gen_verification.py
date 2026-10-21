@@ -32,7 +32,8 @@ regenerates and compares with the committed lock.
 The committed captures (fixtures/tasks/verification/captures.jsonl) are the
 default input, so regeneration needs no tools.
 
-Two corpus.toml settings change a set and are off unless given:
+A set is `review-<batch>` (the committed `review` lock is batch 2's, kept
+as validated). Two corpus.toml settings change a set and are off unless given:
 `monotonic_calls = true` renumbers call ids so they increase through each
 haystack, remapping every `[call cN]` pointer in the claim, its probes and
 its notes (each pointer is then checked to name a call that runs the
@@ -346,6 +347,13 @@ def lineage(world: str, parents: dict[str, str]) -> str:
     return world
 
 
+def mutates_block(spec: dict, corpus: dict) -> bool:
+    """Whether any variant of a block runs a capture marked `mutates` in the
+    recipes (a command that changes the state it runs in)."""
+    mut = corpus.get("_mutating", set())
+    return any(spec.get(k) in mut for k in ("capture", "s_from", "c_from", "nm_from"))
+
+
 def needle_lineages(claim: dict, caps: dict, parents: dict) -> set[str]:
     return {lineage(caps[cid]["world"], parents) for cid in needle_captures(claim) if cid in caps}
 
@@ -368,6 +376,17 @@ def chronological(order: list, caps: dict, corpus: dict) -> list:
         for n, cid in zip(idxs, ids):
             order[n] = ("filler", cid)
     return order
+
+
+CALL_BLOCK_RE = re.compile(r"\A\[call c\d+\] \$ .*\n(?P<body>(?:.*\n)*?)\[exit (?P<exit>-?\d+)\]\n?\Z")
+
+
+def nm_emptied_call(s_text: str, nm_text: str) -> bool:
+    """Whether NOT MENTIONED keeps this call with no output and a nonzero
+    exit, where SUPPORTED shows output: the `empty-output-nonzero-exit`
+    shape (nm_kind), as opposed to removing the call or a line from it."""
+    s, nm = CALL_BLOCK_RE.match(s_text), CALL_BLOCK_RE.match(nm_text)
+    return bool(s and nm and s.group("body") and not nm.group("body") and nm.group("exit") != "0")
 
 
 def nearest_boundary(cum: list[int], frac: float) -> int:
@@ -408,6 +427,9 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
     if cfg["obstacle"] == "repeated":
         if "repeat" not in claim:
             raise Refusal(f"{claim['id']}: no repeatable block declared")
+        if mutates_block(specs[claim["repeat"]], corpus):
+            raise Refusal(f"{claim['id']}: the repeated block runs a state-changing command; "
+                          "a second run could not print the same output")
         repeat = [("repeat", claim["repeat"])]
 
     def item_tokens(kind, payload) -> int:
@@ -544,10 +566,13 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
 
     # Render into tagged pieces: (item index, str | slot).
     pieces, layout, slot_roles, bodies_spec = [], [], [], []
+    emptied = False  # a call NOT MENTIONED keeps with no output and a nonzero exit
     for n, ((kind, p), call) in enumerate(zip(order, calls)):
         if kind in ("needle", "repeat"):
             spec = specs[p]
             texts = {v: block_text(spec, v, caps, call) for v in VARIANTS}
+            if "capture" in spec and texts["nm"] and texts["s"]:
+                emptied |= nm_emptied_call(texts["s"], texts["nm"])
             texts = {v: (t + "\n" if t else "") for v, t in texts.items()}
             for piece in split3(texts["s"], texts["c"], texts["nm"]):
                 if isinstance(piece, dict):
@@ -586,6 +611,7 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
             segments.append("")
     ev = {}
     item_start = {}  # item index -> its offset in SUPPORTED
+    slot_start = {}  # item index -> the offset of its first slot in SUPPORTED
     notes_spans = []
     for v in VARIANTS:
         text, spans, dspans, sspans, si = "", [], [], [], 0
@@ -600,6 +626,8 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
                 elif order[n][0] == "scoped":
                     sspans.append((start, len(text)))
             else:
+                if v == "s":
+                    slot_start.setdefault(n, start)
                 text += piece[v]
                 spans.append((start, len(text), si))
                 si += 1
@@ -646,14 +674,13 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
                 raise Refusal(f"{claim['id']}: {v} leaves an empty container in a {kind} body: "
                               f"{sorted(hazards.empty_containers(kind, b[v]) - before)}")
 
-    # Position by text offset: the middle of the deciding needle group (its
-    # first through last block) as a share of SUPPORTED's length.
+    # Position by text offset: where the deciding needle group's first slot
+    # starts, as a share of SUPPORTED's length, in thirds.
     anchor_kind = "b" if needle_b and anchor == "b" else "a"
     group_ns = [n for n, (k, p) in enumerate(order)
                 if k == "needle" and specs[p].get("group", "a") == anchor_kind]
-    item_end = {n: item_start.get(n + 1, len(ev["s"].text)) for n in group_ns}
-    mid = (item_start.get(group_ns[0], 0) + item_end[group_ns[-1]]) / 2
-    at = mid / max(1, len(ev["s"].text))
+    first = next((slot_start[n] for n in group_ns if n in slot_start), item_start.get(group_ns[0], 0))
+    at = first / max(1, len(ev["s"].text))
     measured = POSITION_THIRDS[min(2, int(at * 3))]
     cfg = {**cfg, "position": measured}
 
@@ -695,8 +722,7 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
         "haystack_kind": caps[first]["kind"] if first else "notes",
         "worked": bool(claim.get("worked")),
         "position_at": round(at, 3),
-        "nm_kind": ("empty-output-nonzero-exit"
-                    if any(s.get("nm_empty") and caps[s["capture"]]["exit"] != 0 for s in specs) else "removed"),
+        "nm_kind": "empty-output-nonzero-exit" if emptied else "removed",
         "tokens": {v: canon.approx_tokens(ev[v].text) for v in VARIANTS},
         "length_unit": canon.LENGTH_UNIT,
         "segments": segments,
@@ -757,7 +783,8 @@ def review_plan(claims: list[dict], corpus: dict) -> list[tuple[dict, dict]]:
             c = pool[k % len(pool)]
             obstacle = "none"
             if c["mechanism"] == "plain":
-                avail = {"none": True, "distractor": bool(c.get("distractor")), "repeated": "repeat" in c}
+                avail = {"none": True, "distractor": bool(c.get("distractor")),
+                         "repeated": "repeat" in c and not mutates_block(c["block"][c["repeat"]], corpus)}
                 for step in range(3):
                     cand = OBSTACLES[(turn + step) % 3]
                     if avail[cand]:
@@ -798,11 +825,12 @@ def generate(captures: Path, out: Path, set_name: str, claims_path: Path, corpus
         worlds = load_toml(recipes_path)["world"]
         corpus["_parents"] = {w["id"]: w["from"] for w in worlds if "from" in w}
         no_filler = [w["id"] for w in worlds if w.get("filler") is False]
+        corpus["_mutating"] = {c["id"] for w in worlds for c in w.get("capture", []) if c.get("mutates")}
         corpus.setdefault("filler", {})
         corpus["filler"]["exclude_worlds"] = list(corpus["filler"].get("exclude_worlds", [])) + no_filler
     claims = load_claims(claims_path, corpus["max_per_shape"], corpus.get("max_per_fact", 2))
     caps = load_captures(captures, captures_lock)
-    if set_name != "review":
+    if not re.fullmatch(r"review(-\d+)?", set_name):
         raise SystemExit(f"unknown set {set_name!r}")
     triples, pending, refused = [], [], []
     for claim, cfg in review_plan(claims, corpus):
@@ -814,12 +842,13 @@ def generate(captures: Path, out: Path, set_name: str, claims_path: Path, corpus
         except Refusal as e:
             refused.append(str(e))
     # The capture stage scanned every capture with the capturing machine's
-    # identity; scan the assembled evidence too, since edits and notes add text
-    # of their own (paths, addresses, secrets, dates).
+    # identity; scan the assembled evidence too, since claims, edits and notes
+    # add text of their own. On a maintainer's machine this scan also refuses
+    # that machine's home, user and host names (scrub.local_identity).
     recipes = load_toml(FIXTURES / "recipes.toml") if (FIXTURES / "recipes.toml").exists() else {}
     allow = [{**a, "capture": "*"} for a in recipes.get("scan", {}).get("allow", [])]
     clock = tuple(recipes.get("scan", {}).get("clock", ["2026-10-01", "2026-10-01"]))
-    identity = {"home": "", "user": "", "hosts": []}
+    identity = scrub.local_identity()
     for t in triples:
         for v in VARIANTS:
             found = scrub.unallowed(scrub.scan(expand(t, v), identity, clock), allow, t["id"])
@@ -874,13 +903,13 @@ def export_review(triples: list[dict], out: Path, set_name: str) -> None:
     index = [f"# Verification triples for review: `{set_name}`\n",
              "Each triple is one claim and three haystacks (SUPPORTED, CONTRADICTED, NOT MENTIONED) that are "
              "byte-identical outside the slots listed in its file. " + LENGTH_NOTE + "\n",
-             "| # | triple | type | mechanism | obstacles | edit | length | position | tokens (s) | split |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             "| # | triple | type | mechanism | obstacles | edit | nm_kind | length | position | tokens (s) | split |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     rows = []
     for n, t in enumerate(sorted(triples, key=lambda t: (not t["worked"], t["claim"]["type"], t["id"])), 1):
         name = f"{n:03d}-{t['id']}.md"
         index.append(f"| {n} | [{t['id']}]({name}) | {t['claim']['type']} | {t['claim']['mechanism']} | "
-                     f"{', '.join(t['obstacles']) or '-'} | {t['edit']} | {t['config']['length']} | "
+                     f"{', '.join(t['obstacles']) or '-'} | {t['edit']} | {t['nm_kind']} | {t['config']['length']} | "
                      f"{t['config']['position']} | {t['tokens']['s']} | {t['split']} |")
         texts = {v: expand(t, v) for v in VARIANTS}
         md = [f"# {t['id']}\n",
@@ -890,7 +919,7 @@ def export_review(triples: list[dict], out: Path, set_name: str) -> None:
               f"Gold: s = SUPPORTED, c = CONTRADICTED, nm = NOT MENTIONED. Length {t['config']['length']} "
               f"(tokens s/c/nm: {t['tokens']['s']}/{t['tokens']['c']}/{t['tokens']['nm']}), position "
               f"{t['config']['position']}, obstacles: {', '.join(t['obstacles']) or 'none'}. Split: {t['split']}.\n"]
-        md += [f"Edit kind: {t['edit']}. {t['edit_note']}\n"]
+        md += [f"Edit kind: {t['edit']}. NOT MENTIONED kind: {t['nm_kind']}. {t['edit_note']}\n"]
         md += ["## Needle slots and edits\n"]
         offs = {v: len(t["segments"][0]) for v in VARIANTS}
         for i, (slot, seg) in enumerate(zip(t["slots"], t["segments"][1:])):
@@ -908,6 +937,7 @@ def export_review(triples: list[dict], out: Path, set_name: str) -> None:
             md += ["", f"## Haystack: {GOLD[v]} ({v})\n", "~~~~text", texts[v].rstrip("\n"), "~~~~"]
         (d / name).write_text("\n".join(md) + "\n", encoding="utf-8")
         rows.append({"id": t["id"], "claim": t["claim"], "config": t["config"], "obstacles": t["obstacles"],
+                     "edit": t["edit"], "nm_kind": t["nm_kind"], "position_at": t["position_at"],
                      "gold": t["gold"], "evidence": texts, "slots": t["slots"], "layout": t["layout"]})
     (d / f"{set_name}.md").write_text("\n".join(index) + "\n", encoding="utf-8")
     canon.write_jsonl(d / f"{set_name}.jsonl", rows)
@@ -954,7 +984,8 @@ def export_compact(triples: list[dict], path: Path, set_name: str, context: int 
         md += [f"## {n}. {t['id']}\n",
                f"- **Claim:** {t['claim']['text']}",
                f"- **Type:** {t['claim']['type']}; **mechanism:** {t['claim']['mechanism']}; **obstacle:** "
-               f"{t['config']['obstacle']}; **edit:** {t['edit']}; **length:** {t['config']['length']} "
+               f"{t['config']['obstacle']}; **edit:** {t['edit']}; **nm_kind:** {t['nm_kind']}; "
+               f"**length:** {t['config']['length']} "
                f"({t['tokens']['s']} approx tokens); **position:** {t['config']['position']}"
                f"{'; worked example' if t['worked'] else ''}",
                f"- **Edit:** {t['edit_note']}",
@@ -980,7 +1011,7 @@ def main(argv=None) -> int:
     ap.add_argument("--captures", type=Path, default=FIXTURES / "captures.jsonl",
                     help="captures.jsonl from tools/tasks/capture.py (default: the committed one)")
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--set", default="review")
+    ap.add_argument("--set", help="the set to build (default: review-<corpus batch>; `review` is batch 2)")
     ap.add_argument("--claims", type=Path, default=FIXTURES / "claims.toml")
     ap.add_argument("--corpus", type=Path, default=FIXTURES / "corpus.toml")
     ap.add_argument("--captures-lock", type=Path, default=FIXTURES / "captures.lock.json")
@@ -990,6 +1021,8 @@ def main(argv=None) -> int:
     g.add_argument("--check", action="store_true")
     ap.add_argument("--export", action="store_true", help="also write the reviewer's copy under <out>/review/")
     a = ap.parse_args(argv)
+    if not a.set:
+        a.set = f"review-{load_toml(a.corpus).get('batch', 2)}"
     lock_path = a.lock or FIXTURES / f"verification-{a.set}.lock.json"
     triples, pending, lock = generate(a.captures, a.out, a.set, a.claims, a.corpus, a.captures_lock)
     by_type = {}

@@ -169,6 +169,38 @@ extract = { raw = true }
 install = "old/dasel-2.8.1/dasel"
 version_cmd = "old/dasel-2.8.1/dasel --version"
 
+# The release before each of these, for real CONTRADICTED version lines.
+
+[[tool]]
+name = "gh-2.94"
+version = "2.94.0"
+repo = "cli/cli"
+tag = "v2.94.0"
+licence = "MIT"
+asset = "gh_2.94.0_macOS_arm64.zip"
+url = "https://github.com/cli/cli/releases/download/v2.94.0/gh_2.94.0_macOS_arm64.zip"
+sha256 = "4f9bc1a5e77500737290a307b40b4c396a4d23729f55340f2a83f414410165a1"
+digest_source = "GitHub release asset digest"
+size = 13778337
+extract = { zip = "gh_2.94.0_macOS_arm64/bin/gh" }
+install = "old/gh-2.94.0/gh"
+version_cmd = "old/gh-2.94.0/gh --version"
+
+[[tool]]
+name = "dasel-3.10"
+version = "3.10.1"
+repo = "TomWright/dasel"
+tag = "v3.10.1"
+licence = "MIT"
+asset = "dasel_darwin_arm64"
+url = "https://github.com/TomWright/dasel/releases/download/v3.10.1/dasel_darwin_arm64"
+sha256 = "9708e2223cc8d8264cc74a51552650330230d7e6d19950799a26455201d2d256"
+digest_source = "GitHub release asset digest"
+size = 9820690
+extract = { raw = true }
+install = "old/dasel-3.10.1/dasel"
+version_cmd = "old/dasel-3.10.1/dasel version"
+
 # Host tools are not downloaded. Their versions are recorded in
 # captures.lock.json with the captures whose output depends on them, and
 # `capture.py run --check` fails if a version differs (pass

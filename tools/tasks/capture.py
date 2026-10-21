@@ -40,6 +40,9 @@ JJ_RANDOMNESS_SEED), so generated ids are reproducible.
 from __future__ import annotations
 
 import argparse
+import io
+import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -96,16 +99,20 @@ def fetch(cache: Path, tools_lock: dict) -> None:
 
 
 def install(cache: Path, root: Path, tools_lock: dict) -> None:
+    """Install each tool from the cache. The asset is read once, its sha256
+    checked on those bytes, and extracted from memory, so the file can't
+    change between the check and the use."""
     for tool in tools_lock["tool"]:
         src = asset_path(cache, tool)
-        if not src.exists() or canon.sha256_file(src) != tool["sha256"]:
+        blob = src.read_bytes() if src.exists() else b""
+        if canon.sha256_bytes(blob) != tool["sha256"]:
             raise SystemExit(f"{tool['name']}: no verified asset in the cache; run `fetch` first")
         ex = tool["extract"]
         if "tar_tree" in ex:  # a whole tree (a toolchain), under a prefix
             dest = root / tool["install"]
             dest.mkdir(parents=True, exist_ok=True)
             prefix = ex["tar_tree"]
-            with tarfile.open(src) as t:
+            with tarfile.open(fileobj=io.BytesIO(blob)) as t:
                 members = []
                 for m in t.getmembers():
                     if not m.name.startswith(prefix) or m.name == prefix.rstrip("/"):
@@ -116,13 +123,13 @@ def install(cache: Path, root: Path, tools_lock: dict) -> None:
                 t.extractall(dest, members=members, filter="data")
             continue
         if "tar" in ex:
-            with tarfile.open(src) as t:
+            with tarfile.open(fileobj=io.BytesIO(blob)) as t:
                 data = t.extractfile(ex["tar"]).read()
         elif "zip" in ex:
-            with zipfile.ZipFile(src) as z:
+            with zipfile.ZipFile(io.BytesIO(blob)) as z:
                 data = z.read(ex["zip"])
         else:
-            data = src.read_bytes()
+            data = blob
         dest = root / tool["install"]
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
@@ -146,7 +153,7 @@ def link_toolchains(tools_lock: dict, root: Path, given: dict[str, Path]) -> set
         dest = root / tc["link"]
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.symlink_to(Path(given[tc["name"]]).resolve(), target_is_directory=True)
-        out = subprocess.run(["/bin/sh", "-c", tc["version_cmd"].replace("{W}", str(root))],
+        out = subprocess.run(["/bin/sh", "-c", tc["version_cmd"].replace("{W}", shlex.quote(str(root)))],
                              capture_output=True, text=True, timeout=COMMAND_TIMEOUT_S).stdout
         if not out.startswith(tc["expect"]):
             raise SystemExit(f"toolchain {tc['name']}: {out.splitlines()[:1]} is not {tc['expect'].strip()}")
@@ -173,12 +180,17 @@ def _make_writable(path: Path) -> None:
 
 
 def reset_root(root: Path) -> None:
-    if root.exists():
+    """Delete and recreate the working root. It must be ours: made by this
+    tool (a marker file) and owned by the user running it, so a root another
+    user planted in a shared /tmp is never used."""
+    if root.exists() or root.is_symlink():
+        if root.is_symlink() or root.lstat().st_uid != os.getuid():
+            raise SystemExit(f"refusing to use {root}: it is a symlink or owned by another user")
         if not (root / ".skv-root").exists():
             raise SystemExit(f"refusing to delete {root}: it was not made by this tool (no .skv-root marker)")
         _make_writable(root)
         shutil.rmtree(root)
-    root.mkdir(parents=True)
+    root.mkdir(parents=True, mode=0o700)
     (root / ".skv-root").write_text("verification capture root; deleted and rebuilt by tools/tasks/capture.py\n")
 
 
@@ -253,7 +265,7 @@ def host_versions(tools_lock: dict, env: dict, root: Path, linked: set[str] = fr
         out[t["name"]] = (r.stdout or r.stderr).decode().strip().splitlines()[0] if (r.stdout or r.stderr) else ""
     for tc in tools_lock.get("linked_toolchain", []):
         if tc["name"] in linked:
-            r = sh(tc["version_cmd"].replace("{W}", str(root)), root, env)
+            r = sh(tc["version_cmd"].replace("{W}", shlex.quote(str(root))), root, env)
             out[tc["name"]] = "; ".join(r.stdout.decode().strip().splitlines())
     return out
 

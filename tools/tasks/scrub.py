@@ -10,9 +10,15 @@ HOME and clock (tools/tasks/capture.py), then:
    The capture stage refuses to write a capture with any finding that the
    recipe does not allowlist with a reason.
 
-The scan looks for:
-- the real home directory, user name and host name of the machine running it;
-- absolute paths under /Users/, /home/, /root/, /var/folders/, /private/;
+The scan first normalizes the text (NFKC, JSON-escaped slashes unescaped, percent-decoding)
+and scans both the text and its normal form. It looks for:
+- the real home directory, user name and host name of the machine running it
+  (`machine_identity`), and any literal listed, one per line, in the file
+  named by $SIDEKICK_SCAN_DENYLIST (a local, uncommitted list);
+- absolute paths under /Users/, /home/, /root/, /var/folders/, /private/,
+  /Volumes/ and /opt/homebrew/, in any letter case, and /tmp/<number>/;
+- `name.local` host names, and bare `user@host` pairs;
+- `Signed-off-by:`-style trailers naming anyone outside the example domains;
 - IPv4 addresses other than loopback, 0.0.0.0 and the documentation ranges
   (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24), and full IPv6 addresses
   other than loopback and 2001:db8::/32;
@@ -20,9 +26,10 @@ The scan looks for:
   reserved .example/.test/.invalid/.localhost names;
 - MAC addresses;
 - dates outside the synthetic clock's range;
-- secrets: GitHub, OpenAI-style and AWS key prefixes, private-key blocks,
-  and long high-entropy tokens (mixed case and digits; hex ids such as
-  commit hashes are exempt).
+- secrets: GitHub, OpenAI-style, AWS and Slack (`xox?-`) key prefixes,
+  private-key blocks, hex keys named as such (`token: 3fa9…`), and long
+  high-entropy tokens (mixed case and digits; bare hex ids such as commit
+  hashes are exempt).
 """
 
 from __future__ import annotations
@@ -33,6 +40,8 @@ import math
 import os
 import re
 import socket
+import unicodedata
+import urllib.parse
 from dataclasses import dataclass
 
 PLACEHOLDER_ROOT = "/work"
@@ -74,19 +83,56 @@ def machine_identity() -> dict:
         user = ""
     host = socket.gethostname()
     hosts = {h for h in (host, host.split(".")[0]) if h and h not in ("localhost",)}
-    return {"home": home, "user": user, "hosts": sorted(hosts)}
+    return {"home": home, "user": user, "hosts": sorted(hosts), "extra": denylist()}
 
 
-_PATH_RE = re.compile(r"(?<![\w.])/(?:Users|home|root|var/folders|private)/[^\s'\"`)]*")
+def denylist() -> list[str]:
+    """Literals from $SIDEKICK_SCAN_DENYLIST, a local file never committed:
+    one per line (a real name, a project name), blank lines and # comments
+    ignored."""
+    path = os.environ.get("SIDEKICK_SCAN_DENYLIST")
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [x.strip() for x in f if x.strip() and not x.lstrip().startswith("#")]
+
+
+def local_identity() -> dict:
+    """The machine's identity when scanning on a maintainer's machine, and an
+    empty one in CI, where the runner's own names (`runner`) are common
+    words and the captures were already scanned on the machine that made
+    them."""
+    if os.environ.get("CI"):
+        return {"home": "", "user": "", "hosts": [], "extra": denylist()}
+    return machine_identity()
+
+
+def normalize(text: str) -> str:
+    """NFKC, `\\/` unescaped (JSON), and percent-encoding decoded."""
+    text = unicodedata.normalize("NFKC", text).replace("\\/", "/")
+    if "%" in text:
+        text = urllib.parse.unquote(text)
+    return text
+
+
+_PATH_RE = re.compile(r"(?<![\w.])/(?:users|home|root|var/folders|private|volumes|opt/homebrew)/[^\s'\"`)]*"
+                      r"|(?<![\w.])/tmp/\d+(?:/[^\s'\"`)]*)?", re.I)
+_LOCAL_HOST_RE = re.compile(r"(?<![\w.-])[A-Za-z0-9][\w-]*\.local(?![\w-])(?!\.\w)")
+_USER_AT_HOST_RE = re.compile(r"(?<![\w.+%-])([A-Za-z][\w.+-]*)@([A-Za-z][\w-]*)(?![\w.@\\-])")
+_TRAILER_RE = re.compile(r"^\s*(?:signed-off-by|co-authored-by|reviewed-by|acked-by|reported-by):\s*(.+)$",
+                         re.I | re.M)
+_HEX_KEY_RE = re.compile(r"(?i)\b(?:api[_-]?key|token|secret|passwd|password|auth)\w*[\"']?\s*[:=]\s*[\"']?"
+                         r"([0-9a-f]{24,})")
 _IPV4_RE = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})(?![\w.]*\d)")
 _IPV6_RE = re.compile(r"(?<![\w:])((?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,6}:(?:[0-9A-Fa-f]{1,4}:?){1,6})(?![\w:])")
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})(?![\w.-]*\d)")
+_EMAIL_RE = re.compile(r"[\w.%+-]+@((?:[^\W_][\w-]*\.)+[^\W\d_]{2,})(?![\w.-]*\d)")
 _MAC_RE = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])")
 _DATE_RE = re.compile(r"(?<!\d)((?:19|20)\d\d)-(\d\d)-(\d\d)(?!\d)")
 _SECRET_RES = [
     ("secret:github", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}")),
     ("secret:openai", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}")),
     ("secret:aws", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("secret:slack", re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}")),
     ("secret:private-key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
 ]
 _TOKEN_RE = re.compile(r"[A-Za-z0-9+/_=-]{25,}")
@@ -114,10 +160,21 @@ def _allowed_ip(text: str) -> bool:
 
 def scan(text: str, identity: dict | None = None, clock: tuple[str, str] = ("2026-10-01", "2026-10-01"),
          extra_literals: list[str] = ()) -> list[Finding]:
-    """Return every finding in `text`. `clock` is the inclusive date range of
-    the synthetic clock; `extra_literals` are more strings to refuse (the
-    capture's own working root, for one)."""
+    """Return every finding in `text` and in its normal form (`normalize`).
+    `clock` is the inclusive date range of the synthetic clock;
+    `extra_literals` are more strings to refuse (the capture's own working
+    root, for one)."""
     identity = identity if identity is not None else machine_identity()
+    norm = normalize(text)
+    if norm != text:
+        seen = {(f.rule, f.text) for f in _scan(text, identity, clock, extra_literals)}
+        out = _scan(text, identity, clock, extra_literals)
+        out += [f for f in _scan(norm, identity, clock, extra_literals) if (f.rule, f.text) not in seen]
+        return sorted(set(out), key=lambda f: (f.offset, f.rule, f.text))
+    return _scan(text, identity, clock, extra_literals)
+
+
+def _scan(text: str, identity: dict, clock: tuple[str, str], extra_literals) -> list[Finding]:
     found: list[Finding] = []
 
     def literal(rule, needle, word=False):
@@ -135,6 +192,19 @@ def scan(text: str, identity: dict | None = None, clock: tuple[str, str] = ("202
         literal("host", h, word=True)
     for lit in extra_literals:
         literal("root", lit)
+    for lit in identity.get("extra", []):
+        literal("denylist", lit, word=True)
+    for m in _LOCAL_HOST_RE.finditer(text):
+        found.append(Finding("host", m.group(0), m.start()))
+    for m in _USER_AT_HOST_RE.finditer(text):
+        found.append(Finding("user@host", m.group(0), m.start()))
+    for m in _TRAILER_RE.finditer(text):
+        who = m.group(1)
+        mail = re.search(r"@([\w.-]+)", who)
+        if not (mail and mail.group(1).lower() in _ALLOWED_EMAIL_DOMAINS):
+            found.append(Finding("trailer", m.group(0).strip(), m.start()))
+    for m in _HEX_KEY_RE.finditer(text):
+        found.append(Finding("secret:hex-key", m.group(1), m.start(1)))
 
     for m in _PATH_RE.finditer(text):
         found.append(Finding("path", m.group(0), m.start()))
