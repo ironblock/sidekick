@@ -20,6 +20,18 @@ jobs:
       - name: Check docs/MODELS.md against docs/data/models.json
         run: python3 tools/models_table.py --docs --check
 
+  task-corpora:
+    # The verification corpus's committed recipe, claims and locks, its
+    # scrubber's refusal scan, and its generator's determinism and hazard
+    # checks on a synthetic capture set (tools/tasks). Standard library
+    # only: no captures, tools or network.
+    name: Task corpus tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: python3 -m unittest discover -s tools/tasks/tests -t tools -v
+
   linux:
     # x86-64 and arm64 Linux. The onnx backend (D40) runs against the pinned
     # ONNX Runtime there, and SIDEKICK_REQUIRE_ONNX turns its tests' skip

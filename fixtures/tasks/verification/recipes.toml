@@ -1,0 +1,574 @@
+# Capture recipes for the verification corpus (stage 1; tools/tasks/capture.py).
+#
+# Every world is built from the files written here, by the pinned tools in
+# tools.lock.toml, under that file's fixed environment. A capture is one
+# command's stdout, stderr and exit status. `kind` names the haystack kind:
+# help, stdout, stderr, toml, json, jsonl, yaml, csv, trace, source, listing,
+# log or prose. `exit`, when given, is asserted.
+#
+# Sibling worlds ("world edits") differ from a base world in exactly one fact,
+# so a contradicted variant whose fact has dependents (a count, a sum, a
+# derived view) comes from really running the tool on the edited input.
+
+schema = "sidekick-verification-recipes/1"
+root = "/tmp/skv"
+
+[scan]
+# The synthetic clock: every date in a capture must fall in this range.
+clock = ["2026-10-01", "2026-10-01"]
+
+# Findings the refusal scan raises on public, fixed text. Each needs a reason.
+# (jj's tutorial, `jj help -k tutorial`, is not captured: its sample output
+# carries real names and addresses.)
+
+[[scan.allow]]
+capture = "jj.help.metaedit"
+text = "foo@bar.com"
+reason = "the placeholder author in jj's own documentation of --author"
+
+[[scan.allow]]
+capture = "jj.help.metaedit"
+text = "2000-01-23"
+reason = "the placeholder date in jj's own documentation of --author-timestamp"
+
+[[scan.allow]]
+capture = "jj.help.kw.revsets"
+text = "2024-02-01"
+reason = "an example date in jj's revset documentation"
+
+[[scan.allow]]
+capture = "jj.help.kw.config"
+text = "AAAAC3NzaC1lZDI1NTE5AAAAIGj+J6N6SO+4P8dOZqfR1oiay2yxhhHnagH52avUqw5h"
+reason = "an example SSH public key in jj's signing documentation, not a secret"
+
+[[scan.allow]]
+capture = "jj.help.kw.config"
+text = "/home/alice/.config/jj/config.toml"
+reason = "an example path in jj's configuration documentation"
+
+[[scan.allow]]
+capture = "jj.help.kw.config"
+text = "YOUR_WORK_EMAIL@workplace.com"
+reason = "a placeholder address in jj's configuration documentation"
+
+[[scan.allow]]
+capture = "gh.help.repo-clone"
+text = "git@github.com"
+reason = "the SSH remote form in gh's documentation, not a person's address"
+
+[[scan.allow]]
+capture = "gh.version"
+text = "2026-06-17"
+reason = "gh's release date, part of its fixed version string"
+
+[[scan.allow]]
+capture = "gh.help.gist"
+text = "com/OWNER/5b0e0062eb8e9654adad7bb1d81cc75f"
+reason = "a placeholder gist URL in gh's documentation, not a credential"
+
+# ------------------------------------------------------------------ jj 0.46.0
+# A small recipe book with three bookmarks and a side branch, plus a working
+# copy with two edits and one new file. One JJ_RANDOMNESS_SEED per command
+# makes change ids reproducible; the frame pins user, host and clock.
+
+[[world]]
+id = "jj/book"
+tool = "jj"
+dir = "jj/book"
+seed_env = "JJ_RANDOMNESS_SEED"
+steps = [
+  { run = "jj git init --no-colocate" },
+  { write = "README.md", content = "# Recipes\n" },
+  { run = "jj commit -m 'start recipe book'" },
+  { write = "pasta.txt", content = "Boil water.\nAdd pasta.\n" },
+  { run = "jj commit -m 'add pasta'" },
+  { write = "soup.txt", content = "Chop onions.\nSimmer.\n" },
+  { run = "jj commit -m 'add soup'" },
+  { run = "jj bookmark create stable -r @-" },
+  { write = "salad.txt", content = "Wash leaves.\nAdd dressing.\n" },
+  { run = "jj commit -m 'add salad'" },
+  { write = "salad.txt", content = "Wash leaves.\nAdd lemon dressing.\n" },
+  { run = "jj commit -m 'tweak dressing'" },
+  { run = "jj bookmark create menu -r @-" },
+  { run = "jj new 'description(substring:\"add pasta\")' -m 'add dessert'" },
+  { write = "dessert.txt", content = "Whip cream.\n" },
+  { run = "jj new -m 'add cake'" },
+  { write = "cake.txt", content = "Bake 30 min.\n" },
+  { run = "jj new -m 'add icing'" },
+  { write = "icing.txt", content = "Sugar and water.\n" },
+  { run = "jj bookmark create sweets -r @" },
+  { run = "jj new menu" },
+  { append = "soup.txt", content = "Add salt.\n" },
+  { append = "README.md", content = "Updated.\n" },
+  { write = "scratch.log", content = "tmp\n" },
+  { run = "jj status" },
+]
+capture = [
+  { id = "jj.version", cmd = "jj --version", kind = "stdout", exit = 0 },
+  { id = "jj.log", cmd = "jj log", kind = "log", exit = 0 },
+  { id = "jj.log.menu-oneline", cmd = "jj log --no-graph -r '::menu' -T 'commit_id.short() ++ \" \" ++ description.first_line() ++ \"\\n\"'", kind = "log", exit = 0 },
+  { id = "jj.ls", cmd = "ls -A", kind = "listing", exit = 0 },
+  { id = "jj.status", cmd = "jj status", kind = "stdout", exit = 0 },
+  { id = "jj.diff.add-soup", cmd = "jj diff -r 'description(substring:\"add soup\")'", kind = "stdout", exit = 0 },
+  { id = "jj.log.json", cmd = "jj log --no-graph -r 'stable..menu' -T 'json(self) ++ \"\\n\"'", kind = "jsonl", exit = 0 },
+  { id = "jj.op-log", cmd = "jj op log --no-graph --limit 5", kind = "log", exit = 0 },
+  { id = "jj.err.ancestors-method", cmd = "jj log -r 'menu.ancestors()'", kind = "stderr", exit = 1 },
+  { id = "jj.err.id-keyword", cmd = "jj log -r '::menu' --no-graph -T 'id.short()'", kind = "stderr", exit = 1 },
+  { id = "jj.ok.commit-id-keyword", cmd = "jj log -r '::menu' --no-graph -T 'commit_id.short() ++ \"\\n\"'", kind = "stdout", exit = 0 },
+  { id = "jj.err.file-show-colon", cmd = "jj file show 'stable:soup.txt'", kind = "stderr", exit = 1 },
+  { id = "jj.ok.file-show-r", cmd = "jj file show -r stable soup.txt", kind = "stdout", exit = 0 },
+  { id = "jj.ok.file-show-wc", cmd = "jj file show soup.txt", kind = "stdout", exit = 0 },
+  { id = "jj.ok.file-list-stable", cmd = "jj file list -r stable", kind = "listing", exit = 0 },
+  { id = "jj.err.bookmark-move-backwards", cmd = "jj bookmark move menu --to stable", kind = "stderr", exit = 1 },
+  { id = "jj.bookmark-list", cmd = "jj bookmark list", kind = "stdout", exit = 0 },
+  { id = "jj.help.bookmark-move", cmd = "jj help bookmark move", kind = "help", exit = 0 },
+  { id = "jj.help.file-show", cmd = "jj help file show", kind = "help", exit = 0 },
+  { id = "jj.help.file-list", cmd = "jj help file list", kind = "help", exit = 0 },
+  { id = "jj.help.abandon", cmd = "jj help abandon", kind = "help", exit = 0 },
+  { id = "jj.help.kw.filesets", cmd = "jj help -k filesets", kind = "prose", exit = 0 },
+  { id = "jj.help.kw.revsets", cmd = "jj help -k revsets", kind = "prose", exit = 0 },
+  { id = "jj.help.kw.templates", cmd = "jj help -k templates", kind = "prose", exit = 0 },
+  { id = "jj.help.kw.bookmarks", cmd = "jj help -k bookmarks", kind = "prose", exit = 0 },
+  { id = "jj.help.kw.glossary", cmd = "jj help -k glossary", kind = "prose", exit = 0 },
+  { id = "jj.help.kw.config", cmd = "jj help -k config", kind = "prose", exit = 0 },
+]
+
+# Filler: help pages for the rest of jj's commands (fixed text, no repository state).
+[[world]]
+id = "jj/help"
+tool = "jj"
+dir = "jj/help"
+capture = [
+  { id = "jj.help.absorb", cmd = "jj help absorb", kind = "help", exit = 0 },
+  { id = "jj.help.bisect-run", cmd = "jj help bisect run", kind = "help", exit = 0 },
+  { id = "jj.help.bookmark", cmd = "jj help bookmark", kind = "help", exit = 0 },
+  { id = "jj.help.bookmark-create", cmd = "jj help bookmark create", kind = "help", exit = 0 },
+  { id = "jj.help.bookmark-delete", cmd = "jj help bookmark delete", kind = "help", exit = 0 },
+  { id = "jj.help.bookmark-forget", cmd = "jj help bookmark forget", kind = "help", exit = 0 },
+  { id = "jj.help.bookmark-list", cmd = "jj help bookmark list", kind = "help", exit = 0 },
+  { id = "jj.help.bookmark-rename", cmd = "jj help bookmark rename", kind = "help", exit = 0 },
+  { id = "jj.help.bookmark-set", cmd = "jj help bookmark set", kind = "help", exit = 0 },
+  { id = "jj.help.bookmark-track", cmd = "jj help bookmark track", kind = "help", exit = 0 },
+  { id = "jj.help.commit", cmd = "jj help commit", kind = "help", exit = 0 },
+  { id = "jj.help.config-get", cmd = "jj help config get", kind = "help", exit = 0 },
+  { id = "jj.help.config-list", cmd = "jj help config list", kind = "help", exit = 0 },
+  { id = "jj.help.config-set", cmd = "jj help config set", kind = "help", exit = 0 },
+  { id = "jj.help.describe", cmd = "jj help describe", kind = "help", exit = 0 },
+  { id = "jj.help.diff", cmd = "jj help diff", kind = "help", exit = 0 },
+  { id = "jj.help.duplicate", cmd = "jj help duplicate", kind = "help", exit = 0 },
+  { id = "jj.help.edit", cmd = "jj help edit", kind = "help", exit = 0 },
+  { id = "jj.help.evolog", cmd = "jj help evolog", kind = "help", exit = 0 },
+  { id = "jj.help.file-annotate", cmd = "jj help file annotate", kind = "help", exit = 0 },
+  { id = "jj.help.file-chmod", cmd = "jj help file chmod", kind = "help", exit = 0 },
+  { id = "jj.help.file-track", cmd = "jj help file track", kind = "help", exit = 0 },
+  { id = "jj.help.file-untrack", cmd = "jj help file untrack", kind = "help", exit = 0 },
+  { id = "jj.help.fix", cmd = "jj help fix", kind = "help", exit = 0 },
+  { id = "jj.help.git-clone", cmd = "jj help git clone", kind = "help", exit = 0 },
+  { id = "jj.help.git-fetch", cmd = "jj help git fetch", kind = "help", exit = 0 },
+  { id = "jj.help.git-init", cmd = "jj help git init", kind = "help", exit = 0 },
+  { id = "jj.help.git-push", cmd = "jj help git push", kind = "help", exit = 0 },
+  { id = "jj.help.git-remote-add", cmd = "jj help git remote add", kind = "help", exit = 0 },
+  { id = "jj.help.interdiff", cmd = "jj help interdiff", kind = "help", exit = 0 },
+  { id = "jj.help.log", cmd = "jj help log", kind = "help", exit = 0 },
+  { id = "jj.help.metaedit", cmd = "jj help metaedit", kind = "help", exit = 0 },
+  { id = "jj.help.new", cmd = "jj help new", kind = "help", exit = 0 },
+  { id = "jj.help.next", cmd = "jj help next", kind = "help", exit = 0 },
+  { id = "jj.help.op-log", cmd = "jj help operation log", kind = "help", exit = 0 },
+  { id = "jj.help.op-restore", cmd = "jj help operation restore", kind = "help", exit = 0 },
+  { id = "jj.help.parallelize", cmd = "jj help parallelize", kind = "help", exit = 0 },
+  { id = "jj.help.prev", cmd = "jj help prev", kind = "help", exit = 0 },
+  { id = "jj.help.rebase", cmd = "jj help rebase", kind = "help", exit = 0 },
+  { id = "jj.help.resolve", cmd = "jj help resolve", kind = "help", exit = 0 },
+  { id = "jj.help.restore", cmd = "jj help restore", kind = "help", exit = 0 },
+  { id = "jj.help.revert", cmd = "jj help revert", kind = "help", exit = 0 },
+  { id = "jj.help.show", cmd = "jj help show", kind = "help", exit = 0 },
+  { id = "jj.help.simplify-parents", cmd = "jj help simplify-parents", kind = "help", exit = 0 },
+  { id = "jj.help.sparse-set", cmd = "jj help sparse set", kind = "help", exit = 0 },
+  { id = "jj.help.split", cmd = "jj help split", kind = "help", exit = 0 },
+  { id = "jj.help.squash", cmd = "jj help squash", kind = "help", exit = 0 },
+  { id = "jj.help.status", cmd = "jj help status", kind = "help", exit = 0 },
+  { id = "jj.help.tag", cmd = "jj help tag", kind = "help", exit = 0 },
+  { id = "jj.help.undo", cmd = "jj help undo", kind = "help", exit = 0 },
+  { id = "jj.help.workspace-add", cmd = "jj help workspace add", kind = "help", exit = 0 },
+]
+
+# A copy of the recipe book in which a commit is abandoned (a mutation).
+[[world]]
+id = "jj/abandon"
+tool = "jj"
+dir = "jj/abandon"
+from = "jj/book"
+seed_env = "JJ_RANDOMNESS_SEED"
+capture = [
+  { id = "jj.abandon.tweak", cmd = "jj abandon 'description(substring:\"tweak dressing\")'", kind = "stderr", exit = 0 },
+  { id = "jj.abandon.log", cmd = "jj log", kind = "log", exit = 0 },
+  { id = "jj.abandon.bookmark-list", cmd = "jj bookmark list", kind = "stdout", exit = 0 },
+]
+
+# ---------------------------------------------------------------- dasel 3.11.2
+# An inventory config with a database section and three services, a CSV, and
+# a defaults/override pair of YAML files.
+
+[[world]]
+id = "dasel/base"
+tool = "dasel"
+dir = "dasel/base"
+steps = [
+  { write = "app.toml", content = "title = \"Inventory\"\n\n[database]\nhost = \"db.example.test\"\nport = 5432\n\n[database.pool]\nmin = 2\nmax = 20\n\n[[services]]\nname = \"api\"\nreplicas = 3\ntags = [\"http\", \"public\"]\n\n[[services]]\nname = \"worker\"\nreplicas = 5\ntags = [\"queue\"]\n\n[[services]]\nname = \"cron\"\nreplicas = 1\ntags = []\n" },
+  { write = "users.csv", content = "name,age,city\nAnn,34,Oslo\nBo,28,Rome\nCy,41,Oslo\nDi,19,Kyiv\n" },
+  { write = "defaults.yaml", content = "database:\n  host: db.example.test\n  port: 5432\n  pool:\n    min: 2\n    max: 20\nfeatures:\n  beta: false\n  audit: true\n" },
+  { write = "override.yaml", content = "database:\n  port: 6432\n  pool:\n    max: 40\nfeatures:\n  beta: true\n" },
+]
+capture = [
+  { id = "dasel.cat.app-toml", cmd = "cat app.toml", kind = "toml", exit = 0 },
+  { id = "dasel.cat.users-csv", cmd = "cat users.csv", kind = "csv", exit = 0 },
+  { id = "dasel.cat.defaults-yaml", cmd = "cat defaults.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.cat.override-yaml", cmd = "cat override.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.help", cmd = "dasel --help", kind = "help", exit = 0 },
+  { id = "dasel.version", cmd = "dasel version", kind = "stdout", exit = 0 },
+  { id = "dasel.err.version-flag", cmd = "dasel --version", kind = "stderr", exit = 80 },
+  { id = "dasel.pool-max", cmd = "dasel -i toml 'database.pool.max' < app.toml", kind = "stdout", exit = 0 },
+  { id = "dasel.services-json", cmd = "dasel -i toml -o json 'services' < app.toml", kind = "json", exit = 0 },
+  { id = "dasel.filter-replicas", cmd = "dasel -i toml -o yaml 'services.filter(replicas >= 3).map(name)' < app.toml", kind = "yaml", exit = 0 },
+  { id = "dasel.sum-replicas", cmd = "dasel -i toml 'sum(services.map(replicas)...)' < app.toml", kind = "stdout", exit = 0 },
+  { id = "dasel.users-json", cmd = "dasel -i csv -o json < users.csv", kind = "json", exit = 0 },
+  { id = "dasel.merge", cmd = "dasel -i yaml -o json --var o=yaml:file:./override.yaml 'merge($this, $o)' < defaults.yaml", kind = "json", exit = 0 },
+  { id = "dasel.put-pool-max", cmd = "dasel -i toml --root 'database.pool.max = 50' < app.toml", kind = "toml", exit = 0 },
+  { id = "dasel.err.hash-filter", cmd = "dasel -i toml 'services.filter(#.replicas >= 3)' < app.toml", kind = "stderr", exit = 1 },
+  { id = "dasel.err.method-sum", cmd = "dasel -i toml 'services.map(replicas).sum()' < app.toml", kind = "stderr", exit = 1 },
+]
+
+# World edit: the worker runs 6 replicas instead of 5.
+[[world]]
+id = "dasel/worker6"
+tool = "dasel"
+dir = "dasel/worker6"
+from = "dasel/base"
+steps = [
+  { run = "sed -i '' 's/^replicas = 5$/replicas = 6/' app.toml" },
+]
+capture = [
+  { id = "dasel.worker6.cat.app-toml", cmd = "cat app.toml", kind = "toml", exit = 0 },
+  { id = "dasel.worker6.services-json", cmd = "dasel -i toml -o json 'services' < app.toml", kind = "json", exit = 0 },
+  { id = "dasel.worker6.sum-replicas", cmd = "dasel -i toml 'sum(services.map(replicas)...)' < app.toml", kind = "stdout", exit = 0 },
+]
+
+# World edit: no services at all; the database section stays.
+[[world]]
+id = "dasel/noservices"
+tool = "dasel"
+dir = "dasel/noservices"
+steps = [
+  { write = "app.toml", content = "title = \"Inventory\"\n\n[database]\nhost = \"db.example.test\"\nport = 5432\n\n[database.pool]\nmin = 2\nmax = 20\n" },
+]
+capture = [
+  { id = "dasel.noservices.cat.app-toml", cmd = "cat app.toml", kind = "toml", exit = 0 },
+]
+
+# World edits for a value read twice: the pool size before and after a change.
+[[world]]
+id = "dasel/pool25"
+tool = "dasel"
+dir = "dasel/pool25"
+from = "dasel/base"
+steps = [
+  { run = "sed -i '' 's/^max = 20$/max = 25/' app.toml" },
+]
+capture = [
+  { id = "dasel.pool25.pool-max", cmd = "dasel -i toml 'database.pool.max' < app.toml", kind = "stdout", exit = 0 },
+  { id = "dasel.pool25.cat.app-toml", cmd = "cat app.toml", kind = "toml", exit = 0 },
+]
+
+# World edits for precedence: the port swapped between the two files, and
+# the port removed from both.
+[[world]]
+id = "dasel/merge-swap"
+tool = "dasel"
+dir = "dasel/merge-swap"
+steps = [
+  { write = "defaults.yaml", content = "database:\n  host: db.example.test\n  port: 6432\n  pool:\n    min: 2\n    max: 20\nfeatures:\n  beta: false\n  audit: true\n" },
+  { write = "override.yaml", content = "database:\n  port: 5432\n  pool:\n    max: 40\nfeatures:\n  beta: true\n" },
+]
+capture = [
+  { id = "dasel.merge-swap.cat.defaults-yaml", cmd = "cat defaults.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.merge-swap.cat.override-yaml", cmd = "cat override.yaml", kind = "yaml", exit = 0 },
+]
+
+[[world]]
+id = "dasel/merge-noport"
+tool = "dasel"
+dir = "dasel/merge-noport"
+steps = [
+  { write = "defaults.yaml", content = "database:\n  host: db.example.test\n  pool:\n    min: 2\n    max: 20\nfeatures:\n  beta: false\n  audit: true\n" },
+  { write = "override.yaml", content = "database:\n  pool:\n    max: 40\nfeatures:\n  beta: true\n" },
+]
+capture = [
+  { id = "dasel.merge-noport.cat.defaults-yaml", cmd = "cat defaults.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.merge-noport.cat.override-yaml", cmd = "cat override.yaml", kind = "yaml", exit = 0 },
+]
+
+# ------------------------------------------------------ gh-stack 0.2.1 on gh 2.95.0
+# Offline: each repository's origin is a local bare repository, and gh needs
+# no network or credentials for these commands. G3 is a four-layer stack
+# checked out on its second layer; G5 is a two-layer stack whose bottom layer
+# gained a conflicting commit.
+
+[[world]]
+id = "gh/G3"
+tool = "gh"
+dir = "gs/G3"
+steps = [
+  { run = "git init -q --bare ../G3.git && git clone -q ../G3.git . 2>/dev/null" },
+  { write = "README.md", content = "# Service\n" },
+  { run = "git add -A && git commit -qm 'Start the project' && git push -q -u origin main 2>/dev/null" },
+  { run = "gh stack init schema >/dev/null 2>&1" },
+  { write = "schema.sql", content = "tables\n" },
+  { run = "gh stack add -Am 'Add the schema' >/dev/null 2>&1" },
+  { write = "models.py", content = "models\n" },
+  { run = "gh stack add -Am 'Add the models' models >/dev/null 2>&1" },
+  { write = "routes.py", content = "routes\n" },
+  { run = "gh stack add -Am 'Add the routes' routes >/dev/null 2>&1" },
+  { write = "tests.py", content = "tests\n" },
+  { run = "gh stack add -Am 'Add the tests' tests >/dev/null 2>&1" },
+  { run = "gh stack down 2 >/dev/null 2>&1" },
+]
+capture = [
+  { id = "gh.version", cmd = "gh --version", kind = "stdout", exit = 0 },
+  { id = "gh.stack.version", cmd = "gh stack --version", kind = "stdout" },
+  { id = "gh.stack.view-short", cmd = "gh stack view --short", kind = "stdout" },
+  { id = "gh.stack.view-json", cmd = "gh stack view --json", kind = "json" },
+  { id = "gh.git-log", cmd = "git log --oneline --decorate --graph --all", kind = "log", exit = 0 },
+  { id = "gh.stack.err.version-subcommand", cmd = "gh stack version", kind = "stdout" },
+  { id = "gh.stack.err.submit-draft", cmd = "gh stack submit --draft", kind = "stderr" },
+  { id = "gh.stack.err.submit", cmd = "gh stack submit", kind = "stderr" },
+  { id = "gh.stack.err.switch", cmd = "gh stack switch", kind = "stderr" },
+  { id = "gh.stack.sync", cmd = "gh stack sync", kind = "stderr" },
+]
+
+[[world]]
+id = "gh/G5"
+tool = "gh"
+dir = "gs/G5"
+steps = [
+  { run = "git init -q --bare ../G5.git && git clone -q ../G5.git . 2>/dev/null" },
+  { write = "README.md", content = "# Client\n" },
+  { write = "config.txt", content = "timeout = 30\nretries = 1\nverbose = false\n" },
+  { run = "git add -A && git commit -qm 'Add config' && git push -q -u origin main 2>/dev/null" },
+  { run = "gh stack init retry-core >/dev/null 2>&1" },
+  { write = "config.txt", content = "timeout = 30\nretries = 3\nverbose = false\n" },
+  { run = "git commit -qam 'Set retries to 3'" },
+  { write = "config.txt", content = "timeout = 30\nretries = 5\nverbose = true\n" },
+  { run = "gh stack add -Am 'Raise retries and turn on verbose' retry-cli >/dev/null 2>&1" },
+  { run = "git checkout -q retry-core" },
+  { write = "config.txt", content = "timeout = 30\nretries = 4\nverbose = false\n" },
+  { run = "git commit -qam 'Tune retries to 4'" },
+]
+capture = [
+  { id = "gh.g5.git-log", cmd = "git log --oneline --decorate --graph --all", kind = "log", exit = 0 },
+  { id = "gh.g5.stack.rebase", cmd = "gh stack rebase", kind = "stderr" },
+  { id = "gh.g5.git-status", cmd = "git status --short", kind = "stdout" },
+  { id = "gh.g5.git-diff", cmd = "git diff", kind = "stdout" },
+]
+
+# Filler: gh and gh stack help pages.
+[[world]]
+id = "gh/help"
+tool = "gh"
+dir = "gh/help"
+capture = [
+  { id = "gh.help", cmd = "gh help", kind = "help", exit = 0 },
+  { id = "gh.help.alias", cmd = "gh alias --help", kind = "help", exit = 0 },
+  { id = "gh.help.api", cmd = "gh api --help", kind = "help", exit = 0 },
+  { id = "gh.help.auth", cmd = "gh auth --help", kind = "help", exit = 0 },
+  { id = "gh.help.browse", cmd = "gh browse --help", kind = "help", exit = 0 },
+  { id = "gh.help.cache", cmd = "gh cache --help", kind = "help", exit = 0 },
+  { id = "gh.help.config", cmd = "gh config --help", kind = "help", exit = 0 },
+  { id = "gh.help.extension", cmd = "gh extension --help", kind = "help", exit = 0 },
+  { id = "gh.help.gist", cmd = "gh gist --help", kind = "help", exit = 0 },
+  { id = "gh.help.issue", cmd = "gh issue --help", kind = "help", exit = 0 },
+  { id = "gh.help.issue-create", cmd = "gh issue create --help", kind = "help", exit = 0 },
+  { id = "gh.help.issue-list", cmd = "gh issue list --help", kind = "help", exit = 0 },
+  { id = "gh.help.label", cmd = "gh label --help", kind = "help", exit = 0 },
+  { id = "gh.help.pr", cmd = "gh pr --help", kind = "help", exit = 0 },
+  { id = "gh.help.pr-create", cmd = "gh pr create --help", kind = "help", exit = 0 },
+  { id = "gh.help.pr-checkout", cmd = "gh pr checkout --help", kind = "help", exit = 0 },
+  { id = "gh.help.pr-list", cmd = "gh pr list --help", kind = "help", exit = 0 },
+  { id = "gh.help.pr-merge", cmd = "gh pr merge --help", kind = "help", exit = 0 },
+  { id = "gh.help.pr-view", cmd = "gh pr view --help", kind = "help", exit = 0 },
+  { id = "gh.help.release", cmd = "gh release --help", kind = "help", exit = 0 },
+  { id = "gh.help.release-create", cmd = "gh release create --help", kind = "help", exit = 0 },
+  { id = "gh.help.repo", cmd = "gh repo --help", kind = "help", exit = 0 },
+  { id = "gh.help.repo-clone", cmd = "gh repo clone --help", kind = "help", exit = 0 },
+  { id = "gh.help.run", cmd = "gh run --help", kind = "help", exit = 0 },
+  { id = "gh.help.run-view", cmd = "gh run view --help", kind = "help", exit = 0 },
+  { id = "gh.help.search", cmd = "gh search --help", kind = "help", exit = 0 },
+  { id = "gh.help.secret", cmd = "gh secret --help", kind = "help", exit = 0 },
+  { id = "gh.help.status", cmd = "gh status --help", kind = "help", exit = 0 },
+  { id = "gh.help.workflow", cmd = "gh workflow --help", kind = "help", exit = 0 },
+  { id = "gh.help.topic.environment", cmd = "gh help environment", kind = "prose", exit = 0 },
+  { id = "gh.help.topic.exit-codes", cmd = "gh help exit-codes", kind = "prose", exit = 0 },
+  { id = "gh.help.topic.formatting", cmd = "gh help formatting", kind = "prose", exit = 0 },
+  { id = "gh.stack.help", cmd = "gh stack --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.add", cmd = "gh stack add --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.checkout", cmd = "gh stack checkout --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.init", cmd = "gh stack init --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.link", cmd = "gh stack link --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.merge", cmd = "gh stack merge --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.modify", cmd = "gh stack modify --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.push", cmd = "gh stack push --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.rebase", cmd = "gh stack rebase --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.submit", cmd = "gh stack submit --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.sync", cmd = "gh stack sync --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.unstack", cmd = "gh stack unstack --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.view", cmd = "gh stack view --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.up", cmd = "gh stack up --help", kind = "help", exit = 0 },
+  { id = "gh.stack.help.down", cmd = "gh stack down --help", kind = "help", exit = 0 },
+]
+
+# ------------------------------------------------------------- generic haystacks
+# Files written for this corpus and read with the shell, python3 and jq.
+
+# A service config whose comment carries an environment fact.
+[[world]]
+id = "gen/service"
+tool = "shell"
+dir = "gen/service"
+steps = [
+  { write = "service.toml", content = "# service settings; ports 5173, 5180 and 5181 are already in use on this host\n[server]\nport = 5182\nstrict_port = true\nwatch = false   # no file watcher in this sandbox\n\n[[routes]]\npath = \"/health\"\ntimeout_ms = 500\n\n[[routes]]\npath = \"/api\"\ntimeout_ms = 3000\n" },
+]
+capture = [
+  { id = "gen.service.cat", cmd = "cat service.toml", kind = "toml", exit = 0 },
+]
+
+# World edit: an earlier version of the same file, on a port that is taken.
+[[world]]
+id = "gen/service-5180"
+tool = "shell"
+dir = "gen/service-5180"
+from = "gen/service"
+steps = [
+  { run = "sed -i '' 's/^port = 5182$/port = 5180/' service.toml" },
+]
+capture = [
+  { id = "gen.service-5180.cat", cmd = "cat service.toml", kind = "toml", exit = 0 },
+]
+
+# A package manifest with a chained lint script and a pinned package manager.
+[[world]]
+id = "gen/package"
+tool = "shell"
+dir = "gen/package"
+steps = [
+  { write = "package.json", content = "{\n  \"name\": \"vc-demo\",\n  \"private\": true,\n  \"packageManager\": \"pnpm@9.15.4\",\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.build.json\",\n    \"lint\": \"eslint . && tsc --noEmit -p a && tsc --noEmit -p b && tsc --noEmit -p c\",\n    \"test\": \"vitest run --project unit\"\n  },\n  \"engines\": { \"node\": \">=22\" }\n}\n" },
+]
+capture = [
+  { id = "gen.package.cat", cmd = "cat package.json", kind = "json", exit = 0 },
+  { id = "gen.package.script-names", cmd = "jq -r '.scripts | keys[]' package.json", kind = "stdout", exit = 0 },
+]
+
+# A Python stack trace: a lookup of a key the config lacks.
+[[world]]
+id = "gen/trace"
+tool = "shell"
+dir = "gen/trace"
+steps = [
+  { write = "app.py", content = "def pool_max(cfg):\n    return cfg[\"pool\"][\"max\"]\n\ndef main():\n    print(pool_max({\"pool\": {\"min\": 2}}))\n\nmain()\n" },
+]
+capture = [
+  { id = "gen.trace.cat", cmd = "cat app.py", kind = "source", exit = 0 },
+  { id = "gen.trace.run", cmd = "python3 -I app.py", kind = "trace", exit = 1 },
+]
+
+# A JSONL event log of an agent session: fourteen events, four tool calls,
+# two of which exited non-zero.
+[[world]]
+id = "gen/events"
+tool = "shell"
+dir = "gen/events"
+steps = [
+  { write = "mklog.py", content = "import json\nkinds = ['session.start', 'ask', 'request', 'tool_call', 'response', 'tool_call', 'turn.settled']\nfor i in range(1, 15):\n    k = kinds[(i - 1) % len(kinds)]\n    print(json.dumps({'seq': i * 37, 't': i * 1250, 'kind': k, 'turn': (i - 1) // len(kinds) + 1,\n                      'exit': int(k == 'tool_call' and i % 3 == 1)}, separators=(',', ':')))\n" },
+  { run = "python3 -I mklog.py > events.jsonl" },
+]
+capture = [
+  { id = "gen.events.cat", cmd = "cat events.jsonl", kind = "jsonl", exit = 0 },
+  { id = "gen.events.tool-calls", cmd = "jq -c 'select(.kind==\"tool_call\")' events.jsonl", kind = "jsonl", exit = 0 },
+]
+
+# Two workers writing one job log: each buffers and flushes on its own, so
+# lines are in flush order, not time order. Each line carries its time.
+[[world]]
+id = "gen/jobs"
+tool = "shell"
+dir = "gen/jobs"
+steps = [
+  { write = "jobs.jsonl", content = "{\"ts\":\"2026-10-01T12:00:01Z\",\"worker\":\"w1\",\"job\":\"build-7\",\"status\":\"started\"}\n{\"ts\":\"2026-10-01T12:00:02Z\",\"worker\":\"w1\",\"job\":\"lint-3\",\"status\":\"started\"}\n{\"ts\":\"2026-10-01T12:00:09Z\",\"worker\":\"w2\",\"job\":\"build-7\",\"status\":\"passed\"}\n{\"ts\":\"2026-10-01T12:00:10Z\",\"worker\":\"w2\",\"job\":\"deploy-2\",\"status\":\"queued\"}\n{\"ts\":\"2026-10-01T12:00:04Z\",\"worker\":\"w1\",\"job\":\"build-7\",\"status\":\"failed\"}\n{\"ts\":\"2026-10-01T12:00:05Z\",\"worker\":\"w1\",\"job\":\"lint-3\",\"status\":\"passed\"}\n{\"ts\":\"2026-10-01T12:00:12Z\",\"worker\":\"w2\",\"job\":\"deploy-2\",\"status\":\"started\"}\n{\"ts\":\"2026-10-01T12:00:07Z\",\"worker\":\"w1\",\"job\":\"cache-1\",\"status\":\"evicted\"}\n{\"ts\":\"2026-10-01T12:00:14Z\",\"worker\":\"w2\",\"job\":\"cache-1\",\"status\":\"rebuilt\"}\n" },
+]
+capture = [
+  { id = "gen.jobs.cat", cmd = "cat jobs.jsonl", kind = "jsonl", exit = 0 },
+]
+
+# What the sandbox provides and refuses.
+[[world]]
+id = "gen/env"
+tool = "shell"
+dir = "gen/env"
+steps = [
+  { run = "mkdir ro" },
+  { chmod = "ro", mode = "555" },
+]
+capture = [
+  { id = "gen.env.missing-tool", cmd = "nosuchtool --check", kind = "stderr", exit = 127 },
+  { id = "gen.env.command-v", cmd = "command -v nosuchtool", kind = "stdout", exit = 1 },
+  { id = "gen.env.command-v-jq", cmd = "command -v jq", kind = "stdout", exit = 0 },
+  { id = "gen.env.mkdir-ro", cmd = "mkdir ro/scratch", kind = "stderr", exit = 1 },
+  { id = "gen.env.mkdir-local", cmd = "mkdir .scratch && ls -A", kind = "listing", exit = 0 },
+]
+
+# ------------------------------------------------- pending: toolchain recipes
+# These need a pinned toolchain outside the frame's PATH, and a quiet machine.
+# They run only with `capture.py run --include-pending`; their captures, and
+# the triples that need them, are pending until then.
+
+# A two-test crate whose second assertion is wrong, run offline. cargo's
+# timing and thread numbering are the only moving parts; the scrub rules
+# below normalize them.
+[[world]]
+id = "gen/cargo"
+tool = "cargo"
+dir = "gen/cargo"
+pending = "Rust 1.94.1 (cargo) on PATH; the capture machine must be idle"
+env = { PATH = "{W}/toolchain/bin:{W}/bin:/usr/bin:/bin", CARGO_HOME = "{W}/cargo", CARGO_TARGET_DIR = "{W}/target", RUST_BACKTRACE = "0", CARGO_TERM_COLOR = "never" }
+steps = [
+  { write = "Cargo.toml", content = "[package]\nname = \"vc-demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n" },
+  { write = "src/lib.rs", content = "pub fn clamp_pct(n: i32) -> i32 { n.clamp(0, 100) }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test] fn clamps_high() { assert_eq!(clamp_pct(140), 100); }\n    #[test] fn clamps_low() { assert_eq!(clamp_pct(-5), 5); }\n}\n" },
+]
+capture = [
+  { id = "gen.cargo.lib-rs", cmd = "cat src/lib.rs", kind = "source", exit = 0 },
+  { id = "gen.cargo.test", cmd = "cargo test --offline", kind = "stdout", exit = 101 },
+]
+
+# npm with an empty cache and no network: install fails with ENOTCACHED.
+[[world]]
+id = "gen/npm"
+tool = "npm"
+dir = "gen/npm"
+pending = "node 26.5.0 and npm 11.17.0 on PATH; the capture machine must be idle"
+env = { PATH = "{W}/toolchain/bin:{W}/bin:/usr/bin:/bin", npm_config_cache = "{W}/npm-cache", npm_config_userconfig = "{W}/hm/npmrc", npm_config_update_notifier = "false", npm_config_fund = "false", npm_config_audit = "false" }
+steps = [
+  { write = "package.json", content = "{\"name\":\"vc-demo\",\"version\":\"1.0.0\",\"scripts\":{\"build\":\"node build.js\"},\"dependencies\":{\"left-pad\":\"1.3.0\"}}\n" },
+]
+capture = [
+  { id = "gen.npm.versions", cmd = "node --version; npm --version", kind = "stdout", exit = 0 },
+  { id = "gen.npm.install-offline", cmd = "npm install --offline", kind = "stderr", exit = 1 },
+  { id = "gen.npm.run-missing", cmd = "npm run nope", kind = "stderr", exit = 1 },
+  { id = "gen.npm.run-build", cmd = "npm run build", kind = "trace", exit = 1 },
+]
+
+[scrub]
+# Normalization for the pending recipes' nondeterministic fields.
+rule = [
+  { pattern = 'finished in [0-9.]+s', replace = "finished in 0.00s" },
+  { pattern = 'in [0-9.]+s$', replace = "in 0.00s" },
+  { pattern = "thread '([^']+)' \\([0-9]+\\) panicked", replace = "thread '\\1' panicked" },
+  { pattern = '[0-9]{4}-[0-9T_:.-]+Z-debug-0', replace = "TS-debug-0" },
+]

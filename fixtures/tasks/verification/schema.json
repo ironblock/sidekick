@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sidekick/fixtures/tasks/verification/schema.json",
+  "title": "Verification corpus records",
+  "description": "Records of the verification corpus: captures (stage 1), claims (fixtures/tasks/verification/claims.toml), generated triples (stage 2) and the locks. tools/tasks/schema.py validates against this file.",
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$"},
+    "variant_text": {
+      "type": "object",
+      "required": ["s", "c", "nm"],
+      "additionalProperties": false,
+      "properties": {"s": {"type": "string"}, "c": {"type": "string"}, "nm": {"type": "string"}}
+    },
+    "variant_sha": {
+      "type": "object",
+      "required": ["s", "c", "nm"],
+      "additionalProperties": false,
+      "properties": {"s": {"$ref": "#/$defs/sha256"}, "c": {"$ref": "#/$defs/sha256"}, "nm": {"$ref": "#/$defs/sha256"}}
+    },
+
+    "capture": {
+      "description": "One command run in a hermetic world, after scrubbing.",
+      "type": "object",
+      "required": ["schema", "id", "world", "tool", "kind", "cmd", "stdout", "stderr", "exit"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "sidekick-verification-capture/1"},
+        "id": {"$ref": "#/$defs/id"},
+        "world": {"type": "string", "minLength": 1},
+        "tool": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["help", "stdout", "stderr", "toml", "json", "jsonl", "yaml", "csv", "trace", "source", "listing", "log", "prose"]},
+        "cmd": {"type": "string", "minLength": 1},
+        "stdout": {"type": "string"},
+        "stderr": {"type": "string"},
+        "exit": {"type": "integer"}
+      }
+    },
+
+    "edit": {
+      "description": "Replace every occurrence of `find` in the block, in each variant named here (s, c, nm). `count` asserts how many occurrences there are.",
+      "type": "object",
+      "required": ["find"],
+      "additionalProperties": false,
+      "properties": {
+        "find": {"type": "string", "minLength": 1},
+        "s": {"type": "string"}, "c": {"type": "string"}, "nm": {"type": "string"},
+        "count": {"type": "integer", "minimum": 1},
+        "role": {"enum": ["winner", "loser"]}
+      }
+    },
+    "block": {
+      "description": "One needle block: a capture (`capture`) or working notes (`notes`), with per-variant output from a sibling world (`<v>_from`), per-variant notes (`<v>_notes`), dropped variants (`<v>_drop`), variants that keep the command and exit status but print nothing (`<v>_empty`), and textual edits. An edit's `role` names the slot it makes, for two-slot mechanisms within one block.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capture": {"$ref": "#/$defs/id"},
+        "notes": {"type": "array", "items": {"type": "string"}},
+        "s_from": {"$ref": "#/$defs/id"}, "c_from": {"$ref": "#/$defs/id"}, "nm_from": {"$ref": "#/$defs/id"},
+        "s_notes": {"type": "array", "items": {"type": "string"}},
+        "c_notes": {"type": "array", "items": {"type": "string"}},
+        "nm_notes": {"type": "array", "items": {"type": "string"}},
+        "s_drop": {"type": "boolean"}, "c_drop": {"type": "boolean"}, "nm_drop": {"type": "boolean"},
+        "s_empty": {"type": "boolean"}, "c_empty": {"type": "boolean"}, "nm_empty": {"type": "boolean"},
+        "edit": {"type": "array", "items": {"$ref": "#/$defs/edit"}},
+        "role": {"enum": ["winner", "loser"]},
+        "group": {"enum": ["a", "b"]},
+        "call": {"type": "string", "pattern": "^c[0-9]+$"}
+      }
+    },
+    "probes": {
+      "type": "object",
+      "required": ["support", "contradict"],
+      "additionalProperties": false,
+      "properties": {
+        "support": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "contradict": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "mention": {"type": "array", "items": {"type": "string"}},
+        "near": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "claim": {
+      "description": "A claim instance after its shape's fields are folded in.",
+      "type": "object",
+      "required": ["id", "shape", "type", "mechanism", "text", "probes", "block"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "shape": {"$ref": "#/$defs/id"},
+        "type": {"enum": ["tool", "environment", "file", "result", "refutation"]},
+        "mechanism": {"enum": ["plain", "sequence", "supersede", "precedence", "version", "timestamp"]},
+        "role": {"enum": ["belief", "reason"]},
+        "text": {"type": "string", "minLength": 1},
+        "worked": {"type": "boolean"},
+        "pending": {"type": "string"},
+        "value": {"type": "string"},
+        "value_c": {"type": "string"},
+        "guard": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "probes": {"$ref": "#/$defs/probes"},
+        "block": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/block"}},
+        "anchor": {"enum": ["a", "b"]},
+        "repeat": {"type": "integer", "minimum": 0},
+        "exclude": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+        "distractor": {"type": "array", "items": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"capture": {"$ref": "#/$defs/id"}, "notes": {"type": "array", "items": {"type": "string"}}}}},
+        "scoped": {"type": "array", "items": {
+          "type": "object", "required": ["notes"], "additionalProperties": false,
+          "properties": {"notes": {"type": "array", "items": {"type": "string"}}}}},
+        "version": {"type": "string"},
+        "scope_re": {"type": "string"},
+        "time_re": {"type": "string"},
+        "invariants": {"type": "array", "items": {
+          "type": "object", "required": ["type", "items", "total"], "additionalProperties": false,
+          "properties": {"type": {"enum": ["count", "sum"]}, "items": {"type": "string"}, "total": {"type": "string"}}}},
+        "edit_note": {"type": "string"}
+      }
+    },
+
+    "slot": {
+      "type": "object",
+      "required": ["s", "c", "nm", "role", "block"],
+      "additionalProperties": false,
+      "properties": {
+        "s": {"type": "string"}, "c": {"type": "string"}, "nm": {"type": "string"},
+        "role": {"type": ["string", "null"]},
+        "block": {"type": "integer", "minimum": 0}
+      }
+    },
+    "triple": {
+      "description": "One generated triple: evidence(v) = segments[0] + slots[0][v] + segments[1] + ... for v in s, c, nm.",
+      "type": "object",
+      "required": ["schema", "family", "id", "claim", "split", "config", "obstacles", "haystack_kind", "worked", "tokens", "length_unit", "segments", "slots", "layout", "gold", "edits", "evidence_sha256", "generator"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "sidekick-verification-triple/1"},
+        "family": {"const": "verification"},
+        "id": {"$ref": "#/$defs/id"},
+        "claim": {
+          "type": "object", "required": ["id", "shape", "type", "mechanism", "text"], "additionalProperties": false,
+          "properties": {
+            "id": {"$ref": "#/$defs/id"}, "shape": {"$ref": "#/$defs/id"},
+            "type": {"enum": ["tool", "environment", "file", "result", "refutation"]},
+            "mechanism": {"enum": ["plain", "sequence", "supersede", "precedence", "version", "timestamp"]},
+            "text": {"type": "string", "minLength": 1}}},
+        "split": {"enum": ["dev", "test"]},
+        "config": {
+          "type": "object", "required": ["length", "position", "obstacle"], "additionalProperties": false,
+          "properties": {
+            "length": {"enum": ["1k", "4k", "12k", "32k"]},
+            "position": {"enum": ["start", "middle", "end"]},
+            "obstacle": {"enum": ["none", "distractor", "repeated"]}}},
+        "obstacles": {"type": "array", "items": {"type": "string"}},
+        "haystack_kind": {"type": "string"},
+        "worked": {"type": "boolean"},
+        "tokens": {"type": "object", "required": ["s", "c", "nm"], "additionalProperties": {"type": "integer"}},
+        "length_unit": {"type": "string"},
+        "segments": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "slots": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/slot"}},
+        "layout": {"type": "array", "items": {
+          "type": "object", "required": ["item", "source", "call"], "additionalProperties": false,
+          "properties": {
+            "item": {"enum": ["filler", "needle", "distractor", "scoped", "repeat"]},
+            "source": {"type": "string"},
+            "call": {"type": ["string", "null"]}}}},
+        "gold": {
+          "type": "object", "additionalProperties": false, "required": ["s", "c", "nm"],
+          "properties": {"s": {"const": "SUPPORTED"}, "c": {"const": "CONTRADICTED"}, "nm": {"const": "NOT_MENTIONED"}}},
+        "edits": {"type": "string"},
+        "evidence_sha256": {"$ref": "#/$defs/variant_sha"},
+        "generator": {"type": "string"}
+      }
+    },
+
+    "lock": {
+      "description": "A generated set's lock: committed, so `--check` can prove a regeneration is byte-identical.",
+      "type": "object",
+      "required": ["schema", "set", "generator", "length_unit", "corpus_sha256", "claims_sha256", "captures_set_sha256", "triples", "pending", "set_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "sidekick-verification-lock/1"},
+        "set": {"type": "string"},
+        "generator": {"type": "string"},
+        "length_unit": {"type": "string"},
+        "corpus_sha256": {"$ref": "#/$defs/sha256"},
+        "claims_sha256": {"$ref": "#/$defs/sha256"},
+        "captures_set_sha256": {"$ref": "#/$defs/sha256"},
+        "triples": {"type": "array", "items": {
+          "type": "object", "required": ["id", "sha256", "evidence_sha256"], "additionalProperties": false,
+          "properties": {"id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/sha256"},
+                         "evidence_sha256": {"$ref": "#/$defs/variant_sha"}}}},
+        "pending": {"type": "array", "items": {"type": "string"}},
+        "set_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "captures_lock": {
+      "type": "object",
+      "required": ["schema", "tools_lock_sha256", "recipes_sha256", "host_tools", "captures", "set_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "sidekick-verification-captures-lock/1"},
+        "tools_lock_sha256": {"$ref": "#/$defs/sha256"},
+        "recipes_sha256": {"$ref": "#/$defs/sha256"},
+        "host_tools": {"type": "object", "additionalProperties": {"type": "string"}},
+        "captures": {"type": "array", "minItems": 1, "items": {
+          "type": "object", "required": ["id", "sha256"], "additionalProperties": false,
+          "properties": {"id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/sha256"}}}},
+        "set_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

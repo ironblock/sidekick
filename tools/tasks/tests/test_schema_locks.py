@@ -1,0 +1,147 @@
+"""The committed recipe, claims and locks are well formed and agree with
+each other, and the schema validator rejects malformed records."""
+
+import re
+import tempfile
+import tomllib
+import unittest
+from pathlib import Path
+
+from tasks import canon, gen_verification as gen, schema
+
+FIX = Path(__file__).resolve().parents[3] / "fixtures" / "tasks" / "verification"
+SHA = re.compile(r"^[0-9a-f]{64}$")
+
+
+def load(name):
+    with open(FIX / name, "rb") as f:
+        return tomllib.load(f)
+
+
+class Canonical(unittest.TestCase):
+    def test_lines_are_sorted_compact_and_hashable(self):
+        recs = [{"id": "b", "x": "ü"}, {"id": "a", "y": [1, 2]}]
+        with tempfile.TemporaryDirectory() as d:
+            sha = canon.write_jsonl(Path(d) / "x.jsonl", recs)
+            body = (Path(d) / "x.jsonl").read_bytes()
+        self.assertEqual(body, '{"id":"a","y":[1,2]}\n{"id":"b","x":"ü"}\n'.encode())
+        self.assertEqual(sha, canon.sha256_bytes(body))
+        self.assertEqual(canon.record_sha256(recs[1]), canon.sha256_text('{"id":"a","y":[1,2]}\n'))
+
+    def test_sub_seeds_are_stable_and_independent(self):
+        self.assertEqual(canon.sub_seed(133, "claim-a"), canon.sub_seed(133, "claim-a"))
+        self.assertNotEqual(canon.sub_seed(133, "claim-a"), canon.sub_seed(133, "claim-b"))
+        self.assertNotEqual(canon.sub_seed(133, "a", "bc"), canon.sub_seed(133, "ab", "c"))
+
+
+class Validator(unittest.TestCase):
+    CAPTURE = {"schema": "sidekick-verification-capture/1", "id": "x.y", "world": "w", "tool": "t",
+               "kind": "stdout", "cmd": "echo", "stdout": "", "stderr": "", "exit": 0}
+
+    def test_accepts_a_valid_capture(self):
+        schema.validate(self.CAPTURE, "capture")
+
+    def test_rejects_missing_extra_and_wrong_values(self):
+        bad = dict(self.CAPTURE)
+        del bad["exit"]
+        self.assertTrue(any("missing 'exit'" in e for e in schema.errors(bad, "capture")))
+        self.assertTrue(any("unexpected key" in e for e in schema.errors({**self.CAPTURE, "host": "h"}, "capture")))
+        self.assertTrue(any("not one of" in e for e in schema.errors({**self.CAPTURE, "kind": "pdf"}, "capture")))
+        self.assertTrue(schema.errors({**self.CAPTURE, "exit": True}, "capture"))
+        self.assertTrue(schema.errors({**self.CAPTURE, "id": "Bad Id"}, "capture"))
+
+
+class ToolsLock(unittest.TestCase):
+    def test_every_tool_is_pinned_to_a_release_asset_by_sha256(self):
+        lock = load("tools.lock.toml")
+        self.assertTrue(lock["tool"])
+        for t in lock["tool"]:
+            with self.subTest(tool=t["name"]):
+                self.assertRegex(t["sha256"], SHA)
+                self.assertEqual(t["url"], f"https://github.com/{t['repo']}/releases/download/{t['tag']}/{t['asset']}")
+                self.assertIn(t["version"], t["tag"])
+                self.assertTrue(t["licence"])
+                self.assertGreater(t["size"], 0)
+        env = lock["frame"]["env"]
+        for var in ("HOME", "TMPDIR", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL", "JJ_CONFIG"):
+            self.assertTrue(env[var].startswith("{W}/"), var)
+        self.assertEqual(env["TZ"], "UTC")
+
+
+class CapturesLock(unittest.TestCase):
+    def test_validates_and_matches_the_committed_recipe(self):
+        lock = canon.read_json(FIX / "captures.lock.json")
+        schema.validate(lock, "captures_lock")
+        ids = [c["id"] for c in lock["captures"]]
+        self.assertEqual(ids, sorted(ids))
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(lock["recipes_sha256"], canon.sha256_file(FIX / "recipes.toml"),
+                         "recipes.toml changed: rerun tools/tasks/capture.py run --update-lock")
+        self.assertEqual(lock["tools_lock_sha256"], canon.sha256_file(FIX / "tools.lock.toml"))
+
+    def test_every_recipe_capture_is_locked(self):
+        recipes = load("recipes.toml")
+        lock = canon.read_json(FIX / "captures.lock.json")
+        locked = {c["id"] for c in lock["captures"]}
+        want = {c["id"] for w in recipes["world"] if not w.get("pending") for c in w.get("capture", [])}
+        self.assertEqual(locked, want)
+
+
+class Claims(unittest.TestCase):
+    def setUp(self):
+        self.corpus = load("corpus.toml")
+        self.claims = gen.load_claims(FIX / "claims.toml", self.corpus["max_per_shape"])
+
+    def test_claims_validate_and_cover_every_type(self):
+        self.assertEqual({c["type"] for c in self.claims}, set(gen.TYPES))
+        for c in self.claims:
+            for p in [*c["probes"]["support"], *c["probes"]["contradict"], *c["probes"].get("mention", [])]:
+                re.compile(p)
+
+    def test_claims_name_only_locked_or_pending_captures(self):
+        locked = {c["id"] for c in canon.read_json(FIX / "captures.lock.json")["captures"]}
+        for c in self.claims:
+            missing = gen.needle_captures(c) - locked
+            with self.subTest(claim=c["id"]):
+                self.assertTrue(not missing or c.get("pending"), missing)
+
+    def test_four_worked_examples_one_per_kind(self):
+        worked = [c for c in self.claims if c.get("worked")]
+        self.assertEqual(len(worked), 4)
+
+    def test_the_five_ways_of_deciding_what_is_current_are_all_present(self):
+        mechs = {c["mechanism"] for c in self.claims}
+        self.assertTrue({"sequence", "supersede", "precedence", "version", "timestamp"} <= mechs)
+        roles = {c.get("role") for c in self.claims if c["mechanism"] == "supersede"}
+        self.assertEqual(roles, {"belief", "reason"})
+
+    def test_shape_cap_is_enforced(self):
+        text = "\n".join(['[[shape]]', 'id = "s"', 'type = "tool"'] +
+                         [f'[[shape.claim]]\nid = "c{i}"\ntext = "t"\nprobes.support = ["a"]\n'
+                          f'probes.contradict = ["b"]\n[[shape.claim.block]]\ncapture = "x"' for i in range(4)])
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "c.toml").write_text(text)
+            with self.assertRaises(SystemExit):
+                gen.load_claims(Path(d) / "c.toml", 3)
+
+
+class SetLock(unittest.TestCase):
+    def test_review_lock_is_consistent(self):
+        lock = canon.read_json(FIX / "verification-review.lock.json")
+        schema.validate(lock, "lock")
+        ids = [t["id"] for t in lock["triples"]]
+        self.assertEqual(ids, sorted(ids))
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(lock["claims_sha256"], canon.sha256_file(FIX / "claims.toml"),
+                         "claims.toml changed: regenerate and update the review lock")
+        self.assertEqual(lock["corpus_sha256"], canon.sha256_file(FIX / "corpus.toml"))
+        self.assertEqual(lock["generator"], gen.GENERATOR)
+        self.assertEqual(lock["captures_set_sha256"], canon.read_json(FIX / "captures.lock.json")["set_sha256"])
+        corpus = load("corpus.toml")
+        claim_ids = {c["id"] for c in gen.load_claims(FIX / "claims.toml", corpus["max_per_shape"])}
+        for tid in ids:
+            self.assertIn(tid.split(".")[0], claim_ids)
+
+
+if __name__ == "__main__":
+    unittest.main()

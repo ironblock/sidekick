@@ -1,0 +1,37 @@
+# The verification corpus's assembly recipe (stage 2; tools/tasks/gen_verification.py).
+#
+# One top-level seed. Every random choice for a triple draws from
+# sha256(seed ‖ claim id ‖ length ‖ position ‖ obstacle), so adding a claim
+# never reshuffles the others. Lengths are approximate tokens (`approx-v1`,
+# tools/tasks/canon.py); each model's own count is measured at run time.
+
+schema = "sidekick-verification-corpus/1"
+seed = 133
+max_per_shape = 3      # instances of one claim shape
+dev_share = 0.2        # share of shapes, by seeded hash, in the dev split
+
+[filler]
+# Sibling worlds exist to give a variant its edited output; their captures
+# would disagree with their base world's, so they never pad a haystack.
+exclude_worlds = ["jj/abandon", "dasel/worker6", "dasel/noservices", "dasel/pool25", "dasel/merge-swap",
+                  "dasel/merge-noport", "gen/service-5180"]
+
+[lengths]
+1k = 1000
+4k = 4000
+12k = 12000
+32k = 32000
+
+[positions]            # where the needle sits, as a share of the haystack
+start = 0.05
+middle = 0.5
+end = 0.95
+
+# The first review batch: the worked triples, then `per_type` triples per
+# claim type, spread over lengths, positions and obstacles. A config whose
+# needle is too long for its length moves up to the next length.
+[review]
+per_type = 10
+lengths = ["1k", "4k", "12k", "32k"]
+positions = ["start", "middle", "end"]
+worked = { length = "4k", position = "middle", obstacle = "none" }

@@ -1,0 +1,126 @@
+# Pinned tools and the fixed environment for the verification corpus's
+# capture stage (tools/tasks/capture.py).
+#
+# Each pinned tool is a GitHub release asset. Its sha256 is the release's own
+# per-asset `digest` (GitHub computes it at upload; read it with
+# `gh api repos/OWNER/REPO/releases/tags/TAG`), and the capture stage refuses
+# a download that doesn't match. Assets are for Apple-silicon macOS; a
+# capture made with other assets must be checked against captures.lock.json.
+#
+# Host tools are not downloaded. Their versions are recorded in
+# captures.lock.json, and `capture.py --check` reports a difference.
+
+schema = "sidekick-verification-tools/1"
+platform = "darwin-arm64"
+
+[[tool]]
+name = "jj"
+version = "0.46.0"
+repo = "jj-vcs/jj"
+tag = "v0.46.0"
+licence = "Apache-2.0"
+asset = "jj-v0.46.0-aarch64-apple-darwin.tar.gz"
+url = "https://github.com/jj-vcs/jj/releases/download/v0.46.0/jj-v0.46.0-aarch64-apple-darwin.tar.gz"
+sha256 = "43daa37ce0f9716cdf6fb65a29cbcae74a3160aef048cf3cb3d166d41cb4ab58"
+size = 10074305
+extract = { tar = "./jj" }
+install = "bin/jj"
+version_cmd = "jj --version"
+
+[[tool]]
+name = "dasel"
+version = "3.11.2"
+repo = "TomWright/dasel"
+tag = "v3.11.2"
+licence = "MIT"
+asset = "dasel_darwin_arm64"
+url = "https://github.com/TomWright/dasel/releases/download/v3.11.2/dasel_darwin_arm64"
+sha256 = "63407a21f1354dda62c7f015e5262a91b05ce20a858406e2aeac3e5fc614f355"
+size = 9856210
+extract = { raw = true }
+install = "bin/dasel"
+version_cmd = "dasel version"
+
+[[tool]]
+name = "gh"
+version = "2.95.0"
+repo = "cli/cli"
+tag = "v2.95.0"
+licence = "MIT"
+asset = "gh_2.95.0_macOS_arm64.zip"
+url = "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_macOS_arm64.zip"
+sha256 = "3677f9c27965825f9c7d50395473c134edaea4b484373ef6b25de653570a0489"
+size = 13944744
+extract = { zip = "gh_2.95.0_macOS_arm64/bin/gh" }
+install = "bin/gh"
+version_cmd = "gh --version"
+
+[[tool]]
+name = "gh-stack"
+version = "0.2.1"
+repo = "github/gh-stack"
+tag = "v0.2.1"
+licence = "MIT"
+asset = "darwin-arm64"
+url = "https://github.com/github/gh-stack/releases/download/v0.2.1/darwin-arm64"
+sha256 = "c4d62dc667343d6dd8ff1cb60dcff9d0e097c2460dea326892f36d5d2e835d76"
+size = 25721042
+extract = { raw = true }
+# A gh extension: gh finds it by this layout under XDG_DATA_HOME, and the
+# manifest pins it, so gh never checks for an update.
+install = "xdg/gh/extensions/gh-stack/gh-stack"
+manifest = { path = "xdg/gh/extensions/gh-stack/manifest.yml", content = "owner: github\nname: gh-stack\nhost: github.com\ntag: v0.2.1\nispinned: true\npath: \"\"\n" }
+version_cmd = "gh stack --help"
+
+[[host_tool]]
+name = "git"
+version_cmd = "git --version"
+
+[[host_tool]]
+name = "python3"
+version_cmd = "python3 --version"
+
+[[host_tool]]
+name = "jq"
+version_cmd = "jq --version"
+
+# The fixed environment. `{W}` is the working root (recipes.toml `root`),
+# which the scrubber maps to /work. Every command runs with exactly these
+# variables (no inherited environment), under /bin/sh, with stdin closed.
+[frame.env]
+HOME = "{W}/hm"
+TMPDIR = "{W}/tmp"
+XDG_DATA_HOME = "{W}/xdg"
+XDG_CONFIG_HOME = "{W}/xcfg"
+XDG_CACHE_HOME = "{W}/xcache"
+PATH = "{W}/bin:/usr/bin:/bin"
+LC_ALL = "C"
+TZ = "UTC"
+TERM = "dumb"
+NO_COLOR = "1"
+COLUMNS = "100"
+GIT_CONFIG_GLOBAL = "{W}/hm/gitconfig"
+GIT_CONFIG_NOSYSTEM = "1"
+GIT_AUTHOR_DATE = "2026-10-01T12:00:00+00:00"
+GIT_COMMITTER_DATE = "2026-10-01T12:00:00+00:00"
+JJ_CONFIG = "{W}/hm/jj.toml"
+JJ_EDITOR = "true"
+JJ_TIMESTAMP = "2026-10-01T12:00:00+00:00"
+JJ_OP_TIMESTAMP = "2026-10-01T12:00:00+00:00"
+GH_PROMPT_DISABLED = "1"
+GH_NO_UPDATE_NOTIFIER = "1"
+GH_NO_EXTENSION_UPDATE_NOTIFIER = "1"
+GH_SPINNER_DISABLED = "1"
+DO_NOT_TRACK = "1"
+PYTHONDONTWRITEBYTECODE = "1"
+PYTHONHASHSEED = "0"
+
+[[frame.file]]
+path = "hm/gitconfig"
+content = "[user]\n\tname = Test User\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n"
+
+[[frame.file]]
+# jj's operation log records the user and host, and its log prints relative
+# times; pin both.
+path = "hm/jj.toml"
+content = "[user]\nname = \"Test User\"\nemail = \"test@example.com\"\n[ui]\npaginate = \"never\"\neditor = \"true\"\n[operation]\nhostname = \"fixture-host\"\nusername = \"fixture\"\n[template-aliases]\n\"format_time_range(time_range)\" = \"time_range.start()\"\n"
