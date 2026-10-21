@@ -94,7 +94,7 @@ without running them (docs/MODELS.md, D27).
 
 `POST /v1/chat/completions`-style OpenAI compatibility, documented in the
 README. Embeddings: `POST /v1/embeddings` with optional `input_type:
-"query"` or `"none"`, `dimensions` (matryoshka models), `encoding_format:
+"query"` or `"none"` (or `prompt_name`), `dimensions` (matryoshka models), `encoding_format:
 "base64"`, and `truncate`. Classification: `POST /v1/classify`; see
 [Classification](#classification) below.
 
@@ -113,6 +113,24 @@ host's prompt from its text, so `START` may cut it: with `none`, truncate
 with `END`, or keep inputs within the limit (`/tokenize`'s `fits`). `/tokenize` takes the same `input_type`, so its
 count and `fits` match. Over the C ABI, `sk_embed`'s purpose 2 is the
 same, and `sk_model_info` reports the prompts.
+
+**Named prompts.** Where the checkpoint names prompts for other tasks
+(EmbeddingGemma's `Classification`, `Clustering`, `STS` and others), a
+host can send `prompt_name` instead of `input_type`, as with Hugging
+Face Text Embeddings Inference, rather than copying the prompt's text
+and sending `none`. The names are each model's `named_prompts` in
+`/v1/models` (name to prompt; `{}` for none), match exactly, case
+included, and are listed in docs/MODELS.md. A named prompt is sidekick's
+own, so `truncate: "START"` keeps it whole, which a host's prompt sent
+with `none` doesn't get. Sending `prompt_name` with any `input_type`,
+`none` included, is a 400, and so is a name the model doesn't have; the
+message lists the model's names. `/v2/embed` and `/tokenize` take it too.
+Over the C ABI, `sk_embed_named` takes a name where `sk_embed` takes a
+purpose, and `sk_model_info` lists `named_prompts`. Qwen3-Embedding and
+F2LLM take a free-text instruction per task instead of a fixed set, so
+their only names are `query` and `document`. For another task, send
+`Instruct: <task>\nQuery:` (F2LLM: `Instruct: <task>\nQuery: `, with a
+trailing space) before the text with `input_type: "none"` (D45).
 
 **Over-length input.** `/v1/embeddings` refuses an input longer than the
 model's limit with a 400 `invalid_request_error`, as OpenAI's embeddings
@@ -208,7 +226,12 @@ Notes:
 - `requested_dims` has the daemon's `dimensions` semantics (matryoshka
   truncate + renormalize), so vectors indexed via one path stay compatible
   with the other. Discover a model's valid values with `sk_model_info`
-  (JSON: `{"id","backend","dims","matryoshka","max_seq_len"}`).
+  (JSON: `{"id","backend","dims","matryoshka","max_seq_len","prompts",
+  "named_prompts"}`).
+- `sk_embed_named` is `sk_embed` with one of the model's `named_prompts`
+  in place of `purpose`, as the daemon's `prompt_name`. It was added
+  without an ABI version bump, so resolve it with `dlsym` if the host
+  must also run against older libraries.
 - The first `sk_embed` per model loads it (Core ML: ~1s for bge-small,
   seconds for large encoders) and it stays resident until `sk_pool_close`.
   Loads don't block calls on other, already-loaded models.

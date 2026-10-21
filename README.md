@@ -193,6 +193,27 @@ Some models have no prompt for one side or both, and then that
 lists each installed model's as `prompts` (`{"query": "…", "document":
 "…"}`, `""` for none). D9 records the choice.
 
+Some models also name prompts for other tasks, such as EmbeddingGemma's
+`Classification`, `Clustering` and `STS`. Send `prompt_name` instead of
+`input_type` to use one, as with Hugging Face Text Embeddings Inference:
+
+```sh
+curl -s localhost:8790/v1/embeddings -H 'content-type: application/json' -d '{
+  "model": "embeddinggemma-300m", "input": "I loved this film", "prompt_name": "Classification"
+}'
+```
+
+The name is one of the model's `named_prompts` in `/v1/models` (name to
+prompt, `{}` for a model with none), copied from the checkpoint's
+sentence-transformers configuration, and matches exactly, case included.
+Another name is a 400 that lists the model's, and so is a request that
+sends `prompt_name` with any `input_type`, `"none"` included. A named
+prompt is sidekick's, so `truncate: "START"` keeps it whole.
+Qwen3-Embedding and F2LLM take a free-text instruction per task instead:
+send it with `input_type: "none"`, in the model's format
+([docs/MODELS.md](docs/MODELS.md#named-prompts-prompt_name)). D45
+records the choice.
+
 An input longer than the model's limit is a 400 `invalid_request_error`.
 OpenAI's `/v1/embeddings` refuses it too, and Hugging Face TEI returns an
 error unless the request asks it to truncate. Here, `/v1/rerank` and
@@ -258,7 +279,7 @@ is refused by a Core ML or ONNX model that adds no special tokens.
 includes the special tokens and the prompt prefix, which `input_type`
 chooses by `/v1/embeddings`' names or `/v2/embed`'s (`query` or
 `search_query`; `document`, the default, `passage` or `search_document`;
-or `none`, no prompt).
+or `none`, no prompt), or `prompt_name` chooses by name.
 The text is never truncated, so a text over the limit is counted in full.
 `max_model_len` is that limit: the model's `max_seq_len` from
 `/v1/models`, or lower when the model's own `tokenizer.json` truncates
@@ -353,7 +374,8 @@ leaves the texts out.
 `POST /v2/rerank` takes Cohere's v2 request and truncates long documents,
 as Cohere does, keeping the query whole. Its response parses as both
 Cohere's and vLLM's. `POST /v2/embed` serves the embedders in Cohere's v2
-shape: `input_type` (`search_query` / `search_document`, or `none`),
+shape: `input_type` (`search_query` / `search_document`, or `none`) or
+`prompt_name`,
 `embedding_types` (`float`, `base64`, `binary`, `ubinary`),
 `output_dimension`, and `truncate`. The full contract is in
 [docs/design/rerank.md](docs/design/rerank.md).

@@ -103,7 +103,7 @@ non-retrieval scores, which MTEB measured with no prefix.
   prompt is the default and when to send `none`.
 
 Named prompts (a model's task-specific prompts, chosen by name) are a
-separate question.
+separate question, answered by D45.
 
 ## D10 — `dimensions` only honors manifest-declared Matryoshka dims
 Truncating a non-Matryoshka embedding silently degrades quality, so a
@@ -3172,6 +3172,78 @@ them at the root, and their clients call them there.
   differently (other prefixes, a capped `max_seq_len`) never gets another's
   copy. `/detokenize` keeps special tokens, as vLLM's does, and an id
   outside the vocabulary is a 400.
+
+## D45 — Named prompts, chosen by `prompt_name`
+D9 gives each embedder two prompts, chosen by `input_type`, but many
+checkpoints publish more. EmbeddingGemma's
+`config_sentence_transformers.json` names prompts for classification,
+clustering, sentence similarity, code retrieval and others. Before this, a
+client that wanted EmbeddingGemma's classification prompt had to copy its
+text and send it with `input_type: "none"`, and under `truncate: "START"`
+that copy could be cut, since sidekick can't tell it from the text. Hugging
+Face Text Embeddings Inference (TEI) already has a convention for this: its
+`/embed` takes `prompt_name`, a key of the model's sentence-transformers
+`prompts`, as sentence-transformers' `encode(prompt_name=…)` does.
+
+**Decision.** Requests may name one of the model's own prompts, as TEI's
+do, and the prompts are copied from the checkpoint into the manifest.
+
+- **Request.** `/v1/embeddings`, `/v2/embed` and `/tokenize` take an
+  optional `prompt_name`, read by the one parser behind all three, so
+  `/tokenize`'s count and `fits` follow it. It replaces the `input_type`
+  prompt. Sending it with any `input_type` is a 400, `"none"` included:
+  `none` asks for no prompt and a name asks for one, so any answer would
+  silently drop one of them. On `/v2/embed`, a client therefore leaves
+  out `input_type`, which Cohere requires and sidekick doesn't. A request
+  without `prompt_name` is unchanged, and tests pin its vectors.
+- **Names match exactly, case included.** TEI and sentence-transformers
+  look the name up as a dictionary key, and EmbeddingGemma 2's
+  checkpoint has both `document` and `Document`. A name the model
+  doesn't have is a 400 that lists the names it has, refused from the
+  manifest before the model loads. A model with none says so.
+- **A named prompt is sidekick's prompt.** It goes before the text as
+  an `input_type` prefix does, so `truncate: "START"` keeps it whole,
+  and a `max_tokens` it fills is a 400 before any input is embedded.
+- **Manifest.** A `[prompts]` table maps name to text. `[prefixes]`
+  stays as it was: it holds the `input_type` prompts, which sidekick
+  chose. A manifest without `[prompts]` reads as before, and older
+  daemons ignore the table. The committed manifests of
+  embeddinggemma-300m, embeddinggemma-2, F2LLM-v2-160M,
+  LFM2.5-Embedding-350M and Qwen3-Embedding-0.6B carry their
+  checkpoints' `prompts`, every name, copied exactly at the revision each
+  build pins. EmbeddingGemma-300m's repository is gated; its prompts
+  were read from a snapshot of that revision. The other committed
+  embedders' checkpoints publish none. `query` and `document` are names
+  too, since the checkpoints list them and TEI accepts them.
+- **The converter copies them.** Converters copy the committed manifest
+  and never generate one, so `manifest.check_embedder()` stops a
+  conversion whose `[prompts]` differ from the checkpoint's, printing the
+  table to paste, and `python -m sidekick_convert.manifest prompts <dir>`
+  prints it. A checkpoint that publishes no prompts leaves the table to
+  the manifest, so prompts a model card gives only in prose can be
+  written there by hand, with the source cited in a comment.
+- **Disclosure.** `/v1/models` lists each embedder's `named_prompts`,
+  name to text, `{}` for none, beside D9's `prompts`. `sk_model_info`
+  reports the same. docs/MODELS.md has a table of every build's named
+  prompts, generated from the committed manifests.
+- **C ABI.** `sk_embed_named` is `sk_embed` with a prompt name in place
+  of the purpose, added without changing `sk_embed` or
+  `SK_ABI_VERSION`, as `sk_pool_skipped` was. The library's
+  `EmbedPurpose` gains `Named(&str)`, and so it gains a lifetime
+  parameter.
+- **Instruction models.** Qwen3-Embedding and F2LLM take a free-text
+  instruction per task (`Instruct: {task}\nQuery:`), not a fixed set,
+  and their checkpoints name only `query` and `document`. An
+  `instruction` field that fills the model's template was considered and
+  left out for now. It would add a template to the manifest, a field to
+  three routes and another C function, for two models. What it would
+  save the client is small: the template is one line, and those models
+  put the instruction on queries only, which are short enough that
+  `START` rarely cuts them. These clients send the whole instruction with
+  `input_type: "none"`, and docs/MODELS.md gives each model's format,
+  trailing space included. If more instruction models arrive, an
+  `instruction` field can be added beside `prompt_name` without changing
+  it.
 
 ## Hardware verification status
 
