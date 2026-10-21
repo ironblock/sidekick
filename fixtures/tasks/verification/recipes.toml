@@ -62,6 +62,16 @@ text = "git@github.com"
 reason = "the SSH remote form in gh's documentation, not a person's address"
 
 [[scan.allow]]
+capture = "gen.cargo.versions"
+text = "2026-03-24"
+reason = "cargo 1.94.1's build date, part of its fixed version string"
+
+[[scan.allow]]
+capture = "gen.cargo.versions"
+text = "2026-03-25"
+reason = "rustc 1.94.1's build date, part of its fixed version string"
+
+[[scan.allow]]
 capture = "gh.version"
 text = "2026-06-17"
 reason = "gh's release date, part of its fixed version string"
@@ -136,6 +146,15 @@ capture = [
   { id = "jj.help.kw.bookmarks", cmd = "jj help -k bookmarks", kind = "prose", exit = 0 },
   { id = "jj.help.kw.glossary", cmd = "jj help -k glossary", kind = "prose", exit = 0 },
   { id = "jj.help.kw.config", cmd = "jj help -k config", kind = "prose", exit = 0 },
+  { id = "jj.log.all-flat", cmd = "jj log -r 'all()' --no-graph", kind = "log", exit = 0 },
+  { id = "jj.show.stable", cmd = "jj show -r stable", kind = "stdout", exit = 0 },
+  { id = "jj.show.sweets", cmd = "jj show -r sweets", kind = "stdout", exit = 0 },
+  { id = "jj.diff.wc", cmd = "jj diff", kind = "stdout", exit = 0 },
+  { id = "jj.diff.stat-sweets", cmd = "jj diff --stat -r 'sweets::'", kind = "stdout", exit = 0 },
+  { id = "jj.evolog.wc", cmd = "jj evolog", kind = "log", exit = 0 },
+  { id = "jj.file-list.sweets", cmd = "jj file list -r sweets", kind = "listing", exit = 0 },
+  { id = "jj.log.json.all", cmd = "jj log --no-graph -r 'all() ~ root()' -T 'json(self) ++ \"\\n\"'", kind = "jsonl", exit = 0 },
+  { id = "jj.op-log.all", cmd = "jj op log --no-graph", kind = "log", exit = 0 },
 ]
 
 # Filler: help pages for the rest of jj's commands (fixed text, no repository state).
@@ -210,6 +229,43 @@ capture = [
   { id = "jj.abandon.bookmark-list", cmd = "jj bookmark list", kind = "stdout", exit = 0 },
 ]
 
+# The same abandon with --retain-bookmarks: the bookmark moves to the parent.
+[[world]]
+id = "jj/abandon-retain"
+tool = "jj"
+dir = "jj/abandon-retain"
+from = "jj/book"
+seed_env = "JJ_RANDOMNESS_SEED"
+capture = [
+  { id = "jj.abandon-retain.tweak", cmd = "jj abandon --retain-bookmarks 'description(substring:\"tweak dressing\")'", kind = "stderr", exit = 0 },
+  { id = "jj.abandon-retain.bookmark-list", cmd = "jj bookmark list", kind = "stdout", exit = 0 },
+]
+
+# The same abandon after one more commit on top: two descendants to rebase.
+[[world]]
+id = "jj/abandon-two"
+tool = "jj"
+dir = "jj/abandon-two"
+from = "jj/book"
+seed_env = "JJ_RANDOMNESS_SEED"
+steps = [
+  { run = "jj commit -m 'salt the soup'" },
+]
+capture = [
+  { id = "jj.abandon-two.tweak", cmd = "jj abandon 'description(substring:\"tweak dressing\")'", kind = "stderr", exit = 0 },
+]
+
+# Moving menu back to stable with the override flag.
+[[world]]
+id = "jj/move-back"
+tool = "jj"
+dir = "jj/move-back"
+from = "jj/book"
+seed_env = "JJ_RANDOMNESS_SEED"
+capture = [
+  { id = "jj.move-back.allowed", cmd = "jj bookmark move menu --to stable --allow-backwards", kind = "stderr", exit = 0 },
+]
+
 # ---------------------------------------------------------------- dasel 3.11.2
 # An inventory config with a database section and three services, a CSV, and
 # a defaults/override pair of YAML files.
@@ -241,6 +297,10 @@ capture = [
   { id = "dasel.put-pool-max", cmd = "dasel -i toml --root 'database.pool.max = 50' < app.toml", kind = "toml", exit = 0 },
   { id = "dasel.err.hash-filter", cmd = "dasel -i toml 'services.filter(#.replicas >= 3)' < app.toml", kind = "stderr", exit = 1 },
   { id = "dasel.err.method-sum", cmd = "dasel -i toml 'services.map(replicas).sum()' < app.toml", kind = "stderr", exit = 1 },
+  { id = "dasel.app-json", cmd = "dasel -i toml -o json < app.toml", kind = "json", exit = 0 },
+  { id = "dasel.users-yaml", cmd = "dasel -i csv -o yaml < users.csv", kind = "yaml", exit = 0 },
+  { id = "dasel.defaults-toml", cmd = "dasel -i yaml -o toml < defaults.yaml", kind = "toml", exit = 0 },
+  { id = "dasel.oslo-users", cmd = "dasel -i csv -o json 'filter(city == \"Oslo\")' < users.csv", kind = "json" },
 ]
 
 # World edit: the worker runs 6 replicas instead of 5.
@@ -268,6 +328,20 @@ steps = [
 ]
 capture = [
   { id = "dasel.noservices.cat.app-toml", cmd = "cat app.toml", kind = "toml", exit = 0 },
+  { id = "dasel.noservices.err.method-sum", cmd = "dasel -i toml 'services.map(replicas).sum()' < app.toml", kind = "stderr" },
+]
+
+# World edit: cron runs 3 replicas and the worker 2, so the filter keeps api and cron.
+[[world]]
+id = "dasel/filter-swap"
+tool = "dasel"
+dir = "dasel/filter-swap"
+from = "dasel/base"
+steps = [
+  { run = "sed -i '' 's/^replicas = 5$/replicas = 2/; s/^replicas = 1$/replicas = 3/' app.toml" },
+]
+capture = [
+  { id = "dasel.filter-swap.filter-replicas", cmd = "dasel -i toml -o yaml 'services.filter(replicas >= 3).map(name)' < app.toml", kind = "yaml", exit = 0 },
 ]
 
 # World edits for a value read twice: the pool size before and after a change.
@@ -297,6 +371,7 @@ steps = [
 capture = [
   { id = "dasel.merge-swap.cat.defaults-yaml", cmd = "cat defaults.yaml", kind = "yaml", exit = 0 },
   { id = "dasel.merge-swap.cat.override-yaml", cmd = "cat override.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.merge-swap.merge", cmd = "dasel -i yaml -o json --var o=yaml:file:./override.yaml 'merge($this, $o)' < defaults.yaml", kind = "json", exit = 0 },
 ]
 
 [[world]]
@@ -310,6 +385,36 @@ steps = [
 capture = [
   { id = "dasel.merge-noport.cat.defaults-yaml", cmd = "cat defaults.yaml", kind = "yaml", exit = 0 },
   { id = "dasel.merge-noport.cat.override-yaml", cmd = "cat override.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.merge-noport.merge", cmd = "dasel -i yaml -o json --var o=yaml:file:./override.yaml 'merge($this, $o)' < defaults.yaml", kind = "json", exit = 0 },
+]
+
+# World edits for the pool size: swapped between the files, and set in neither.
+[[world]]
+id = "dasel/merge-swap-pool"
+tool = "dasel"
+dir = "dasel/merge-swap-pool"
+steps = [
+  { write = "defaults.yaml", content = "database:\n  host: db.example.test\n  port: 5432\n  pool:\n    min: 2\n    max: 40\nfeatures:\n  beta: false\n  audit: true\n" },
+  { write = "override.yaml", content = "database:\n  port: 6432\n  pool:\n    max: 20\nfeatures:\n  beta: true\n" },
+]
+capture = [
+  { id = "dasel.merge-swap-pool.cat.defaults-yaml", cmd = "cat defaults.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.merge-swap-pool.cat.override-yaml", cmd = "cat override.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.merge-swap-pool.merge", cmd = "dasel -i yaml -o json --var o=yaml:file:./override.yaml 'merge($this, $o)' < defaults.yaml", kind = "json", exit = 0 },
+]
+
+[[world]]
+id = "dasel/merge-nopool"
+tool = "dasel"
+dir = "dasel/merge-nopool"
+steps = [
+  { write = "defaults.yaml", content = "database:\n  host: db.example.test\n  port: 5432\n  pool:\n    min: 2\nfeatures:\n  beta: false\n  audit: true\n" },
+  { write = "override.yaml", content = "database:\n  port: 6432\nfeatures:\n  beta: true\n" },
+]
+capture = [
+  { id = "dasel.merge-nopool.cat.defaults-yaml", cmd = "cat defaults.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.merge-nopool.cat.override-yaml", cmd = "cat override.yaml", kind = "yaml", exit = 0 },
+  { id = "dasel.merge-nopool.merge", cmd = "dasel -i yaml -o json --var o=yaml:file:./override.yaml 'merge($this, $o)' < defaults.yaml", kind = "json", exit = 0 },
 ]
 
 # ------------------------------------------------------ gh-stack 0.2.1 on gh 2.95.0
@@ -348,7 +453,24 @@ capture = [
   { id = "gh.stack.err.submit-draft", cmd = "gh stack submit --draft", kind = "stderr" },
   { id = "gh.stack.err.submit", cmd = "gh stack submit", kind = "stderr" },
   { id = "gh.stack.err.switch", cmd = "gh stack switch", kind = "stderr" },
+  { id = "gh.git-branch", cmd = "git branch -vv", kind = "stdout", exit = 0 },
+  { id = "gh.git-show-stat", cmd = "git show --stat HEAD", kind = "log", exit = 0 },
+  { id = "gh.git-log-stat", cmd = "git log --stat --oneline main..tests", kind = "log", exit = 0 },
   { id = "gh.stack.sync", cmd = "gh stack sync", kind = "stderr" },
+]
+
+# A copy of G3 checked out one layer up, on routes.
+[[world]]
+id = "gh/G3-routes"
+host_tools = ["git"]
+tool = "gh"
+dir = "gs/G3r"
+from = "gh/G3"
+steps = [
+  { run = "gh stack up >/dev/null 2>&1" },
+]
+capture = [
+  { id = "gh.g3r.stack.view-short", cmd = "gh stack view --short", kind = "stdout" },
 ]
 
 [[world]]
@@ -375,6 +497,32 @@ capture = [
   { id = "gh.g5.stack.rebase", cmd = "gh stack rebase", kind = "stderr" },
   { id = "gh.g5.git-status", cmd = "git status --short", kind = "stdout" },
   { id = "gh.g5.git-diff", cmd = "git diff", kind = "stdout" },
+]
+
+# G5 again, but the two layers conflict in README.md instead of config.txt.
+[[world]]
+id = "gh/G5-readme"
+host_tools = ["git"]
+tool = "gh"
+dir = "gs/G5"
+steps = [
+  { run = "rm -rf ../G5.git && find . -mindepth 1 -delete" },
+  { run = "git init -q --bare ../G5.git && git clone -q ../G5.git . 2>/dev/null" },
+  { write = "README.md", content = "# Client\n" },
+  { write = "config.txt", content = "timeout = 30\nretries = 1\nverbose = false\n" },
+  { run = "git add -A && git commit -qm 'Add config' && git push -q -u origin main 2>/dev/null" },
+  { run = "gh stack init retry-core >/dev/null 2>&1" },
+  { write = "config.txt", content = "timeout = 30\nretries = 3\nverbose = false\n" },
+  { run = "git commit -qam 'Set retries to 3'" },
+  { write = "config.txt", content = "timeout = 30\nretries = 5\nverbose = true\n" },
+  { write = "README.md", content = "# Client\nRetries raised to 5.\n" },
+  { run = "gh stack add -Am 'Raise retries and turn on verbose' retry-cli >/dev/null 2>&1" },
+  { run = "git checkout -q retry-core" },
+  { write = "README.md", content = "# Client\nRetries tuned.\n" },
+  { run = "git commit -qam 'Tune retries to 4'" },
+]
+capture = [
+  { id = "gh.g5r.stack.rebase", cmd = "gh stack rebase", kind = "stderr" },
 ]
 
 # Filler: gh and gh stack help pages.
@@ -487,6 +635,20 @@ capture = [
   { id = "gen.trace.run", cmd = "python3 -I app.py", kind = "trace", exit = 1 },
 ]
 
+# The same program with a header comment: every frame's line number moves by one.
+[[world]]
+id = "gen/trace-shift"
+host_tools = ["python3"]
+tool = "shell"
+dir = "gen/trace"
+from = "gen/trace"
+steps = [
+  { write = "app.py", content = "# pool settings reader\ndef pool_max(cfg):\n    return cfg[\"pool\"][\"max\"]\n\ndef main():\n    print(pool_max({\"pool\": {\"min\": 2}}))\n\nmain()\n" },
+]
+capture = [
+  { id = "gen.trace-shift.run", cmd = "python3 -I app.py", kind = "trace", exit = 1 },
+]
+
 # A JSONL event log of an agent session: fourteen events, four tool calls,
 # two of which exited non-zero.
 [[world]]
@@ -501,6 +663,24 @@ steps = [
 capture = [
   { id = "gen.events.cat", cmd = "cat events.jsonl", kind = "jsonl", exit = 0 },
   { id = "gen.events.tool-calls", cmd = "jq -c 'select(.kind==\"tool_call\")' events.jsonl", kind = "jsonl", exit = 0 },
+  { id = "gen.events.by-turn", cmd = "jq -s -c 'group_by(.turn) | map({turn: .[0].turn, events: length, last_t: (map(.t) | max)})' events.jsonl", kind = "json", exit = 0 },
+]
+
+# A service's own log, written by a small deterministic script: requests,
+# cache events and a slow query, none about the claims above.
+[[world]]
+id = "gen/applog"
+host_tools = ["python3"]
+tool = "shell"
+dir = "gen/applog"
+steps = [
+  { write = "mklog.py", content = "paths = ['/health', '/api/items', '/api/items/7', '/api/orders', '/static/app.js']\ncodes = [200, 200, 200, 304, 404, 200, 201, 200, 500, 200]\nfor i in range(160):\n    m, s = divmod(i * 7, 60)\n    ts = '2026-10-01T12:%02d:%02dZ' % (m % 60, s)\n    if i % 23 == 11:\n        print('%s WARN  db     slow query on orders: %d ms' % (ts, 800 + i * 3))\n    elif i % 17 == 5:\n        print('%s INFO  cache  evicted %d entries (lru)' % (ts, 40 + i % 9))\n    else:\n        p = paths[i % len(paths)]\n        c = codes[(i * 3) % len(codes)]\n        print('%s INFO  http   %s %s -> %d in %d ms' % (ts, 'POST' if 'orders' in p else 'GET', p, c, 3 + (i * 13) % 90))\n" },
+  { run = "python3 -I mklog.py > app.log" },
+]
+capture = [
+  { id = "gen.applog.head", cmd = "head -n 80 app.log", kind = "log", exit = 0 },
+  { id = "gen.applog.tail", cmd = "tail -n 80 app.log", kind = "log", exit = 0 },
+  { id = "gen.applog.errors", cmd = "grep -n ' 500 \\| WARN' app.log", kind = "log", exit = 0 },
 ]
 
 # Two workers writing one job log: each buffers and flushes on its own, so
@@ -534,6 +714,35 @@ capture = [
   { id = "gen.env.mkdir-local", cmd = "mkdir .scratch && ls -A", kind = "listing", exit = 0 },
 ]
 
+# World edits for the sandbox: a nosuchtool on PATH that isn't executable,
+# and an ro directory that is writable after all.
+[[world]]
+id = "gen/env-noexec"
+host_tools = ["sh"]
+tool = "shell"
+dir = "gen/tools"
+env = { PATH = "{W}/gen/tools/bin:{W}/bin:/usr/bin:/bin" }
+steps = [
+  { write = "bin/nosuchtool", content = "#!/bin/sh\necho ok\n" },
+  { chmod = "bin/nosuchtool", mode = "644" },
+]
+capture = [
+  { id = "gen.env-noexec.missing-tool", cmd = "nosuchtool --check", kind = "stderr" },
+  { id = "gen.env-noexec.command-v", cmd = "command -v nosuchtool", kind = "stdout" },
+]
+
+[[world]]
+id = "gen/env-rw"
+host_tools = ["sh"]
+tool = "shell"
+dir = "gen/env-rw"
+steps = [
+  { run = "mkdir ro" },
+]
+capture = [
+  { id = "gen.env-rw.mkdir-ro", cmd = "mkdir ro/scratch", kind = "stderr", exit = 0 },
+]
+
 # ------------------------------------------------------- older tool versions
 # What older releases really do, so a note scoped to an older version says
 # what that version did (claims.toml `scoped.verified_by`). Never filler.
@@ -558,27 +767,44 @@ capture = [
   { id = "old.dasel.version-subcommand", cmd = "dasel version", kind = "stdout" },
 ]
 
-# ------------------------------------------------- pending: toolchain recipes
-# These need a pinned toolchain outside the frame's PATH, and a quiet machine.
-# They run only with `capture.py run --include-pending`; their captures, and
-# the triples that need them, are pending until then.
+# ---------------------------------------------------- toolchain recipes
+# cargo comes from the linked Rust 1.94.1 toolchain (tools.lock.toml), node,
+# npm and pnpm from the pinned node 26.5.0 and pnpm 11.21.0 releases.
 
 # A two-test crate whose second assertion is wrong, run offline. cargo's
 # timing and thread numbering are the only moving parts; the scrub rules
 # below normalize them.
 [[world]]
 id = "gen/cargo"
+host_tools = ["cc"]
 tool = "cargo"
 dir = "gen/cargo"
-pending = "Rust 1.94.1 (cargo) on PATH; the capture machine must be idle"
-env = { PATH = "{W}/toolchain/bin:{W}/bin:/usr/bin:/bin", CARGO_HOME = "{W}/cargo", CARGO_TARGET_DIR = "{W}/target", RUST_BACKTRACE = "0", CARGO_TERM_COLOR = "never" }
+needs = ["rust"]
+env = { PATH = "{W}/toolchain/rust/bin:{W}/bin:/usr/bin:/bin", CARGO_HOME = "{W}/cargo", CARGO_TARGET_DIR = "{W}/target", RUST_BACKTRACE = "0", CARGO_TERM_COLOR = "never" }
 steps = [
   { write = "Cargo.toml", content = "[package]\nname = \"vc-demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n" },
   { write = "src/lib.rs", content = "pub fn clamp_pct(n: i32) -> i32 { n.clamp(0, 100) }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test] fn clamps_high() { assert_eq!(clamp_pct(140), 100); }\n    #[test] fn clamps_low() { assert_eq!(clamp_pct(-5), 5); }\n}\n" },
 ]
 capture = [
+  { id = "gen.cargo.versions", cmd = "cargo --version; rustc --version", kind = "stdout", exit = 0 },
   { id = "gen.cargo.lib-rs", cmd = "cat src/lib.rs", kind = "source", exit = 0 },
-  { id = "gen.cargo.test", cmd = "cargo test --offline", kind = "stdout", exit = 101 },
+  { id = "gen.cargo.test", cmd = "cargo test --offline 2>&1", kind = "stdout", exit = 101 },
+]
+
+# The same crate whose wrong assertion expects 7 instead of 5.
+[[world]]
+id = "gen/cargo-7"
+host_tools = ["cc"]
+tool = "cargo"
+dir = "gen/cargo"
+from = "gen/cargo"
+needs = ["rust"]
+env = { PATH = "{W}/toolchain/rust/bin:{W}/bin:/usr/bin:/bin", CARGO_HOME = "{W}/cargo", CARGO_TARGET_DIR = "{W}/target", RUST_BACKTRACE = "0", CARGO_TERM_COLOR = "never" }
+steps = [
+  { run = "sed -i '' 's/assert_eq!(clamp_pct(-5), 5)/assert_eq!(clamp_pct(-5), 7)/' src/lib.rs" },
+]
+capture = [
+  { id = "gen.cargo-7.test", cmd = "cargo test --offline 2>&1", kind = "stdout", exit = 101 },
 ]
 
 # npm with an empty cache and no network: install fails with ENOTCACHED.
@@ -586,8 +812,7 @@ capture = [
 id = "gen/npm"
 tool = "npm"
 dir = "gen/npm"
-pending = "node 26.5.0 and npm 11.17.0 on PATH; the capture machine must be idle"
-env = { PATH = "{W}/toolchain/bin:{W}/bin:/usr/bin:/bin", npm_config_cache = "{W}/npm-cache", npm_config_userconfig = "{W}/hm/npmrc", npm_config_update_notifier = "false", npm_config_fund = "false", npm_config_audit = "false" }
+env = { PATH = "{W}/toolchain/node/bin:{W}/toolchain/pnpm:{W}/bin:/usr/bin:/bin", npm_config_cache = "{W}/npm-cache", npm_config_userconfig = "{W}/hm/npmrc", npm_config_update_notifier = "false", npm_config_fund = "false", npm_config_audit = "false" }
 steps = [
   { write = "package.json", content = "{\"name\":\"vc-demo\",\"version\":\"1.0.0\",\"scripts\":{\"build\":\"node build.js\"},\"dependencies\":{\"left-pad\":\"1.3.0\"}}\n" },
 ]
@@ -596,6 +821,7 @@ capture = [
   { id = "gen.npm.install-offline", cmd = "npm install --offline", kind = "stderr", exit = 1 },
   { id = "gen.npm.run-missing", cmd = "npm run nope", kind = "stderr", exit = 1 },
   { id = "gen.npm.run-build", cmd = "npm run build", kind = "trace", exit = 1 },
+  { id = "gen.npm.pnpm-install-offline", cmd = "pnpm install --offline", kind = "stderr" },
 ]
 
 [scrub]

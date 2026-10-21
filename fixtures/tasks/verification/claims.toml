@@ -37,7 +37,6 @@ type = "tool"
 [[shape.claim]]
 id = "jj-bookmark-move-allow-backwards"
 fact = "jj-bookmark-move-backwards"
-edit = "fabricated"
 worked = true
 text = "gotcha: jj bookmark move won't move a bookmark backwards or sideways unless it gets --allow-backwards."
 value = "--allow-backwards"
@@ -60,24 +59,24 @@ edit = [
 ]
 
 [[shape]]
-id = "tool.flag-not-accepted"
+id = "tool.refused-operation"
 type = "tool"
 
 [[shape.claim]]
-id = "gh-stack-submit-no-draft-flag"
-fact = "gh-stack-submit-draft"
-text = "fact: gh stack submit has no --draft flag; passing it is an error."
-probes.near = ['requires an interactive terminal']
-distractor = [{ capture = "gh.stack.err.switch" }]
+id = "jj-bookmark-move-menu-refused"
+fact = "jj-bookmark-move-backwards"
+text = "gotcha: jj bookmark move menu --to stable is refused, because it would move menu backwards."
+touch = ['backwards or sideways', 'allow-backwards']
+probes.support = ['Refusing to move bookmark backwards or sideways: menu']
+probes.contradict = ['''\$ jj bookmark move menu --to stable\nMoved 1 bookmarks''']
+probes.mention = ['Refusing to move bookmark', 'Moved 1 bookmarks']
+probes.near = ['Failed to parse revset']
+distractor = [{ capture = "jj.err.ancestors-method" }]
 repeat = 0
-probes.support = ['unknown flag: --draft']
-probes.contradict = ['''\$ gh stack submit --draft\nChecking stack state''']
-probes.mention = ['--draft']
-exclude = ["gh.stack.help.submit"]
-edit_note = "c: the command runs past flag parsing (gh stack submit's own output, failing later on the remote); nm: the call is removed."
+edit_note = "c: the same command moves the bookmark (jj's own output when the move is allowed, run with --allow-backwards on a copy of the repository); nm: the call is removed."
 [[shape.claim.block]]
-capture = "gh.stack.err.submit-draft"
-c_from = "gh.stack.err.submit"
+capture = "jj.err.bookmark-move-backwards"
+c_from = "jj.move-back.allowed"
 nm_drop = true
 
 [[shape]]
@@ -88,6 +87,7 @@ type = "tool"
 id = "dasel-filter-hash-placeholder"
 fact = "dasel-filter-hash"
 text = "fact: dasel 3 rejects a `#` placeholder in a filter: the selector fails to tokenize."
+touch = ['filter\(']
 probes.near = ['func "sum" expects']
 distractor = [{ capture = "dasel.err.method-sum" }]
 repeat = 0
@@ -107,7 +107,6 @@ type = "tool"
 [[shape.claim]]
 id = "jj-file-show-revision-option"
 fact = "jj-file-show-revision-option"
-edit = "fabricated"
 text = "fact: jj file show picks the revision to read with -r/--revision."
 value = "--revision"
 value_c = "--source"
@@ -133,68 +132,20 @@ type = "tool"
 [[shape.claim]]
 id = "jj-abandon-deletes-bookmarks"
 fact = "jj-abandon-bookmarks"
-edit = "fabricated"
 text = "gotcha: jj abandon deletes the bookmarks on the abandoned commit; it does not move them to the parent."
+touch = ['\bmenu\b', 'retain-bookmarks', 'Do not delete bookmarks']
 probes.support = ['^Deleted bookmarks: menu$']
-probes.contradict = ['^Moved bookmarks to the parent: menu$']
-probes.mention = ['bookmarks: menu', 'Do not delete bookmarks']
-exclude = ["jj.abandon.log", "jj.abandon.bookmark-list"]
+probes.contradict = ['^menu: zsuskuln 211033a3 add salad$', 'Parent commit \(@-\)      : zsuskuln 211033a3 menu \| add salad']
+probes.mention = ['bookmarks: menu', '^menu: ']
 repeat = 0
-edit_note = "c: the abandon reports the bookmark moved to the parent; nm: the bookmark line is removed."
+edit_note = "c: the abandon leaves menu on the parent and the bookmark list shows it there (jj's own output for the same abandon run with --retain-bookmarks on a copy, under the plain command line); nm: the deletion line and the bookmark list are removed."
 [[shape.claim.block]]
 capture = "jj.abandon.tweak"
-edit = [{ find = "Deleted bookmarks: menu\n", c = "Moved bookmarks to the parent: menu\n", nm = "" }]
-
-# A belief that the session later refuted: SUPPORTED holds it as a live fact,
-# CONTRADICTED shows it marked `was: …, wrong because …` beside the call that
-# refuted it.
-[[shape]]
-id = "tool.superseded-belief"
-type = "tool"
-mechanism = "supersede"
-
-[[shape.claim]]
-id = "jj-template-id-keyword-belief"
-fact = "jj-template-id-keyword"
-role = "belief"
-text = "fact: jj templates have an `id` keyword, so id.short() prints a commit's short id."
-probes.support = ['`id` keyword; `id\.short\(\)` prints']
-probes.contradict = ["Keyword `id` doesn't exist"]
-probes.mention = ['`id` keyword', 'Keyword `id`']
-edit_note = "c: the note is marked refuted (was: …, wrong because …) and the refuting call c17 is shown; nm: neither."
+c_from = "jj.abandon-retain.tweak"
+edit = [{ find = "Deleted bookmarks: menu\n", nm = "" }]
 [[shape.claim.block]]
-notes = ["- fact: jj templates have an `id` keyword; `id.short()` prints a commit's short id"]
-c_notes = [
-  "- was: jj templates have an `id` keyword; `id.short()` prints a commit's short id (held at 8/10), wrong because jj rejected it: Keyword `id` doesn't exist [call c17]",
-  "- fact: the commit id keyword in jj templates is `commit_id`",
-]
-nm_notes = []
-[[shape.claim.block]]
-capture = "jj.err.id-keyword"
-call = "c17"
-s_drop = true
-nm_drop = true
-
-[[shape.claim]]
-id = "jj-file-show-rev-path-belief"
-fact = "jj-file-show-rev-path"
-role = "belief"
-text = "fact: jj file show accepts a REV:PATH argument such as stable:soup.txt."
-probes.support = ['`jj file show` accepts `REV:PATH`']
-probes.contradict = ['Invalid file pattern kind `stable:`']
-probes.mention = ['REV:PATH', 'Invalid file pattern']
-edit_note = "c: the note is marked refuted beside the refuting call c52; nm: neither."
-[[shape.claim.block]]
-notes = ["- fact: `jj file show` accepts `REV:PATH`, as in `stable:soup.txt`"]
-c_notes = [
-  "- was: `jj file show` accepts `REV:PATH`, as in `stable:soup.txt` (held at 7/10), wrong because it failed with Invalid file pattern kind `stable:` [call c52]",
-  "- fact: `jj file show` takes the revision as `-r REV` and the path as a fileset",
-]
-nm_notes = []
-[[shape.claim.block]]
-capture = "jj.err.file-show-colon"
-call = "c52"
-s_drop = true
+capture = "jj.abandon.bookmark-list"
+c_from = "jj.abandon-retain.bookmark-list"
 nm_drop = true
 
 # A statement scoped to a version, beside notes about an older version that
@@ -207,7 +158,6 @@ mechanism = "version"
 [[shape.claim]]
 id = "jj-bare-fileset-path-prefix-glob"
 fact = "jj-fileset-bare-path"
-edit = "fabricated"
 text = "fact: in jj 0.46, a bare path in a fileset is parsed as a prefix-glob: pattern."
 version = "0.46.0"
 scope_re = 'jj 0\.\d+\.\d+'
@@ -256,27 +206,27 @@ type = "environment"
 [[shape.claim]]
 id = "jj-installed-0-46-0"
 fact = "jj-version"
-edit = "fabricated"
 text = "fact: the jj on PATH is version 0.46.0."
+touch = ['jj \d+\.\d+\.\d+-']
 probes.near = ['gh version 2\.95\.0']
 distractor = [{ capture = "gh.version" }]
 value = "0.46.0"
-value_c = "0.45.0"
+value_c = "0.30.0"
 probes.support = ['^jj 0\.46\.0-']
-probes.contradict = ['^jj 0\.45\.0-']
+probes.contradict = ['^jj 0\.30\.0-']
 probes.mention = ['^jj \d+\.\d+\.\d+-']
 repeat = 0
-edit_note = "c: jj --version reports 0.45.0; nm: the call is removed."
+edit_note = "c: jj --version reports 0.30.0 (the real output of that release); nm: the call is removed."
 [[shape.claim.block]]
 capture = "jj.version"
-edit = [{ find = "jj 0.46.0-", c = "jj 0.45.0-" }]
+c_from = "old.jj.version"
 nm_drop = true
 
 [[shape.claim]]
 id = "dasel-installed-3-11-2"
 fact = "dasel-version-number"
-edit = "fabricated"
 text = "fact: the installed dasel is version 3.11.2."
+touch = ['dasel version', '3\.1\d\.\d']
 probes.near = ['^jj 0\.46\.0-']
 distractor = [{ capture = "jj.version" }]
 repeat = 0
@@ -294,8 +244,8 @@ nm_drop = true
 [[shape.claim]]
 id = "gh-installed-2-95-0"
 fact = "gh-version"
-edit = "fabricated"
 text = "fact: gh 2.95.0 is installed."
+touch = ['gh version']
 probes.near = ['gh stack version 0\.2\.1']
 distractor = [{ capture = "gh.stack.version" }]
 repeat = 0
@@ -310,6 +260,40 @@ capture = "gh.version"
 edit = [{ find = "2.95.0", c = "2.94.0", count = 2 }]
 nm_drop = true
 
+# A belief a later call superseded: SUPPORTED shows the tool output that
+# backed it; CONTRADICTED shows it marked `was: …, wrong because …` beside
+# the call that superseded it.
+[[shape]]
+id = "environment.superseded-belief"
+type = "environment"
+mechanism = "supersede"
+
+[[shape.claim]]
+id = "jj-installed-0-30-belief"
+fact = "jj-version"
+role = "belief"
+text = "fact: the installed jj is 0.30.0."
+touch = ['jj \d+\.\d+\.\d+-']
+probes.support = ['^jj 0\.30\.0-', 'installed jj is 0\.30\.0']
+probes.contradict = ['^jj 0\.46\.0-']
+probes.mention = ['^jj \d+\.\d+\.\d+-', 'jj is 0\.30\.0']
+edit_note = "s: jj --version prints 0.30.0 (a capture of that release); c: that belief is marked refuted beside a later jj --version printing 0.46.0; nm: neither."
+[[shape.claim.block]]
+capture = "old.jj.version"
+c_drop = true
+nm_drop = true
+[[shape.claim.block]]
+notes = []
+c_notes = [
+  "- was: the installed jj is 0.30.0 (held at 9/10), wrong because jj --version now prints 0.46.0 [call c41]",
+  "- fact: jj 0.46.0 is installed",
+]
+[[shape.claim.block]]
+capture = "jj.version"
+call = "c41"
+s_drop = true
+nm_drop = true
+
 [[shape]]
 id = "environment.command-missing"
 type = "environment"
@@ -317,22 +301,21 @@ type = "environment"
 [[shape.claim]]
 id = "sandbox-nosuchtool-missing"
 fact = "sandbox-nosuchtool"
-edit = "fabricated"
 text = "gotcha: nosuchtool isn't installed in this sandbox; the shell reports it as command not found."
+touch = ['nosuchtool']
 probes.near = ['command -v jq']
 distractor = [{ capture = "gen.env.command-v-jq" }]
 repeat = 0
-probes.support = ['nosuchtool: command not found', '''\$ command -v nosuchtool\n\[exit 1\]''']
-probes.contradict = ['nosuchtool: Permission denied', '''\$ command -v nosuchtool\n/work/bin/nosuchtool''']
+probes.support = ['nosuchtool: command not found']
+probes.contradict = ['nosuchtool: Permission denied']
 probes.mention = ['nosuchtool']
-edit_note = "c: nosuchtool exists but can't be executed (exit 126), and command -v finds it; nm: both calls are removed."
+edit_note = "c: a nosuchtool is on PATH but not executable, so the shell says Permission denied (exit 126; the shell's own output with such a file in place); nm: both calls are removed."
 [[shape.claim.block]]
 capture = "gen.env.missing-tool"
-edit = [{ find = "/bin/sh: nosuchtool: command not found\n[exit 127]\n", c = "/bin/sh: /work/bin/nosuchtool: Permission denied\n[exit 126]\n" }]
+c_from = "gen.env-noexec.missing-tool"
 nm_drop = true
 [[shape.claim.block]]
 capture = "gen.env.command-v"
-edit = [{ find = "$ command -v nosuchtool\n[exit 1]\n", c = "$ command -v nosuchtool\n/work/bin/nosuchtool\n[exit 0]\n" }]
 nm_drop = true
 
 [[shape]]
@@ -342,18 +325,18 @@ type = "environment"
 [[shape.claim]]
 id = "sandbox-ro-dir-read-only"
 fact = "sandbox-ro-dir"
-edit = "fabricated"
 text = "gotcha: the ro directory is read-only here; mkdir inside it fails with Permission denied."
+touch = ['\bro/']
 probes.near = ['mkdir \.scratch']
 distractor = [{ capture = "gen.env.mkdir-local" }]
 repeat = 0
 probes.support = ['ro/scratch: Permission denied']
 probes.contradict = ['''\$ mkdir ro/scratch\n\[exit 0\]''']
 probes.mention = ['ro/scratch']
-edit_note = "c: the mkdir succeeds silently with exit 0; nm: the call is removed."
+edit_note = "c: the mkdir succeeds silently with exit 0 (run where ro is writable); nm: the call is removed."
 [[shape.claim.block]]
 capture = "gen.env.mkdir-ro"
-edit = [{ find = "mkdir: ro/scratch: Permission denied\n[exit 1]\n", c = "[exit 0]\n" }]
+c_from = "gen.env-rw.mkdir-ro"
 nm_drop = true
 
 [[shape]]
@@ -363,8 +346,8 @@ type = "environment"
 [[shape.claim]]
 id = "gh-stack-submit-exit-4"
 fact = "gh-stack-submit-remote"
-edit = "fabricated"
 text = "gotcha: gh stack submit fails here with exit status 4: it can't create a GitHub client because no remote points to a GitHub host."
+touch = ['gh stack submit']
 probes.near = ['requires an interactive terminal']
 distractor = [{ capture = "gh.stack.err.switch" }]
 repeat = 0
@@ -388,6 +371,7 @@ type = "environment"
 id = "service-ports-taken"
 fact = "service-ports-taken"
 text = "constraint: ports 5173, 5180 and 5181 are already taken on this host."
+touch = ['ports? 51\d\d', '518\d']
 repeat = 0
 probes.support = ['ports 5173, 5180 and 5181 are already in use']
 probes.contradict = ['ports 5173, 5180 and 5181 are free']
@@ -411,6 +395,7 @@ id = "app-toml-three-services"
 fact = "app-toml-services"
 worked = true
 text = "fact: app.toml defines three [[services]] tables: api with 3 replicas, worker with 5 and cron with 1."
+touch = ['\[\[services\]\]', 'replicas']
 probes.support = ['^name = "worker"\nreplicas = 5$', '"name": "worker",\n\s+"replicas": 5,']
 probes.contradict = ['^name = "worker"\nreplicas = 6$', '"name": "worker",\n\s+"replicas": 6,']
 probes.mention = ['\[\[services\]\]', '"replicas"', 'replicas = ']
@@ -433,6 +418,7 @@ nm_drop = true
 id = "users-csv-four-records"
 fact = "users-csv"
 text = "fact: users.csv has a name,age,city header and four records, Ann through Di."
+touch = ['users\.csv', 'Oslo|Kyiv|Rome']
 repeat = 0
 probes.support = ['^name,age,city\nAnn,34,Oslo\nBo,28,Rome\nCy,41,Oslo\nDi,19,Kyiv\n\[exit 0\]']
 probes.contradict = ['^Di,19,Kyiv\nEd,52,Lima$']
@@ -451,6 +437,7 @@ type = "file"
 id = "app-toml-pool-max-20"
 fact = "app-toml-pool-max"
 text = "fact: app.toml sets database.pool.max to 20."
+touch = ['\bpool\b', 'pool\.max']
 probes.support = ['^\[database\.pool\]\nmin = 2\nmax = 20$']
 probes.contradict = ['^\[database\.pool\]\nmin = 2\nmax = 25$']
 probes.mention = ['\[database\.pool\]', 'database\.pool\.max']
@@ -469,6 +456,7 @@ edit = [
 id = "service-toml-port-5182"
 fact = "service-port"
 text = "fact: service.toml sets port = 5182 in its [server] table."
+touch = ['\bport\b']
 value = "5182"
 value_c = "5184"
 probes.support = ['^port = 5182$']
@@ -486,6 +474,7 @@ edit = [{ find = "port = 5182\n", c = "port = 5184\n", nm = "" }]
 id = "service-toml-api-timeout"
 fact = "service-api-timeout"
 text = "fact: in service.toml the /api route has timeout_ms = 3000."
+touch = ['timeout_ms', '/api\b']
 repeat = 0
 guard = ["3000"]
 probes.support = ['path = "/api"\ntimeout_ms = 3000$']
@@ -507,6 +496,7 @@ type = "file"
 id = "package-lint-script"
 fact = "package-lint"
 text = "fact: package.json's lint script runs eslint, then tsc --noEmit three times."
+touch = ['package\.json', 'eslint']
 value = "eslint"
 value_c = "oxlint"
 probes.support = ['"lint": "eslint \. && tsc --noEmit -p a && tsc --noEmit -p b && tsc --noEmit -p c"']
@@ -530,6 +520,7 @@ type = "file"
 id = "package-manager-pnpm"
 fact = "package-manager"
 text = "fact: package.json pins packageManager to pnpm@9.15.4."
+touch = ['package\.json', 'packageManager']
 repeat = 0
 value = "pnpm@9.15.4"
 value_c = "pnpm@9.12.4"
@@ -545,6 +536,7 @@ edit = [{ find = "  \"packageManager\": \"pnpm@9.15.4\",\n", c = "  \"packageMan
 id = "package-node-engine"
 fact = "package-engines"
 text = "fact: package.json's engines field requires node >=22."
+touch = ['package\.json', 'engines']
 repeat = 0
 probes.support = ['"engines": \{ "node": ">=22" \}']
 probes.contradict = ['"engines": \{ "node": ">=20" \}']
@@ -565,6 +557,7 @@ type = "file"
 id = "jj-book-no-git-dir"
 fact = "jj-book-git-dir"
 text = "fact: the recipe-book repository has a .jj directory and no .git directory."
+touch = ['\$ ls -A']
 probes.near = ['^\.scratch$']
 distractor = [{ capture = "gen.env.mkdir-local" }]
 repeat = 0
@@ -587,6 +580,7 @@ mechanism = "sequence"
 id = "service-port-now-5182"
 fact = "service-port"
 text = "fact: service.toml now sets port = 5182."
+touch = ['\bport\b']
 anchor = "b"
 probes.support = ['^port = 5182$']
 probes.contradict = ['^port = 5180$']
@@ -605,8 +599,9 @@ nm_drop = true
 role = "winner"
 group = "b"
 
-# Settings layered by precedence: the higher-precedence file decides, and it
-# is shown first, so a reader that trusts the last value read is wrong.
+# Settings layered by precedence: dasel's merge of the two files decides,
+# and the winning file is shown first, so a reader that trusts the last file
+# read is wrong.
 [[shape]]
 id = "file.override-precedence"
 type = "file"
@@ -616,12 +611,11 @@ mechanism = "precedence"
 id = "effective-db-port-6432"
 fact = "merged-db-port"
 text = "fact: with override.yaml applied over defaults.yaml, the effective database port is 6432."
-probes.support = ['^  port: 6432$']
-probes.contradict = ['^  port: 5432$']
+touch = ['\bport\b']
+probes.support = ['^  port: 6432$', '"port": 6432']
+probes.contradict = ['^  port: 5432$', '"port": 5432']
 probes.mention = ['^  port: \d+$', '"port": \d+']
-edit_note = "s: override.yaml sets port 6432 and defaults.yaml 5432; c: the two files' ports swap; nm: neither file sets a port. A fixed note states the precedence."
-[[shape.claim.block]]
-notes = ["- fact: the service reads defaults.yaml, then override.yaml; a key set in override.yaml replaces the same key from defaults.yaml"]
+edit_note = "s: override.yaml sets port 6432 and defaults.yaml 5432, and dasel's merge of the two prints 6432; c: the files' values swap and the merge prints 5432; nm: neither file sets it and the merge has none (all real output from sibling fixtures)."
 [[shape.claim.block]]
 capture = "dasel.cat.override-yaml"
 c_from = "dasel.merge-swap.cat.override-yaml"
@@ -634,27 +628,40 @@ c_from = "dasel.merge-swap.cat.defaults-yaml"
 nm_from = "dasel.merge-noport.cat.defaults-yaml"
 role = "loser"
 group = "b"
+[[shape.claim.block]]
+capture = "dasel.merge"
+c_from = "dasel.merge-swap.merge"
+nm_from = "dasel.merge-noport.merge"
+role = "winner"
+group = "b"
 
 [[shape.claim]]
 id = "effective-pool-max-40"
 fact = "merged-pool-max"
 text = "fact: with override.yaml applied over defaults.yaml, the database pool's max is 40."
-probes.support = ['^    max: 40$']
-probes.contradict = ['^    max: 20$']
+touch = ['\bpool\b', '\bmax\b']
+probes.support = ['^    max: 40$', '"max": 40']
+probes.contradict = ['^    max: 20$', '"max": 20']
 probes.mention = ['^    max: \d+$', '"max": \d+', '^max = \d+$']
-edit_note = "s: override.yaml sets pool max 40 and defaults.yaml 20; c: the values swap; nm: neither file sets it. A fixed note states the precedence."
-[[shape.claim.block]]
-notes = ["- fact: the service reads defaults.yaml, then override.yaml; a key set in override.yaml replaces the same key from defaults.yaml"]
+edit_note = "s: override.yaml sets pool max 40 and defaults.yaml 20, and dasel's merge of the two prints 40; c: the files' values swap and the merge prints 20; nm: neither file sets it and the merge has none (all real output from sibling fixtures)."
 [[shape.claim.block]]
 capture = "dasel.cat.override-yaml"
+c_from = "dasel.merge-swap-pool.cat.override-yaml"
+nm_from = "dasel.merge-nopool.cat.override-yaml"
 role = "winner"
 group = "a"
-edit = [{ find = "    max: 40\n", c = "    max: 20\n", nm = "" }]
 [[shape.claim.block]]
 capture = "dasel.cat.defaults-yaml"
+c_from = "dasel.merge-swap-pool.cat.defaults-yaml"
+nm_from = "dasel.merge-nopool.cat.defaults-yaml"
 role = "loser"
 group = "b"
-edit = [{ find = "    max: 20\n", c = "    max: 40\n", nm = "" }]
+[[shape.claim.block]]
+capture = "dasel.merge"
+c_from = "dasel.merge-swap-pool.merge"
+nm_from = "dasel.merge-nopool.merge"
+role = "winner"
+group = "b"
 
 # ======================================================== result facts
 
@@ -666,21 +673,18 @@ type = "result"
 id = "cargo-test-clamps-low-values"
 fact = "cargo-clamps-low"
 worked = true
-pending = "generic recipe A (cargo test), deferred until heavy jobs on the capture machine finish"
 text = "learned: cargo test failed clamps_low with left 0 and right 5."
+touch = ['clamps_', 'cargo test']
 probes.support = ['^  left: 0\n right: 5$']
 probes.contradict = ['^  left: 0\n right: 7$']
 probes.mention = ['^  left: 0$', 'tests::clamps_low stdout']
 invariants = [{ type = "count", items = '^test tests::\w+ \.\.\. ok$', total = 'test result: \w+\. (\d+) passed;' }]
 exclude = ["gen.cargo.lib-rs"]
-edit_note = "c: right: 7 (the source, whose assert says 5, is not shown); nm: the clamps_low stdout block and the failures list are removed, so only left/right loses support; the FAILED marker and the counts stay."
+edit_note = "c: right: 7 (cargo's own output for the same crate whose assertion expects 7; the source is not shown); nm: the clamps_low stdout block and the failures list are removed, so only left/right loses support; the FAILED marker and the counts stay."
 [[shape.claim.block]]
 capture = "gen.cargo.test"
-edit = [
-  { find = "\n right: 5\n", c = "\n right: 7\n" },
-  { find = "---- tests::clamps_low stdout ----\n", nm = "" },
-  { find = "  left: 0\n right: 5\n", nm = "" },
-]
+c_from = "gen.cargo-7.test"
+edit = [{ find = "failures:\n\n---- tests::clamps_low stdout ----\n\nthread 'tests::clamps_low' panicked at src/lib.rs:7:31:\nassertion `left == right` failed\n  left: 0\n right: 5\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::clamps_low\n\n", nm = "" }]
 
 [[shape]]
 id = "result.scalar-output"
@@ -690,6 +694,7 @@ type = "result"
 id = "dasel-replicas-sum"
 fact = "dasel-replicas-sum"
 text = "learned: dasel sums the services' replicas to 9."
+touch = ['replicas']
 probes.support = ['''sum\(services\.map\(replicas\)\.\.\.\)' < app\.toml\n9\n''']
 probes.contradict = ['''sum\(services\.map\(replicas\)\.\.\.\)' < app\.toml\n10\n''']
 probes.mention = ['replicas']
@@ -701,22 +706,53 @@ c_from = "dasel.worker6.sum-replicas"
 nm_drop = true
 
 [[shape]]
+id = "result.superseded-belief"
+type = "result"
+mechanism = "supersede"
+
+[[shape.claim]]
+id = "replicas-sum-9-belief"
+fact = "dasel-replicas-sum"
+role = "belief"
+text = "learned: the services' replicas sum to 9."
+touch = ['replicas', 'sum to \d+']
+probes.support = ['''sum\(services\.map\(replicas\)\.\.\.\)' < app\.toml\n9\n''', 'replicas sum to 9']
+probes.contradict = ['''sum\(services\.map\(replicas\)\.\.\.\)' < app\.toml\n10\n''']
+probes.mention = ['replicas']
+edit_note = "s: dasel sums the replicas to 9; c: that belief is marked refuted beside a later sum printing 10 (dasel rerun after the worker went to 6 replicas); nm: neither."
+[[shape.claim.block]]
+capture = "dasel.sum-replicas"
+c_drop = true
+nm_drop = true
+[[shape.claim.block]]
+notes = []
+c_notes = [
+  "- was: the services' replicas sum to 9 (held at 8/10), wrong because after the worker went to 6 replicas dasel sums them to 10 [call c27]",
+  "- fact: the replicas now sum to 10",
+]
+[[shape.claim.block]]
+capture = "dasel.worker6.sum-replicas"
+call = "c27"
+s_drop = true
+nm_drop = true
+
+[[shape]]
 id = "result.selection"
 type = "result"
 
 [[shape.claim]]
 id = "dasel-filter-keeps-api-worker"
 fact = "dasel-filter-result"
-edit = "fabricated"
 text = "learned: filtering services on replicas >= 3 keeps api and worker."
+touch = ['replicas']
 repeat = 0
 probes.support = ['^- api\n- worker$']
 probes.contradict = ['^- api\n- cron$']
 probes.mention = ['replicas']
-edit_note = "c: the filter's output lists api and cron; nm: the call is removed."
+edit_note = "c: the filter keeps api and cron (dasel's output on a sibling file where cron has 3 replicas and the worker 2); nm: the call is removed."
 [[shape.claim.block]]
 capture = "dasel.filter-replicas"
-edit = [{ find = "- worker\n", c = "- cron\n" }]
+c_from = "dasel.filter-swap.filter-replicas"
 nm_drop = true
 
 [[shape]]
@@ -727,6 +763,7 @@ type = "result"
 id = "events-two-failed-tool-calls"
 fact = "events-failed-calls"
 text = "learned: two of the session's four tool_call events exited non-zero, seq 148 and seq 481."
+touch = ['tool_call', 'events\.jsonl']
 probes.near = ['"status":"failed"']
 distractor = [{ capture = "gen.jobs.cat" }]
 repeat = 0
@@ -751,31 +788,33 @@ type = "result"
 id = "gh-stack-models-current"
 fact = "gh-stack-current"
 text = "learned: the stack has four layers, schema at the bottom to tests at the top, and models is the current branch."
+touch = ['gh stack view', '\bmodels\b', 'HEAD -> ']
 repeat = 0
 probes.support = ['^» models \(current\)$']
 probes.contradict = ['^» routes \(current\)$']
 probes.mention = ['\(current\)', '"currentBranch"', 'HEAD -> models']
 exclude = ["gh.stack.sync"]
-edit_note = "c: the current marker sits on routes; nm: the view is removed."
+edit_note = "c: the current marker sits on routes (gh stack view on a copy checked out one layer up); nm: the view is removed."
 [[shape.claim.block]]
 capture = "gh.stack.view-short"
-edit = [{ find = "├ routes\n» models (current)\n", c = "» routes (current)\n├ models\n" }]
+c_from = "gh.g3r.stack.view-short"
 nm_drop = true
 
 [[shape.claim]]
 id = "jj-abandon-rebased-one"
 fact = "jj-abandon-rebase-count"
-edit = "fabricated"
 text = "learned: abandoning 'tweak dressing' rebased one descendant commit."
+touch = ['\bmenu\b', 'tweak dressing', 'descendant']
 repeat = 0
 probes.support = ['^Rebased 1 descendant commits onto parents']
 probes.contradict = ['^Rebased 2 descendant commits onto parents']
 probes.mention = ['descendant commits onto parents']
 exclude = ["jj.log", "jj.status", "jj.log.json", "jj.log.menu-oneline", "jj.op-log", "jj.abandon.log", "jj.bookmark-list"]
-edit_note = "c: two descendants rebased (the commit graph, which would show one, is not in the haystack); nm: the line is removed."
+edit_note = "c: two descendants rebased (jj's output for the same abandon on a copy with one more commit on top); nm: the line is removed."
 [[shape.claim.block]]
 capture = "jj.abandon.tweak"
-edit = [{ find = "Rebased 1 descendant commits onto parents of abandoned commits.\n", c = "Rebased 2 descendant commits onto parents of abandoned commits.\n", nm = "" }]
+c_from = "jj.abandon-two.tweak"
+edit = [{ find = "Rebased 1 descendant commits onto parents of abandoned commits.\n", nm = "" }]
 
 [[shape]]
 id = "result.failure-site"
@@ -784,33 +823,33 @@ type = "result"
 [[shape.claim]]
 id = "python-keyerror-line-2"
 fact = "python-keyerror"
-edit = "fabricated"
 text = "learned: app.py died with KeyError: 'max', raised at line 2, in pool_max."
+touch = ['pool_max', 'app\.py']
 repeat = 0
 probes.support = ['line 2, in pool_max\n    return cfg\["pool"\]\["max"\]\nKeyError']
 probes.contradict = ['line 3, in pool_max\n']
 probes.mention = ['in pool_max']
 exclude = ["gen.trace.cat"]
-edit_note = "c: the frame says line 3 (app.py's source is not in the haystack); nm: the run is removed."
+edit_note = "c: the frame says line 3 (Python's traceback for the same program with a header comment, so every line number moves by one; the source is not shown); nm: the run is removed."
 [[shape.claim.block]]
 capture = "gen.trace.run"
-edit = [{ find = "line 2, in pool_max\n", c = "line 3, in pool_max\n" }]
+c_from = "gen.trace-shift.run"
 nm_drop = true
 
 [[shape.claim]]
 id = "gh-stack-rebase-conflict-file"
 fact = "gh-stack-rebase-conflict"
-edit = "fabricated"
 text = "learned: gh stack rebase hit a conflict in config.txt."
+touch = ['config\.txt', 'gh stack rebase', 'retry-c']
 repeat = 0
 probes.support = ['^  C config\.txt \(lines']
 probes.contradict = ['^  C README\.md \(lines']
 probes.mention = ['Conflicted files']
 exclude = ["gh.g5.git-status", "gh.g5.git-diff"]
-edit_note = "c: the conflicted file listed is README.md (git status and diff are not in the haystack); nm: the run is removed."
+edit_note = "c: the conflicted file is README.md (gh stack rebase on a sibling repository whose two layers conflict there); nm: the run is removed."
 [[shape.claim.block]]
 capture = "gh.g5.stack.rebase"
-edit = [{ find = "  C config.txt (lines 2–8)\n", c = "  C README.md (lines 1–2)\n" }]
+c_from = "gh.g5r.stack.rebase"
 nm_drop = true
 
 # A value read twice, before and after a change.
@@ -823,6 +862,7 @@ mechanism = "sequence"
 id = "pool-max-reads-25"
 fact = "app-toml-pool-max"
 text = "learned: after the change, dasel reads database.pool.max as 25."
+touch = ['\bpool\b']
 anchor = "b"
 probes.support = ['''pool\.max' < app\.toml\n25\n''']
 probes.contradict = ['''pool\.max' < app\.toml\n20\n''']
@@ -851,6 +891,7 @@ mechanism = "timestamp"
 id = "build-7-latest-status"
 fact = "build-7-status"
 text = "learned: build-7's latest status in the job log is passed."
+touch = ['build-7']
 time_re = '"ts":"[^"]+"'
 probes.support = ['"job":"build-7","status":"passed"']
 probes.contradict = ['"job":"build-7","status":"failed"']
@@ -901,12 +942,12 @@ distractor = [{ capture = "dasel.err.hash-filter" }]
 probes.support = ['dasel: error: unknown flag --version\n\[exit 80\]']
 probes.contradict = ['''\[call c8\] \$ dasel --version\n3\.11\.2\n\[exit 0\]''']
 probes.mention = ['unknown flag --version']
-edit_note = "c: the pointed call prints 3.11.2 and exits 0; nm: it prints nothing and exits 80."
+edit_note = "c: the pointed call prints 3.11.2 and exits 0; nm: the call is removed (the claim states its exit status)."
 [[shape.claim.block]]
 capture = "dasel.err.version-flag"
 call = "c8"
 c_from = "dasel.version"
-nm_empty = true
+nm_drop = true
 
 [[shape.claim]]
 id = "gh-stack-draft-refuted"
@@ -932,18 +973,17 @@ type = "refutation"
 [[shape.claim]]
 id = "dasel-method-sum-refuted"
 fact = "dasel-sum-method"
-edit = "fabricated"
 text = "was: services.map(replicas).sum() adds up the replicas (held at 5/10), wrong because dasel answered 'func \"sum\" expects at least 1 arguments, got 0' [call c11]"
 probes.near = ['failed to tokenize']
 distractor = [{ capture = "dasel.err.hash-filter" }]
 probes.support = ['func "sum" expects at least 1 arguments, got 0']
-probes.contradict = ['error executing function: unknown function "sum"']
-probes.mention = ['func "sum"', 'function "sum"']
-edit_note = "c: the pointed call fails for another reason (an unknown function); nm: it prints nothing and exits 1."
+probes.contradict = ['map key not found: "services"']
+probes.mention = ['func "sum"', 'map key not found']
+edit_note = "c: the pointed call fails for another reason (dasel's own error for the same query on a file without services); nm: it prints nothing and exits 1."
 [[shape.claim.block]]
 capture = "dasel.err.method-sum"
 call = "c11"
-edit = [{ find = "error executing function: func \"sum\" expects at least 1 arguments, got 0", c = "error executing function: unknown function \"sum\"" }]
+c_from = "dasel.noservices.err.method-sum"
 nm_empty = true
 
 # The reason a belief was refuted, as recorded in working notes: SUPPORTED

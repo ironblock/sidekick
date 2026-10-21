@@ -104,6 +104,42 @@ def synonym_groups(text: str) -> list[set[str]]:
     return groups
 
 
+def empty_containers(kind: str, body: str) -> set[str]:
+    """Keys, tables and lists left with nothing in them: a YAML `key:` with
+    no value and nothing indented under it, a TOML table header with no keys
+    before the next header, a JSON `{}` or `[]`."""
+    out = set()
+    lines = body.splitlines()
+    if kind == "yaml":
+        for i, line in enumerate(lines):
+            m = re.match(r"^(\s*)([\w.-]+):\s*$", line)
+            if not m:
+                continue
+            nxt = next((x for x in lines[i + 1:] if x.strip()), None)
+            if nxt is None or len(nxt) - len(nxt.lstrip()) <= len(m.group(1)):
+                out.add(m.group(2))
+    elif kind == "toml":
+        for i, line in enumerate(lines):
+            m = re.match(r"^\s*\[\[?([^\]]+)\]\]?\s*$", line)
+            if not m:
+                continue
+            nxt = next((x for x in lines[i + 1:] if x.strip() and not x.strip().startswith("#")), None)
+            if nxt is None or nxt.lstrip().startswith("["):
+                out.add(m.group(1))
+    elif kind in ("json", "jsonl"):
+        def walk(v, path):
+            if isinstance(v, (dict, list)) and not v and path:
+                out.add(path)
+            for k, x in (v.items() if isinstance(v, dict) else enumerate(v) if isinstance(v, list) else ()):
+                walk(x, f"{path}.{k}")
+        for doc in ([body] if kind == "json" else [x for x in lines if x.strip()]):
+            try:
+                walk(json.loads(doc), "$")
+            except ValueError:
+                pass
+    return out
+
+
 def _parse_body(kind: str, body: str) -> str | None:
     try:
         if kind == "json":

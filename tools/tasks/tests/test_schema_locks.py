@@ -35,7 +35,7 @@ class Canonical(unittest.TestCase):
 
 
 class Validator(unittest.TestCase):
-    CAPTURE = {"schema": "sidekick-verification-capture/1", "id": "x.y", "world": "w", "tool": "t",
+    CAPTURE = {"schema": "sidekick-verification-capture/1", "id": "x.y", "seq": 1, "world": "w", "tool": "t",
                "kind": "stdout", "cmd": "echo", "stdout": "", "stderr": "", "exit": 0}
 
     def test_accepts_a_valid_capture(self):
@@ -58,7 +58,12 @@ class ToolsLock(unittest.TestCase):
         for t in lock["tool"]:
             with self.subTest(tool=t["name"]):
                 self.assertRegex(t["sha256"], SHA)
-                self.assertEqual(t["url"], f"https://github.com/{t['repo']}/releases/download/{t['tag']}/{t['asset']}")
+                if t["url"].startswith("https://github.com/"):
+                    self.assertEqual(t["url"],
+                                     f"https://github.com/{t['repo']}/releases/download/{t['tag']}/{t['asset']}")
+                else:  # a project's own download site, with its published checksum file
+                    self.assertTrue(t["url"].startswith("https://") and t["url"].endswith(t["asset"]))
+                    self.assertIn("SHASUMS", t["digest_source"])
                 self.assertIn(t["version"], t["tag"])
                 self.assertTrue(t["licence"])
                 self.assertGreater(t["size"], 0)

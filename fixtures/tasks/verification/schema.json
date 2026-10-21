@@ -22,11 +22,12 @@
     "capture": {
       "description": "One command run in a hermetic world, after scrubbing.",
       "type": "object",
-      "required": ["schema", "id", "world", "tool", "kind", "cmd", "stdout", "stderr", "exit"],
+      "required": ["schema", "id", "seq", "world", "tool", "kind", "cmd", "stdout", "stderr", "exit"],
       "additionalProperties": false,
       "properties": {
         "schema": {"const": "sidekick-verification-capture/1"},
         "id": {"$ref": "#/$defs/id"},
+        "seq": {"type": "integer", "minimum": 1, "description": "the capture's place in the run; a world's captures happened in this order"},
         "world": {"type": "string", "minLength": 1},
         "tool": {"type": "string", "minLength": 1},
         "kind": {"enum": ["help", "stdout", "stderr", "toml", "json", "jsonl", "yaml", "csv", "trace", "source", "listing", "log", "prose"]},
@@ -91,7 +92,7 @@
         "mechanism": {"enum": ["plain", "sequence", "supersede", "precedence", "version", "timestamp"]},
         "role": {"enum": ["belief", "reason"]},
         "fact": {"$ref": "#/$defs/id", "description": "the underlying fact; at most max_per_fact claims share one"},
-        "edit": {"enum": ["textual", "fabricated"], "description": "what the claim's textual C edits are; default textual"},
+        "touch": {"type": "array", "items": {"type": "string"}, "description": "regexes for the claim's keys and entities; matching captures never pad it"},
         "text": {"type": "string", "minLength": 1},
         "worked": {"type": "boolean"},
         "pending": {"type": "string"},
@@ -136,7 +137,7 @@
     "triple": {
       "description": "One generated triple: evidence(v) = segments[0] + slots[0][v] + segments[1] + ... for v in s, c, nm.",
       "type": "object",
-      "required": ["schema", "family", "id", "claim", "split", "config", "obstacles", "haystack_kind", "worked", "tokens", "length_unit", "segments", "slots", "layout", "gold", "edit", "edit_note", "evidence_sha256", "generator"],
+      "required": ["schema", "family", "id", "claim", "split", "config", "obstacles", "haystack_kind", "worked", "position_at", "nm_kind", "tokens", "length_unit", "segments", "slots", "layout", "gold", "edit", "edit_note", "evidence_sha256", "generator"],
       "additionalProperties": false,
       "properties": {
         "schema": {"const": "sidekick-verification-triple/1"},
@@ -159,6 +160,8 @@
         "obstacles": {"type": "array", "items": {"type": "string"}},
         "haystack_kind": {"type": "string"},
         "worked": {"type": "boolean"},
+        "position_at": {"type": "number", "description": "the deciding needle block's offset in SUPPORTED, as a share of its length; config.position is its third"},
+        "nm_kind": {"enum": ["removed", "empty-output-nonzero-exit"], "description": "how NOT MENTIONED lost the needle: removed, or a pointed call kept with no output and its nonzero exit"},
         "tokens": {"type": "object", "required": ["s", "c", "nm"], "additionalProperties": {"type": "integer"}},
         "length_unit": {"type": "string"},
         "segments": {"type": "array", "minItems": 1, "items": {"type": "string"}},

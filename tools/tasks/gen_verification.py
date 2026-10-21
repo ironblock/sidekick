@@ -65,7 +65,7 @@ GOLD = {"s": "SUPPORTED", "c": "CONTRADICTED", "nm": "NOT_MENTIONED"}
 TYPES = ("tool", "environment", "file", "result", "refutation")
 OBSTACLES = ("none", "distractor", "repeated")
 MECHANISMS = ("plain", "sequence", "supersede", "precedence", "version", "timestamp")
-PARSED_KINDS = ("json", "jsonl", "toml")
+PARSED_KINDS = ("json", "jsonl", "toml", "yaml")
 # How CONTRADICTED's text came to be, from most to least real:
 # - sibling-world: the same command, rerun on a sibling fixture;
 # - textual: an edit that is still a faithful view of edited input (a file's
@@ -73,6 +73,11 @@ PARSED_KINDS = ("json", "jsonl", "toml")
 # - spliced: real output of another command, under this command line;
 # - fabricated: an edit that invents what a tool says or does.
 EDIT_KINDS = ("sibling-world", "textual", "spliced", "fabricated")
+FILE_VIEW_KINDS = ("toml", "json", "jsonl", "yaml", "csv", "listing", "source")
+DOC_KINDS = ("help", "prose")       # documentation; the rest is command output
+MAX_BLOCK_SHARE = 0.25              # no single filler block over this share of the target
+POSITION_THIRDS = ("start", "middle", "end")
+EXIT_STATED_RE = re.compile(r"\b(?:exit(?:s|ed)?|exit status|status)(?: with)?(?: status| code)? (\d+)", re.I)
 CALL_RE = re.compile(r"\bc(\d+)\b")
 
 
@@ -118,7 +123,15 @@ def load_claims(path: Path, max_per_shape: int, max_per_fact: int = 2) -> list[d
 
 
 def edit_kind(claim: dict, caps: dict) -> str:
-    """The least real source of any of CONTRADICTED's text (EDIT_KINDS)."""
+    """How CONTRADICTED's text was made, by one rule for every claim: the
+    least real source among its blocks (EDIT_KINDS).
+    - output taken from another capture: sibling-world if the command line
+      is the same, spliced if not;
+    - a find/replace edit: textual on a view of input data (a file's
+      contents, a listing, a data row: FILE_VIEW_KINDS), fabricated on
+      anything a tool says about itself (help, messages, logs, traces);
+    - working notes: textual. Dropping or adding a whole real block adds
+      nothing."""
     kinds = set()
     for b in claim["block"]:
         if "c_from" in b:
@@ -126,12 +139,13 @@ def edit_kind(claim: dict, caps: dict) -> str:
             kinds.add("sibling-world" if same else "spliced")
         if b.get("c_empty"):
             kinds.add("fabricated")
-        if "c_notes" in b or any("c" in ed for ed in b.get("edit", [])):
-            kinds.add(claim.get("edit", "textual"))
-    if "edit" in claim and claim["edit"] not in kinds:
-        raise Refusal(f"{claim['id']}: declares edit = {claim['edit']!r} but makes no textual C edit")
+        if "c_notes" in b:
+            kinds.add("textual")
+        if any("c" in ed for ed in b.get("edit", [])):
+            kind = caps[b["capture"]]["kind"] if "capture" in b else "notes"
+            kinds.add("textual" if kind in FILE_VIEW_KINDS or kind == "notes" else "fabricated")
     if not kinds:
-        kinds.add("textual")  # C only drops or adds whole real blocks
+        kinds.add("textual")
     return max(kinds, key=EDIT_KINDS.index)
 
 
@@ -247,11 +261,17 @@ def split3(s: str, c: str, nm: str) -> list:
 
 
 def mentions_claim(text: str, claim: dict) -> bool:
+    """Whether a capture says anything about the claim: its probes, guard
+    literals, or `touch` (the keys and entities the claim is about), so a
+    triple without a declared distractor has no unplanned one."""
     probes = claim.get("probes", {})
     for key in ("support", "contradict", "mention"):
         for p in probes.get(key, []):
             if re.search(p, text, re.M):
                 return True
+    for p in claim.get("touch", []):
+        if re.search(p, text, re.M):
+            return True
     return any(re.search(r"(?<![\w-])" + re.escape(lit) + r"(?![\w-])", text) for lit in claim.get("guard", []))
 
 
@@ -267,16 +287,20 @@ def needle_captures(claim: dict) -> set[str]:
     return ids
 
 
-def filler_pool(claim: dict, caps: dict, exclude_worlds=()) -> list[str]:
-    """Captures that may pad this claim's haystack: never the needle's own,
-    never a sibling world's (whose output would disagree with its base
-    world's), never one the claim excludes, and never one that matches any
-    of the claim's probes or guard literals."""
+def filler_pool(claim: dict, caps: dict, exclude_worlds=(), parents: dict | None = None) -> list[str]:
+    """Captures that may pad this claim's haystack: never the needle's own
+    or its world family's, never a sibling world's (whose output would
+    disagree with its base world's), never one the claim excludes, and never
+    one that matches the claim's probes, guard literals or `touch`."""
     exclude = needle_captures(claim) | set(claim.get("exclude", []))
+    parents = parents or {}
+    own = needle_lineages(claim, caps, parents)
     pool, seen_text = [], set()
     for cid in sorted(caps):
         if cid in exclude or caps[cid]["world"] in exclude_worlds:
             continue
+        if lineage(caps[cid]["world"], parents) in own:
+            continue  # the needle's own world family: see chronological()
         text = render_capture(caps[cid]["cmd"], caps[cid], "c0")
         key = body(caps[cid])
         if key in seen_text or mentions_claim(text, claim):
@@ -284,6 +308,36 @@ def filler_pool(claim: dict, caps: dict, exclude_worlds=()) -> list[str]:
         seen_text.add(key)
         pool.append(cid)
     return pool
+
+
+def lineage(world: str, parents: dict[str, str]) -> str:
+    while world in parents:
+        world = parents[world]
+    return world
+
+
+def needle_lineages(claim: dict, caps: dict, parents: dict) -> set[str]:
+    return {lineage(caps[cid]["world"], parents) for cid in needle_captures(claim) if cid in caps}
+
+
+def chronological(order: list, caps: dict, corpus: dict) -> list:
+    """Keep the transcript in the order things happened. Fillers from one
+    world family (a world and the copies made from it) appear in the order
+    they were captured, so a capture taken after a mutation (a sync, an
+    abandon) never comes before one taken earlier. Fillers from the needle's
+    own family never pad it at all (filler_pool), so no filler can show a
+    state from before or after the needle's own command out of order."""
+    parents = corpus.get("_parents", {})
+    fam = {}
+    for n, (kind, p) in enumerate(order):
+        if kind == "filler":
+            fam.setdefault(lineage(caps[p]["world"], parents), []).append(n)
+    order = list(order)
+    for idxs in fam.values():
+        ids = sorted((order[n][1] for n in idxs), key=lambda c: caps[c]["seq"])
+        for n, cid in zip(idxs, ids):
+            order[n] = ("filler", cid)
+    return order
 
 
 def nearest_boundary(cum: list[int], frac: float) -> int:
@@ -343,16 +397,33 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
         raise Refusal(f"{claim['id']}: the needle alone is {fixed_tokens} tokens, over {cfg['length']}")
 
     # Filler: a seeded draw from captures that say nothing about the claim.
-    pool = filler_pool(claim, caps, corpus.get("filler", {}).get("exclude_worlds", ()))
+    pool = filler_pool(claim, caps, corpus.get("filler", {}).get("exclude_worlds", ()), corpus.get("_parents", {}))
     r.shuffle(pool)
-    filler, total = [], fixed_tokens
-    for cid in pool:
-        t = item_tokens("filler", cid)
-        if total + t <= target * 1.05:
+    # Command output first, up to `output_share` of the filler, then
+    # documentation, then more output if still short. No block may take more
+    # than MAX_BLOCK_SHARE of the target, so the needle can sit where asked.
+    output = [c for c in pool if caps[c]["kind"] not in DOC_KINDS]
+    docs = [c for c in pool if caps[c]["kind"] in DOC_KINDS]
+    need = target - fixed_tokens
+    share = corpus.get("filler", {}).get("output_share", 0.6)
+    filler, total, used = [], fixed_tokens, set()
+
+    def take(cands, stop_at):
+        nonlocal total
+        for cid in cands:
+            t = item_tokens("filler", cid)
+            if cid in used or t > target * MAX_BLOCK_SHARE or total + t > target * 1.05:
+                continue
             filler.append(cid)
+            used.add(cid)
             total += t
-        if total >= target * 0.95:
-            break
+            if total >= stop_at:
+                return
+
+    take(output, fixed_tokens + need * share)
+    take(docs, target * 0.95)
+    take(output, target * 0.95)
+    r.shuffle(filler)
     if total < target * 0.9:
         raise Refusal(f"{claim['id']}: filler pool too small for {cfg['length']} ({total} tokens)")
 
@@ -382,7 +453,11 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
                 ia -= 1
         inserts += [(ia, 0, it) for it in group_a] + [(ib, 1, it) for it in group_b]
     else:
-        inserts += [(nearest_boundary(cum, frac), 0, it) for it in group_a]
+        # Aim the middle of the needle group, not its first line, at `frac`.
+        group = sum(item_tokens(k, p) for k, p in group_a)
+        want = frac * (cum[-1] + group) - group / 2
+        b = min(range(len(cum)), key=lambda i: (abs(cum[i] - want), i))
+        inserts += [(b, 0, it) for it in group_a]
     for it in repeat:
         inserts.append((nearest_boundary(cum, 0.85 if frac < 0.5 else 0.15), 2, it))
     order = []
@@ -394,6 +469,8 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
             k += 1
         if i < len(filler):
             order.append(("filler", filler[i]))
+
+    order = chronological(order, caps, corpus)
 
     # Call ids: fixed ones from the claim, the rest drawn without collisions.
     def has_call(kind, payload):
@@ -459,10 +536,14 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
             slots.append({k: piece[k] for k in ("s", "c", "nm", "role", "block")})
             segments.append("")
     ev = {}
+    item_start = {}  # item index -> its offset in SUPPORTED
+    notes_spans = []
     for v in VARIANTS:
         text, spans, dspans, sspans, si = "", [], [], [], 0
         for n, piece in pieces:
             start = len(text)
+            if v == "s":
+                item_start.setdefault(n, start)
             if isinstance(piece, str):
                 text += piece
                 if order[n][0] == "distractor":
@@ -473,6 +554,8 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
                 text += piece[v]
                 spans.append((start, len(text), si))
                 si += 1
+            if v == "s" and order[n][0] in ("needle", "repeat") and "notes" in specs[order[n][1]]:
+                notes_spans.append((start, len(text)))
         bodies = [(kd, b[v]) for kd, b in bodies_spec if b[v]]
         ev[v] = hazards.Evidence(text, spans, dspans, sspans, bodies)
     for v in VARIANTS:
@@ -488,6 +571,42 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
                 raise Refusal(f"{claim['id']}: {vb['capture']} does not show {vb['pattern']!r}")
         if not sc.get("verified_by"):
             raise Refusal(f"{claim['id']}: a version-scoped note needs a capture of that version")
+
+    # Notes may carry the supersede mechanism or be distractors, but never be
+    # SUPPORTED's only support: some support must sit in a tool's output.
+    sup = [m.span() for p in claim["probes"]["support"] for m in re.finditer(p, ev["s"].text, re.M)]
+    in_needle = [sp for sp in sup if any(a < sp[1] and sp[0] < b for a, b, _ in ev["s"].slots)]
+    if in_needle and all(any(a <= sp[0] and sp[1] <= b for a, b in notes_spans) for sp in in_needle):
+        raise Refusal(f"{claim['id']}: SUPPORTED rests only on notes; it needs a tool's output")
+
+    # NOT MENTIONED may keep a pointed call with no output and its nonzero
+    # exit (`nm_kind` says so), but not an exit status the claim states.
+    stated = set(EXIT_STATED_RE.findall(claim["text"]))
+    for spec in specs:
+        if spec.get("nm_empty") and str(caps[spec["capture"]]["exit"]) in stated:
+            raise Refusal(f"{claim['id']}: NOT MENTIONED keeps exit {caps[spec['capture']]['exit']}, "
+                          "which the claim states")
+
+    # An edit must not leave an empty parent container behind.
+    for kind, b in bodies_spec:
+        if not b["s"]:
+            continue
+        before = hazards.empty_containers(kind, b["s"])
+        for v in ("c", "nm"):
+            if b[v] and hazards.empty_containers(kind, b[v]) - before:
+                raise Refusal(f"{claim['id']}: {v} leaves an empty container in a {kind} body: "
+                              f"{sorted(hazards.empty_containers(kind, b[v]) - before)}")
+
+    # Position by text offset: the middle of the deciding needle group (its
+    # first through last block) as a share of SUPPORTED's length.
+    anchor_kind = "b" if needle_b and anchor == "b" else "a"
+    group_ns = [n for n, (k, p) in enumerate(order)
+                if k == "needle" and specs[p].get("group", "a") == anchor_kind]
+    item_end = {n: item_start.get(n + 1, len(ev["s"].text)) for n in group_ns}
+    mid = (item_start.get(group_ns[0], 0) + item_end[group_ns[-1]]) / 2
+    at = mid / max(1, len(ev["s"].text))
+    measured = POSITION_THIRDS[min(2, int(at * 3))]
+    cfg = {**cfg, "position": measured}
 
     problems = hazards.check(claim, ev, slot_roles)
     if problems:
@@ -510,6 +629,9 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
         "obstacles": obstacles,
         "haystack_kind": caps[first]["kind"] if first else "notes",
         "worked": bool(claim.get("worked")),
+        "position_at": round(at, 3),
+        "nm_kind": ("empty-output-nonzero-exit"
+                    if any(s.get("nm_empty") and caps[s["capture"]]["exit"] != 0 for s in specs) else "removed"),
         "tokens": {v: canon.approx_tokens(ev[v].text) for v in VARIANTS},
         "length_unit": canon.LENGTH_UNIT,
         "segments": segments,
@@ -605,6 +727,9 @@ def fit_length(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
 def generate(captures: Path, out: Path, set_name: str, claims_path: Path, corpus_path: Path,
              captures_lock: Path | None) -> tuple[list[dict], list[str], dict]:
     corpus = load_toml(corpus_path)
+    recipes_path = corpus_path.parent / "recipes.toml"
+    if recipes_path.exists():
+        corpus["_parents"] = {w["id"]: w["from"] for w in load_toml(recipes_path)["world"] if "from" in w}
     claims = load_claims(claims_path, corpus["max_per_shape"], corpus.get("max_per_fact", 2))
     caps = load_captures(captures, captures_lock)
     if set_name != "review":

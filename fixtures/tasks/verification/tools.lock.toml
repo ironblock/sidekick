@@ -87,6 +87,50 @@ extract = { raw = true }
 install = "bin/jq"
 version_cmd = "jq --version"
 
+# Toolchains for the generic recipes (gen/cargo, gen/npm).
+
+[[tool]]
+name = "node"
+version = "26.5.0"
+repo = "nodejs/node"
+tag = "v26.5.0"
+licence = "MIT (node); Artistic-2.0 (the bundled npm 11.17.0)"
+asset = "node-v26.5.0-darwin-arm64.tar.gz"
+url = "https://nodejs.org/dist/v26.5.0/node-v26.5.0-darwin-arm64.tar.gz"
+# nodejs.org publishes a signed SHASUMS256.txt per release; this is its line.
+sha256 = "ee920559aaa2391569cff4d737e3b83963430e3a14dedd91bfe0ff53171b5af9"
+digest_source = "https://nodejs.org/dist/v26.5.0/SHASUMS256.txt"
+size = 57181366
+extract = { tar_tree = "node-v26.5.0-darwin-arm64/" }
+install = "toolchain/node"
+version_cmd = "toolchain/node/bin/node --version"
+
+[[tool]]
+name = "pnpm"
+version = "11.21.0"
+repo = "pnpm/pnpm"
+tag = "v11.21.0"
+licence = "MIT"
+asset = "pnpm-darwin-arm64.tar.gz"
+url = "https://github.com/pnpm/pnpm/releases/download/v11.21.0/pnpm-darwin-arm64.tar.gz"
+sha256 = "860a96978a79ca5132bdc247375f94150a3c98edbecbee36e9f8e0c9e2f7f056"
+digest_source = "GitHub release asset digest"
+size = 48000084
+extract = { tar_tree = "" }
+install = "toolchain/pnpm"
+version_cmd = "toolchain/pnpm/pnpm --version"
+
+# Rust is not downloaded here: a rustup toolchain of exactly this version is
+# linked in with `capture.py run --toolchain rust=<toolchain dir>`, and the
+# capture refuses any other rustc. Its full `rustc -vV` is recorded in
+# captures.lock.json like a host tool's, so `--check` fails on drift.
+[[linked_toolchain]]
+name = "rust"
+version = "1.94.1"
+link = "toolchain/rust"
+version_cmd = "{W}/toolchain/rust/bin/rustc -vV"
+expect = "rustc 1.94.1 "
+
 # Older releases, run only in the `old/…` worlds, whose captures back the
 # version-scoped notes ("under jj 0.30.0 …") with what that version really
 # does. They are installed off PATH and never used as filler.
@@ -182,3 +226,7 @@ content = "[user]\n\tname = Test User\n\temail = test@example.com\n[init]\n\tdef
 # times; pin both.
 path = "hm/jj.toml"
 content = "[user]\nname = \"Test User\"\nemail = \"test@example.com\"\n[ui]\npaginate = \"never\"\neditor = \"true\"\n[operation]\nhostname = \"fixture-host\"\nusername = \"fixture\"\n[template-aliases]\n\"format_time_range(time_range)\" = \"time_range.start()\"\n"
+
+[[host_tool]]
+name = "cc"
+version_cmd = "cc --version"

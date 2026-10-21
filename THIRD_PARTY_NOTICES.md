@@ -59,10 +59,13 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 - **GitHub CLI** ([cli/cli](https://github.com/cli/cli)), release v2.95.0: MIT License, "Copyright (c) 2019 GitHub Inc." (text below). The captures include `gh --help` pages and help topics.
 - **gh-stack** ([github/gh-stack](https://github.com/github/gh-stack)), release v0.2.1: MIT License, "Copyright GitHub, Inc." (text below).
 - **jq** ([jqlang/jq](https://github.com/jqlang/jq)), release jq-1.7.1: MIT License, "jq is copyright (C) 2012 Stephen Dolan" (text below). The captures hold only jq's output of sidekick's own data.
+- **Node.js** ([nodejs/node](https://github.com/nodejs/node)), release v26.5.0, with its bundled **npm** 11.17.0: Node.js is under the MIT License, "Copyright Node.js contributors. All rights reserved." (text below); npm is under the Artistic License 2.0 (https://github.com/npm/cli/blob/latest/LICENSE). The captures hold their version lines, npm's error messages and one Node.js stack trace for sidekick's own fixture.
+- **pnpm** ([pnpm/pnpm](https://github.com/pnpm/pnpm)), release v11.21.0: MIT License, "Copyright (c) 2015-2016 Rico Sta. Cruz and other contributors" and "Copyright (c) 2016-2026 Zoltan Kochan and other contributors" (text below). The captures hold one pnpm error message.
+- **Rust** 1.94.1 (cargo and rustc, a rustup toolchain): MIT or Apache-2.0. The captures hold their version lines and the output of `cargo test` on sidekick's own two-test crate.
 
-Host tools also run during capture: git, `/usr/bin/python3` and `/bin/sh`, with the system's `cat`, `ls`, `mkdir` and `sed`. Their output in the captures is git's status, log and diff of sidekick's fixture repositories, one Python traceback of a sidekick fixture, and single-line shell errors.
+Host tools also run during capture: git, `/usr/bin/python3`, `/bin/sh` and the C compiler driver `cc` (which links the Rust test binary), with the system's `cat`, `ls`, `mkdir`, `sed`, `head`, `tail` and `grep`. Their output in the captures is git's status, log and diff of sidekick's fixture repositories, Python tracebacks of a sidekick fixture, and single-line shell errors.
 
-The MIT License, as it applies to dasel, the GitHub CLI, gh-stack and jq, with each project's copyright line above:
+The MIT License, as it applies to dasel, the GitHub CLI, gh-stack, jq, Node.js and pnpm, with each project's copyright line above:
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy

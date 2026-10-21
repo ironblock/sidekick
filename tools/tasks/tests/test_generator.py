@@ -13,8 +13,12 @@ from pathlib import Path
 from tasks import canon, gen_verification as gen, hazards
 
 
+_SEQ = [0]
+
+
 def cap(cid, cmd, stdout="", stderr="", exit=0, kind="stdout", world="w"):
-    return {"schema": "sidekick-verification-capture/1", "id": cid, "world": world, "tool": "demo",
+    _SEQ[0] += 1
+    return {"schema": "sidekick-verification-capture/1", "id": cid, "seq": _SEQ[0], "world": world, "tool": "demo",
             "kind": kind, "cmd": cmd, "stdout": stdout, "stderr": stderr, "exit": exit}
 
 
@@ -38,13 +42,15 @@ def captures():
         cap("demo.cat.old", "cat port.txt", "port = 7000\n", world="old"),
         cap("demo.cat.new", "cat port.txt", "port = 7001\n"),
         cap("demo.cat.json", "cat app.json", '{\n  "port": 7001,\n  "name": "x"\n}\n', kind="json"),
+        cap("demo.cat.yaml", "cat app.yaml", "server:\n  port: 7001\n  pool:\n    max: 4\n", kind="yaml"),
+        cap("demo.err.version", "demo --version", stderr="demo: unknown flag --version\n", exit=80, kind="stderr"),
     ]
-    for i, w in enumerate(FILLER_WORDS * 3):
-        caps.append(cap(f"demo.filler.{i:02d}", f"demo echo {w} {i}", (f"{w} line {i}\n" * 12)))
+    for i, w in enumerate(FILLER_WORDS * 6):
+        caps.append(cap(f"demo.filler.{i:02d}", f"demo echo {w} {i}", (f"{w} line {i}\n" * 12), world="f"))
     return {c["id"]: c for c in caps}
 
 
-CORPUS = {"seed": 7, "lengths": {"1k": 250, "4k": 500, "12k": 900, "32k": 1400},
+CORPUS = {"seed": 7, "lengths": {"1k": 400, "4k": 800, "12k": 1200, "32k": 1600},
           "positions": {"start": 0.05, "middle": 0.5, "end": 0.95}, "dev_share": 0.2, "max_per_shape": 3,
           "filler": {"exclude_worlds": ["w6", "old"]}}
 CFG = {"length": "1k", "position": "middle", "obstacle": "none"}
@@ -99,17 +105,19 @@ def sequence_claim():
 
 
 def belief_claim():
+    """SUPPORTED rests on a read of the file; CONTRADICTED marks the belief
+    refuted beside a later read."""
     return {
-        "id": "demo-flag-belief", "shape": "tool.belief", "type": "tool", "mechanism": "supersede", "role": "belief",
-        "fact": "demo-move-back",
-        "text": "fact: demo move needs no flag to move a marker back.", "guard": [],
-        "probes": {"support": ["demo move needs no flag"], "contradict": ["refusing to move m back"],
-                   "mention": ["needs no flag"]},
+        "id": "demo-port-belief", "shape": "file.belief", "type": "file", "mechanism": "supersede", "role": "belief",
+        "fact": "demo-port-old",
+        "text": "fact: port.txt sets port = 7000.", "guard": [],
+        "probes": {"support": ["^port = 7000$", "sets port = 7000"], "contradict": ["^port = 7001$"],
+                   "mention": [r"^port = \d+$"]},
         "block": [
-            {"notes": ["- fact: demo move needs no flag to move back"],
-             "c_notes": ["- was: demo move needs no flag to move back (held at 6/10), wrong because it refused [call c9]"],
-             "nm_notes": []},
-            {"capture": "demo.err.move", "call": "c9", "s_drop": True, "nm_drop": True},
+            {"capture": "demo.cat.old", "c_drop": True, "nm_drop": True},
+            {"notes": [],
+             "c_notes": ["- was: port.txt sets port = 7000 (held at 6/10), wrong because a later read shows 7001 [call c9]"]},
+            {"capture": "demo.cat.new", "call": "c9", "s_drop": True, "nm_drop": True},
         ],
     }
 
@@ -153,7 +161,7 @@ class Assembly(unittest.TestCase):
         corpus_toml = "\n".join([
             "seed = 7", "max_per_shape = 3", "dev_share = 0.2",
             "[filler]", 'exclude_worlds = ["w6", "old"]',
-            "[lengths]", "1k = 250", "4k = 500", "12k = 900", "32k = 1400",
+            "[lengths]", "1k = 400", "4k = 800", "12k = 1200", "32k = 1600",
             "[positions]", "start = 0.05", "middle = 0.5", "end = 0.95",
             "[review]", "per_type = 2", 'lengths = ["1k", "4k"]', 'positions = ["start", "end"]',
             'worked = { length = "1k", position = "middle", obstacle = "none" }',
@@ -181,22 +189,64 @@ class Assembly(unittest.TestCase):
         self.assertEqual(t["obstacles"], ["current:sequence"])
         self.build(belief_claim())
 
-    def test_edit_kind_names_how_contradicted_was_made(self):
-        self.assertEqual(self.build(flag_claim())["edit"], "textual")
+    def test_edit_kind_follows_one_rule(self):
+        # an edit of a tool's own message is fabricated; of a file view, textual
+        self.assertEqual(self.build(flag_claim())["edit"], "fabricated")
+        self.assertEqual(gen.edit_kind({"block": [{"capture": "demo.cat.json", "edit": [
+            {"find": "7001", "c": "7002"}]}]}, self.caps), "textual")
+        # another capture's output: same command line, sibling-world; another command, spliced
         self.assertEqual(self.build(sum_claim())["edit"], "sibling-world")
         self.assertEqual(self.build(sequence_claim())["edit"], "sibling-world")
-        fab = flag_claim()
-        fab["edit"] = "fabricated"
-        self.assertEqual(self.build(fab)["edit"], "fabricated")
-        spliced = sum_claim()
-        spliced["block"][1]["c_from"] = "demo.cat.new"  # another command's output under `demo sum replicas`
-        spliced["invariants"] = []
-        spliced["probes"]["mention"] = ["replicas = "]
-        self.assertEqual(gen.edit_kind(spliced, self.caps), "spliced")
-        wrong = sum_claim()
-        wrong["edit"] = "fabricated"  # declared, but C has no textual edit
-        with self.assertRaises(gen.Refusal):
-            gen.edit_kind(wrong, self.caps)
+        self.assertEqual(gen.edit_kind({"block": [{"capture": "demo.sum", "c_from": "demo.cat.new"}]}, self.caps),
+                         "spliced")
+        # the least real source wins
+        self.assertEqual(gen.edit_kind({"block": [{"capture": "demo.sum", "c_from": "demo.w6.sum"},
+                                                  {"capture": "demo.err.move", "edit": [{"find": "m", "c": "n"}]}]},
+                                       self.caps), "fabricated")
+
+    def test_position_is_measured_in_thirds_of_the_text(self):
+        for pos in ("start", "middle", "end"):
+            t = self.build(flag_claim(), {**CFG, "length": "4k", "position": pos})
+            self.assertEqual(t["config"]["position"], gen.POSITION_THIRDS[min(2, int(t["position_at"] * 3))])
+            self.assertEqual(t["config"]["position"], pos)
+
+    def test_nm_kind_labels_empty_output_with_nonzero_exit(self):
+        self.assertEqual(self.build(flag_claim())["nm_kind"], "removed")
+        c = {"id": "demo-version-refuted", "shape": "r.p", "type": "refutation", "mechanism": "plain", "fact": "dv",
+             "text": "was: demo --version prints the version (held at 6/10), wrong because it is an unknown flag [call c8]",
+             "guard": [],
+             "probes": {"support": ["unknown flag --version"], "contradict": [r"\$ demo --version\n8\n"],
+                        "mention": ["unknown flag"]},
+             "block": [{"capture": "demo.err.version", "call": "c8", "c_from": "demo.sum", "nm_empty": True}]}
+        self.assertEqual(self.build(c)["nm_kind"], "empty-output-nonzero-exit")
+
+    def test_touch_keeps_same_key_fillers_out(self):
+        c = flag_claim()
+        c["touch"] = [r"\bbravo\b"]
+        pool = gen.filler_pool(c, self.caps)
+        self.assertTrue(pool)
+        self.assertFalse([p for p in pool if "bravo" in self.caps[p]["cmd"]])
+
+    def test_chronology_within_a_world_family(self):
+        caps = dict(self.caps)
+        # a mutation of world w2, whose captures are filler for a needle from w
+        for i in range(40):
+            caps[f"demo.w2.read{i}"] = cap(f"demo.w2.read{i}", f"demo read {i}", f"state {i}\n" * 8, world="w2")
+        caps["demo.mut.abandon"] = cap("demo.mut.abandon", "demo abandon", stderr="Abandoned m\n", world="w-mut")
+        corpus = {**CORPUS, "_parents": {"w-mut": "w"}, "filler": {"exclude_worlds": ["w6", "old"]}}
+        c = {"id": "demo-abandon", "shape": "t.a", "type": "tool", "mechanism": "plain", "fact": "da",
+             "text": "fact: demo abandon abandons m.", "guard": [],
+             "probes": {"support": ["^Abandoned m$"], "contradict": ["^Abandoned n$"], "mention": ["Abandoned"]},
+             "block": [{"capture": "demo.mut.abandon", "edit": [{"find": "Abandoned m", "c": "Abandoned n"}],
+                        "nm_drop": True}]}
+        for pos in ("start", "middle"):
+            t = gen.build(c, {**CFG, "length": "32k", "position": pos}, caps, corpus)
+            fill = [caps[b["source"]] for b in t["layout"] if b["item"] == "filler"]
+            self.assertEqual([f["id"] for f in fill if f["world"] == "w"], [],
+                             "no capture of the needle's own world family pads it")
+            seqs = [f["seq"] for f in fill if f["world"] == "w2"]
+            self.assertTrue(seqs)
+            self.assertEqual(seqs, sorted(seqs), "one world's captures keep their order")
 
     def test_compact_review_is_small_and_complete(self):
         triples = [self.build(flag_claim()), self.build(sum_claim(), {**CFG, "position": "end"})]
@@ -301,8 +351,33 @@ class Hazards(unittest.TestCase):
 
     def test_supersede_belief_cannot_stay_live(self):
         c = belief_claim()
-        c["block"][0]["c_notes"] = ["- fact: demo move needs no flag to move back"]
+        c["block"][1]["c_notes"] = ["- fact: port.txt sets port = 7000"]
         self.refused(c, why="restatement")
+
+    def test_notes_are_never_the_only_support(self):
+        c = belief_claim()
+        c["block"][0]["capture"] = "demo.sum"  # SUPPORTED's tool output no longer states it
+        c["block"][1]["notes"] = ["- fact: port.txt sets port = 7000"]
+        self.refused(c, why="rests only on notes")
+
+    def test_nm_must_not_keep_an_exit_status_the_claim_states(self):
+        c = {"id": "demo-version-refuted", "shape": "r.p", "type": "refutation", "mechanism": "plain", "fact": "dv",
+             "text": "was: demo --version prints the version (held at 6/10), wrong because it exited 80 [call c8]",
+             "guard": [],
+             "probes": {"support": ["unknown flag --version"], "contradict": [r"\$ demo --version\n8\n"],
+                        "mention": ["unknown flag"]},
+             "block": [{"capture": "demo.err.version", "call": "c8", "c_from": "demo.sum", "nm_empty": True}]}
+        self.refused(c, why="keeps exit 80")
+
+    def test_nm_must_not_leave_an_empty_container(self):
+        c = {"id": "demo-yaml-pool", "shape": "f.y", "type": "file", "mechanism": "plain", "fact": "dy",
+             "text": "fact: app.yaml sets the pool max to 4.", "guard": [],
+             "probes": {"support": ["^    max: 4$"], "contradict": ["^    max: 5$"], "mention": ["max:"]},
+             "block": [{"capture": "demo.cat.yaml", "edit": [{"find": "    max: 4\n", "c": "    max: 5\n", "nm": ""}]}]}
+        self.refused(c, why="empty container")
+        c["block"][0]["edit"] = [{"find": "    max: 4\n", "c": "    max: 5\n"},
+                                 {"find": "  pool:\n    max: 4\n", "nm": ""}]
+        gen.build(c, dict(CFG), self.caps, CORPUS)
 
     def test_unedited_find_is_refused(self):
         c = flag_claim()

@@ -28,8 +28,10 @@ light, but it shares the machine.
 A world is a directory under the root, built by `steps` (`write` a file,
 `append` to one, `chmod`, or `run` a shell command), optionally starting
 from a copy of an earlier world (`from`) and with extra variables (`env`).
-A world marked `pending` needs a toolchain outside the frame (cargo, node)
-and runs only with --include-pending. Each capture runs one command in
+A world that `needs` a linked toolchain (Rust) runs only when
+`--toolchain NAME=DIR` supplies it; one marked `pending` runs only with
+--include-pending. Each capture records `seq`, its place in the run, so the
+generator can keep a world's captures in order. Each capture runs one command in
 its world and records its stdout, stderr and exit status. `seed_env` names
 a variable that gets a fresh value per command (jj's
 JJ_RANDOMNESS_SEED), so generated ids are reproducible.
@@ -99,6 +101,20 @@ def install(cache: Path, root: Path, tools_lock: dict) -> None:
         if not src.exists() or canon.sha256_file(src) != tool["sha256"]:
             raise SystemExit(f"{tool['name']}: no verified asset in the cache; run `fetch` first")
         ex = tool["extract"]
+        if "tar_tree" in ex:  # a whole tree (a toolchain), under a prefix
+            dest = root / tool["install"]
+            dest.mkdir(parents=True, exist_ok=True)
+            prefix = ex["tar_tree"]
+            with tarfile.open(src) as t:
+                members = []
+                for m in t.getmembers():
+                    if not m.name.startswith(prefix) or m.name == prefix.rstrip("/"):
+                        continue
+                    m.name = m.name[len(prefix):]
+                    if m.name:
+                        members.append(m)
+                t.extractall(dest, members=members, filter="data")
+            continue
         if "tar" in ex:
             with tarfile.open(src) as t:
                 data = t.extractfile(ex["tar"]).read()
@@ -118,6 +134,24 @@ def install(cache: Path, root: Path, tools_lock: dict) -> None:
 
 
 # ---------------------------------------------------------------- run
+
+
+def link_toolchains(tools_lock: dict, root: Path, given: dict[str, Path]) -> set[str]:
+    """Link each `--toolchain NAME=DIR` into the root, refusing a version other
+    than the lock's. Returns the names linked."""
+    linked = set()
+    for tc in tools_lock.get("linked_toolchain", []):
+        if tc["name"] not in given:
+            continue
+        dest = root / tc["link"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.symlink_to(Path(given[tc["name"]]).resolve(), target_is_directory=True)
+        out = subprocess.run(["/bin/sh", "-c", tc["version_cmd"].replace("{W}", str(root))],
+                             capture_output=True, text=True, timeout=COMMAND_TIMEOUT_S).stdout
+        if not out.startswith(tc["expect"]):
+            raise SystemExit(f"toolchain {tc['name']}: {out.splitlines()[:1]} is not {tc['expect'].strip()}")
+        linked.add(tc["name"])
+    return linked
 
 
 def frame_env(tools_lock: dict, root: Path) -> dict:
@@ -152,13 +186,14 @@ def run_world(world: dict, root: Path, env: dict, counters: dict) -> list[dict]:
     wdir = root / world["dir"]
     if "from" in world:
         src = root / counters["dirs"][world["from"]]
-        if wdir.exists():
-            shutil.rmtree(wdir)
-        shutil.copytree(src, wdir, symlinks=True)
+        if src != wdir:  # same dir: continue in place, after the earlier world's captures
+            if wdir.exists():
+                shutil.rmtree(wdir)
+            shutil.copytree(src, wdir, symlinks=True)
     wdir.mkdir(parents=True, exist_ok=True)
     env = {**env, **{k: v.replace("{W}", str(root)) for k, v in world.get("env", {}).items()}}
     seed_var = world.get("seed_env")
-    seed = 0
+    seed = counters.setdefault("seed_end", {}).get(world.get("from"), 0)  # a copy continues its source's ids
 
     def env_for_call():
         nonlocal seed
@@ -191,9 +226,11 @@ def run_world(world: dict, root: Path, env: dict, counters: dict) -> list[dict]:
         if "exit" in cap and r.returncode != cap["exit"]:
             raise SystemExit(f"capture {cap['id']}: expected exit {cap['exit']}, got {r.returncode}:\n"
                              f"{r.stderr.decode(errors='replace')}")
+        counters["seq"] += 1
         out.append({
             "schema": CAPTURE_SCHEMA,
             "id": cap["id"],
+            "seq": counters["seq"],
             "world": world["id"],
             "tool": world["tool"],
             "kind": cap["kind"],
@@ -203,19 +240,27 @@ def run_world(world: dict, root: Path, env: dict, counters: dict) -> list[dict]:
             "exit": r.returncode,
         })
     counters["dirs"][world["id"]] = world["dir"]
+    counters["seed_end"][world["id"]] = seed
     return out
 
 
-def host_versions(tools_lock: dict, env: dict, root: Path) -> dict:
+def host_versions(tools_lock: dict, env: dict, root: Path, linked: set[str] = frozenset()) -> dict:
+    """First line of each host tool's version, and a linked toolchain's full
+    version output joined with "; " (rustc -vV names its commit)."""
     out = {}
     for t in tools_lock.get("host_tool", []):
         r = sh(t["version_cmd"], root, env)
         out[t["name"]] = (r.stdout or r.stderr).decode().strip().splitlines()[0] if (r.stdout or r.stderr) else ""
+    for tc in tools_lock.get("linked_toolchain", []):
+        if tc["name"] in linked:
+            r = sh(tc["version_cmd"].replace("{W}", str(root)), root, env)
+            out[tc["name"]] = "; ".join(r.stdout.decode().strip().splitlines())
     return out
 
 
 def run(cache: Path, out_dir: Path, root: Path | None, update_lock: bool, check: bool,
-        include_pending: bool = False, allow_host_drift: bool = False) -> int:
+        include_pending: bool = False, allow_host_drift: bool = False,
+        toolchains: dict[str, Path] | None = None) -> int:
     tools_lock = load_toml(TOOLS_LOCK)
     recipes = load_toml(RECIPES)
     root = Path(root or recipes["root"])
@@ -225,13 +270,18 @@ def run(cache: Path, out_dir: Path, root: Path | None, update_lock: bool, check:
     for f in tools_lock["frame"]["file"]:
         (root / f["path"]).write_text(f["content"])
     install(cache, root, tools_lock)
+    linked = link_toolchains(tools_lock, root, toolchains or {})
     env = frame_env(tools_lock, root)
 
     captures = []
-    counters = {"dirs": {}}
+    counters = {"dirs": {}, "seq": 0}
     for world in recipes["world"]:
         if world.get("pending") and not include_pending:
             print(f"skipped world {world['id']}: pending ({world['pending']})")
+            continue
+        missing = set(world.get("needs", [])) - linked
+        if missing:
+            print(f"skipped world {world['id']}: needs --toolchain {', '.join(sorted(missing))}=<dir>")
             continue
         captures.extend(run_world(world, root, env, counters))
 
@@ -259,7 +309,7 @@ def run(cache: Path, out_dir: Path, root: Path | None, update_lock: bool, check:
         "schema": "sidekick-verification-captures-lock/1",
         "tools_lock_sha256": canon.sha256_file(TOOLS_LOCK),
         "recipes_sha256": canon.sha256_file(RECIPES),
-        "host_tools": host_versions(tools_lock, env, root),
+        "host_tools": host_versions(tools_lock, env, root, linked),
         "host_dependents": host_dependents(recipes, captures),
         "captures": [{"id": c["id"], "sha256": canon.record_sha256(c)} for c in sorted(captures, key=lambda c: c["id"])],
         "set_sha256": set_sha,
@@ -278,7 +328,7 @@ def run(cache: Path, out_dir: Path, root: Path | None, update_lock: bool, check:
 def host_dependents(recipes: dict, captures: list[dict]) -> dict:
     """Which captures' output depends on each host tool, from the worlds'
     `host_tools` declarations."""
-    by_world = {w["id"]: w.get("host_tools", []) for w in recipes["world"]}
+    by_world = {w["id"]: w.get("host_tools", []) + w.get("needs", []) for w in recipes["world"]}
     out: dict[str, list[str]] = {}
     for c in sorted(captures, key=lambda c: c["id"]):
         for t in by_world.get(c["world"], []):
@@ -320,6 +370,8 @@ def main(argv=None) -> int:
     r.add_argument("--cache", type=Path, required=True)
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--root", type=Path, help="working root (default: recipes.toml's)")
+    r.add_argument("--toolchain", action="append", default=[], metavar="NAME=DIR",
+                   help="link a toolchain the lock names (rust=<rustup toolchain dir>)")
     r.add_argument("--allow-host-drift", action="store_true",
                    help="with --check, report a different host git, python3 or sh instead of failing")
     r.add_argument("--include-pending", action="store_true",
@@ -331,7 +383,9 @@ def main(argv=None) -> int:
     if a.cmd == "fetch":
         fetch(a.cache, load_toml(TOOLS_LOCK))
         return 0
-    return run(a.cache, a.out, a.root, a.update_lock, a.check, a.include_pending, a.allow_host_drift)
+    toolchains = dict(t.split("=", 1) for t in a.toolchain)
+    return run(a.cache, a.out, a.root, a.update_lock, a.check, a.include_pending, a.allow_host_drift,
+               {k: Path(v) for k, v in toolchains.items()})
 
 
 if __name__ == "__main__":

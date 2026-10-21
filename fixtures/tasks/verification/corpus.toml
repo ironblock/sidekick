@@ -16,8 +16,14 @@ dev_share = 0.2        # share of shapes, by seeded hash, in the dev split
 # Sibling worlds exist to give a variant its edited output, and old/ worlds to
 # back version-scoped notes. Their captures would disagree with the base
 # worlds', so they never pad a haystack.
-exclude_worlds = ["jj/abandon", "dasel/worker6", "dasel/noservices", "dasel/pool25", "dasel/merge-swap",
-                  "dasel/merge-noport", "gen/service-5180", "old/jj-0.30", "old/dasel-2"]
+exclude_worlds = ["jj/abandon", "jj/abandon-retain", "jj/abandon-two", "jj/move-back",
+                  "dasel/worker6", "dasel/noservices", "dasel/pool25", "dasel/filter-swap", "dasel/merge-swap",
+                  "dasel/merge-noport", "dasel/merge-swap-pool", "dasel/merge-nopool",
+                  "gh/G3-routes", "gh/G5-readme", "gen/service-5180", "gen/trace-shift", "gen/env-noexec",
+                  "gen/env-rw", "gen/cargo-7", "old/jj-0.30", "old/dasel-2"]
+# Filler is command output first, up to this share of the filler's tokens,
+# then documentation (help pages and topics), then more output if short.
+output_share = 0.6
 
 [lengths]
 1k = 1000
