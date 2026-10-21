@@ -294,6 +294,79 @@ call = "c41"
 s_drop = true
 nm_drop = true
 
+# jj's documented config precedence (a config file, then environment
+# overrides such as $JJ_EMAIL, then --config-file on the command line): the
+# value `jj config get` prints decides, and the winning source is shown
+# first, so a reader that trusts the last value shown is wrong. Introduced
+# for review batch 3.
+[[shape]]
+id = "environment.config-precedence"
+type = "environment"
+mechanism = "precedence"
+
+[[shape.claim]]
+id = "jj-email-env-over-file"
+fact = "jj-email-env"
+since = 3
+text = "fact: jj's effective user.email here is ana@example.com."
+touch = ['user\.email', 'JJ_EMAIL', '@example\.com"']
+probes.support = ['^ana@example\.com$', 'email = "ana@example\.com"']
+probes.contradict = ['^bo@example\.com$', 'email = "bo@example\.com"']
+probes.mention = ['ana@example', 'bo@example', 'JJ_EMAIL', 'user\.email']
+edit_note = "s: $JJ_EMAIL is ana, config.toml says bo, and jj config get prints ana; c: the two values swap and jj prints bo (real output with the values swapped); nm: all three calls are removed."
+[[shape.claim.block]]
+capture = "jj.cfg-env.printenv"
+c_from = "jj.cfg-env-swap.printenv"
+nm_drop = true
+role = "winner"
+group = "a"
+[[shape.claim.block]]
+capture = "jj.cfg-env.cat-config"
+c_from = "jj.cfg-env-swap.cat-config"
+nm_drop = true
+role = "loser"
+group = "b"
+[[shape.claim.block]]
+capture = "jj.cfg-env.get-email"
+c_from = "jj.cfg-env-swap.get-email"
+nm_drop = true
+role = "winner"
+group = "b"
+
+[[shape.claim]]
+id = "jj-email-flag-over-env"
+fact = "jj-email-flag"
+since = 3
+text = "fact: with --config-file flags.toml, jj's effective user.email is cy@example.com."
+touch = ['user\.email', 'JJ_EMAIL', '@example\.com"']
+probes.support = ['^cy@example\.com$', 'email = "cy@example\.com"']
+probes.contradict = ['^ana@example\.com$', 'email = "ana@example\.com"']
+probes.mention = ['ana@example', 'bo@example', 'cy@example', 'JJ_EMAIL', 'user\.email']
+edit_note = "s: flags.toml says cy, $JJ_EMAIL is ana, config.toml says bo, and jj --config-file flags.toml config get prints cy; c: flags.toml and $JJ_EMAIL swap and jj prints ana (real output); nm: all four calls are removed."
+[[shape.claim.block]]
+capture = "jj.cfg-flag.cat-flags"
+c_from = "jj.cfg-flag-swap.cat-flags"
+nm_drop = true
+role = "winner"
+group = "a"
+[[shape.claim.block]]
+capture = "jj.cfg-flag.printenv"
+c_from = "jj.cfg-flag-swap.printenv"
+nm_drop = true
+role = "loser"
+group = "b"
+[[shape.claim.block]]
+capture = "jj.cfg-flag.cat-config"
+nm_drop = true
+role = "loser"
+group = "b"
+[[shape.claim.block]]
+capture = "jj.cfg-flag.get-email"
+c_from = "jj.cfg-flag-swap.get-email"
+nm_drop = true
+role = "winner"
+group = "b"
+
 [[shape]]
 id = "environment.command-missing"
 type = "environment"

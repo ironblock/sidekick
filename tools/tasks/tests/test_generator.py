@@ -6,6 +6,7 @@ only need the shapes real captures have."""
 
 import copy
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -219,6 +220,49 @@ class Assembly(unittest.TestCase):
                         "mention": ["unknown flag"]},
              "block": [{"capture": "demo.err.version", "call": "c8", "c_from": "demo.sum", "nm_empty": True}]}
         self.assertEqual(self.build(c)["nm_kind"], "empty-output-nonzero-exit")
+
+    def refutation_claim(self):
+        return {"id": "demo-version-refuted", "shape": "r.p", "type": "refutation", "mechanism": "plain", "fact": "dv",
+                "text": "was: demo --version prints the version (held at 6/10), wrong because it is an unknown flag "
+                        "[call c8]",
+                "guard": [],
+                "probes": {"support": ["unknown flag --version"], "contradict": [r"\[call c8\] \$ demo --version\n8\n"],
+                           "mention": ["unknown flag"]},
+                "block": [{"notes": ["- was: demo --version prints the version, wrong because unknown flag [call c8]"],
+                           "c_notes": [], "nm_notes": []},
+                          {"capture": "demo.err.version", "call": "c8", "c_from": "demo.sum", "nm_drop": True}]}
+
+    def test_monotonic_call_ids_and_pointers(self):
+        corpus = {**CORPUS, "monotonic_calls": True}
+        for pos in ("start", "middle", "end"):
+            t = gen.build(self.refutation_claim(), {**CFG, "length": "4k", "position": pos}, self.caps, corpus)
+            for v in gen.VARIANTS:
+                text = gen.expand(t, v)
+                ids = [int(x) for x in re.findall(r"^\[call c(\d+)\] \$", text, re.M)]
+                self.assertEqual(ids, sorted(ids), "ids increase through the haystack")
+                self.assertEqual(len(ids), len(set(ids)))
+            ptr = re.search(r"\[call (c\d+)\]$", t["claim"]["text"]).group(1)
+            for v in ("s", "c"):
+                # the renumbered pointer still names the pointed capture's call
+                m = re.search(r"^\[call " + ptr + r"\] \$ (.*)$", gen.expand(t, v), re.M)
+                self.assertEqual(m.group(1), self.caps["demo.err.version"]["cmd"])
+            self.assertIn(f"[call {ptr}]", gen.expand(t, "s").split("[notes]")[1].split("\n")[1])
+
+    def test_a_pointer_to_a_missing_call_is_refused(self):
+        c = self.refutation_claim()
+        c["text"] = c["text"].replace("[call c8]", "[call c99]")
+        with self.assertRaises(gen.Refusal) as ctx:
+            gen.build(c, dict(CFG), self.caps, CORPUS)
+        self.assertIn("not in the haystack", str(ctx.exception))
+
+    def test_claims_for_a_later_batch_stay_out_of_the_plan(self):
+        later = {**sum_claim(), "id": "demo-later", "since": 3}
+        corpus = {**CORPUS, "review": {"per_type": 2, "lengths": ["1k"], "positions": ["start", "end"],
+                                        "worked": {"length": "1k", "position": "middle", "obstacle": "none"}}}
+        ids = {c["id"] for c, _ in gen.review_plan([sum_claim(), later], corpus)}
+        self.assertEqual(ids, {"demo-worker-replicas"})
+        ids = {c["id"] for c, _ in gen.review_plan([sum_claim(), later], {**corpus, "batch": 3})}
+        self.assertEqual(ids, {"demo-worker-replicas", "demo-later"})
 
     def test_touch_keeps_same_key_fillers_out(self):
         c = flag_claim()

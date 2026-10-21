@@ -30,7 +30,15 @@ regenerates and compares with the committed lock.
         [--set review] [--update-lock | --check] [--export]
 
 The committed captures (fixtures/tasks/verification/captures.jsonl) are the
-default input, so regeneration needs no tools. Each triple records how its
+default input, so regeneration needs no tools.
+
+Two corpus.toml settings change a set and are off unless given:
+`monotonic_calls = true` renumbers call ids so they increase through each
+haystack, remapping every `[call cN]` pointer in the claim, its probes and
+its notes (each pointer is then checked to name a call that runs the
+pointed capture); `batch = N` admits claims whose `since` is at most N
+(default 2), so claims prepared for a later review batch leave an earlier
+batch's set unchanged. Each triple records how its
 CONTRADICTED text came to be (`edit`: sibling-world, textual, spliced or
 fabricated). Length buckets are approximate (`approx-v1`).
 
@@ -79,6 +87,28 @@ MAX_BLOCK_SHARE = 0.25              # no single filler block over this share of 
 POSITION_THIRDS = ("start", "middle", "end")
 EXIT_STATED_RE = re.compile(r"\b(?:exit(?:s|ed)?|exit status|status)(?: with)?(?: status| code)? (\d+)", re.I)
 CALL_RE = re.compile(r"\bc(\d+)\b")
+POINTER_RE = re.compile(r"\[call (c\d+)\]")
+
+
+def renumber_calls(claim: dict, mapping: dict[str, str]) -> dict:
+    """A copy of the claim with each call id in `mapping` replaced in its
+    text, probes, notes and blocks' fixed ids (in one pass, so a new id never
+    gets replaced again)."""
+    if not mapping:
+        return claim
+    pat = re.compile(r"\b(" + "|".join(re.escape(k) for k in sorted(mapping, key=len, reverse=True)) + r")\b")
+
+    def sub(x):
+        if isinstance(x, str):
+            return pat.sub(lambda m: mapping[m.group(1)], x)
+        if isinstance(x, list):
+            return [sub(i) for i in x]
+        if isinstance(x, dict):
+            return {k: (x[k] if k in ("capture", "s_from", "c_from", "nm_from", "id", "shape", "fact") else sub(x[k]))
+                    for k in x}
+        return x
+
+    return sub(claim)
 
 
 class Refusal(Exception):
@@ -480,18 +510,37 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
             return "capture" in claim["distractor"][payload]
         return kind == "filler"
 
-    free = [n for n in range(1, 1000) if str(n) not in reserved]
-    need = sum(1 for kind, p in order if has_call(kind, p) and not (kind == "needle" and "call" in specs[p]))
-    drawn = sorted(r.sample(free, need))
-    calls, di = [], 0
-    for kind, p in order:
-        if not has_call(kind, p):
-            calls.append(None)
-        elif kind == "needle" and "call" in specs[p]:
-            calls.append(specs[p]["call"])  # a repeat is a re-run: it gets its own id
-        else:
-            calls.append(f"c{drawn[di]}")
+    if corpus.get("monotonic_calls"):
+        # Ids increase through the transcript, as a session's call ids do. The
+        # claim's own ids (its pointers, and its blocks' fixed ids) are
+        # renumbered to match, everywhere they occur.
+        total = sum(1 for kind, p in order if has_call(kind, p))
+        drawn = sorted(r.sample(range(1, 1000), total))
+        calls, di, renumber = [], 0, {}
+        for kind, p in order:
+            if not has_call(kind, p):
+                calls.append(None)
+                continue
+            new = f"c{drawn[di]}"
             di += 1
+            if kind == "needle" and "call" in specs[p]:
+                renumber[specs[p]["call"]] = new
+            calls.append(new)
+        claim = renumber_calls(claim, renumber)
+        specs = claim["block"]
+    else:
+        free = [n for n in range(1, 1000) if str(n) not in reserved]
+        need = sum(1 for kind, p in order if has_call(kind, p) and not (kind == "needle" and "call" in specs[p]))
+        drawn = sorted(r.sample(free, need))
+        calls, di = [], 0
+        for kind, p in order:
+            if not has_call(kind, p):
+                calls.append(None)
+            elif kind == "needle" and "call" in specs[p]:
+                calls.append(specs[p]["call"])  # a repeat is a re-run: it gets its own id
+            else:
+                calls.append(f"c{drawn[di]}")
+                di += 1
 
     # Render into tagged pieces: (item index, str | slot).
     pieces, layout, slot_roles, bodies_spec = [], [], [], []
@@ -608,6 +657,22 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
     measured = POSITION_THIRDS[min(2, int(at * 3))]
     cfg = {**cfg, "position": measured}
 
+    # Every `[call cN]` pointer, in the claim and in each variant's notes,
+    # resolves to a call that variant shows, running the pointed capture.
+    # (The claim's own pointer must resolve in SUPPORTED and CONTRADICTED.)
+    pointed = {s["call"]: caps[s["capture"]]["cmd"] for s in specs if "call" in s and "capture" in s}
+    for v in VARIANTS:
+        text = ev[v].text
+        refs = set(POINTER_RE.findall("".join(text[a:b] for a, b, _ in ev[v].slots)))
+        if v in ("s", "c"):
+            refs |= set(POINTER_RE.findall(claim["text"]))
+        for ref in sorted(refs):
+            m = re.search(r"^\[call " + re.escape(ref) + r"\] \$ (.*)$", text, re.M)
+            if not m:
+                raise Refusal(f"{claim['id']}: {v}: [call {ref}] is pointed to but not in the haystack")
+            if ref in pointed and m.group(1) != pointed[ref]:
+                raise Refusal(f"{claim['id']}: {v}: [call {ref}] runs {m.group(1)!r}, not the pointed capture")
+
     problems = hazards.check(claim, ev, slot_roles)
     if problems:
         raise Refusal(f"{claim['id']} {cfg_id(cfg)}:\n  " + "\n  ".join(problems))
@@ -676,7 +741,8 @@ def review_plan(claims: list[dict], corpus: dict) -> list[tuple[dict, dict]]:
         if c.get("worked"):
             plan.append((c, dict(rv["worked"])))
     for t in TYPES:
-        pool = sorted((c for c in claims if c["type"] == t and not c.get("worked")), key=lambda c: c["id"])
+        pool = sorted((c for c in claims if c["type"] == t and not c.get("worked")
+                       and c.get("since", 1) <= corpus.get("batch", 2)), key=lambda c: c["id"])
         if not pool:
             continue
         r = canon.rng(seed, "review", t)
@@ -729,7 +795,11 @@ def generate(captures: Path, out: Path, set_name: str, claims_path: Path, corpus
     corpus = load_toml(corpus_path)
     recipes_path = corpus_path.parent / "recipes.toml"
     if recipes_path.exists():
-        corpus["_parents"] = {w["id"]: w["from"] for w in load_toml(recipes_path)["world"] if "from" in w}
+        worlds = load_toml(recipes_path)["world"]
+        corpus["_parents"] = {w["id"]: w["from"] for w in worlds if "from" in w}
+        no_filler = [w["id"] for w in worlds if w.get("filler") is False]
+        corpus.setdefault("filler", {})
+        corpus["filler"]["exclude_worlds"] = list(corpus["filler"].get("exclude_worlds", [])) + no_filler
     claims = load_claims(claims_path, corpus["max_per_shape"], corpus.get("max_per_fact", 2))
     caps = load_captures(captures, captures_lock)
     if set_name != "review":

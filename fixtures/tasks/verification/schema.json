@@ -93,6 +93,7 @@
         "role": {"enum": ["belief", "reason"]},
         "fact": {"$ref": "#/$defs/id", "description": "the underlying fact; at most max_per_fact claims share one"},
         "touch": {"type": "array", "items": {"type": "string"}, "description": "regexes for the claim's keys and entities; matching captures never pad it"},
+        "since": {"type": "integer", "minimum": 1, "description": "the review batch that introduced the claim; a set built for an earlier batch (corpus `batch`) leaves it out"},
         "text": {"type": "string", "minLength": 1},
         "worked": {"type": "boolean"},
         "pending": {"type": "string"},

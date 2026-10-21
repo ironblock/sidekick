@@ -577,6 +577,58 @@
       "sha256": "048202a345c1d9d0f23c61646b55246d384d2305d8332e256a17fe53a131160d"
     },
     {
+      "id": "jj.cfg-env-swap.cat-config",
+      "sha256": "78323452965c5bbf48f8bc6b9a677a590debbcb3160575d77ebeee6bae009c66"
+    },
+    {
+      "id": "jj.cfg-env-swap.get-email",
+      "sha256": "a3df33678e044a4f0f145f2b9c8959f56f4a88c037d74f5335c7c0791d726566"
+    },
+    {
+      "id": "jj.cfg-env-swap.printenv",
+      "sha256": "36550e9d9ca532eb36b0b03e9d8f7ccb6b36ee67345ac45a5c4e846e5d9e875a"
+    },
+    {
+      "id": "jj.cfg-env.cat-config",
+      "sha256": "29edd0fe3503a07d5fbe642466350b226dcb0669ebfd4265bab0f9a1f9782ecc"
+    },
+    {
+      "id": "jj.cfg-env.get-email",
+      "sha256": "3f2e02f9c30ff7a47b68fa59b580cce4c8d95087da409569ed436ff5c31b28dc"
+    },
+    {
+      "id": "jj.cfg-env.printenv",
+      "sha256": "55850b2b0f41c3f4e3600c614522acb929382e770ab0a90a4fb0063e4797c77b"
+    },
+    {
+      "id": "jj.cfg-flag-swap.cat-flags",
+      "sha256": "cf5eb25f5574aa3642e396ac8fcbad3d4e7dea51030b1ffa2926ba813dbbdd96"
+    },
+    {
+      "id": "jj.cfg-flag-swap.get-email",
+      "sha256": "e5454b150101836e01fd36b69414b9a0e06ef218f9c4459d707b83b63eab7e09"
+    },
+    {
+      "id": "jj.cfg-flag-swap.printenv",
+      "sha256": "a69e73c133b3cabf349282bd5c28e7d8732973e3fbedab7489499075595320f8"
+    },
+    {
+      "id": "jj.cfg-flag.cat-config",
+      "sha256": "fbdc64c277469befdf2c30aa45c34a58c9b94c4afb7e73e9188a5f37e7e24161"
+    },
+    {
+      "id": "jj.cfg-flag.cat-flags",
+      "sha256": "9253ac4bbb204e4b220c59eba9f7d8d4c59102de98770398b4910b43850c1ede"
+    },
+    {
+      "id": "jj.cfg-flag.get-email",
+      "sha256": "b30a12dd1f754a64f0a427ef61e3640d5b82552177a9a3c66049eb51656118ea"
+    },
+    {
+      "id": "jj.cfg-flag.printenv",
+      "sha256": "f73dcbc0b3eb63caf6b13ede9cfe0787b1316642090dbfb5970afb899f4b0f91"
+    },
+    {
       "id": "jj.diff.add-soup",
       "sha256": "33d845d7e4e9d1fb0e2b8da3788b82b0f321a7b38e6029fa7b7e5aeb2c51d94f"
     },
@@ -1004,8 +1056,8 @@
     "rust": "rustc 1.94.1 (e408947bf 2026-03-25); binary: rustc; commit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1; commit-date: 2026-03-25; host: aarch64-apple-darwin; release: 1.94.1; LLVM version: 21.1.8",
     "sh": "GNU bash, version 3.2.57(1)-release (arm64-apple-darwin26)"
   },
-  "recipes_sha256": "e99f92ba19e136b2739f7c9d8e848232def47ea4efd39658334c204e1443a60a",
+  "recipes_sha256": "0a9db9bacca08503b3e3dd0eb1ad80923f64a88b21dbac086a1ec7ffff4214bf",
   "schema": "sidekick-verification-captures-lock/1",
-  "set_sha256": "45a02619250db557ed5d8c207cd2d79c685ed231a123704fd5e5abc9300957b7",
+  "set_sha256": "2bdd682458cf293c243a2ac39745687c2b9e590d0e1f7a7b73e3577881a77563",
   "tools_lock_sha256": "f6168981cbe7308a0dfc0e62d84758dfc637e7e0d0c65c7708fa45d90c65f720"
 }

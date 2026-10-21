@@ -824,6 +824,76 @@ capture = [
   { id = "gen.npm.pnpm-install-offline", cmd = "pnpm install --offline", kind = "stderr" },
 ]
 
+# ------------------------------------------------- jj config precedence
+# `jj help -k config`: settings load from the config files, then environment
+# overrides such as $JJ_EMAIL, then --config / --config-file on the command
+# line, each overriding the last. `jj config get` prints the value that won.
+# The sibling worlds swap the competing values; each writes its own files in
+# the same directory, so paths in the output never differ.
+
+[[world]]
+id = "jj/cfg-env"
+tool = "jj"
+dir = "jj/cfg"
+filler = false
+env = { JJ_CONFIG = "{W}/jj/cfg/config.toml", JJ_EMAIL = "ana@example.com" }
+steps = [
+  { write = "config.toml", content = "[user]\nname = \"Test User\"\nemail = \"bo@example.com\"\n" },
+]
+capture = [
+  { id = "jj.cfg-env.printenv", cmd = "printenv JJ_EMAIL", kind = "stdout", exit = 0 },
+  { id = "jj.cfg-env.cat-config", cmd = "cat config.toml", kind = "toml", exit = 0 },
+  { id = "jj.cfg-env.get-email", cmd = "jj config get user.email", kind = "stdout", exit = 0 },
+]
+
+[[world]]
+id = "jj/cfg-env-swap"
+tool = "jj"
+dir = "jj/cfg"
+filler = false
+env = { JJ_CONFIG = "{W}/jj/cfg/config.toml", JJ_EMAIL = "bo@example.com" }
+steps = [
+  { write = "config.toml", content = "[user]\nname = \"Test User\"\nemail = \"ana@example.com\"\n" },
+]
+capture = [
+  { id = "jj.cfg-env-swap.printenv", cmd = "printenv JJ_EMAIL", kind = "stdout", exit = 0 },
+  { id = "jj.cfg-env-swap.cat-config", cmd = "cat config.toml", kind = "toml", exit = 0 },
+  { id = "jj.cfg-env-swap.get-email", cmd = "jj config get user.email", kind = "stdout", exit = 0 },
+]
+
+[[world]]
+id = "jj/cfg-flag"
+tool = "jj"
+dir = "jj/cfg"
+filler = false
+env = { JJ_CONFIG = "{W}/jj/cfg/config.toml", JJ_EMAIL = "ana@example.com" }
+steps = [
+  { write = "config.toml", content = "[user]\nname = \"Test User\"\nemail = \"bo@example.com\"\n" },
+  { write = "flags.toml", content = "[user]\nemail = \"cy@example.com\"\n" },
+]
+capture = [
+  { id = "jj.cfg-flag.cat-flags", cmd = "cat flags.toml", kind = "toml", exit = 0 },
+  { id = "jj.cfg-flag.printenv", cmd = "printenv JJ_EMAIL", kind = "stdout", exit = 0 },
+  { id = "jj.cfg-flag.cat-config", cmd = "cat config.toml", kind = "toml", exit = 0 },
+  { id = "jj.cfg-flag.get-email", cmd = "jj --config-file flags.toml config get user.email", kind = "stdout", exit = 0 },
+]
+
+[[world]]
+id = "jj/cfg-flag-swap"
+tool = "jj"
+dir = "jj/cfg"
+filler = false
+env = { JJ_CONFIG = "{W}/jj/cfg/config.toml", JJ_EMAIL = "cy@example.com" }
+steps = [
+  { write = "config.toml", content = "[user]\nname = \"Test User\"\nemail = \"bo@example.com\"\n" },
+  { write = "flags.toml", content = "[user]\nemail = \"ana@example.com\"\n" },
+]
+capture = [
+  { id = "jj.cfg-flag-swap.cat-flags", cmd = "cat flags.toml", kind = "toml", exit = 0 },
+  { id = "jj.cfg-flag-swap.printenv", cmd = "printenv JJ_EMAIL", kind = "stdout", exit = 0 },
+  { id = "jj.cfg-flag-swap.get-email", cmd = "jj --config-file flags.toml config get user.email", kind = "stdout", exit = 0 },
+]
+
 [scrub]
 # Normalization for the pending recipes' nondeterministic fields.
 rule = [
