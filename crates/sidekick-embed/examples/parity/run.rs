@@ -77,6 +77,7 @@ const MEASURE_ALL: sidekick_core::ScanOptions = sidekick_core::ScanOptions {
     ignore_ane_weight_cap: true,
     ignore_cpu_seq_cap: true,
     ignore_ane_seq_cap: true,
+    no_neural_engine: false,
 };
 
 /// The ANE length cap the ane path runs under (D48), as the runtime serves
@@ -859,13 +860,16 @@ struct BucketInfo {
     bucket: usize,
     model_mil: Option<String>,
     weights: Option<String>,
-    ane_ops: usize,
-    assigned_ops: usize,
-    plan: Result<(), String>,
-    /// Past the model's ANE length cap (D48): its plan wasn't read (that
-    /// compiles the bucket for the ANE), and the ane path doesn't run it.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    ane_capped: bool,
+    /// `None` when the plan wasn't read (`not_read`).
+    ane_ops: Option<usize>,
+    assigned_ops: Option<usize>,
+    /// The plan's verdict; `None` when it wasn't read (`not_read`).
+    plan: Option<Result<(), String>>,
+    /// Why the plan wasn't read: the bucket is past the ANE length cap of a
+    /// model served on the ANE (D48), so the ANE never serves it, and
+    /// reading its plan would compile it for the ANE.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_read: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -969,9 +973,10 @@ fn chain_sha(artifacts: &[PathBuf], file: &str) -> Option<String> {
 /// ineligible or unreadable one as a warning, and every path still runs,
 /// the ANE path reporting what Core ML actually did. (A multi-shape
 /// artifact, which could abort a prediction, is refused at load by D27's
-/// guard, whatever the plan.) A bucket past `ane_cap` (D48) has no plan
-/// read: reading one compiles the bucket for the ANE, which took half an
-/// hour for a 4,096-token one, and the ANE never serves it.
+/// guard, whatever the plan.) For a model served on the ANE, a bucket past
+/// `ane_cap` (D48) has no plan read: the runtime never serves it there, and
+/// reading one compiles it for the ANE, which took half an hour for a
+/// 4,096-token one.
 #[allow(clippy::too_many_arguments)]
 fn check_plans(
     id: &str,
@@ -984,15 +989,35 @@ fn check_plans(
     failures: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> Plans {
+    let read = |arts: &[PathBuf], label: &str| read_chain_plan(arts, label, o.timeout, scratch);
+    check_plans_with(id, buckets, artifacts_for, units, ane_cap, o, failures, warnings, read)
+}
+
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+/// [`check_plans`], reading each bucket's plan with `read` (its artifacts
+/// and a label), so a test can see which buckets' plans are read.
+#[allow(clippy::too_many_arguments)]
+fn check_plans_with(
+    id: &str,
+    buckets: &[usize],
+    artifacts_for: impl Fn(usize) -> Vec<PathBuf>,
+    units: ComputeUnits,
+    ane_cap: Option<usize>,
+    o: &Options,
+    failures: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+    mut read: impl FnMut(&[PathBuf], &str) -> Result<Option<(PlanSummary, bool)>, String>,
+) -> Plans {
     let ane_here = has_ane();
-    let gated = plans_gate(matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All), ane_here);
+    let served_on_ane = matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All);
+    let gated = plans_gate(served_on_ane, ane_here);
     let mut plans = Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() };
     for &b in buckets {
         let arts = artifacts_for(b);
-        if let Some(cap) = ane_cap.filter(|&cap| b > cap) {
+        if let Some(cap) = ane_cap.filter(|&cap| served_on_ane && b > cap) {
+            let why = format!("not read (past the ANE cap of {cap} tokens, D48)");
             println!(
-                "  bucket {b:>4}: past the ANE cap of {cap} tokens (D48): no plan read, not run on the ane path  \
-                 model.mil {} weights {}",
+                "  bucket {b:>4}: plan {why}; the ane path doesn't run it  model.mil {} weights {}",
                 chain_sha(&arts, "model.mil").unwrap_or("-".into()),
                 chain_sha(&arts, "weights/weight.bin").unwrap_or("-".into()),
             );
@@ -1000,14 +1025,14 @@ fn check_plans(
                 bucket: b,
                 model_mil: chain_sha(&arts, "model.mil"),
                 weights: chain_sha(&arts, "weights/weight.bin"),
-                ane_ops: 0,
-                assigned_ops: 0,
-                plan: Ok(()),
-                ane_capped: true,
+                ane_ops: None,
+                assigned_ops: None,
+                plan: None,
+                not_read: Some(why),
             });
             continue;
         }
-        let plan = read_chain_plan(&arts, &format!("{id}-{b}"), o.timeout, scratch);
+        let plan = read(&arts, &format!("{id}-{b}"));
         let (ane, assigned, verdict) = match &plan {
             Ok(Some((p, _))) => (p.ane, p.assigned(), p.verdict()),
             Ok(None) => (0, 0, Ok(())),
@@ -1071,10 +1096,10 @@ fn check_plans(
             bucket: b,
             model_mil: chain_sha(&arts, "model.mil"),
             weights: chain_sha(&arts, "weights/weight.bin"),
-            ane_ops: ane,
-            assigned_ops: assigned,
-            plan: verdict,
-            ane_capped: false,
+            ane_ops: Some(ane),
+            assigned_ops: Some(assigned),
+            plan: Some(verdict),
+            not_read: None,
         });
     }
     plans
@@ -1925,6 +1950,45 @@ mod tests {
         assert_eq!(ane_path_cap(false, 4096, Some(4096)), None);
         // --ignore-ane-seq-cap grades every bucket.
         assert_eq!(ane_path_cap(true, 4096, None), None);
+    }
+
+    /// D48: a bucket past the ANE cap of a model served on the ANE has no
+    /// compute plan read (reading one compiles it for the ANE); served on
+    /// the GPU, every bucket's plan is read.
+    #[cfg(all(target_os = "macos", feature = "coreml"))]
+    #[test]
+    fn no_plan_is_read_for_a_bucket_past_the_ane_cap_of_an_ane_served_model() {
+        let o = parse(&["--models-dir".into(), "unused".into()]).unwrap();
+        let read_for = |units: ComputeUnits| {
+            let mut read: Vec<String> = Vec::new();
+            let plans = check_plans_with(
+                "m",
+                &[128, 2048, 4096],
+                |_| Vec::new(),
+                units,
+                Some(2048),
+                &o,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                |_: &[PathBuf], label: &str| {
+                    read.push(label.to_string());
+                    let plan = PlanSummary { ane: 9, cpu: 1, gpu: 0, unassigned: 0, off_ane_ops: Default::default() };
+                    Ok(Some((plan, false)))
+                },
+            );
+            (read, plans.buckets)
+        };
+        for units in [ComputeUnits::CpuAndNeuralEngine, ComputeUnits::All] {
+            let (read, buckets) = read_for(units);
+            assert_eq!(read, ["m-128", "m-2048"], "{units:?}");
+            let capped = &buckets[2];
+            assert_eq!((capped.ane_ops, capped.assigned_ops, &capped.plan), (None, None, &None));
+            assert_eq!(capped.not_read.as_deref(), Some("not read (past the ANE cap of 2048 tokens, D48)"));
+            assert_eq!((buckets[0].ane_ops, &buckets[0].not_read), (Some(9), &None));
+        }
+        let (read, buckets) = read_for(ComputeUnits::CpuAndGpu);
+        assert_eq!(read, ["m-128", "m-2048", "m-4096"]);
+        assert!(buckets.iter().all(|b| b.not_read.is_none() && b.plan.is_some()));
     }
 
     #[test]

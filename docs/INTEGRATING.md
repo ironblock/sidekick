@@ -379,7 +379,9 @@ Likewise, a Core ML model served on the ANE (`cpu_and_ne`, the default, or
 `all`) runs no longer than 2,048 tokens, or its manifest's
 `ane_max_seq_len`: past that, a bucket can take half an hour to compile
 for the ANE and then fail some predictions. The same artifact served on
-the GPU (`cpu_and_gpu`) has no cap. Its `/v1/models` entry shows
+the GPU (`cpu_and_gpu`) has no cap. On an Intel Mac, which has no Neural
+Engine, `cpu_and_ne` runs on the CPU and gets the CPU's 1,024-token cap
+instead. Its `/v1/models` entry shows
 `seq_cap` the same way, `/tokenize`'s `max_model_len` and `fits` use the
 capped limit, and a longer input to `/v1/embeddings` is refused (or
 truncated) at it. For longer inputs, serve the model on the GPU, in its

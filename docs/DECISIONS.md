@@ -3612,13 +3612,23 @@ Core ML model served on the ANE:
   window, as under D33. 2,048 is the longest length measured to work on
   the ANE, and no published build goes past it, so the default changes no
   published model.
-- **`all` is capped too, unlike under D33.** Under `all` Core ML places
-  ANE-eligible operations on the ANE, so it compiles the bucket for the
-  ANE, and the long compile and the failures come with it. D33 leaves
-  `all` alone because Core ML may not use the CPU there at all.
-- **`cpu_and_gpu` is unaffected,** and `cpu_only` keeps D33's 1,024. Each
-  compute-units value has at most one cap (`seq_len_cap`), so the two never
-  stack.
+- **`all` is capped too, unlike under D33, by reasoning rather than
+  measurement.** D46 measured `cpu_and_ne` only. Under `all`, Core ML
+  places ANE-eligible operations on the ANE, so it compiles the bucket for
+  the ANE, and the long compile and the failures are expected to come with
+  it. D33's reasoning runs the other way: under `all` Core ML may not use
+  the CPU at all, so a CPU cap could hide what `all` does, whereas the
+  ANE is exactly where `all` puts an ANE-eligible model. A measurement of
+  a long bucket under `all` would confirm or revise this.
+- **`cpu_and_gpu` is unaffected,** and `cpu_only` keeps D33's 1,024. The
+  two caps never stack: `seq_len_cap` chooses at most one per model, by
+  the compute units Core ML will actually use (`capped_as`). On a Mac with
+  a Neural Engine that is the units' name. On a Mac without one (an Intel
+  Mac), Core ML runs `cpu_and_ne` on the CPU, so it gets D33's 1,024 and
+  honours `cpu_seq_limit`, and the ANE cap and `ane_max_seq_len` don't
+  apply; `all` runs on the CPU and GPU there, which D33 leaves uncapped.
+  The daemon and `libsidekick.dylib` ask Core ML whether a Neural Engine
+  is present (`ScanOptions::no_neural_engine`).
 - **Per model: `ane_max_seq_len`.** A top-level manifest key (either
   manifest file, beside `cpu_seq_limit` and `ane_weight_limit`; coreml
   backend only; at least 1) replaces the default. It can lower the cap,
@@ -3646,21 +3656,22 @@ Core ML model served on the ANE:
   `manifest_max_seq_len`, and a `reason` that names D48 and says whether
   the manifest set the cap), `/health` lists every capped model under
   `seq_caps`, and the daemon logs each cap at startup. `libsidekick.dylib`
-  scans with the same defaults, so it applies the cap too.
+  scans as the daemon does, so it applies the cap too. The caps apply
+  before D32's weight limit, so a bucket the cap drops is never read.
 - **The parity suite** grades the ane path under the cap the runtime
   applies. Its ane worker loads only the buckets within it, and runs only
   the cases whose reference ids fit it. The cases past it are listed as
   `capped` in the ane path's grade, not failed, and the grade covers the
-  rest, printed in a table of its own. No compute plan is read for a
-  bucket past the cap: reading one compiles the bucket for the ANE, which
-  timed out the plan read at 4,096 tokens (D46). The cpu and gpu paths
-  still run every bucket. `--ignore-ane-seq-cap` grades the ane path past
-  the cap, as D46's measurement did.
+  rest, printed in a table of its own. For a model served on the ANE, no
+  compute plan is read for a bucket past the cap (the report records it
+  as not read): the runtime never serves it there, and reading one
+  compiles the bucket for the ANE, which timed out the plan read at 4,096
+  tokens (D46). The cpu and gpu paths still run every bucket.
+  `--ignore-ane-seq-cap` grades the ane path past the cap, as D46's
+  measurement did.
 
-On an Intel Mac, which has no ANE, Core ML runs `cpu_and_ne` on the CPU,
-and the cap still applies; the operator serves such a model on the GPU
-(D38) or lifts the cap. With the cap in place, Qwen3-Embedding's Core ML
-build can add a 4,096-token bucket for the GPU (D46).
+With the cap in place, Qwen3-Embedding's Core ML build can add a
+4,096-token bucket for the GPU (D46).
 
 ## Hardware verification status
 

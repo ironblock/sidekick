@@ -473,9 +473,17 @@ tokens):
   capped window, and a model with no bucket within the cap is skipped with
   the fixes as the reason. The buckets past it are never loaded or
   compiled for the ANE.
-- `all` is capped too: Core ML compiles a bucket for the ANE whenever it
-  places operations there, and the long compile comes with it.
-  `cpu_and_gpu` isn't capped, and `cpu_only` has the CPU cap above.
+- `all` is capped too, by reasoning rather than measurement (D46 measured
+  `cpu_and_ne` only): Core ML compiles a bucket for the ANE whenever it
+  places operations there, and the long compile is expected to come with
+  it. The CPU cap reasons the other way, leaving `all` alone because Core
+  ML may not use the CPU there at all. `cpu_and_gpu` isn't capped, and
+  `cpu_only` has the CPU cap above. A model has at most one of the two
+  caps.
+- On a Mac without a Neural Engine (an Intel Mac), Core ML runs
+  `cpu_and_ne` on the CPU, so it gets the CPU cap instead (1,024 tokens,
+  `cpu_seq_limit` honoured, `ane_max_seq_len` ignored), and `all`, which
+  runs on the CPU and GPU there, isn't capped.
 - `/v1/models` shows it as `seq_cap`, whose `reason` names D48 and says
   whether the manifest set the cap; `/health` lists it under `seq_caps`,
   and the daemon logs it at startup.
@@ -491,9 +499,10 @@ tokens):
 - The parity suite grades the ane path under the same cap: its ane worker
   loads only the buckets within it and runs only the cases that fit it,
   and the cases past it are listed as `capped` in the ane path's grade, not
-  failed. It reads no compute plan for a bucket past the cap, since that
-  compiles the bucket for the ANE. The cpu and gpu paths run every
-  bucket; `--ignore-ane-seq-cap` grades the ane path past the cap.
+  failed. For a model served on the ANE it reads no compute plan for a
+  bucket past the cap, since that compiles the bucket for the ANE, and
+  records the plan as not read. The cpu and gpu paths run every bucket;
+  `--ignore-ane-seq-cap` grades the ane path past the cap.
 
 ### Where Core ML places operations
 
