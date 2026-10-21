@@ -26,7 +26,7 @@ pub struct CoremlEmbedder {
     /// Lazily loaded per-bucket models.
     models: BucketModels,
     /// Tokenizing, prefixes and truncation, shared with the ONNX backend.
-    input: EmbedInput,
+    input: std::sync::Arc<EmbedInput>,
     buckets: Vec<usize>,
     pooling: Pooling,
     input_ids_name: String,
@@ -67,7 +67,7 @@ impl CoremlEmbedder {
             dims: m.dims,
             matryoshka: m.matryoshka.clone(),
             models: BucketModels::new(&model.dir, &m.artifact, m.chunks(), units),
-            input: EmbedInput::load(model)?,
+            input: EmbedInput::shared(model)?,
             buckets: m.buckets.clone(),
             pooling: m.pooling,
             input_ids_name: m.io.input_ids.clone(),

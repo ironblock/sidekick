@@ -485,6 +485,58 @@ pub struct CohereEmbeddings {
     pub ubinary: Option<Vec<Vec<u8>>>,
 }
 
+// ---------- tokenize ----------
+
+/// vLLM's `/tokenize` request, plus `input_type`. Only the completion form
+/// (`prompt`): `messages`, vLLM's chat form, is a 400, since encoders have
+/// no chat template.
+#[derive(Debug, Deserialize)]
+pub struct TokenizeRequest {
+    pub model: String,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub messages: Option<Value>,
+    /// Default true: the special tokens the model's route adds.
+    #[serde(default)]
+    pub add_special_tokens: Option<bool>,
+    #[serde(default)]
+    pub return_token_strs: Option<bool>,
+    /// Extension, embedders: which prompt prefix applies, by
+    /// /v1/embeddings' names or /v2/embed's (`query`, `search_query`;
+    /// `document`, the default, `passage`, `search_document`).
+    #[serde(default)]
+    pub input_type: Option<String>,
+    /// Extension, embedders: /v2/embed's `max_tokens`, which `fits` then
+    /// measures against.
+    #[serde(default)]
+    pub max_tokens: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TokenizeResponse {
+    pub count: usize,
+    pub max_model_len: usize,
+    pub tokens: Vec<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_strs: Option<Vec<String>>,
+    /// Extension: whether the model's route takes the text whole, by the
+    /// check it runs (D44).
+    pub fits: bool,
+}
+
+/// vLLM's `/detokenize` request.
+#[derive(Debug, Deserialize)]
+pub struct DetokenizeRequest {
+    pub model: String,
+    pub tokens: Vec<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DetokenizeResponse {
+    pub prompt: String,
+}
+
 // ---------- models ----------
 
 #[derive(Debug, Serialize)]

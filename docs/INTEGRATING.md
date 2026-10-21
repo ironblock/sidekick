@@ -111,6 +111,26 @@ instead. A model whose own `tokenizer.json` truncates
 (LFM2.5-Embedding-350M's does, at 512 tokens, its `max_seq_len`) is
 refused past that point too.
 
+**Checking fit before embedding.** `POST /tokenize` with `{model,
+prompt}` (and the `input_type` you will embed with) answers with `fits`:
+whether `/v1/embeddings` will take the text whole under its default
+`truncate: NONE`, decided by the same check the route runs. Use `fits`
+rather than re-deriving it. The route refuses a text by its size in bytes
+as well as its tokens, and the two disagree for some text: a run of Thai
+or Khmer without spaces can be one unknown token yet far too many bytes,
+and a text of spaces counts no tokens at all. The response also has
+sidekick's own `count`, never truncated, with the prompt prefix and
+special tokens included, and `max_model_len`, the limit it is compared
+with. A tokenizer of your own, or an estimate from characters, can
+disagree with that count at the edge: it may miss the prompt prefix or the
+special tokens, or tokenize differently. A client that truncates some
+documents on purpose can send `/tokenize` first, log the ones that don't
+fit, with their counts, and send those with `truncate: "END"`. At most
+4 MiB of text is tokenized at once across requests, and a request waits
+for room within the request timeout. The request body limit (2 MiB)
+bounds the text. See the README's Tokenize
+section for the full shape (D44).
+
 To truncate instead, send `truncate: "END"` (or TEI's `truncate: true`;
 OpenAI's Python SDK sends it through `extra_body`): the input is cut to
 the limit and returns a normal vector, with nothing in the response to say

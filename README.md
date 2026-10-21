@@ -20,6 +20,7 @@ POST /v1/classify           Core ML classifiers, on macOS (vLLM's /classify cont
 POST /v1/rerank, /rerank    Core ML cross-encoder rerankers, on macOS (vLLM's / Jina's shape)
 POST /v2/rerank             the same, in Cohere's v2 shape
 POST /v2/embed              the embedders, in Cohere's v2 embed shape
+POST /tokenize, /detokenize an embedder's or text classifier's tokenizer (vLLM's shape)
 GET  /v1/models             what this machine can serve: each model's backend and
                             longest input (max_seq_len)
 GET  /health                availability per tier, and why when unavailable
@@ -204,6 +205,56 @@ A model whose own `tokenizer.json` truncates is refused past that point
 too. Under `END` it stops there, and if that were fewer tokens than
 `max_seq_len`, `/v1/models` wouldn't show it. LFM2.5-Embedding-350M's
 truncates at 512, which is also its `max_seq_len`.
+
+### Tokenize
+
+`POST /tokenize` and `POST /detokenize` are vLLM's (and SGLang's), for
+embedders and text-classification models. They let a client count a
+text's tokens with the model's own tokenizer, and ask whether the model
+will take it, before it embeds it:
+
+```sh
+curl -s localhost:8790/tokenize -H 'content-type: application/json' -d '{
+  "model": "bge-small-en-v1.5", "prompt": "How do I reset my password?"
+}'
+```
+
+```json
+{"count": 9, "max_model_len": 512, "tokens": [101, 2129, 2079, 1045, 25141, 2026, 20786, 1029, 102], "fits": true}
+```
+
+`fits`, an extension, is the answer to "will `/v1/embeddings` take this
+text whole?": the route's own check, run on the text, under the default
+`truncate: NONE`. Use it rather than comparing `count` with
+`max_model_len`. The route also refuses a text by its size in bytes (see
+above), and some text is far more bytes per token than English. A run
+of Thai, Lao, Khmer or Burmese with no spaces can be a single unknown
+token to a WordPiece vocabulary, so it fits by count and not by size.
+A text of nothing but spaces counts no tokens at all. An empty text
+is refused by a Core ML or ONNX model that adds no special tokens.
+
+`count` is the number `/v1/embeddings` compares with the limit. It
+includes the special tokens and the prompt prefix, which `input_type`
+chooses by `/v1/embeddings`' names or `/v2/embed`'s (`query` or
+`search_query`; `document`, the default, `passage` or `search_document`).
+The text is never truncated, so a text over the limit is counted in full.
+`max_model_len` is that limit: the model's `max_seq_len` from
+`/v1/models`, or lower when the model's own `tokenizer.json` truncates
+sooner (D44). `max_tokens`, `/v2/embed`'s, makes `fits` measure against
+it instead, as `/v2/embed` with `truncate: "NONE"` does.
+`add_special_tokens: false` leaves the special tokens out of `count` and
+`tokens` (not out of `fits`), and `return_token_strs: true` adds each
+token's vocabulary entry as `token_strs`. `/detokenize` takes `{model,
+tokens}` and returns `{prompt}`, special tokens kept.
+
+For a text-classification model, `count` and `fits` are `/v1/classify`'s,
+without `truncate_prompt_tokens`, which refuses a text over 16 bytes per
+token of the limit by its size. Rerankers and zero-shot models are a 400:
+their inputs are pairs, or a text laid out with the request's labels, not
+one text on its own. So is `messages`, vLLM's chat form, since these
+models have no chat template. The chat model is a 400 too, because
+Foundation Models reports token counts but not token ids. The routes
+aren't mounted under `/v1/`, as in vLLM and SGLang (D44).
 
 ### Classification
 

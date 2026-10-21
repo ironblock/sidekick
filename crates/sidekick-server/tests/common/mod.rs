@@ -14,7 +14,7 @@ use sidekick_core::{
     ClassifyTask, DeltaSink, Error, FinishReason, ModelInfo, ModelRegistry, NliPair, NliPairs, PairParams, Prepared,
     ProblemType, Result, Source, Usage,
 };
-use sidekick_server::{build_router, AppState, ClassifierPool, EmbedderPool};
+use sidekick_server::{build_router, AppState, ClassifierPool, EmbedderPool, TokenizerPool};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
@@ -756,6 +756,7 @@ pub fn test_state_scanned(chat_available: bool, api_key: Option<&str>, options: 
         chat: Arc::new(MockChat { available: chat_available, info_delay: Duration::ZERO }),
         embedders: Arc::new(EmbedderPool::embedders(registry.clone(), Duration::from_secs(60))),
         classifiers: Arc::new(classifiers),
+        tokenizers: Arc::new(TokenizerPool::tokenizers(registry.clone(), Duration::from_secs(60))),
         registry,
         classifiers_supported: true,
         chat_model: Default::default(),

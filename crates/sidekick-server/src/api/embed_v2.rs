@@ -35,18 +35,7 @@ pub async fn embed_v2(
     if texts.len() > MAX_TEXTS {
         return Err(ApiError::invalid(format!("{} texts exceed the maximum of {MAX_TEXTS}", texts.len())));
     }
-    // Cohere requires `input_type`; vLLM makes it optional. Absent, the
-    // document prefix applies, as on /v1/embeddings (a deliberate default).
-    let purpose = match req.input_type.as_deref() {
-        None | Some("search_document") | Some("document") => EmbedPurpose::Document,
-        Some("search_query") | Some("query") => EmbedPurpose::Query,
-        Some(other) => {
-            return Err(ApiError::invalid(format!(
-                "unsupported input_type `{other}`: embedders here declare prompts for \
-                 `search_query` (`query`) and `search_document` (`document`) only"
-            )))
-        }
-    };
+    let purpose = purpose(req.input_type.as_deref())?;
     let types: Vec<String> = req.embedding_types.clone().unwrap_or_else(|| vec!["float".into()]);
     if types.is_empty() {
         return Err(ApiError::invalid("`embedding_types` must not be empty"));
@@ -63,19 +52,7 @@ pub async fn embed_v2(
         }
     }
     let truncate = truncate(req.truncate.as_deref())?;
-    // As in vLLM: positive, and within the model's maximum.
-    let model_max = state.registry.get(&req.model).map(|m| m.manifest.max_seq_len).unwrap_or(usize::MAX);
-    let max_tokens = match req.max_tokens {
-        None => None,
-        Some(n) if n >= 1 && (n as u64) <= model_max as u64 => Some(n as usize),
-        Some(n) if n >= 1 => {
-            return Err(ApiError::invalid(format!(
-                "max_tokens {n} exceeds model `{}`'s maximum of {model_max} tokens",
-                req.model
-            )))
-        }
-        Some(n) => return Err(ApiError::invalid(format!("max_tokens must be positive (got {n})"))),
-    };
+    let max_tokens = max_tokens(&state, &req.model, req.max_tokens)?;
     pooling::check_priority(&req.priority)?;
     let request_id = match headers.get("x-request-id") {
         Some(h) => h
@@ -169,6 +146,35 @@ pub async fn embed_v2(
         })
         .into_response(),
     ))
+}
+
+/// `input_type` on /v2/embed, and its names on /tokenize: which of the
+/// model's prompt prefixes applies. Cohere requires it; vLLM makes it
+/// optional. Absent, the document prefix applies, as on /v1/embeddings (a
+/// deliberate default).
+pub(super) fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
+    match input_type {
+        None | Some("search_document") | Some("document") => Ok(EmbedPurpose::Document),
+        Some("search_query") | Some("query") => Ok(EmbedPurpose::Query),
+        Some(other) => Err(ApiError::invalid(format!(
+            "unsupported input_type `{other}`: embedders here declare prompts for \
+             `search_query` (`query`) and `search_document` (`document`) only"
+        ))),
+    }
+}
+
+/// `max_tokens` on /v2/embed, and on /tokenize: as in vLLM, positive, and
+/// within the model's maximum.
+pub(super) fn max_tokens(state: &AppState, model: &str, value: Option<i64>) -> Result<Option<usize>, ApiError> {
+    let model_max = state.registry.get(model).map(|m| m.manifest.max_seq_len).unwrap_or(usize::MAX);
+    match value {
+        None => Ok(None),
+        Some(n) if n >= 1 && (n as u64) <= model_max as u64 => Ok(Some(n as usize)),
+        Some(n) if n >= 1 => Err(ApiError::invalid(format!(
+            "max_tokens {n} exceeds model `{model}`'s maximum of {model_max} tokens"
+        ))),
+        Some(n) => Err(ApiError::invalid(format!("max_tokens must be positive (got {n})"))),
+    }
 }
 
 /// Cohere's `truncate`, spelled as Cohere spells it: `END` (the default)

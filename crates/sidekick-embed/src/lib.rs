@@ -10,6 +10,9 @@
 //!   text-classification, a reranker, or zero-shot in laya's or GLiNER2's
 //!   format. Its tokenization ([`InputBuilder`], [`laya`], [`gliner2`]) is
 //!   platform-neutral.
+//! - [`tokenize::ModelTokenizer`]: an embedder's or classifier's tokenizer
+//!   without its weights, counting as its route does (the daemon's
+//!   `/tokenize`, D44).
 
 pub mod classify_input;
 pub mod embed_input;
@@ -20,7 +23,9 @@ pub mod laya;
 pub mod onnx;
 pub mod placement;
 mod pooling;
+mod shared;
 mod static_embedder;
+pub mod tokenize;
 
 pub use classify_input::InputBuilder;
 pub use pooling::{degenerate, mean_pool, normalize_in_place, pool};

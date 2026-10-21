@@ -124,6 +124,27 @@ impl ClassifierPool {
     }
 }
 
+/// Models' tokenizers on their own, for `/tokenize` and `/detokenize`:
+/// without the models' weights, kept while in use as the models are. A
+/// tokenizer is the same copy its model holds when the model is resident
+/// (`EmbedInput::shared`, `InputBuilder::shared`), and concurrent first
+/// requests load it once.
+pub type TokenizerPool = ModelPool<sidekick_embed::tokenize::ModelTokenizer>;
+
+impl TokenizerPool {
+    /// The registry's embedders' and classifiers' tokenizers.
+    pub fn tokenizers(registry: Arc<ModelRegistry>, idle_ttl: Duration) -> Self {
+        use sidekick_embed::tokenize::ModelTokenizer;
+        Self::new("tokenizer", idle_ttl, move |id| {
+            let tokenizer = match registry.get(id) {
+                Ok(model) => ModelTokenizer::embedder(model)?,
+                Err(_) => ModelTokenizer::classifier(registry.classifier(id)?)?,
+            };
+            Ok(Arc::new(tokenizer))
+        })
+    }
+}
+
 impl<T: ?Sized + Send + Sync + 'static> ModelPool<T> {
     pub fn new(
         kind: &'static str,

@@ -6,14 +6,11 @@
 //! normalize. No context, no attention — a floor tier that works on any
 //! hardware in microseconds.
 
-use crate::embed_input::{
-    each_input, encode, no_room, too_big, too_long, Limit, Tokenizers, REJECT_BYTES_PER_TOKEN,
-};
+use crate::embed_input::{each_input, encode, no_room, EmbedInput, Limit};
 use crate::pooling::normalize_in_place;
 use half::f16;
 use sidekick_core::manifest::ResolvedModel;
 use sidekick_core::{EmbedLimits, EmbedPurpose, Embedder, Error, Result, Truncate};
-use tokenizers::Tokenizer;
 
 pub struct StaticEmbedder {
     id: String,
@@ -21,9 +18,10 @@ pub struct StaticEmbedder {
     matryoshka: Vec<usize>,
     /// `[vocab * dims]`, row-major.
     table: Vec<f32>,
-    tokenizers: Tokenizers,
-    prefix_query: String,
-    prefix_document: String,
+    /// The tokenizer and prompt prefixes, without special tokens: a static
+    /// model averages the text's own token rows. `NONE` and the request's
+    /// limits are checked by the code every backend shares.
+    input: std::sync::Arc<EmbedInput>,
     max_seq_len: usize,
 }
 
@@ -58,46 +56,16 @@ impl StaticEmbedder {
                 )))
             }
         };
-        let mut tokenizer = Tokenizer::from_file(model.tokenizer_path())
-            .map_err(|e| Error::Tokenizer(e.to_string()))?;
-        // A tokenizer.json may pad every input to a fixed length
-        // (all-MiniLM ships padding to 128): the pads would be averaged in
-        // as text. One input is never padded.
-        tokenizer.with_padding(None);
+        // EmbedInput turns a tokenizer.json's padding off: a pad would be
+        // averaged in as text (all-MiniLM ships padding to 128).
         Ok(Self {
             id: m.id.clone(),
             dims: m.dims,
             matryoshka: m.matryoshka.clone(),
             table,
-            tokenizers: Tokenizers::new(tokenizer)?,
-            prefix_query: m.prefixes.query.clone(),
-            prefix_document: m.prefixes.document.clone(),
+            input: EmbedInput::shared(model)?,
             max_seq_len: m.max_seq_len,
         })
-    }
-
-    fn prefix(&self, purpose: EmbedPurpose) -> &str {
-        match purpose {
-            EmbedPurpose::Query => &self.prefix_query,
-            EmbedPurpose::Document => &self.prefix_document,
-        }
-    }
-
-    /// The checks of `limits` that don't depend on the input, made before
-    /// any input is named, as `EmbedInput::check_limits` makes them.
-    fn check_limits(&self, purpose: EmbedPurpose, limits: EmbedLimits) -> Result<()> {
-        if limits.max_tokens == Some(0) {
-            return Err(Error::InvalidRequest("max_tokens must be at least 1".into()));
-        }
-        let prefix = self.prefix(purpose);
-        if limits.truncate == Truncate::Start && !prefix.is_empty() {
-            let max = Limit::new(self.tokenizers.limit(self.max_seq_len), limits.max_tokens).tokens();
-            let kept = encode(self.tokenizers.whole(), prefix, false)?.len();
-            if kept >= max {
-                return Err(no_room(max, kept));
-            }
-        }
-        Ok(())
     }
 
     /// Prefix, tokenize, and truncate (or refuse) one input. `END` uses the
@@ -107,19 +75,20 @@ impl StaticEmbedder {
         if limits.max_tokens == Some(0) {
             return Err(Error::InvalidRequest("max_tokens must be at least 1".into()));
         }
-        let prefix = self.prefix(purpose);
+        let prefix = self.input.prefix(purpose);
+        let tokenizers = &self.input.tokenizers;
         // Byte caps bound tokenizer work on the text; the prefix stays whole.
         let ids = match limits.truncate {
             Truncate::End => {
                 let max = limits.max_tokens.unwrap_or(self.max_seq_len).min(self.max_seq_len);
                 let text = format!("{prefix}{}", crate::byte_cap(text, max));
-                let all = encode(self.tokenizers.shipped(), &text, false)?.get_ids().to_vec();
+                let all = encode(tokenizers.shipped(), &text, false)?.get_ids().to_vec();
                 all.into_iter().take(max).collect()
             }
             Truncate::Start => {
-                let max = Limit::new(self.tokenizers.limit(self.max_seq_len), limits.max_tokens).tokens();
+                let max = Limit::new(tokenizers.limit(self.max_seq_len), limits.max_tokens).tokens();
                 let text = format!("{prefix}{}", crate::classify_input::byte_cap_end(text, max));
-                let encoding = encode(self.tokenizers.whole(), &text, false)?;
+                let encoding = encode(tokenizers.whole(), &text, false)?;
                 let all = encoding.get_ids();
                 // The prompt prefix's tokens stay whole, then the text's end.
                 let kept = encoding.get_offsets().iter().take_while(|(start, _)| *start < prefix.len()).count();
@@ -129,17 +98,7 @@ impl StaticEmbedder {
                     n => all[..kept].iter().chain(&all[n - (max - kept)..]).copied().collect(),
                 }
             }
-            Truncate::Reject => {
-                let limit = Limit::new(self.tokenizers.limit(self.max_seq_len), limits.max_tokens);
-                if text.len() > limit.tokens().saturating_mul(REJECT_BYTES_PER_TOKEN) {
-                    return Err(too_big(&self.id, text.len(), limit));
-                }
-                let encoding = encode(self.tokenizers.whole(), &format!("{prefix}{text}"), false)?;
-                if encoding.len() > limit.tokens() {
-                    return Err(too_long(&self.id, encoding.len(), limit));
-                }
-                encoding.get_ids().to_vec()
-            }
+            Truncate::Reject => self.input.whole(text, purpose, limits, self.max_seq_len)?,
         };
         Ok(ids)
     }
@@ -196,7 +155,7 @@ impl Embedder for StaticEmbedder {
     ) -> Result<Vec<Vec<f32>>> {
         // Every input first, as the other backends do: one refused input
         // refuses the request.
-        self.check_limits(purpose, limits)?;
+        self.input.check_limits(purpose, limits, self.max_seq_len)?;
         let ids = each_input(texts, |t| self.ids(purpose, t, limits))?;
         Ok(ids.iter().map(|ids| self.lookup(ids)).collect())
     }
@@ -322,7 +281,8 @@ mod tests {
     #[test]
     fn truncate_none_refuses_the_request_naming_the_input() {
         let dir = std::env::temp_dir().join(format!("sk-static-none-{}", std::process::id()));
-        let mut e = StaticEmbedder::load(&fixture(&dir)).unwrap();
+        let model = fixture(&dir);
+        let mut e = StaticEmbedder::load(&model).unwrap();
         let none = EmbedLimits { truncate: Truncate::Reject, max_tokens: Some(2) };
         let message = |r: Result<Vec<Vec<f32>>>| match r {
             Err(Error::InvalidRequest(m)) => m,
@@ -332,9 +292,11 @@ mod tests {
         assert!(m.starts_with("input 1: 3 tokens, over max_tokens 2, and truncate is NONE"), "{m}");
         // A tokenizer that truncates on its own, at 2: END keeps its first
         // 2 tokens, START the text's last 2, and NONE refuses the input.
-        let mut tokenizer = e.tokenizers.shipped().clone();
+        let mut tokenizer = e.input.tokenizers.shipped().clone();
         tokenizer.with_truncation(Some(tokenizers::TruncationParams { max_length: 2, ..Default::default() })).unwrap();
-        e.tokenizers = Tokenizers::new(tokenizer).unwrap();
+        let mut input = EmbedInput::load(&model).unwrap();
+        input.tokenizers = crate::embed_input::Tokenizers::new(tokenizer).unwrap();
+        e.input = std::sync::Arc::new(input);
         let end = e.embed(&["world hello hello"], EmbedPurpose::Document).unwrap();
         assert!(end[0][1] > 0.5, "world, hello: {:?}", end[0]);
         let start = EmbedLimits { truncate: Truncate::Start, max_tokens: None };

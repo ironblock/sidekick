@@ -5,6 +5,7 @@ pub mod embeddings;
 pub mod misc;
 pub mod pooling;
 pub mod rerank;
+pub mod tokenize;
 pub mod embed_v2;
 pub mod wire;
 
@@ -31,13 +32,17 @@ pub fn build_router(state: AppState) -> Router {
         // Cohere's v2 shapes.
         .route("/v2/rerank", post(rerank::rerank_v2))
         .route("/v2/embed", post(embed_v2::embed_v2))
+        // vLLM's and SGLang's paths; neither mounts them under /v1/.
+        .route("/tokenize", post(tokenize::tokenize))
+        .route("/detokenize", post(tokenize::detokenize))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
         .merge(api)
         .route("/health", get(misc::health))
         // axum's default; stated explicitly because it is what bounds the
-        // tokenizer cost of one embeddings request.
+        // tokenizer cost of one embeddings request, and the text /tokenize
+        // counts.
         .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(state)
 }

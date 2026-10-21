@@ -1,11 +1,16 @@
 //! One embedding input as token ids: the purpose's prompt prefix, the
-//! tokenizer, and truncation (`max_tokens`, `truncate`). Shared by the
-//! Core ML and ONNX backends, which then differ only in how they run the
-//! ids (D40). Platform-neutral.
+//! tokenizer, and truncation (`max_tokens`, `truncate`). Shared by every
+//! embedding backend, which then differ only in how they run the ids
+//! (D40), and by the daemon's `/tokenize`. Platform-neutral.
 
+use crate::shared::Shared;
 use sidekick_core::manifest::ResolvedModel;
-use sidekick_core::{EmbedLimits, EmbedPurpose, Error, Result, Truncate};
+use sidekick_core::{EmbedLimits, EmbedPurpose, EmbeddingBackendKind, Error, Result, Truncate};
+use std::sync::{Arc, LazyLock};
 use tokenizers::{Tokenizer, TruncationDirection};
+
+/// Every model's input in use, shared by its backend and `/tokenize`.
+static INPUTS: LazyLock<Shared<EmbedInput>> = LazyLock::new(Shared::default);
 
 /// Under truncate `NONE`, a text longer than this many bytes per token of
 /// its limit is refused without being tokenized. Generous, so that text
@@ -18,22 +23,51 @@ pub(crate) const REJECT_BYTES_PER_TOKEN: usize = 64;
 pub struct EmbedInput {
     /// The model's id, for errors.
     model: String,
-    tokenizers: Tokenizers,
+    pub(crate) tokenizers: Tokenizers,
     prefix_query: String,
     prefix_document: String,
-    /// Special tokens the tokenizer adds around one input.
+    /// Whether the model's inputs carry the tokenizer's special tokens. A
+    /// static model's don't: it averages the text's own token rows.
+    special_tokens: bool,
+    /// Whether an input with no tokens is a 400. A Core ML or ONNX model
+    /// can't run an empty sequence; a static model embeds it (as zeros).
+    refuse_empty: bool,
+    /// Special tokens the tokenizer adds around one input (0 without them).
     added_tokens: usize,
 }
 
 impl EmbedInput {
+    /// The model's input, as its backend embeds with it: the copy already
+    /// in use (by its backend, or by the daemon's `/tokenize`), or a new
+    /// one. Every backend and `/tokenize` get it this way, so the two count
+    /// alike and hold one tokenizer between them.
+    pub fn shared(model: &ResolvedModel) -> Result<Arc<Self>> {
+        INPUTS.get_or_load(&model.dir, crate::shared::fingerprint(&model.manifest), || Self::load(model))
+    }
+
+    /// A copy of its own, outside the cache.
     pub fn load(model: &ResolvedModel) -> Result<Self> {
         let m = &model.manifest;
         let tokenizer = Tokenizer::from_file(model.tokenizer_path())
             .map_err(|e| Error::Tokenizer(e.to_string()))?;
-        Self::new(&m.id, tokenizer, &m.prefixes.query, &m.prefixes.document)
+        let is_static = m.backend == EmbeddingBackendKind::Static;
+        let mut input = Self::with_specials(&m.id, tokenizer, &m.prefixes.query, &m.prefixes.document, !is_static)?;
+        input.refuse_empty = !is_static;
+        Ok(input)
     }
 
-    fn new(model: &str, mut tokenizer: Tokenizer, prefix_query: &str, prefix_document: &str) -> Result<Self> {
+    #[cfg(test)]
+    fn new(model: &str, tokenizer: Tokenizer, prefix_query: &str, prefix_document: &str) -> Result<Self> {
+        Self::with_specials(model, tokenizer, prefix_query, prefix_document, true)
+    }
+
+    fn with_specials(
+        model: &str,
+        mut tokenizer: Tokenizer,
+        prefix_query: &str,
+        prefix_document: &str,
+        special_tokens: bool,
+    ) -> Result<Self> {
         // A tokenizer.json may pad every input to a fixed length
         // (all-MiniLM ships padding to 128), and every returned token is
         // marked real in the attention mask: the pads would be read as
@@ -42,7 +76,7 @@ impl EmbedInput {
         // Measured with padding off, or a padding tokenizer would count its
         // pads as added tokens.
         let added_tokens = tokenizer
-            .encode("", true)
+            .encode("", special_tokens)
             .map_err(|e| Error::Tokenizer(e.to_string()))?
             .len();
         Ok(Self {
@@ -50,11 +84,13 @@ impl EmbedInput {
             tokenizers: Tokenizers::new(tokenizer)?,
             prefix_query: prefix_query.to_string(),
             prefix_document: prefix_document.to_string(),
+            special_tokens,
+            refuse_empty: true,
             added_tokens,
         })
     }
 
-    fn prefix(&self, purpose: EmbedPurpose) -> &str {
+    pub(crate) fn prefix(&self, purpose: EmbedPurpose) -> &str {
         match purpose {
             EmbedPurpose::Query => &self.prefix_query,
             EmbedPurpose::Document => &self.prefix_document,
@@ -84,7 +120,9 @@ impl EmbedInput {
     /// `max_tokens` and `longest`: keeping the start (`END`, the final
     /// token preserved), the end (`START`: the first token preserved, since
     /// a tokenizer's leading special token is what CLS pooling reads), or a
-    /// 400 (`NONE`).
+    /// 400 (`NONE`). The Core ML and ONNX backends' input; the static
+    /// backend truncates its own way and shares only `NONE`
+    /// (`whole`).
     pub fn ids(&self, text: &str, purpose: EmbedPurpose, limits: EmbedLimits, longest: usize) -> Result<Vec<i32>> {
         if limits.max_tokens == Some(0) {
             return Err(Error::InvalidRequest("max_tokens must be at least 1".into()));
@@ -97,7 +135,7 @@ impl EmbedInput {
             Truncate::End => {
                 let max = limits.max_tokens.unwrap_or(longest).min(longest);
                 let text = format!("{prefix}{}", crate::byte_cap(text, max));
-                truncate_preserving_last(encode(self.tokenizers.shipped(), &text, true)?.get_ids(), max)
+                truncate_preserving_last(encode(self.tokenizers.shipped(), &text, self.special_tokens)?.get_ids(), max)
             }
             // The rest see the whole text, under the tokenizer's own limit
             // as well as the model's.
@@ -112,25 +150,95 @@ impl EmbedInput {
                     keep_prefix_and_end(self.tokenizers.whole(), self.added_tokens, &text, prefix.len(), max)?
                 }
             }
-            Truncate::Reject => {
-                let limit = Limit::new(self.tokenizers.limit(longest), limits.max_tokens);
-                if text.len() > limit.tokens().saturating_mul(REJECT_BYTES_PER_TOKEN) {
-                    return Err(too_big(&self.model, text.len(), limit));
-                }
-                let encoding = encode(self.tokenizers.whole(), &format!("{prefix}{text}"), true)?;
-                if encoding.len() > limit.tokens() {
-                    return Err(too_long(&self.model, encoding.len(), limit));
-                }
-                encoding.get_ids().iter().map(|&u| u as i32).collect()
-            }
+            Truncate::Reject => self.whole(text, purpose, limits, longest)?.iter().map(|&u| u as i32).collect(),
         };
         // A tokenizer that adds no special tokens gives nothing for an empty
         // text: a bad request, not a model failure.
         if ids.is_empty() {
-            return Err(Error::InvalidRequest("the input has no tokens to embed".into()));
+            return Err(no_tokens());
         }
         Ok(ids)
     }
+
+    /// `NONE`: the whole input's ids, or a 400 ([`check_whole`](Self::check_whole)).
+    pub(crate) fn whole(&self, text: &str, purpose: EmbedPurpose, limits: EmbedLimits, longest: usize) -> Result<Vec<u32>> {
+        Ok(self.check_whole(text, purpose, limits.max_tokens, longest)?.get_ids().to_vec())
+    }
+
+    /// `NONE`'s verdict on one input: its whole encoding, special tokens
+    /// and prompt prefix included, or the 400 every backend refuses it
+    /// with. A `max_tokens` of 0; a text of more than
+    /// [`REJECT_BYTES_PER_TOKEN`] bytes per token of the limit (the lower
+    /// of `longest`, the tokenizer's own limit and `max_tokens`), refused
+    /// without being tokenized; more tokens than the limit; or none, for a
+    /// model that can't run an empty input. The one check behind every
+    /// backend's `NONE` and the daemon's `/tokenize` `fits`.
+    pub fn check_whole(
+        &self,
+        text: &str,
+        purpose: EmbedPurpose,
+        max_tokens: Option<usize>,
+        longest: usize,
+    ) -> Result<tokenizers::Encoding> {
+        if max_tokens == Some(0) {
+            return Err(Error::InvalidRequest("max_tokens must be at least 1".into()));
+        }
+        let limit = Limit::new(self.tokenizers.limit(longest), max_tokens);
+        if text.len() > limit.tokens().saturating_mul(REJECT_BYTES_PER_TOKEN) {
+            return Err(too_big(&self.model, text.len(), limit));
+        }
+        let encoding = self.tokenize(text, purpose, true)?;
+        if encoding.len() > limit.tokens() {
+            return Err(too_long(&self.model, encoding.len(), limit));
+        }
+        if encoding.is_empty() && self.refuse_empty {
+            return Err(no_tokens());
+        }
+        Ok(encoding)
+    }
+
+    /// The whole input as `NONE` counts it, however long: the purpose's
+    /// prompt prefix, then the text, by the tokenizer without its own
+    /// truncation, with the special tokens the model's inputs carry (none
+    /// for a static model) unless `add_special_tokens` is false. The
+    /// daemon's `/tokenize` reports this, so its count is the one
+    /// `/v1/embeddings` compares with the limit. No byte bound: the caller
+    /// bounds the text.
+    pub fn tokenize(&self, text: &str, purpose: EmbedPurpose, add_special_tokens: bool) -> Result<tokenizers::Encoding> {
+        let text = format!("{}{text}", self.prefix(purpose));
+        encode(self.tokenizers.whole(), &text, add_special_tokens && self.special_tokens)
+    }
+
+    /// The most tokens `NONE` accepts for a model whose limit is `longest`:
+    /// that, or the tokenizer's own limit when its tokenizer.json
+    /// truncates at fewer.
+    pub fn limit(&self, longest: usize) -> usize {
+        self.tokenizers.limit(longest)
+    }
+
+    /// Token ids back to text, special tokens kept. An id outside the
+    /// vocabulary is a 400.
+    pub fn decode(&self, ids: &[u32]) -> Result<String> {
+        decode(self.tokenizers.whole(), ids)
+    }
+}
+
+/// The 400 for an input with no tokens, which a Core ML or ONNX model
+/// can't run.
+fn no_tokens() -> Error {
+    Error::InvalidRequest("the input has no tokens to embed".into())
+}
+
+/// `ids` as text by `tokenizer`, special tokens kept, or a 400 naming the
+/// first id it has no token for.
+pub(crate) fn decode(tokenizer: &Tokenizer, ids: &[u32]) -> Result<String> {
+    if let Some(id) = ids.iter().find(|&&id| tokenizer.id_to_token(id).is_none()) {
+        return Err(Error::InvalidRequest(format!(
+            "token id {id} isn't in the model's vocabulary of {} tokens",
+            tokenizer.get_vocab_size(true)
+        )));
+    }
+    tokenizer.decode(ids, false).map_err(|e| Error::Tokenizer(e.to_string()))
 }
 
 /// A model's tokenizer as its tokenizer.json ships it, and, when that
@@ -382,6 +490,37 @@ mod tests {
         // A tokenizer limit above the model's: the model's applies.
         let e = input(Some(64)).ids("a b c d e f", EmbedPurpose::Document, NONE, 6).unwrap_err();
         assert!(message(e).starts_with("8 tokens, over model `tiny`'s limit of 6 tokens"));
+    }
+
+    #[test]
+    fn tokenize_counts_what_none_compares_with_the_limit() {
+        // A tokenizer that keeps 5 tokens on its own: tokenize counts the
+        // whole text, the number NONE's 400 names, and limit is the 5.
+        let tok = EmbedInput::new("tiny", tokenizer(Some(5)), "", "question : ").unwrap();
+        let text = "a b c d e f";
+        assert_eq!(tok.tokenize(text, EmbedPurpose::Document, true).unwrap().len(), 10);
+        assert_eq!(tok.tokenize(text, EmbedPurpose::Query, true).unwrap().len(), 8, "no query prefix");
+        assert_eq!(tok.tokenize(text, EmbedPurpose::Document, false).unwrap().len(), 8, "no special tokens");
+        assert_eq!(tok.limit(32), 5);
+        let e = tok.ids(text, EmbedPurpose::Document, NONE, 32).unwrap_err();
+        assert!(message(e).starts_with("10 tokens, over model `tiny`'s limit of 5 tokens"));
+        // At the limit, NONE's ids are tokenize's.
+        let at = tok.tokenize("a", EmbedPurpose::Document, true).unwrap();
+        let ids: Vec<i32> = at.get_ids().iter().map(|&u| u as i32).collect();
+        assert_eq!((ids.len(), tok.ids("a", EmbedPurpose::Document, NONE, 32).unwrap()), (5, ids));
+        // NONE's verdict, the one /tokenize's `fits` reports: past the
+        // byte bound (one token: a run without spaces), and no tokens.
+        let e = tok.check_whole(&"x".repeat(5 * 64 + 1), EmbedPurpose::Query, None, 32).unwrap_err();
+        assert!(message(e).starts_with("321 bytes, more than the 320 bytes"));
+        assert_eq!(tok.check_whole("a", EmbedPurpose::Query, Some(3), 32).unwrap().len(), 3);
+        assert!(tok.check_whole("a b", EmbedPurpose::Query, Some(3), 32).is_err(), "max_tokens");
+        let bare = EmbedInput::with_specials("tiny", tokenizer(None), "", "", false).unwrap();
+        assert_eq!(message(bare.check_whole("", EmbedPurpose::Document, None, 32).unwrap_err()), "the input has no tokens to embed");
+        // A static model's inputs carry no special tokens.
+        let plain = EmbedInput::with_specials("tiny", tokenizer(None), "", "", false).unwrap();
+        assert_eq!(plain.tokenize(text, EmbedPurpose::Document, true).unwrap().len(), 6);
+        assert_eq!(plain.decode(&[1, 2]).unwrap(), "[CLS] [SEP]");
+        assert!(message(plain.decode(&[9999]).unwrap_err()).starts_with("token id 9999 isn't in the model's vocabulary"));
     }
 
     #[test]
