@@ -649,25 +649,27 @@ length in the smallest bucket that fits it, padded. ms per input:
   read 20–70 throughout, inflated by another user session's waiting threads
   while the CPU stayed about 80% idle; re-running 6, 8 and 10 threads
   reproduced the numbers to within 7%. The M4 Max wasn't idle either
-  (load average 9–12 during its run), so its row is provisional.
+  (load average 9–14 during its run), so its row is provisional.
 
   Except on the M4 Max (below), latency roughly halves with each doubling
   up to 4–8 threads, then flattens, even with 32 cores. Simultaneous
-  multithreading adds nothing, and more threads than fast cores make it worse: on the M1 Max, 10 threads
-  (adding its two efficiency cores, ONNX Runtime's own default) is twice as
-  slow as 8, and the Xeon at 24 threads is 2.5–3.4× slower. Only a model as large as
-  Qwen3-Embedding keeps gaining past 8 threads on a machine with more fast
-  cores (Threadripper: 277 ms at 16 threads against 335 at 8).
-- **SME on the M4 Max.** The M4's CPU has SME2, and on it ONNX Runtime
-  1.28.3 ran onnx-cpu's fp32 matrix multiplies on KleidiAI's SME2 kernels
-  rather than its own MLAS kernels. In a 10 s `sample` of sidekickd serving
-  Qwen3-Embedding-0.6B a stream of long documents (about 2,400 tokens
-  each), KleidiAI's SME2 fp32 matmul kernel
+  multithreading adds nothing, and more threads than fast cores make it
+  worse: on the M1 Max, 10 threads (adding its two efficiency cores, ONNX
+  Runtime's own default) is twice as slow as 8, and the Xeon at 24 threads
+  is 2.5–3.4× slower. Only a model as large as Qwen3-Embedding keeps
+  gaining past 8 threads on a machine with more fast cores (Threadripper:
+  277 ms at 16 threads against 335 at 8).
+- **SME on the M4 Max.** The M4's CPU has SME2. Serving
+  Qwen3-Embedding-0.6B there, ONNX Runtime 1.28.3 ran the model's fp32
+  matrix multiplies on KleidiAI's SME2 kernels rather than its own MLAS
+  kernels. In a 10 s `sample` of sidekickd serving a stream of long
+  documents (about 2,400 tokens each), KleidiAI's SME2 fp32 matmul kernel
   (`kai_run_matmul_clamp_f32_f32p2vlx1_f32p2vlx1biasf32_sme2_mopa`) took
-  about 47% of the samples in ONNX Runtime's library, KleidiAI's SME
-  packing kernels ran beside it, and no MLAS frame appeared in the whole
-  capture. One thread through sidekickd embeds the ~290-token input above
-  in 208 ms, against 2,125 ms on the M1 Max.
+  27,208 of the 62,130 samples in ONNX Runtime's library, about 44%. The
+  share is higher if the 30,015 samples at unnamed addresses in the
+  library are the same kernel. KleidiAI's SME packing kernels ran beside
+  it, and no MLAS frame appeared in the whole capture. The other models
+  weren't sampled.
 - **Threads on the M4 Max** don't follow the other machines' pattern.
   Median ms through sidekickd, short (16 tokens) / long (~290 tokens), the
   same method as the table above:
@@ -680,18 +682,30 @@ length in the smallest bucket that fits it, padded. ms per input:
   - Qwen3-Embedding's long input was fastest at 2 threads, 6–15% ahead of
     4, 8 and 12. A second run reproduced that (128 ms at 2, 154–217 at
     4–12). Its short input was fastest at 8.
-  - bge-small-en-v1.5 was fastest at 8 threads at both lengths, like the
-    M1 Max's best.
+  - bge-small-en-v1.5's long input was fastest at 8 threads, as on the M1
+    Max. Its short input was effectively tied at 4 and 8 (the M1 Max's
+    short-input best was 6).
   - 16 threads, which adds the four efficiency cores, was the slowest
-    multi-threaded setting for both models.
+    multi-threaded setting for bge-small-en-v1.5 and for Qwen3-Embedding's
+    short input. On Qwen3-Embedding's long input it was slower than one
+    thread (213 against 208 ms).
   - sidekickd's default there is 12 threads for Qwen3-Embedding (its 12
     performance cores, under the model's raised cap) and 8 for the
     others. In this run 12 threads were 6% slower than the best on the
     long input and 25% on the short one.
-  - The machine wasn't idle: load average 9–12 during this run, and 10–24
+  - The machine wasn't idle: load average 9–14 during this run, and 10–24
     during the second, whose settings above 2 threads were slower. Treat
     these timings as provisional, and measure on your own machine
     (`tools/bench_threads.py`) before choosing a thread count there.
+  - Against the M1 Max's run (the table above, load average 21–71), the
+    M4 Max was 2.9× faster on Qwen3-Embedding's long input at each
+    machine's best setting (124 against 358 ms), 2.6× faster at 8 threads
+    (140 against 358), and 10× faster on one thread (208 against 2,125).
+    bge-small-en-v1.5's long input on one thread: 26 against 121 ms
+    (4.8×). The chips are three generations apart, and no M4 run without
+    KleidiAI's kernels exists, so how much of the gap SME accounts for
+    isn't isolated. Both machines were busy, and the M1 Max's sweep wasn't
+    re-run apart from its 6, 8 and 10 thread settings.
 - Batching helps little on the CPU: a batch of 8 costs 0.9–1.0× per input
   at 256 tokens and 0.6–0.8× at 16.
 - x86-64 latency is from the thread table only.
