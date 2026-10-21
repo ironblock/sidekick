@@ -3,7 +3,8 @@
 //!
 //! The count is the one the model's route compares with its limit: for an
 //! embedder, the prompt prefix `input_type` selects (by /v1/embeddings' or
-//! /v2/embed's names, with their default, the document prefix), the text,
+//! /v2/embed's names, with their default, the document prefix) or the
+//! named prompt `prompt_name` selects (D45), the text,
 //! and the special tokens the backend adds, by the code and the tokenizer
 //! the backend uses. It is never truncated: a text past the limit is
 //! counted whole, a tokenizer.json's own truncation included. `fits` is the
@@ -58,26 +59,28 @@ pub async fn tokenize(
     let Some(prompt) = req.prompt else {
         return Err(ApiError::invalid("`prompt` is required"));
     };
-    let options = match model.kind {
-        Kind::Embedder => MeasureOptions {
-            purpose: Some(purpose(req.input_type.as_deref())?),
-            max_tokens: embed_v2::max_tokens(&state, &req.model, req.max_tokens)?,
-            ..Default::default()
-        },
-        Kind::Classifier if req.input_type.is_some() || req.max_tokens.is_some() => {
+    let (chosen, max_tokens) = match model.kind {
+        Kind::Embedder => (
+            Some(embeddings::prompt(&state, &req.model, req.input_type.as_deref(), req.prompt_name, purpose)?),
+            embed_v2::max_tokens(&state, &req.model, req.max_tokens)?,
+        ),
+        Kind::Classifier if req.input_type.is_some() || req.prompt_name.is_some() || req.max_tokens.is_some() => {
             return Err(ApiError::invalid(format!(
-                "input_type and max_tokens are embedding models' options; model `{}` is a classifier",
+                "input_type, prompt_name and max_tokens are embedding models' options; model `{}` is a classifier",
                 req.model
             )))
         }
-        Kind::Classifier => MeasureOptions::default(),
+        Kind::Classifier => (None, None),
     };
-    let options = MeasureOptions {
-        add_special_tokens: req.add_special_tokens.unwrap_or(true),
-        token_strs: req.return_token_strs.unwrap_or(false),
-        ..options
-    };
+    let add_special_tokens = req.add_special_tokens.unwrap_or(true);
+    let token_strs = req.return_token_strs.unwrap_or(false);
     let (max_model_len, measured) = run(&state, &req.model, prompt.len(), move |t| {
+        let options = MeasureOptions {
+            purpose: chosen.as_ref().map(embeddings::Prompt::purpose),
+            max_tokens,
+            add_special_tokens,
+            token_strs,
+        };
         Ok((t.max_model_len(), t.measure(&prompt, options)?))
     })
     .await?;
@@ -110,7 +113,7 @@ pub async fn detokenize(
 /// `input_type` by /v1/embeddings' names or /v2/embed's, which map alike:
 /// `query`, `search_query`; `document` (the default), `passage`,
 /// `search_document`; and `none`, no prompt.
-fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
+fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose<'static>, ApiError> {
     embeddings::purpose(input_type).or_else(|_| embed_v2::purpose(input_type)).map_err(|_| {
         ApiError::invalid(format!(
             "unsupported input_type `{}` (use `query` or `search_query`; `document`, `passage` or \

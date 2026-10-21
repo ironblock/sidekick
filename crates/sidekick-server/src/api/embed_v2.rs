@@ -3,7 +3,7 @@
 
 use super::wire::*;
 use super::deadline::{signal, Deadline, Work};
-use super::{model_task, pooling, wrong_route, ApiError, ApiJson, Provenance};
+use super::{embeddings, model_task, pooling, wrong_route, ApiError, ApiJson, Provenance};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -35,7 +35,7 @@ pub async fn embed_v2(
     if texts.len() > MAX_TEXTS {
         return Err(ApiError::invalid(format!("{} texts exceed the maximum of {MAX_TEXTS}", texts.len())));
     }
-    let purpose = purpose(req.input_type.as_deref())?;
+    let prompt = embeddings::prompt(&state, &req.model, req.input_type.as_deref(), req.prompt_name.clone(), purpose)?;
     let types: Vec<String> = req.embedding_types.clone().unwrap_or_else(|| vec!["float".into()]);
     if types.is_empty() {
         return Err(ApiError::invalid("`embedding_types` must not be empty"));
@@ -97,7 +97,7 @@ pub async fn embed_v2(
         let task = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
             let mut tx = Some(loaded_tx);
-            embedder.embed_staged(&refs, purpose, limits, &mut |b| signal(&mut tx, b))
+            embedder.embed_staged(&refs, prompt.purpose(), limits, &mut |b| signal(&mut tx, b))
         });
         deadline.finish(loaded, task, "embed").await?
     };
@@ -152,16 +152,18 @@ pub async fn embed_v2(
 /// model's prompt prefixes applies. Cohere requires it; vLLM makes it
 /// optional. Absent, the document prefix applies, as on /v1/embeddings (a
 /// deliberate default). `none`, sidekick's, applies none (D9). Cohere's
-/// `classification` and `clustering` are refused: no manifest declares a
-/// prompt for them, and a client that has its own sends `none`.
-pub(super) fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
+/// `classification` and `clustering` are refused: they name no prompt of a
+/// model's own, so a client sends the model's named prompt by
+/// `prompt_name` (D45), or `none` with its own.
+pub(super) fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose<'static>, ApiError> {
     match input_type {
         None | Some("search_document") | Some("document") => Ok(EmbedPurpose::Document),
         Some("search_query") | Some("query") => Ok(EmbedPurpose::Query),
         Some("none") => Ok(EmbedPurpose::Raw),
         Some(other) => Err(ApiError::invalid(format!(
             "unsupported input_type `{other}`: embedders here declare prompts for \
-             `search_query` (`query`) and `search_document` (`document`) only; send `none` for no prompt"
+             `search_query` (`query`) and `search_document` (`document`) only; omit it and send `prompt_name` \
+             for one of the model's named prompts (its `named_prompts` in /v1/models), or send `none` for no prompt"
         ))),
     }
 }

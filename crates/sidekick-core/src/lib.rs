@@ -25,7 +25,7 @@ pub use classify::{
     activate, check_hypothesis_template, nli_value, ClassifyParams, ClassifyTask, Classifier, NliPair, NliPairs, PairParams,
     Prepared, ProblemType, QuestionType, Source, TruncationSide,
 };
-pub use embed::{truncate_normalized, EmbedLimits, EmbedPurpose, Embedder, Truncate};
+pub use embed::{named_prompt, truncate_normalized, EmbedLimits, EmbedPurpose, Embedder, Truncate};
 pub use error::{Error, Result};
 pub use manifest::{
     ane_weight_refusal, artifact_files, calibration_key, Chunking, AneWeightLimit, ClassifierManifest, ClassifyFormat, ComputeUnits,

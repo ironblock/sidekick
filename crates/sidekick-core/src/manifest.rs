@@ -390,6 +390,12 @@ pub struct ModelManifest {
     /// Prompt prefixes some models require (e.g. EmbeddingGemma).
     #[serde(default)]
     pub prefixes: Prefixes,
+    /// Named prompts, by name: the checkpoint's sentence-transformers
+    /// `prompts` (config_sentence_transformers.json), which a request
+    /// chooses by `prompt_name` in place of an `input_type` prefix (D45).
+    /// Names match exactly, case included.
+    #[serde(default)]
+    pub prompts: std::collections::BTreeMap<String, String>,
     /// Where the weights came from (`sidekick-model: <id>@<revision>`).
     #[serde(default)]
     pub source: Option<Source>,
@@ -1341,6 +1347,9 @@ fn validate_embedder(m: &ModelManifest) -> std::result::Result<(), String> {
     }
     if m.dims == 0 {
         return Err("dims must be > 0".into());
+    }
+    if m.prompts.contains_key("") {
+        return Err("`[prompts]` has a prompt with an empty name".into());
     }
     if let Some(&first) = m.matryoshka.first() {
         if first != m.dims {
@@ -2539,6 +2548,33 @@ max_seq_len = 512
         assert_eq!(g.manifest.io.input_ids, "input_ids");
         assert!(g.artifact_path().ends_with("gemma/model.mlpackage"));
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn the_committed_embedder_manifests_read_and_validate() {
+        // examples/manifests: what converters install. Their named prompts
+        // are the checkpoints' (D45).
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/manifests");
+        let mut named = std::collections::BTreeMap::new();
+        for entry in std::fs::read_dir(&root).unwrap() {
+            let path = entry.unwrap().path().join("manifest.toml");
+            let m: ModelManifest = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            validate_embedder(&m).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            named.insert(m.id.clone(), m.prompts.len());
+        }
+        assert_eq!(named["embeddinggemma-2"], 20);
+        assert_eq!(named["embeddinggemma-300m"], 14);
+        assert_eq!(named["bge-small-en-v1.5"], 0);
+    }
+
+    #[test]
+    fn a_prompt_needs_a_name() {
+        let m: ModelManifest = toml::from_str(
+            "id = \"m\"\nbackend = \"static\"\nartifact = \"a\"\ntokenizer = \"t\"\ndims = 4\nmax_seq_len = 8\n\
+             [prompts]\n\"\" = \"x\"\n",
+        )
+        .unwrap();
+        assert_eq!(validate_embedder(&m).unwrap_err(), "`[prompts]` has a prompt with an empty name");
     }
 
     #[test]

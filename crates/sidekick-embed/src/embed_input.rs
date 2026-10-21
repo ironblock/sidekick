@@ -5,7 +5,8 @@
 
 use crate::shared::Shared;
 use sidekick_core::manifest::ResolvedModel;
-use sidekick_core::{EmbedLimits, EmbedPurpose, EmbeddingBackendKind, Error, Result, Truncate};
+use sidekick_core::{named_prompt, EmbedLimits, EmbedPurpose, EmbeddingBackendKind, Error, Result, Truncate};
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 use tokenizers::{Tokenizer, TruncationDirection};
 
@@ -19,13 +20,15 @@ static INPUTS: LazyLock<Shared<EmbedInput>> = LazyLock::new(Shared::default);
 /// they tokenize at 16 per token instead (`byte_cap`).
 pub(crate) const REJECT_BYTES_PER_TOKEN: usize = 64;
 
-/// A model's tokenizer and prompt prefixes.
+/// A model's tokenizer and prompts.
 pub struct EmbedInput {
     /// The model's id, for errors.
     model: String,
     pub(crate) tokenizers: Tokenizers,
     prefix_query: String,
     prefix_document: String,
+    /// The manifest's named prompts (`[prompts]`), by name.
+    prompts: BTreeMap<String, String>,
     /// Whether the model's inputs carry the tokenizer's special tokens. A
     /// static model's don't: it averages the text's own token rows.
     special_tokens: bool,
@@ -53,6 +56,7 @@ impl EmbedInput {
         let is_static = m.backend == EmbeddingBackendKind::Static;
         let mut input = Self::with_specials(&m.id, tokenizer, &m.prefixes.query, &m.prefixes.document, !is_static)?;
         input.refuse_empty = !is_static;
+        input.prompts = m.prompts.clone();
         Ok(input)
     }
 
@@ -84,29 +88,35 @@ impl EmbedInput {
             tokenizers: Tokenizers::new(tokenizer)?,
             prefix_query: prefix_query.to_string(),
             prefix_document: prefix_document.to_string(),
+            prompts: BTreeMap::new(),
             special_tokens,
             refuse_empty: true,
             added_tokens,
         })
     }
 
-    pub(crate) fn prefix(&self, purpose: EmbedPurpose) -> &str {
+    /// The prompt `purpose` puts before each text: a prefix, none, or a
+    /// named prompt. A name the model doesn't have is a 400 that lists the
+    /// names it has.
+    pub(crate) fn prefix(&self, purpose: EmbedPurpose) -> Result<&str> {
         match purpose {
-            EmbedPurpose::Query => &self.prefix_query,
-            EmbedPurpose::Document => &self.prefix_document,
-            EmbedPurpose::Raw => "",
+            EmbedPurpose::Query => Ok(&self.prefix_query),
+            EmbedPurpose::Document => Ok(&self.prefix_document),
+            EmbedPurpose::Raw => Ok(""),
+            EmbedPurpose::Named(name) => named_prompt(&self.model, &self.prompts, name),
         }
     }
 
     /// The checks of `limits` that don't depend on the input, so that a
     /// backend refuses a request for them before naming any input: a
     /// `max_tokens` of 0, or one that leaves `START` no room for text after
-    /// the prompt prefix. `ids` makes them too.
+    /// the prompt prefix, or a prompt name the model doesn't have. `ids`
+    /// makes them too.
     pub fn check_limits(&self, purpose: EmbedPurpose, limits: EmbedLimits, longest: usize) -> Result<()> {
         if limits.max_tokens == Some(0) {
             return Err(Error::InvalidRequest("max_tokens must be at least 1".into()));
         }
-        let prefix = self.prefix(purpose);
+        let prefix = self.prefix(purpose)?;
         if limits.truncate == Truncate::Start && !prefix.is_empty() {
             let max = Limit::new(self.tokenizers.limit(longest), limits.max_tokens).tokens();
             let tokens = encode(self.tokenizers.whole(), prefix, false)?.len();
@@ -128,7 +138,7 @@ impl EmbedInput {
         if limits.max_tokens == Some(0) {
             return Err(Error::InvalidRequest("max_tokens must be at least 1".into()));
         }
-        let prefix = self.prefix(purpose);
+        let prefix = self.prefix(purpose)?;
         // Byte caps bound tokenizer work on the text; the prefix stays whole.
         let ids = match limits.truncate {
             // With the tokenizer as shipped, its own truncation included:
@@ -146,8 +156,8 @@ impl EmbedInput {
                 if prefix.is_empty() {
                     truncate_preserving_first(encode(self.tokenizers.whole(), &text, true)?.get_ids(), max)
                 } else {
-                    // The model's prompt prefix stays whole: the model was
-                    // never trained without it.
+                    // The model's prompt prefix stays whole, a named
+                    // prompt's too: the model was never trained without it.
                     keep_prefix_and_end(self.tokenizers.whole(), self.added_tokens, &text, prefix.len(), max)?
                 }
             }
@@ -206,7 +216,7 @@ impl EmbedInput {
     /// `/v1/embeddings` compares with the limit. No byte bound: the caller
     /// bounds the text.
     pub fn tokenize(&self, text: &str, purpose: EmbedPurpose, add_special_tokens: bool) -> Result<tokenizers::Encoding> {
-        let text = format!("{}{text}", self.prefix(purpose));
+        let text = format!("{}{text}", self.prefix(purpose)?);
         encode(self.tokenizers.whole(), &text, add_special_tokens && self.special_tokens)
     }
 
@@ -553,6 +563,52 @@ mod tests {
         // Without truncation in the tokenizer, START is as it was.
         let start = input(None).ids(text, EmbedPurpose::Document, START, 5).unwrap();
         assert_eq!(start, vec![1, t("f"), t("g"), t("h"), 2]);
+    }
+
+    /// laya's test tokenizer with no prefixes and one named prompt,
+    /// `STS`: "question : ".
+    fn named(at: Option<usize>) -> EmbedInput {
+        let mut input = EmbedInput::new("tiny", tokenizer(at), "", "").unwrap();
+        input.prompts = [("STS".to_string(), "question : ".to_string())].into();
+        input
+    }
+
+    #[test]
+    fn a_named_prompt_goes_before_the_text_as_a_prefix_does() {
+        let t = |w| crate::laya::tests::tokenizer().token_to_id(w).unwrap() as i32;
+        let sts = EmbedPurpose::Named("STS");
+        // Its ids are the prefix's: the same prompt as a document prefix.
+        let prefixed = EmbedInput::new("tiny", tokenizer(None), "", "question : ").unwrap();
+        for limits in [NONE, START, END] {
+            assert_eq!(
+                named(None).ids("a b", sts, limits, 32).unwrap(),
+                prefixed.ids("a b", EmbedPurpose::Document, limits, 32).unwrap(),
+            );
+        }
+        assert_eq!(named(None).tokenize("a b", sts, true).unwrap().len(), 6);
+        // START keeps it whole, as sidekick's own prompt: [CLS], the
+        // prompt, the text's last 2 words, [SEP].
+        let start = named(None).ids("a b c d e f", sts, START, 6).unwrap();
+        assert_eq!(start, vec![1, t("question"), t(":"), t("e"), t("f"), 2]);
+        // The same when the tokenizer truncates on its own.
+        let start = named(Some(6)).ids("a b c d e f g h", sts, START, 32).unwrap();
+        assert_eq!(start, vec![1, t("question"), t(":"), t("g"), t("h"), 2]);
+        // And a max_tokens it fills is refused before any input.
+        let tight = EmbedLimits { max_tokens: Some(4), ..START };
+        let e = named(None).check_limits(sts, tight, 32).unwrap_err();
+        assert_eq!(message(e), "max_tokens 4 leaves no room for text after the model's 2-token prompt prefix");
+    }
+
+    #[test]
+    fn a_prompt_name_must_be_the_models_exactly() {
+        for purpose in [EmbedPurpose::Named("sts"), EmbedPurpose::Named("query")] {
+            let e = named(None).ids("a", purpose, END, 32).unwrap_err();
+            assert!(message(e).contains("(its prompts: `STS`)"));
+            assert!(named(None).check_limits(purpose, END, 32).is_err());
+            assert!(named(None).tokenize("a", purpose, true).is_err());
+        }
+        let e = input(None).ids("a", EmbedPurpose::Named("STS"), NONE, 32).unwrap_err();
+        assert!(message(e).starts_with("model `tiny` has no named prompts"));
     }
 
     #[test]
