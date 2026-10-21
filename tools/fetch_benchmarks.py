@@ -139,8 +139,11 @@ def query_scores(con, results, models, cells):
         order by 1, 2, 3, 4""").fetchall()
 
 
-def aggregate(rows, cells, pin):
-    """One benchmark's entry for one model, from its query rows."""
+def choose(rows, cells, pin):
+    """{task: (revision, score, trained_on)} from one model's query rows on
+    one benchmark: per task, the first revision with every cell present, in
+    the order sidekick's pin, then a run before a model card's import, then
+    the revision with the most tasks."""
     per_rev = collections.Counter(r[3] for r in rows)
 
     def priority(rev):
@@ -151,6 +154,12 @@ def aggregate(rows, cells, pin):
     for _, _, task, rev, score, n, trained in sorted(rows, key=lambda r: priority(r[3])):
         if n == need[task]:            # a task counts only with every cell present
             chosen.setdefault(task, (rev, score, trained))
+    return chosen
+
+
+def aggregate(rows, cells, pin):
+    """One benchmark's entry for one model, from its query rows."""
+    chosen = choose(rows, cells, pin)
     types = {c[0]: c[1] for c in cells}
     metrics = {c[0]: c[4] for c in cells}
     categories = {}

@@ -38,6 +38,17 @@ Inputs:
   category, metric, source (pinned to a revision) and the date it was
   read; a category mean must cover all of its tasks. `--check` refuses one
   that doesn't.
+- docs/data/mteb_transfer.json (tools/mteb_transfer.py): MTEB tasks run
+  through sidekick's builds beside their published scores, published as
+  `benchmarks.transfer`, and as docs/MODELS.md's findings, whose every
+  figure is computed from it. `--check` refuses a run without its
+  provenance (revision, path, cap, build, chip, OS, mteb version, date), a
+  cap other than the committed manifest's, compute units other than the
+  path's, published scores from another results revision than
+  benchmarks.mteb.json's or that disagree between paths, a model card's
+  source on a run's revision (or the reverse), and a score without a run,
+  its task's metric, or a count of inputs over the cap that its longest
+  input agrees with.
 
 It also writes the data tables in docs/MODELS.md from the results file
 (those between `<!-- generated: NAME -->` markers), and checks the
@@ -839,11 +850,190 @@ def category_order(name):
     return (CATEGORIES.index(name) if name in CATEGORIES else len(CATEGORIES), name)
 
 
+# --- MTEB scores measured on sidekick's builds -------------------------------
+#
+# docs/data/mteb_transfer.json, written by tools/mteb_transfer.py: MTEB tasks
+# run through sidekickd (each build's tokenizer, graph and input cap) and
+# through sentence-transformers in fp32 (the adapter check), beside the
+# published score for the same model and task, read from the same pinned
+# mteb/results commit as benchmarks.mteb.json.
+
+TRANSFER = DATA / "mteb_transfer.json"
+TRANSFER_PATHS = ["reference", "coreml-ane", "coreml-gpu", "coreml-cpu", "onnx-cpu"]
+# What /v1/models reports for each build path.
+PATH_UNITS = {"coreml-ane": ("coreml", "cpu_and_ne"), "coreml-gpu": ("coreml", "cpu_and_gpu"),
+              "coreml-cpu": ("coreml", "cpu_only"), "onnx-cpu": ("onnx", "cpu")}
+# mteb/results revisions that hold scores imported from a model card
+# (tools/fetch_benchmarks.py's MODEL_CARD).
+MODEL_CARD_REVISIONS = ("external", "no_revision_available")
+RUN_FIELDS = {"model", "path", "revision", "chip", "os", "mteb_version", "date", "max_seq_len"}
+BUILD_FIELDS = {"backend", "compute_units", "build", "sidekick"}
+SCORE_FIELDS = {"model", "path", "task", "category", "metric", "score", "seconds", "inputs",
+                "published", "published_revision", "published_source", "published_trained_on"}
+BUILD_SCORE_FIELDS = {"over_cap", "longest"}
+REVISION_FIELDS = {"model", "pin", "revision", "files", "runtime", "max_seq_len", "chip", "os", "mteb_version",
+                   "scores"}
+FILE_LISTS = ("same", "different", "only_in_pin", "only_in_revision")
+
+
+def field_problems(w, record, required, optional=()):
+    missing = sorted(k for k in required if blank_text(record.get(k)))
+    extra = sorted(set(record) - set(required) - set(optional))
+    if not (missing or extra):
+        return []
+    return [f"{w}: " + "; ".join(([f"missing {', '.join(missing)}"] if missing else [])
+                                 + ([f"unknown fields {', '.join(extra)}"] if extra else []))]
+
+
+def transfer_problems(data, models, mteb):
+    """docs/data/mteb_transfer.json: what --check refuses."""
+    where = "mteb_transfer.json"
+    problems = []
+    if data.get("scale") != "fraction":
+        problems.append(f"{where}: scale isn't fraction")
+    if data.get("benchmark") not in mteb["benchmarks"]:
+        problems.append(f"{where}: benchmark {data.get('benchmark')!r} isn't one benchmarks.mteb.json collects")
+    if data.get("mteb_version") != mteb["mteb_version"]:
+        problems.append(f"{where}: mteb {data.get('mteb_version')}, the published scores' is {mteb['mteb_version']}")
+    if data.get("results") != mteb["results"]:
+        problems.append(f"{where}: published scores aren't from benchmarks.mteb.json's results revision")
+    problems += check_date(where, data.get("read_on"))
+    tasks, runs, scores = data.get("tasks"), data.get("runs"), data.get("scores")
+    checks = data.get("revision_checks", [])
+    if not isinstance(tasks, dict) or not isinstance(runs, list) or not isinstance(scores, list) or not isinstance(
+            checks, list):
+        return problems + [f"{where}: tasks, runs, scores or revision_checks missing"]
+    for name, t in tasks.items():
+        if not isinstance(t, dict) or not all(isinstance(t.get(k), str) for k in ("category", "metric")) or not all(
+                isinstance(t.get(k), list) and t[k] for k in ("splits", "subsets")):
+            problems.append(f"{where} task {name}: needs category, metric, splits and subsets")
+    caps = build_caps(models)
+    pins = {m: v.get("source", "").partition("@")[2] for m, v in models.items()}
+    have = {}
+    for r in runs:
+        w = f"{where} run ({r.get('model')}, {r.get('path')})"
+        reference = r.get("path") == "reference"
+        wrong = field_problems(w, r, RUN_FIELDS | ({"runtime"} if reference else BUILD_FIELDS))
+        if wrong:
+            problems += wrong
+            continue
+        if r["model"] not in models:
+            problems.append(f"{w}: model isn't in docs/data/models.toml")
+            continue
+        if r["revision"] != pins[r["model"]]:
+            problems.append(f"{w}: revision {r['revision']} isn't the model's pinned source")
+        if r["path"] not in TRANSFER_PATHS:
+            problems.append(f"{w}: path isn't one of {', '.join(TRANSFER_PATHS)}")
+            continue
+        if r["mteb_version"] != mteb["mteb_version"]:
+            problems.append(f"{w}: mteb {r['mteb_version']}, the published scores' is {mteb['mteb_version']}")
+        if not is_int(r["max_seq_len"]) or r["max_seq_len"] < 1:
+            problems.append(f"{w}: max_seq_len {r['max_seq_len']!r} isn't a positive integer")
+        elif not reference and r["max_seq_len"] != cap_of(r, caps):
+            problems.append(f"{w}: max_seq_len {r['max_seq_len']}, the build's committed manifest says "
+                            f"{cap_of(r, caps)}")
+        if not reference and (r["backend"], r["compute_units"]) != PATH_UNITS[r["path"]]:
+            problems.append(f"{w}: served as {r['backend']}/{r['compute_units']}, which isn't {r['path']}")
+        problems += check_date(w, r["date"])
+        if (r["model"], r["path"]) in have:
+            problems.append(f"{w}: listed twice")
+        have[(r["model"], r["path"])] = r
+    seen, published, counts = {}, {}, {}
+    for s in scores:
+        w = f"{where} score ({s.get('model')}, {s.get('path')}, {s.get('task')})"
+        reference = s.get("path") == "reference"
+        wrong = field_problems(w, s, SCORE_FIELDS - {"published", "published_revision", "published_source",
+                                                     "published_trained_on"} | (set() if reference else
+                                                                                BUILD_SCORE_FIELDS),
+                               {"published", "published_revision", "published_source", "published_trained_on"}
+                               | ({"vs_reference"} if not reference else set()))
+        if wrong:
+            problems += wrong
+            continue
+        key = (s["model"], s["path"], s["task"])
+        if key in seen:
+            problems.append(f"{w}: listed twice")
+        seen[key] = s
+        run = have.get((s["model"], s["path"]))
+        if run is None:
+            problems.append(f"{w}: no run describes it")
+        t = tasks.get(s["task"])
+        if t is None:
+            problems.append(f"{w}: task isn't in `tasks`")
+        elif (s["category"], s["metric"]) != (t["category"], t["metric"]):
+            problems.append(f"{w}: category or metric isn't the task's")
+        for k in ("score", "published"):
+            if s.get(k) is not None and (not is_number(s[k]) or not -1 <= s[k] <= 1):
+                problems.append(f"{w}: {k} {s[k]!r} isn't a fraction")
+        if not is_int(s["inputs"]) or s["inputs"] < 1:
+            problems.append(f"{w}: inputs {s['inputs']!r} isn't a positive integer")
+            continue
+        if not reference:
+            if not (is_int(s["over_cap"]) and 0 <= s["over_cap"] <= s["inputs"]):
+                problems.append(f"{w}: over_cap {s['over_cap']!r} isn't from 0 to its {s['inputs']} inputs")
+            elif not is_int(s["longest"]) or s["longest"] < 1:
+                problems.append(f"{w}: longest {s['longest']!r} isn't a positive integer")
+            elif run is not None and (s["over_cap"] > 0) != (s["longest"] > run["max_seq_len"]):
+                problems.append(f"{w}: {s['over_cap']} inputs over the cap, but its longest is {s['longest']} "
+                                f"tokens and the cap {run['max_seq_len']}")
+        pub = tuple(s.get(k) for k in ("published", "published_revision", "published_source",
+                                       "published_trained_on"))
+        if pub[0] is None:
+            if any(v is not None for v in pub[1:]):
+                problems.append(f"{w}: published_revision, _source or _trained_on without a published score")
+        else:
+            if pub[2] not in ("mteb", "model card") or not isinstance(pub[1], str):
+                problems.append(f"{w}: a published score needs its revision and a source of mteb or model card")
+            elif (pub[2] == "model card") != (pub[1] in MODEL_CARD_REVISIONS):
+                problems.append(f"{w}: published_source {pub[2]!r} with revision {pub[1]!r}: a model card's "
+                                f"scores are under {' or '.join(MODEL_CARD_REVISIONS)}, and only they")
+            if not isinstance(pub[3], bool):
+                problems.append(f"{w}: published_trained_on {pub[3]!r} isn't true or false")
+        other = published.setdefault((s["model"], s["task"]), pub)
+        if other != pub:
+            problems.append(f"{w}: published score {pub} isn't the one another path of the model lists, {other}")
+        n = counts.setdefault((s["model"], s["task"]), s["inputs"])
+        if n != s["inputs"]:
+            problems.append(f"{w}: {s['inputs']} inputs, where another path of the model embedded {n}")
+        v = s.get("vs_reference")
+        if v is not None:
+            if not (isinstance(v, dict) and is_int(v.get("inputs")) and all(
+                    is_number(v.get(k)) and -1 <= v[k] <= 1.000001 for k in ("worst_cosine", "mean_cosine"))):
+                problems.append(f"{w}: vs_reference needs inputs, worst_cosine and mean_cosine")
+            elif not 1 <= v["inputs"] <= s["inputs"]:
+                problems.append(f"{w}: vs_reference compares {v['inputs']} inputs, the task has {s['inputs']}")
+            elif (s["model"], "reference", s["task"]) not in {(r["model"], r["path"], s["task"]) for r in runs}:
+                problems.append(f"{w}: vs_reference without a reference run")
+    for c in checks:
+        w = f"{where} revision check ({c.get('model')}, {c.get('revision')})"
+        wrong = field_problems(w, c, REVISION_FIELDS)
+        if wrong:
+            problems += wrong
+            continue
+        if c["model"] not in models or c["pin"] != pins[c["model"]]:
+            problems.append(f"{w}: pin {c['pin']} isn't the model's pinned source")
+        if c["revision"] == c["pin"]:
+            problems.append(f"{w}: the pin itself")
+        f = c["files"]
+        if not isinstance(f, dict) or set(f) != set(FILE_LISTS) or not all(
+                isinstance(f[k], list) and all(isinstance(p, str) for p in f[k]) for k in FILE_LISTS):
+            problems.append(f"{w}: files must list {', '.join(FILE_LISTS)}")
+        for s in c["scores"] if isinstance(c["scores"], list) else [None]:
+            if not (isinstance(s, dict) and set(s) == {"task", "score", "inputs", "date"} and s["task"] in tasks
+                    and is_number(s["score"]) and -1 <= s["score"] <= 1 and is_int(s["inputs"])):
+                problems.append(f"{w}: a score needs a known task, score, inputs and date")
+            else:
+                problems += check_date(w, s["date"])
+    return problems
+
+
 def benchmark_scores(models):
-    """The results file's `benchmarks`, after checking both inputs."""
+    """The results file's `benchmarks`, after checking its inputs."""
     curated = load_toml(BENCH_TOML).get("scores", [])
     mteb = json.loads(BENCH_MTEB.read_text())
-    problems = curated_problems(curated, models) + mteb_problems(mteb, models)
+    transfer = json.loads(TRANSFER.read_text())
+    problems = curated_problems(curated, models) + mteb_problems(mteb, models) + transfer_problems(
+        transfer, models, mteb)
     if problems:
         raise SystemExit("benchmark scores refused:\n  " + "\n  ".join(problems))
     scores = mteb_records(mteb) + curated_records(curated)
@@ -861,6 +1051,7 @@ def benchmark_scores(models):
                  "benchmarks": mteb["benchmarks"]},
         "source_kinds": SOURCE_KINDS,
         "scores": scores,
+        "transfer": {k: v for k, v in transfer.items() if k != "about"},
     }
 
 
@@ -1191,6 +1382,241 @@ def mteb_source(rows, models, bench):
             f"benchmarks as mteb {m['mteb_version']} defines them, read {m['read_on']}."]
 
 
+def points(v):
+    return f"{v * 100:.2f}"
+
+
+def delta(v, ref):
+    d = round(v * 100, 2) - round(ref * 100, 2)
+    return f"{'+' if d > 0 else '−' if d < 0 else '±'}{abs(d):.2f}"
+
+
+def transfer_scores(rows, models, bench):
+    """Each model and task: the published score, then each build's score
+    (and its difference from the published one), and the share of the
+    task's inputs over each build's cap."""
+    t = bench["transfer"]
+    idx = index(rows)
+    caps = {(r["model"], r["path"]): r.get("max_seq_len") for r in t["runs"]}
+    by = {(s["model"], s["path"], s["task"]): s for s in t["scores"]}
+    builds = [p for p in TRANSFER_PATHS[1:] if any(s["path"] == p for s in t["scores"])]
+    out = []
+    for model, m in models.items():
+        for task, meta in t["tasks"].items():
+            cells = [by.get((model, p, task)) for p in builds]
+            if not any(cells):
+                continue
+            first = next(c for c in cells if c)
+            pub = first["published"]
+            pub_text = "" if pub is None else points(pub) + (" (model card)" if first["published_source"] ==
+                                                               "model card" else "")
+            ref = by.get((model, "reference", task))
+            ref_text = "" if ref is None else points(ref["score"]) + (
+                f" ({delta(ref['score'], pub)})" if pub is not None else "")
+            # Every path embeds the same inputs (and the fp32 run too).
+            row = [m["name"], build_grades(idx, model, models)[0], f"{task} ({meta['category']})",
+                   f"{first['inputs']:,}", pub_text, ref_text]
+            over = []
+            for p, c in zip(builds, cells):
+                if c is None:
+                    row.append("")
+                    over.append("")
+                    continue
+                row.append(points(c["score"]) + (f" ({delta(c['score'], pub)})" if pub is not None else ""))
+                share = c["over_cap"] / c["inputs"]
+                over.append(f"{share * 100:.1f}% over {caps[(model, p)]:,}" if c["over_cap"]
+                            else f"none over {caps[(model, p)]:,}")
+            row.append(" / ".join(over))
+            out.append(row)
+    names = {"coreml-ane": "ANE", "coreml-gpu": "GPU", "coreml-cpu": "Core ML CPU", "onnx-cpu": "onnx-cpu"}
+    return table(["model", "grade (M1 Max)", "task (category)", "inputs", "MTEB run", "sentence-transformers fp32, here"]
+                 + [f"sidekick {names[p]}" for p in builds]
+                 + ["inputs over the cap: " + " / ".join(names[p] for p in builds)], out)
+
+
+def vector_cosine(c):
+    """A cosine between two fp32 vectors: within 1e-7 of 1 is all fp32
+    rounding can tell apart."""
+    if 1 - c < 1e-7:
+        return "1.0000000"
+    # Rounded down, so that "at least" stays true of the printed figure.
+    digits = max(5, math.ceil(-math.log10(1 - c)))
+    return f"{math.floor(c * 10 ** digits) / 10 ** digits:.{digits}f}"
+
+
+def transfer_check(rows, models, bench):
+    """The adapter check: each build's vectors against sentence-transformers
+    in fp32, input by input, on the tasks where both were kept."""
+    t = bench["transfer"]
+    by = {(s["model"], s["path"], s["task"]): s for s in t["scores"]}
+    out = []
+    for s in t["scores"]:
+        ref, v = by.get((s["model"], "reference", s["task"])), s.get("vs_reference")
+        if s["path"] == "reference" or ref is None or v is None:
+            continue
+        out.append([models[s["model"]]["name"], s["path"], s["task"], f"{v['inputs']:,}",
+                    "none" if not s["over_cap"] else f"{s['over_cap']:,}", points(ref["score"]),
+                    points(s["score"]), vector_cosine(v["worst_cosine"]), vector_cosine(v["mean_cosine"])])
+    return table(["model", "path", "task", "inputs", "over the cap", "sentence-transformers fp32, here",
+                  "sidekick", "worst cosine", "mean cosine"], out)
+
+
+def transfer_source(rows, models, bench):
+    """Where and how the transfer runs were made, as a sentence."""
+    t = bench["transfer"]
+    builds = [r for r in t["runs"] if r["path"] != "reference"]
+    refs = [r for r in t["runs"] if r["path"] == "reference"]
+    chips = sorted({r["chip"] for r in t["runs"]})
+    oses = sorted({r["os"] for r in t["runs"]})
+    versions = sorted({r["sidekick"] for r in builds})
+    dates = sorted({r["date"] for r in t["runs"]})
+    runtimes = sorted({r["runtime"] for r in refs})
+    return [f"Measured on {', '.join(chips)} ({', '.join(oses)}) with sidekick {', '.join(versions)}, "
+            f"{dates[0]}{' to ' + dates[-1] if dates[-1] != dates[0] else ''}; fp32 run: {'; '.join(runtimes)}. "
+            f"Tasks as mteb {t['mteb_version']} defines {t['benchmark']}; published scores from "
+            f"[mteb/results at {t['results']['revision'][:12]}]({t['results']['url']}). "
+            f"Data: [mteb_transfer.json](data/mteb_transfer.json).", "",
+            "Builds measured (`build`: sha256 over each build's weights, tokenizer and manifest) and each fp32 "
+            "run's context: " + "; ".join(
+                f"{models[m]['name']}: " + ", ".join(
+                    f"{SHORT_TRANSFER[r['path']]} `{r['build']}` ({r['max_seq_len']:,} tokens)"
+                    if r["path"] != "reference" else f"fp32 {r['max_seq_len']:,} tokens"
+                    for r in sorted((r for r in t["runs"] if r["model"] == m),
+                                    key=lambda r: TRANSFER_PATHS.index(r["path"])))
+                for m in dict.fromkeys(r["model"] for r in t["runs"])) + "."]
+
+
+SHORT_TRANSFER = {"coreml-ane": "ANE", "coreml-gpu": "GPU", "coreml-cpu": "Core ML CPU", "onnx-cpu": "onnx-cpu"}
+
+
+def signed(d):
+    """A difference in points, as the tables print it."""
+    d = round(d * 100, 2)
+    return f"{'+' if d > 0 else '−' if d < 0 else '±'}{abs(d):.2f}"
+
+
+def transfer_pairs(t):
+    """(build score, its fp32 reference score, the run, the reference run)
+    for every build score with a reference."""
+    runs = {(r["model"], r["path"]): r for r in t["runs"]}
+    by = {(s["model"], s["path"], s["task"]): s for s in t["scores"]}
+    out = []
+    for s in t["scores"]:
+        ref = by.get((s["model"], "reference", s["task"]))
+        if s["path"] != "reference" and ref is not None:
+            out.append((s, ref, runs[(s["model"], s["path"])], runs[(s["model"], "reference")]))
+    return out
+
+
+def same_tokens(s, run, ref_run):
+    """Whether a build and the fp32 run embed the same tokens: neither
+    cuts anything, or both cut at the same length."""
+    return run["max_seq_len"] == ref_run["max_seq_len"] or (
+        s["over_cap"] == 0 and s["longest"] <= ref_run["max_seq_len"])
+
+
+def transfer_findings(rows, models, bench):
+    """What the measurements show, every figure computed from the data."""
+    t = bench["transfer"]
+    pairs = transfer_pairs(t)
+    clustering = {n for n, m in t["tasks"].items() if m["category"] == "Clustering"}
+    out = []
+    same = [(s, ref) for s, ref, run, rr in pairs if same_tokens(s, run, rr)]
+    parts = []
+    for path in [p for p in TRANSFER_PATHS[1:] if any(s["path"] == p for s, _ in same)]:
+        def gap(pair):
+            s, ref = pair
+            return abs(round(s["score"] * 100, 2) - round(ref["score"] * 100, 2))
+
+        ps = [(s, ref) for s, ref in same if s["path"] == path]
+        # Clustering is set apart only where it moved: its scores rest on a
+        # small sample (the inputs column), so they move with small changes.
+        cl = [p for p in ps if p[0]["task"] in clustering and gap(p) > 0]
+        flat = [p for p in ps if p not in cl]
+        worst = max(map(gap, flat))
+        text = (f"{SHORT_TRANSFER[path]} "
+                + ("scores what the fp32 run scores to every printed digit" if worst == 0
+                   else f"is within {worst:.2f} point of the fp32 run")
+                + f" on {len(flat)} of them")
+        if cl:
+            text += (" and differs on clustering by " + ", ".join(
+                f"{signed(s['score'] - ref['score'])} ({models[s['model']]['name']})" for s, ref in cl))
+        parts.append(text)
+    cosines = [s["vs_reference"]["worst_cosine"] for s in t["scores"] if s.get("vs_reference")]
+    out.append(f"- **Same tokens, same score.** Over the model–task pairs where a build and the fp32 run embed "
+               f"the same tokens (neither cuts an input, or both cut at the same length): {'; '.join(parts)}. "
+               f"Over every input the adapter check compares, the builds' vectors are at least "
+               f"{vector_cosine(min(cosines))} cosine of the fp32 run's.")
+    lines = []
+    checks = {c["model"]: c for c in t.get("revision_checks", [])}
+    for model in dict.fromkeys(s["model"] for s in t["scores"]):
+        pin = next(r["revision"] for r in t["runs"] if r["model"] == model)
+        # Tasks where the fp32 run sees what the MTEB run saw: the same
+        # context, or every input whole. One build row per task stands for
+        # them all: each counts the inputs with the model's own tokenizer.
+        context = next((s["model_context"] for s in bench["scores"] if s["model"] == model
+                        and s["benchmark"] == t["benchmark"] and s["category"] == MEAN), None)
+        whole = list({s["task"]: (s, ref) for s, ref, run, rr in pairs if s["model"] == model
+                      and s["published"] is not None and (
+                          rr["max_seq_len"] == context or s["longest"] <= min(rr["max_seq_len"], context or 0))
+                      }.values())
+        run_pub = [(s, ref) for s, ref in whole if s["published_source"] == "mteb"]
+        card = [(s, ref) for s, ref in whole if s["published_source"] == "model card"]
+        revs = sorted({s["published_revision"] for s, _ in run_pub})
+        if revs == [pin]:
+            where = "MTEB ran it at sidekick's revision"
+        else:
+            where = "MTEB ran it at " + ", ".join(f"revision {r[:8]}" for r in revs if r != pin)
+            c = checks.get(model)
+            if c and c["revision"] in revs:
+                f = c["files"]
+                differ = f["different"] + f["only_in_pin"] + f["only_in_revision"]
+                docs_only = all(p.endswith((".md", ".ipynb")) for p in differ)
+                where += (f", whose files are identical to sidekick's pin's except {' and '.join(differ)}"
+                          + (" (so the same weights, tokenizer and prompts)" if docs_only else "")
+                          if differ else ", whose files are identical to sidekick's pin")
+                for cs in c["scores"]:
+                    ref = next((r for s, r in whole if s["task"] == cs["task"]), None)
+                    if ref is not None:
+                        where += (f"; the fp32 run at that revision scores {points(cs['score'])} on {cs['task']}"
+                                  + (", the same as at the pin" if round(cs["score"], 4) == round(ref["score"], 4)
+                                     else f", against {points(ref['score'])} at the pin"))
+            else:
+                where += ", not compared with sidekick's pin"
+        text = f"{models[model]['name']}: {where}."
+        if run_pub:
+            d = [(abs(round(ref["score"] * 100, 2) - round(s["published"] * 100, 2)), s["task"]) for s, ref in run_pub]
+            top = max(d)
+            text += (f" On its {len(run_pub)} tasks run by MTEB"
+                     + (f" (both runs' context: {context:,} tokens)" if context else "")
+                     + f", the fp32 run is within {top[0]:.2f} of the published score"
+                     + (f" (the largest, {top[1]})" if top[0] >= 0.5 else "") + ".")
+        if card:
+            d = max(abs(round(ref["score"] * 100, 2) - round(s["published"] * 100, 2)) for s, ref in card)
+            text += (f" Its {len(card)} scores imported from the model card differ from the fp32 run by up to "
+                     f"{d:.2f}.")
+        lines.append("  - " + text)
+    out.append("- **The fp32 run against the published scores**, on the tasks where it sees the tokens the MTEB run "
+               "saw:")
+    out += lines
+    return out
+
+
+def transfer_cap(rows, models, bench):
+    """Each build that cut inputs the fp32 run embeds whole (or cut
+    later): its score against the fp32 run's."""
+    t = bench["transfer"]
+    out = []
+    for s, ref, run, rr in transfer_pairs(t):
+        if s["over_cap"] and rr["max_seq_len"] > run["max_seq_len"]:
+            out.append([models[s["model"]]["name"], s["task"], SHORT_TRANSFER[s["path"]], f"{run['max_seq_len']:,}",
+                        f"{s['over_cap']:,} of {s['inputs']:,} ({s['over_cap'] / s['inputs'] * 100:.1f}%)",
+                        f"{s['longest']:,}", f"{rr['max_seq_len']:,}", points(s["score"]), points(ref["score"]),
+                        signed(s["score"] - ref["score"])])
+    return table(["model", "task", "build", "cap", "inputs over the cap", "longest input (tokens)",
+                  "fp32 run's cap", "build", "fp32 run", "difference"], out)
+
+
 TABLES = {"coreml-grades": coreml_grades, "onnx-accuracy": onnx_accuracy, "latency": latency,
           "threads": threads, "memory": memory, "cosine-scale": cosine_scale,
           "classifier-scales": classifier_scales, "prompts": prompts, "named-prompts": named_prompts}
@@ -1199,7 +1625,10 @@ BENCH_TABLES = {"mteb-eng-v2": mteb_table("MTEB(eng, v2)", every_embedder=True),
                 "mteb-multilingual-v2": mteb_table("MTEB(Multilingual, v2)"),
                 "mteb-eng-v1": mteb_table("MTEB(eng, v1)"),
                 "nanobeir-multilingual": mteb_table("NanoBEIR-multilingual"),
-                "self-reported": self_reported, "mteb-source": mteb_source}
+                "self-reported": self_reported, "mteb-source": mteb_source,
+                "mteb-transfer": transfer_scores, "mteb-transfer-check": transfer_check,
+                "mteb-transfer-source": transfer_source, "mteb-transfer-findings": transfer_findings,
+                "mteb-transfer-cap": transfer_cap}
 MARKER = re.compile(r"^( *)<!-- generated: ([a-z0-9-]+) -->$")
 
 
