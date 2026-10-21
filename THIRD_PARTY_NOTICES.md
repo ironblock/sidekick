@@ -50,6 +50,40 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 - **License:** Apache License 2.0 (full text below)
 - **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path; `fixtures/classify/laya-typed-decisions.corpus.toml`, `fixtures/classify/julia-1.corpus.toml` and `fixtures/classify/lumma-fev-0.1b.corpus.toml` reuse that translation for laya-typed-decisions, Julia-1 and Lumma-fev-0.1b. `fixtures/classify/gliner2.5-decide.corpus.toml` sends each of its classification heads as a gliner2-format request, to measure GLiNER2.5-Decide's parity on each compute path. The dataset is fetched when a reference is generated, not committed. As text and as token ids, `fixtures/classify/laya-en.tokens.json`, `laya-typed-decisions.tokens.json`, `julia-1.tokens.json` and `lumma-fev-0.1b.tokens.json` each include three of its rows, and `gliner2.5-decide.tokens.json` two.
 
+## Verification corpus captures
+
+`fixtures/tasks/verification/captures.jsonl` holds the output of command-line tools run on fixtures written for sidekick (`tools/tasks/capture.py`, `fixtures/tasks/verification/recipes.toml`). That output includes the tools' own help and documentation text, and error messages. The tools are not redistributed: `capture.py` downloads the pinned release binaries in `fixtures/tasks/verification/tools.lock.toml` and checks their sha256.
+
+- **jj** ([jj-vcs/jj](https://github.com/jj-vcs/jj)), releases v0.46.0 and v0.30.0: Apache License 2.0 (full text below). The captures include `jj help` pages and the `jj help -k` documentation for bookmarks, config, filesets, glossary, revsets and templates.
+- **dasel** ([TomWright/dasel](https://github.com/TomWright/dasel)), releases v3.11.2 and v2.8.1: MIT License, "Copyright (c) 2020 Tom Wright" (text below).
+- **GitHub CLI** ([cli/cli](https://github.com/cli/cli)), release v2.95.0: MIT License, "Copyright (c) 2019 GitHub Inc." (text below). The captures include `gh --help` pages and help topics.
+- **gh-stack** ([github/gh-stack](https://github.com/github/gh-stack)), release v0.2.1: MIT License, "Copyright GitHub, Inc." (text below).
+- **jq** ([jqlang/jq](https://github.com/jqlang/jq)), release jq-1.7.1: MIT License, "jq is copyright (C) 2012 Stephen Dolan" (text below). The captures hold only jq's output of sidekick's own data.
+
+Host tools also run during capture: git, `/usr/bin/python3` and `/bin/sh`, with the system's `cat`, `ls`, `mkdir` and `sed`. Their output in the captures is git's status, log and diff of sidekick's fixture repositories, one Python traceback of a sidekick fixture, and single-line shell errors.
+
+The MIT License, as it applies to dasel, the GitHub CLI, gh-stack and jq, with each project's copyright line above:
+
+```
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ---
 
                                      Apache License

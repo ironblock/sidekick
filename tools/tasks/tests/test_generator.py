@@ -52,7 +52,7 @@ CFG = {"length": "1k", "position": "middle", "obstacle": "none"}
 
 def flag_claim():
     return {
-        "id": "demo-move-flag", "shape": "tool.flag", "type": "tool", "mechanism": "plain",
+        "id": "demo-move-flag", "shape": "tool.flag", "type": "tool", "mechanism": "plain", "fact": "demo-move-back",
         "text": "gotcha: demo move refuses to move a marker back unless given --allow-back.",
         "value": "--allow-back", "value_c": "--force", "guard": ["--allow-back", "--force"],
         "probes": {"support": ["pass --allow-back", "^  -B, --allow-back$"],
@@ -73,6 +73,7 @@ def flag_claim():
 def sum_claim():
     return {
         "id": "demo-worker-replicas", "shape": "file.replicas", "type": "file", "mechanism": "plain",
+        "fact": "demo-replicas",
         "text": "fact: cfg.toml gives the worker 5 replicas.", "guard": [],
         "probes": {"support": ['^name = "worker"\nreplicas = 5$'], "contradict": ['^name = "worker"\nreplicas = 6$'],
                    "mention": ["replicas"]},
@@ -87,6 +88,7 @@ def sum_claim():
 def sequence_claim():
     return {
         "id": "demo-port-now", "shape": "file.port-now", "type": "file", "mechanism": "sequence",
+        "fact": "demo-port",
         "text": "fact: port.txt now sets port = 7001.", "guard": [], "anchor": "b",
         "probes": {"support": ["^port = 7001$"], "contradict": ["^port = 7000$"], "mention": [r"^port = \d+$"]},
         "block": [
@@ -99,6 +101,7 @@ def sequence_claim():
 def belief_claim():
     return {
         "id": "demo-flag-belief", "shape": "tool.belief", "type": "tool", "mechanism": "supersede", "role": "belief",
+        "fact": "demo-move-back",
         "text": "fact: demo move needs no flag to move a marker back.", "guard": [],
         "probes": {"support": ["demo move needs no flag"], "contradict": ["refusing to move m back"],
                    "mention": ["needs no flag"]},
@@ -134,7 +137,7 @@ class Assembly(unittest.TestCase):
     def test_generate_twice_into_different_roots_is_byte_identical(self):
         claims_toml = "\n".join([
             '[[shape]]', 'id = "tool.flag"', 'type = "tool"',
-            '[[shape.claim]]', 'id = "demo-move-flag"', 'repeat = 0',
+            '[[shape.claim]]', 'id = "demo-move-flag"', 'fact = "demo-move-back"', 'repeat = 0',
             'text = "gotcha: demo move refuses to move a marker back unless given --allow-back."',
             'value = "--allow-back"', 'value_c = "--force"',
             "probes.support = ['pass --allow-back', '^  -B, --allow-back$']",
@@ -177,6 +180,36 @@ class Assembly(unittest.TestCase):
         t = self.build(sequence_claim(), {**CFG, "position": "end"})
         self.assertEqual(t["obstacles"], ["current:sequence"])
         self.build(belief_claim())
+
+    def test_edit_kind_names_how_contradicted_was_made(self):
+        self.assertEqual(self.build(flag_claim())["edit"], "textual")
+        self.assertEqual(self.build(sum_claim())["edit"], "sibling-world")
+        self.assertEqual(self.build(sequence_claim())["edit"], "sibling-world")
+        fab = flag_claim()
+        fab["edit"] = "fabricated"
+        self.assertEqual(self.build(fab)["edit"], "fabricated")
+        spliced = sum_claim()
+        spliced["block"][1]["c_from"] = "demo.cat.new"  # another command's output under `demo sum replicas`
+        spliced["invariants"] = []
+        spliced["probes"]["mention"] = ["replicas = "]
+        self.assertEqual(gen.edit_kind(spliced, self.caps), "spliced")
+        wrong = sum_claim()
+        wrong["edit"] = "fabricated"  # declared, but C has no textual edit
+        with self.assertRaises(gen.Refusal):
+            gen.edit_kind(wrong, self.caps)
+
+    def test_compact_review_is_small_and_complete(self):
+        triples = [self.build(flag_claim()), self.build(sum_claim(), {**CFG, "position": "end"})]
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "review-compact.md"
+            gen.export_compact(triples, path, "test")
+            text = path.read_text()
+        for t in triples:
+            self.assertIn(t["id"], text)
+            self.assertIn(f"**edit:** {t['edit']}", text)
+        self.assertIn("Hint: pass --force", text)
+        self.assertIn("filler blocks: demo.filler", text)
+        self.assertLess(len(text), 20000)
 
     def test_sibling_worlds_never_pad(self):
         pool = gen.filler_pool(flag_claim(), self.caps, CORPUS["filler"]["exclude_worlds"])

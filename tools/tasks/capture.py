@@ -3,8 +3,14 @@
 Runs each world in fixtures/tasks/verification/recipes.toml with the tools
 pinned in tools.lock.toml, under that file's fixed environment, then scrubs
 and scans every output (tools/tasks/scrub.py). Captured output is written to
-`--out` (never committed); what is committed is the recipe, the tool lock
-and captures.lock.json, which holds each capture's sha256 and the set's.
+`--out`; `--update-lock` also copies it to fixtures/tasks/verification/
+captures.jsonl, which is committed beside the recipe, the tool lock and
+captures.lock.json (each capture's sha256 and the set's). With the
+captures committed, generation needs no tools.
+
+Host tools (git, python3, /bin/sh) are not pinned. The lock records their
+versions and which captures depend on each (a world's `host_tools`), and
+`--check` fails if a version differs unless --allow-host-drift is given.
 
     # download the pinned assets (sha256-checked) into a cache directory
     python3 tools/tasks/capture.py fetch --cache <dir>
@@ -51,6 +57,7 @@ FIXTURES = REPO / "fixtures" / "tasks" / "verification"
 TOOLS_LOCK = FIXTURES / "tools.lock.toml"
 RECIPES = FIXTURES / "recipes.toml"
 CAPTURES_LOCK = FIXTURES / "captures.lock.json"
+CAPTURES = FIXTURES / "captures.jsonl"
 CAPTURE_SCHEMA = "sidekick-verification-capture/1"
 COMMAND_TIMEOUT_S = 60
 
@@ -208,7 +215,7 @@ def host_versions(tools_lock: dict, env: dict, root: Path) -> dict:
 
 
 def run(cache: Path, out_dir: Path, root: Path | None, update_lock: bool, check: bool,
-        include_pending: bool = False) -> int:
+        include_pending: bool = False, allow_host_drift: bool = False) -> int:
     tools_lock = load_toml(TOOLS_LOCK)
     recipes = load_toml(RECIPES)
     root = Path(root or recipes["root"])
@@ -253,6 +260,7 @@ def run(cache: Path, out_dir: Path, root: Path | None, update_lock: bool, check:
         "tools_lock_sha256": canon.sha256_file(TOOLS_LOCK),
         "recipes_sha256": canon.sha256_file(RECIPES),
         "host_tools": host_versions(tools_lock, env, root),
+        "host_dependents": host_dependents(recipes, captures),
         "captures": [{"id": c["id"], "sha256": canon.record_sha256(c)} for c in sorted(captures, key=lambda c: c["id"])],
         "set_sha256": set_sha,
     }
@@ -260,13 +268,25 @@ def run(cache: Path, out_dir: Path, root: Path | None, update_lock: bool, check:
     print(f"{len(captures)} captures, set sha256 {set_sha}")
     if update_lock:
         canon.write_json(CAPTURES_LOCK, lock)
-        print(f"wrote {CAPTURES_LOCK.relative_to(REPO)}")
+        CAPTURES.write_bytes((out_dir / "captures.jsonl").read_bytes())
+        print(f"wrote {CAPTURES_LOCK.relative_to(REPO)} and {CAPTURES.relative_to(REPO)}")
     if check:
-        return compare_lock(lock, canon.read_json(CAPTURES_LOCK))
+        return compare_lock(lock, canon.read_json(CAPTURES_LOCK), allow_host_drift)
     return 0
 
 
-def compare_lock(got: dict, want: dict) -> int:
+def host_dependents(recipes: dict, captures: list[dict]) -> dict:
+    """Which captures' output depends on each host tool, from the worlds'
+    `host_tools` declarations."""
+    by_world = {w["id"]: w.get("host_tools", []) for w in recipes["world"]}
+    out: dict[str, list[str]] = {}
+    for c in sorted(captures, key=lambda c: c["id"]):
+        for t in by_world.get(c["world"], []):
+            out.setdefault(t, []).append(c["id"])
+    return out
+
+
+def compare_lock(got: dict, want: dict, allow_host_drift: bool = False) -> int:
     bad = 0
     for key in ("tools_lock_sha256", "recipes_sha256"):
         if got[key] != want[key]:
@@ -274,7 +294,10 @@ def compare_lock(got: dict, want: dict) -> int:
             bad += 1
     for name, v in want.get("host_tools", {}).items():
         if got["host_tools"].get(name) != v:
-            print(f"note: host {name} is {got['host_tools'].get(name)!r}, the lock recorded {v!r}")
+            deps = want.get("host_dependents", {}).get(name, [])
+            print(f"{'note' if allow_host_drift else 'MISMATCH'}: host {name} is {got['host_tools'].get(name)!r}, "
+                  f"the lock recorded {v!r}; {len(deps)} capture(s) depend on it")
+            bad += 0 if allow_host_drift else 1
     g = {c["id"]: c["sha256"] for c in got["captures"]}
     w = {c["id"]: c["sha256"] for c in want["captures"]}
     for cid in sorted(set(g) | set(w)):
@@ -297,6 +320,8 @@ def main(argv=None) -> int:
     r.add_argument("--cache", type=Path, required=True)
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--root", type=Path, help="working root (default: recipes.toml's)")
+    r.add_argument("--allow-host-drift", action="store_true",
+                   help="with --check, report a different host git, python3 or sh instead of failing")
     r.add_argument("--include-pending", action="store_true",
                    help="also run worlds marked pending (they need toolchains outside the frame's PATH)")
     g = r.add_mutually_exclusive_group()
@@ -306,7 +331,7 @@ def main(argv=None) -> int:
     if a.cmd == "fetch":
         fetch(a.cache, load_toml(TOOLS_LOCK))
         return 0
-    return run(a.cache, a.out, a.root, a.update_lock, a.check, a.include_pending)
+    return run(a.cache, a.out, a.root, a.update_lock, a.check, a.include_pending, a.allow_host_drift)
 
 
 if __name__ == "__main__":

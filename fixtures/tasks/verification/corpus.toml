@@ -2,19 +2,22 @@
 #
 # One top-level seed. Every random choice for a triple draws from
 # sha256(seed ‖ claim id ‖ length ‖ position ‖ obstacle), so adding a claim
-# never reshuffles the others. Lengths are approximate tokens (`approx-v1`,
-# tools/tasks/canon.py); each model's own count is measured at run time.
+# never reshuffles the others. Length buckets are approximate: they are set
+# with the `approx-v1` estimate (tools/tasks/canon.py), not any model's
+# tokenizer, and scoring records each checker's real token counts.
 
 schema = "sidekick-verification-corpus/1"
 seed = 133
 max_per_shape = 3      # instances of one claim shape
+max_per_fact = 2       # claims about one underlying fact (claims.toml `fact`)
 dev_share = 0.2        # share of shapes, by seeded hash, in the dev split
 
 [filler]
-# Sibling worlds exist to give a variant its edited output; their captures
-# would disagree with their base world's, so they never pad a haystack.
+# Sibling worlds exist to give a variant its edited output, and old/ worlds to
+# back version-scoped notes. Their captures would disagree with the base
+# worlds', so they never pad a haystack.
 exclude_worlds = ["jj/abandon", "dasel/worker6", "dasel/noservices", "dasel/pool25", "dasel/merge-swap",
-                  "dasel/merge-noport", "gen/service-5180"]
+                  "dasel/merge-noport", "gen/service-5180", "old/jj-0.30", "old/dasel-2"]
 
 [lengths]
 1k = 1000

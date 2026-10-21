@@ -82,7 +82,7 @@
     "claim": {
       "description": "A claim instance after its shape's fields are folded in.",
       "type": "object",
-      "required": ["id", "shape", "type", "mechanism", "text", "probes", "block"],
+      "required": ["id", "shape", "type", "mechanism", "fact", "text", "probes", "block"],
       "additionalProperties": false,
       "properties": {
         "id": {"$ref": "#/$defs/id"},
@@ -90,6 +90,8 @@
         "type": {"enum": ["tool", "environment", "file", "result", "refutation"]},
         "mechanism": {"enum": ["plain", "sequence", "supersede", "precedence", "version", "timestamp"]},
         "role": {"enum": ["belief", "reason"]},
+        "fact": {"$ref": "#/$defs/id", "description": "the underlying fact; at most max_per_fact claims share one"},
+        "edit": {"enum": ["textual", "fabricated"], "description": "what the claim's textual C edits are; default textual"},
         "text": {"type": "string", "minLength": 1},
         "worked": {"type": "boolean"},
         "pending": {"type": "string"},
@@ -105,8 +107,12 @@
           "type": "object", "additionalProperties": false,
           "properties": {"capture": {"$ref": "#/$defs/id"}, "notes": {"type": "array", "items": {"type": "string"}}}}},
         "scoped": {"type": "array", "items": {
-          "type": "object", "required": ["notes"], "additionalProperties": false,
-          "properties": {"notes": {"type": "array", "items": {"type": "string"}}}}},
+          "type": "object", "required": ["notes", "verified_by"], "additionalProperties": false,
+          "properties": {
+            "notes": {"type": "array", "items": {"type": "string"}},
+            "verified_by": {"type": "array", "minItems": 1, "items": {
+              "type": "object", "required": ["capture", "pattern"], "additionalProperties": false,
+              "properties": {"capture": {"$ref": "#/$defs/id"}, "pattern": {"type": "string"}}}}}}},
         "version": {"type": "string"},
         "scope_re": {"type": "string"},
         "time_re": {"type": "string"},
@@ -130,7 +136,7 @@
     "triple": {
       "description": "One generated triple: evidence(v) = segments[0] + slots[0][v] + segments[1] + ... for v in s, c, nm.",
       "type": "object",
-      "required": ["schema", "family", "id", "claim", "split", "config", "obstacles", "haystack_kind", "worked", "tokens", "length_unit", "segments", "slots", "layout", "gold", "edits", "evidence_sha256", "generator"],
+      "required": ["schema", "family", "id", "claim", "split", "config", "obstacles", "haystack_kind", "worked", "tokens", "length_unit", "segments", "slots", "layout", "gold", "edit", "edit_note", "evidence_sha256", "generator"],
       "additionalProperties": false,
       "properties": {
         "schema": {"const": "sidekick-verification-triple/1"},
@@ -166,7 +172,8 @@
         "gold": {
           "type": "object", "additionalProperties": false, "required": ["s", "c", "nm"],
           "properties": {"s": {"const": "SUPPORTED"}, "c": {"const": "CONTRADICTED"}, "nm": {"const": "NOT_MENTIONED"}}},
-        "edits": {"type": "string"},
+        "edit": {"enum": ["sibling-world", "textual", "spliced", "fabricated"]},
+        "edit_note": {"type": "string"},
         "evidence_sha256": {"$ref": "#/$defs/variant_sha"},
         "generator": {"type": "string"}
       }
@@ -195,13 +202,14 @@
     },
     "captures_lock": {
       "type": "object",
-      "required": ["schema", "tools_lock_sha256", "recipes_sha256", "host_tools", "captures", "set_sha256"],
+      "required": ["schema", "tools_lock_sha256", "recipes_sha256", "host_tools", "host_dependents", "captures", "set_sha256"],
       "additionalProperties": false,
       "properties": {
         "schema": {"const": "sidekick-verification-captures-lock/1"},
         "tools_lock_sha256": {"$ref": "#/$defs/sha256"},
         "recipes_sha256": {"$ref": "#/$defs/sha256"},
         "host_tools": {"type": "object", "additionalProperties": {"type": "string"}},
+        "host_dependents": {"type": "object", "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/id"}}},
         "captures": {"type": "array", "minItems": 1, "items": {
           "type": "object", "required": ["id", "sha256"], "additionalProperties": false,
           "properties": {"id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/sha256"}}}},

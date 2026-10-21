@@ -1,14 +1,12 @@
 # Pinned tools and the fixed environment for the verification corpus's
 # capture stage (tools/tasks/capture.py).
 #
-# Each pinned tool is a GitHub release asset. Its sha256 is the release's own
+# Each pinned tool is a GitHub release asset. Unless `digest_source` says
+# otherwise, its sha256 is the release's own
 # per-asset `digest` (GitHub computes it at upload; read it with
 # `gh api repos/OWNER/REPO/releases/tags/TAG`), and the capture stage refuses
 # a download that doesn't match. Assets are for Apple-silicon macOS; a
 # capture made with other assets must be checked against captures.lock.json.
-#
-# Host tools are not downloaded. Their versions are recorded in
-# captures.lock.json, and `capture.py --check` reports a difference.
 
 schema = "sidekick-verification-tools/1"
 platform = "darwin-arm64"
@@ -72,6 +70,66 @@ install = "xdg/gh/extensions/gh-stack/gh-stack"
 manifest = { path = "xdg/gh/extensions/gh-stack/manifest.yml", content = "owner: github\nname: gh-stack\nhost: github.com\ntag: v0.2.1\nispinned: true\npath: \"\"\n" }
 version_cmd = "gh stack --help"
 
+[[tool]]
+name = "jq"
+version = "1.7.1"
+repo = "jqlang/jq"
+tag = "jq-1.7.1"
+licence = "MIT"
+asset = "jq-macos-arm64"
+url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-macos-arm64"
+# This release predates GitHub's per-asset digests; the sha256 is the one
+# the release publishes in its sha256sum.txt.
+sha256 = "0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a"
+digest_source = "the release's sha256sum.txt"
+size = 807984
+extract = { raw = true }
+install = "bin/jq"
+version_cmd = "jq --version"
+
+# Older releases, run only in the `old/…` worlds, whose captures back the
+# version-scoped notes ("under jj 0.30.0 …") with what that version really
+# does. They are installed off PATH and never used as filler.
+
+[[tool]]
+name = "jj-0.30"
+version = "0.30.0"
+repo = "jj-vcs/jj"
+tag = "v0.30.0"
+licence = "Apache-2.0"
+asset = "jj-v0.30.0-aarch64-apple-darwin.tar.gz"
+url = "https://github.com/jj-vcs/jj/releases/download/v0.30.0/jj-v0.30.0-aarch64-apple-darwin.tar.gz"
+sha256 = "160b9c575f279343b8cd9d2fcef74b03d16210d1457da328ceedc3a7a184c4c7"
+digest_source = "GitHub release asset digest"
+size = 8379306
+extract = { tar = "./jj" }
+install = "old/jj-0.30.0/jj"
+version_cmd = "old/jj-0.30.0/jj --version"
+
+[[tool]]
+name = "dasel-2"
+version = "2.8.1"
+repo = "TomWright/dasel"
+tag = "v2.8.1"
+licence = "MIT"
+asset = "dasel_darwin_arm64"
+url = "https://github.com/TomWright/dasel/releases/download/v2.8.1/dasel_darwin_arm64"
+# The last 2.x release predates GitHub's per-asset digests and publishes no
+# checksum file. This sha256 was pinned at first fetch, after checking that
+# the release's separately uploaded dasel_darwin_arm64.gz decompresses to the
+# same bytes.
+sha256 = "cf976164cf5f929abe25b6924285c27db439dbcc58bac923ee0cbc921a463307"
+digest_source = "pinned at first fetch; matches the release's .gz of the same binary"
+size = 12608946
+extract = { raw = true }
+install = "old/dasel-2.8.1/dasel"
+version_cmd = "old/dasel-2.8.1/dasel --version"
+
+# Host tools are not downloaded. Their versions are recorded in
+# captures.lock.json with the captures whose output depends on them, and
+# `capture.py run --check` fails if a version differs (pass
+# --allow-host-drift to compare captures anyway).
+
 [[host_tool]]
 name = "git"
 version_cmd = "git --version"
@@ -81,8 +139,8 @@ name = "python3"
 version_cmd = "python3 --version"
 
 [[host_tool]]
-name = "jq"
-version_cmd = "jq --version"
+name = "sh"
+version_cmd = "/bin/sh --version"
 
 # The fixed environment. `{W}` is the working root (recipes.toml `root`),
 # which the scrubber maps to /work. Every command runs with exactly these

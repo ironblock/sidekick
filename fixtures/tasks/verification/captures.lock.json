@@ -110,7 +110,7 @@
     },
     {
       "id": "gen.env.command-v-jq",
-      "sha256": "8109824728632c54239dbcbf68bd91a7b16c1a3caa8ae3fb1832fb6899ba44b9"
+      "sha256": "a7feab6029a20f7e9416ca96bfa3ce61273eb0a0dc1ae12ea250d89275f2b52b"
     },
     {
       "id": "gen.env.missing-tool",
@@ -727,15 +727,62 @@
     {
       "id": "jj.version",
       "sha256": "c37122e07fa309f4d13f03b61266abc6121d78dba29a35dc8be1df36b6789da0"
+    },
+    {
+      "id": "old.dasel.version-flag",
+      "sha256": "3c8ccc4b47a6e3f02b1507dae3f48c99236f5d2b857bd20e539327fc4e605b37"
+    },
+    {
+      "id": "old.dasel.version-subcommand",
+      "sha256": "0f295f3bd63597040f24ee5a0d34aff984890f24cb4b3c2497912d82279051c8"
+    },
+    {
+      "id": "old.jj.help.kw.filesets",
+      "sha256": "7edfcbeb631c1aa06f361f8ffad10f49028f6cf88d70ea9a6eb066e6a5947c49"
+    },
+    {
+      "id": "old.jj.version",
+      "sha256": "439f695a5d435f366286a970f01cfb2c211fdedeecf50dfd7bfbb478453b29af"
     }
   ],
+  "host_dependents": {
+    "git": [
+      "gh.g5.git-diff",
+      "gh.g5.git-log",
+      "gh.g5.git-status",
+      "gh.g5.stack.rebase",
+      "gh.git-log",
+      "gh.stack.err.submit",
+      "gh.stack.err.submit-draft",
+      "gh.stack.err.switch",
+      "gh.stack.err.version-subcommand",
+      "gh.stack.sync",
+      "gh.stack.version",
+      "gh.stack.view-json",
+      "gh.stack.view-short",
+      "gh.version"
+    ],
+    "python3": [
+      "gen.events.cat",
+      "gen.events.tool-calls",
+      "gen.trace.cat",
+      "gen.trace.run"
+    ],
+    "sh": [
+      "gen.env.command-v",
+      "gen.env.command-v-jq",
+      "gen.env.missing-tool",
+      "gen.env.mkdir-local",
+      "gen.env.mkdir-ro"
+    ]
+  },
   "host_tools": {
     "git": "git version 2.54.0 (Apple Git-157)",
-    "jq": "jq-1.7.1-apple",
-    "python3": "Python 3.9.6"
+    "python3": "Python 3.9.6",
+    "sh": "GNU bash, version 3.2.57(1)-release (arm64-apple-darwin26)"
   },
-  "recipes_sha256": "3ccff4e97ffca626a07aaa9a4895695be92ddd1ade279702ae7d3db98c5df05b",
+  "recipes_sha256": "bf85252f2dbb0f139fecc2343495d0c79786c1d7ad847a5f4d76dc4910ff11a4",
   "schema": "sidekick-verification-captures-lock/1",
-  "set_sha256": "add20f77013bb03b87ce5c83aef51e5aae7d2170afea2fbad373349db7a7f638",
-  "tools_lock_sha256": "27283cf64470fa4349205bbe8c46c5de26f7fedfeb9d40404c0e8bffb5c35b14"
+  "set_sha256": "3cead449352d04064dc5aad1efb85c6f6fb0d66b6d6f6d95eafb95b8cf143bd9",
+  "tools_lock_sha256": "f05b1b7b482156d9370b20a21ebe98c520a4a16d91502c4d8dd6624584f317d6"
 }

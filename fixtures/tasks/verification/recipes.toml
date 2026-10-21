@@ -9,6 +9,11 @@
 # Sibling worlds ("world edits") differ from a base world in exactly one fact,
 # so a contradicted variant whose fact has dependents (a count, a sum, a
 # derived view) comes from really running the tool on the edited input.
+#
+# `host_tools` names the unpinned host tools a world's output depends on
+# (git, python3, /bin/sh); captures.lock.json lists those captures per tool.
+# The host's cat, ls, mkdir and sed also run here; their output in these
+# recipes is file content or one fixed error line.
 
 schema = "sidekick-verification-recipes/1"
 root = "/tmp/skv"
@@ -315,6 +320,7 @@ capture = [
 
 [[world]]
 id = "gh/G3"
+host_tools = ["git"]
 tool = "gh"
 dir = "gs/G3"
 steps = [
@@ -347,6 +353,7 @@ capture = [
 
 [[world]]
 id = "gh/G5"
+host_tools = ["git"]
 tool = "gh"
 dir = "gs/G5"
 steps = [
@@ -469,6 +476,7 @@ capture = [
 # A Python stack trace: a lookup of a key the config lacks.
 [[world]]
 id = "gen/trace"
+host_tools = ["python3"]
 tool = "shell"
 dir = "gen/trace"
 steps = [
@@ -483,6 +491,7 @@ capture = [
 # two of which exited non-zero.
 [[world]]
 id = "gen/events"
+host_tools = ["python3"]
 tool = "shell"
 dir = "gen/events"
 steps = [
@@ -510,6 +519,7 @@ capture = [
 # What the sandbox provides and refuses.
 [[world]]
 id = "gen/env"
+host_tools = ["sh"]
 tool = "shell"
 dir = "gen/env"
 steps = [
@@ -522,6 +532,30 @@ capture = [
   { id = "gen.env.command-v-jq", cmd = "command -v jq", kind = "stdout", exit = 0 },
   { id = "gen.env.mkdir-ro", cmd = "mkdir ro/scratch", kind = "stderr", exit = 1 },
   { id = "gen.env.mkdir-local", cmd = "mkdir .scratch && ls -A", kind = "listing", exit = 0 },
+]
+
+# ------------------------------------------------------- older tool versions
+# What older releases really do, so a note scoped to an older version says
+# what that version did (claims.toml `scoped.verified_by`). Never filler.
+
+[[world]]
+id = "old/jj-0.30"
+tool = "jj"
+dir = "old/jj"
+env = { PATH = "{W}/old/jj-0.30.0:{W}/bin:/usr/bin:/bin" }
+capture = [
+  { id = "old.jj.version", cmd = "jj --version", kind = "stdout", exit = 0 },
+  { id = "old.jj.help.kw.filesets", cmd = "jj help -k filesets", kind = "prose", exit = 0 },
+]
+
+[[world]]
+id = "old/dasel-2"
+tool = "dasel"
+dir = "old/dasel"
+env = { PATH = "{W}/old/dasel-2.8.1:{W}/bin:/usr/bin:/bin" }
+capture = [
+  { id = "old.dasel.version-flag", cmd = "dasel --version", kind = "stdout" },
+  { id = "old.dasel.version-subcommand", cmd = "dasel version", kind = "stdout" },
 ]
 
 # ------------------------------------------------- pending: toolchain recipes

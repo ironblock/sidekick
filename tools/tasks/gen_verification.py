@@ -26,12 +26,19 @@ Every triple passes tools/tasks/hazards.py's checks or is refused, which
 stops the run. The output is canonical JSONL plus a lock; `--check`
 regenerates and compares with the committed lock.
 
-    python3 tools/tasks/gen_verification.py --captures <dir>/captures.jsonl --out <dir> \\
+    python3 tools/tasks/gen_verification.py --out <dir> [--captures <captures.jsonl>] \\
         [--set review] [--update-lock | --check] [--export]
+
+The committed captures (fixtures/tasks/verification/captures.jsonl) are the
+default input, so regeneration needs no tools. Each triple records how its
+CONTRADICTED text came to be (`edit`: sibling-world, textual, spliced or
+fabricated). Length buckets are approximate (`approx-v1`).
 
 `--export` also writes a reviewer's copy: <out>/review/<set>.md (an index),
 one Markdown file per triple with its claim, edits, needle locations and all
-three haystacks, and <out>/review/<set>.jsonl with the expanded evidence.
+three haystacks, <out>/review/<set>.jsonl with the expanded evidence, and
+<out>/review/review-compact.md, a short copy to relay: per triple, each slot
+in all three variants with 8 lines of context and a filler summary.
 """
 
 from __future__ import annotations
@@ -50,6 +57,8 @@ from tasks import canon, hazards, schema, scrub  # noqa: E402
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "fixtures" / "tasks" / "verification"
 GENERATOR = "sidekick-verification-gen/1"
+LENGTH_NOTE = ("Lengths are approximate: buckets are set with the approx-v1 estimate (tasks/canon.py), not any "
+               "model's tokenizer; scoring records each checker's real token counts.")
 TRIPLE_SCHEMA = "sidekick-verification-triple/1"
 VARIANTS = hazards.VARIANTS
 GOLD = {"s": "SUPPORTED", "c": "CONTRADICTED", "nm": "NOT_MENTIONED"}
@@ -57,6 +66,13 @@ TYPES = ("tool", "environment", "file", "result", "refutation")
 OBSTACLES = ("none", "distractor", "repeated")
 MECHANISMS = ("plain", "sequence", "supersede", "precedence", "version", "timestamp")
 PARSED_KINDS = ("json", "jsonl", "toml")
+# How CONTRADICTED's text came to be, from most to least real:
+# - sibling-world: the same command, rerun on a sibling fixture;
+# - textual: an edit that is still a faithful view of edited input (a file's
+#   contents, a listing, a data row, working notes);
+# - spliced: real output of another command, under this command line;
+# - fabricated: an edit that invents what a tool says or does.
+EDIT_KINDS = ("sibling-world", "textual", "spliced", "fabricated")
 CALL_RE = re.compile(r"\bc(\d+)\b")
 
 
@@ -76,9 +92,12 @@ def load_toml(path: Path) -> dict:
         return tomllib.load(f)
 
 
-def load_claims(path: Path, max_per_shape: int) -> list[dict]:
+def load_claims(path: Path, max_per_shape: int, max_per_fact: int = 2) -> list[dict]:
+    """Claims with their shape's fields folded in. At most `max_per_shape`
+    instances per shape and `max_per_fact` claims per underlying fact, so
+    no one fact dominates a batch."""
     raw = load_toml(path)
-    claims, seen = [], set()
+    claims, seen, facts = [], set(), {}
     for shape in raw["shape"]:
         insts = shape.get("claim", [])
         if not 1 <= len(insts) <= max_per_shape:
@@ -90,8 +109,30 @@ def load_claims(path: Path, max_per_shape: int) -> list[dict]:
                 raise SystemExit(f"duplicate claim id {d['id']}")
             seen.add(d["id"])
             schema.validate(d, "claim")
+            facts.setdefault(d["fact"], []).append(d["id"])
             claims.append(d)
+    over = {f: ids for f, ids in facts.items() if len(ids) > max_per_fact}
+    if over:
+        raise SystemExit(f"facts with more than {max_per_fact} claims: {over}")
     return claims
+
+
+def edit_kind(claim: dict, caps: dict) -> str:
+    """The least real source of any of CONTRADICTED's text (EDIT_KINDS)."""
+    kinds = set()
+    for b in claim["block"]:
+        if "c_from" in b:
+            same = caps[b["c_from"]]["cmd"] == caps[b["capture"]]["cmd"]
+            kinds.add("sibling-world" if same else "spliced")
+        if b.get("c_empty"):
+            kinds.add("fabricated")
+        if "c_notes" in b or any("c" in ed for ed in b.get("edit", [])):
+            kinds.add(claim.get("edit", "textual"))
+    if "edit" in claim and claim["edit"] not in kinds:
+        raise Refusal(f"{claim['id']}: declares edit = {claim['edit']!r} but makes no textual C edit")
+    if not kinds:
+        kinds.add("textual")  # C only drops or adds whole real blocks
+    return max(kinds, key=EDIT_KINDS.index)
 
 
 def load_captures(path: Path, lock_path: Path | None) -> dict[str, dict]:
@@ -438,6 +479,16 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
         if expand({"segments": segments, "slots": slots}, v) != ev[v].text:
             raise Refusal(f"{claim['id']}: internal: segments do not reproduce the {v} evidence")
 
+    # A note scoped to another version must say what that version really did.
+    for sc in claim.get("scoped", []):
+        for vb in sc.get("verified_by", []):
+            if vb["capture"] not in caps:
+                raise Refusal(f"{claim['id']}: scoped note's capture {vb['capture']} is missing")
+            if not re.search(vb["pattern"], body(caps[vb["capture"]]), re.M):
+                raise Refusal(f"{claim['id']}: {vb['capture']} does not show {vb['pattern']!r}")
+        if not sc.get("verified_by"):
+            raise Refusal(f"{claim['id']}: a version-scoped note needs a capture of that version")
+
     problems = hazards.check(claim, ev, slot_roles)
     if problems:
         raise Refusal(f"{claim['id']} {cfg_id(cfg)}:\n  " + "\n  ".join(problems))
@@ -465,7 +516,8 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
         "slots": slots,
         "layout": layout,
         "gold": dict(GOLD),
-        "edits": claim.get("edit_note", ""),
+        "edit": edit_kind(claim, caps),
+        "edit_note": claim.get("edit_note", ""),
         "evidence_sha256": {v: canon.sha256_text(ev[v].text) for v in VARIANTS},
         "generator": GENERATOR,
     }
@@ -553,7 +605,7 @@ def fit_length(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
 def generate(captures: Path, out: Path, set_name: str, claims_path: Path, corpus_path: Path,
              captures_lock: Path | None) -> tuple[list[dict], list[str], dict]:
     corpus = load_toml(corpus_path)
-    claims = load_claims(claims_path, corpus["max_per_shape"])
+    claims = load_claims(claims_path, corpus["max_per_shape"], corpus.get("max_per_fact", 2))
     caps = load_captures(captures, captures_lock)
     if set_name != "review":
         raise SystemExit(f"unknown set {set_name!r}")
@@ -566,12 +618,13 @@ def generate(captures: Path, out: Path, set_name: str, claims_path: Path, corpus
             pending.append(str(p))
         except Refusal as e:
             refused.append(str(e))
-    # The capture stage scanned every capture; scan the assembled evidence too,
-    # since edits and notes add text of their own.
+    # The capture stage scanned every capture with the capturing machine's
+    # identity; scan the assembled evidence too, since edits and notes add text
+    # of their own (paths, addresses, secrets, dates).
     recipes = load_toml(FIXTURES / "recipes.toml") if (FIXTURES / "recipes.toml").exists() else {}
     allow = [{**a, "capture": "*"} for a in recipes.get("scan", {}).get("allow", [])]
     clock = tuple(recipes.get("scan", {}).get("clock", ["2026-10-01", "2026-10-01"]))
-    identity = scrub.machine_identity()
+    identity = {"home": "", "user": "", "hosts": []}
     for t in triples:
         for v in VARIANTS:
             found = scrub.unallowed(scrub.scan(expand(t, v), identity, clock), allow, t["id"])
@@ -625,15 +678,15 @@ def export_review(triples: list[dict], out: Path, set_name: str) -> None:
         old.unlink(missing_ok=True)  # a previous export's files
     index = [f"# Verification triples for review: `{set_name}`\n",
              "Each triple is one claim and three haystacks (SUPPORTED, CONTRADICTED, NOT MENTIONED) that are "
-             "byte-identical outside the slots listed in its file. Lengths are approximate tokens (approx-v1).\n",
-             "| # | triple | type | mechanism | obstacles | length | position | tokens (s) | split |",
-             "|---|---|---|---|---|---|---|---|---|"]
+             "byte-identical outside the slots listed in its file. " + LENGTH_NOTE + "\n",
+             "| # | triple | type | mechanism | obstacles | edit | length | position | tokens (s) | split |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
     rows = []
     for n, t in enumerate(sorted(triples, key=lambda t: (not t["worked"], t["claim"]["type"], t["id"])), 1):
         name = f"{n:03d}-{t['id']}.md"
         index.append(f"| {n} | [{t['id']}]({name}) | {t['claim']['type']} | {t['claim']['mechanism']} | "
-                     f"{', '.join(t['obstacles']) or '-'} | {t['config']['length']} | {t['config']['position']} | "
-                     f"{t['tokens']['s']} | {t['split']} |")
+                     f"{', '.join(t['obstacles']) or '-'} | {t['edit']} | {t['config']['length']} | "
+                     f"{t['config']['position']} | {t['tokens']['s']} | {t['split']} |")
         texts = {v: expand(t, v) for v in VARIANTS}
         md = [f"# {t['id']}\n",
               f"**Claim** ({t['claim']['type']}, shape `{t['claim']['shape']}`, mechanism "
@@ -642,8 +695,7 @@ def export_review(triples: list[dict], out: Path, set_name: str) -> None:
               f"Gold: s = SUPPORTED, c = CONTRADICTED, nm = NOT MENTIONED. Length {t['config']['length']} "
               f"(tokens s/c/nm: {t['tokens']['s']}/{t['tokens']['c']}/{t['tokens']['nm']}), position "
               f"{t['config']['position']}, obstacles: {', '.join(t['obstacles']) or 'none'}. Split: {t['split']}.\n"]
-        if t["edits"]:
-            md += [f"Edit: {t['edits']}\n"]
+        md += [f"Edit kind: {t['edit']}. {t['edit_note']}\n"]
         md += ["## Needle slots and edits\n"]
         offs = {v: len(t["segments"][0]) for v in VARIANTS}
         for i, (slot, seg) in enumerate(zip(t["slots"], t["segments"][1:])):
@@ -664,11 +716,74 @@ def export_review(triples: list[dict], out: Path, set_name: str) -> None:
                      "gold": t["gold"], "evidence": texts, "slots": t["slots"], "layout": t["layout"]})
     (d / f"{set_name}.md").write_text("\n".join(index) + "\n", encoding="utf-8")
     canon.write_jsonl(d / f"{set_name}.jsonl", rows)
+    export_compact(triples, d / "review-compact.md", set_name)
+
+
+def _fence(text: str, max_lines: int = 40) -> list[str]:
+    lines = text.rstrip("\n").split("\n") if text else ["(empty)"]
+    if len(lines) > max_lines:
+        lines = lines[:max_lines] + [f"… ({len(lines) - max_lines} more lines)"]
+    return ["~~~~text", *lines, "~~~~"]
+
+
+def filler_summary(t: dict) -> str:
+    """One line: how many blocks pad the haystack, by tool and kind of command."""
+    groups: dict[str, int] = {}
+    for b in t["layout"]:
+        if b["item"] != "filler":
+            continue
+        parts = b["source"].split(".")
+        key = ".".join(parts[:2]) if parts[1:2] != ["help"] else "help:" + parts[0]
+        groups[key] = groups.get(key, 0) + 1
+    total = sum(groups.values())
+    top = ", ".join(f"{k} ×{n}" for k, n in sorted(groups.items(), key=lambda kv: (-kv[1], kv[0])))
+    return f"{total} filler blocks: {top}" if total else "no filler"
+
+
+def export_compact(triples: list[dict], path: Path, set_name: str, context: int = 8) -> None:
+    """A short copy for the host's hand review: per triple, the claim, its
+    labels, each slot in all three variants, `context` lines either side of
+    each slot (from SUPPORTED; outside the slots all three are identical),
+    and a one-line summary of the filler."""
+    md = [f"# Verification triples for review (compact): `{set_name}`\n",
+          "Per triple: the claim; each needle slot as it reads in SUPPORTED (s), CONTRADICTED (c) and NOT "
+          f"MENTIONED (nm); {context} lines either side of it, as SUPPORTED reads (outside the slots all three are "
+          "identical; nearby context may include another slot); and "
+          "the filler's sources. The full haystacks are in the per-triple files beside this one. "
+          + LENGTH_NOTE + "\n",
+          "Edit kinds: " + "; ".join(f"`{k}`" for k in EDIT_KINDS) + " (from most to least real; see "
+          "tools/tasks/gen_verification.py).\n"]
+    order = sorted(triples, key=lambda t: (not t["worked"], t["claim"]["type"], t["id"]))
+    for n, t in enumerate(order, 1):
+        s_text = expand(t, "s")
+        md += [f"## {n}. {t['id']}\n",
+               f"- **Claim:** {t['claim']['text']}",
+               f"- **Type:** {t['claim']['type']}; **mechanism:** {t['claim']['mechanism']}; **obstacle:** "
+               f"{t['config']['obstacle']}; **edit:** {t['edit']}; **length:** {t['config']['length']} "
+               f"({t['tokens']['s']} approx tokens); **position:** {t['config']['position']}"
+               f"{'; worked example' if t['worked'] else ''}",
+               f"- **Edit:** {t['edit_note']}",
+               f"- **Filler:** {filler_summary(t)}\n"]
+        off = len(t["segments"][0])
+        for i, (slot, seg) in enumerate(zip(t["slots"], t["segments"][1:])):
+            before = s_text[:off].split("\n")
+            before = before[:-1] if before and before[-1] == "" else before
+            after_start = off + len(slot["s"])
+            after = s_text[after_start:].split("\n")
+            role = f", {slot['role']}" if slot["role"] else ""
+            md += [f"### Slot {i + 1} (line {line_of(s_text, off)} of s{role})\n", "Before:"]
+            md += _fence("\n".join(before[-context:]))
+            for v in VARIANTS:
+                md += [f"{v}:"] + _fence(slot[v])
+            md += ["After:"] + _fence("\n".join(after[:context])) + [""]
+            off += len(slot["s"]) + len(seg)
+    path.write_text("\n".join(md) + "\n", encoding="utf-8")
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--captures", type=Path, required=True, help="captures.jsonl from tools/tasks/capture.py")
+    ap.add_argument("--captures", type=Path, default=FIXTURES / "captures.jsonl",
+                    help="captures.jsonl from tools/tasks/capture.py (default: the committed one)")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--set", default="review")
     ap.add_argument("--claims", type=Path, default=FIXTURES / "claims.toml")

@@ -79,7 +79,9 @@ class RefusalScan(unittest.TestCase):
         self.assertGreater(len(files), 5)
         for path in files:
             with self.subTest(file=path.name):
-                found = scrub.unallowed(scrub.scan(path.read_text(), scrub.machine_identity(), clock), allow, "*")
+                # No machine identity: these files are checked wherever the tests
+                # run; the capture stage scanned with the capturing machine's.
+                found = scrub.unallowed(scrub.scan(path.read_text(), {}, clock), allow, "*")
                 self.assertEqual([str(f) for f in found], [])
 
     def test_every_committed_allowlist_entry_has_a_reason(self):

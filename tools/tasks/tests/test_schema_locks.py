@@ -79,6 +79,28 @@ class CapturesLock(unittest.TestCase):
                          "recipes.toml changed: rerun tools/tasks/capture.py run --update-lock")
         self.assertEqual(lock["tools_lock_sha256"], canon.sha256_file(FIX / "tools.lock.toml"))
 
+    def test_committed_captures_match_the_lock(self):
+        lock = canon.read_json(FIX / "captures.lock.json")
+        self.assertEqual(canon.sha256_file(FIX / "captures.jsonl"), lock["set_sha256"])
+        caps = canon.read_jsonl(FIX / "captures.jsonl")
+        for c in caps:
+            schema.validate(c, "capture")
+        self.assertEqual({c["id"]: canon.record_sha256(c) for c in caps},
+                         {c["id"]: c["sha256"] for c in lock["captures"]})
+
+    def test_host_tool_dependents_are_recorded(self):
+        lock = canon.read_json(FIX / "captures.lock.json")
+        self.assertEqual(set(lock["host_dependents"]), set(lock["host_tools"]))
+        self.assertIn("gh.g5.git-diff", lock["host_dependents"]["git"])
+        self.assertIn("gen.trace.run", lock["host_dependents"]["python3"])
+
+    def test_host_drift_fails_check_unless_allowed(self):
+        from tasks import capture
+        lock = canon.read_json(FIX / "captures.lock.json")
+        drifted = {**lock, "host_tools": {**lock["host_tools"], "git": "git version 0.0.0"}}
+        self.assertEqual(capture.compare_lock(drifted, lock), 1)
+        self.assertEqual(capture.compare_lock(drifted, lock, allow_host_drift=True), 0)
+
     def test_every_recipe_capture_is_locked(self):
         recipes = load("recipes.toml")
         lock = canon.read_json(FIX / "captures.lock.json")
@@ -115,9 +137,30 @@ class Claims(unittest.TestCase):
         roles = {c.get("role") for c in self.claims if c["mechanism"] == "supersede"}
         self.assertEqual(roles, {"belief", "reason"})
 
+    def test_fact_cap_is_enforced(self):
+        facts = {}
+        for c in self.claims:
+            facts.setdefault(c["fact"], []).append(c["id"])
+        self.assertLessEqual(max(map(len, facts.values())), self.corpus["max_per_fact"])
+        text = "\n".join(['[[shape]]', 'id = "s"', 'type = "tool"'] +
+                         [f'[[shape.claim]]\nid = "c{i}"\nfact = "same"\ntext = "t"\nprobes.support = ["a"]\n'
+                          f'probes.contradict = ["b"]\n[[shape.claim.block]]\ncapture = "x"' for i in range(3)])
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "c.toml").write_text(text)
+            with self.assertRaises(SystemExit):
+                gen.load_claims(Path(d) / "c.toml", 3, 2)
+
+    def test_version_scoped_notes_are_backed_by_captures(self):
+        caps = {c["id"]: c for c in canon.read_jsonl(FIX / "captures.jsonl")}
+        scoped = [sc for c in self.claims for sc in c.get("scoped", [])]
+        self.assertTrue(scoped)
+        for sc in scoped:
+            for vb in sc["verified_by"]:
+                self.assertRegex(gen.body(caps[vb["capture"]]), re.compile(vb["pattern"], re.M))
+
     def test_shape_cap_is_enforced(self):
         text = "\n".join(['[[shape]]', 'id = "s"', 'type = "tool"'] +
-                         [f'[[shape.claim]]\nid = "c{i}"\ntext = "t"\nprobes.support = ["a"]\n'
+                         [f'[[shape.claim]]\nid = "c{i}"\nfact = "f{i}"\ntext = "t"\nprobes.support = ["a"]\n'
                           f'probes.contradict = ["b"]\n[[shape.claim.block]]\ncapture = "x"' for i in range(4)])
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "c.toml").write_text(text)
@@ -141,6 +184,14 @@ class SetLock(unittest.TestCase):
         claim_ids = {c["id"] for c in gen.load_claims(FIX / "claims.toml", corpus["max_per_shape"])}
         for tid in ids:
             self.assertIn(tid.split(".")[0], claim_ids)
+
+    def test_regenerates_the_committed_review_set(self):
+        """`gen_verification.py --check` on the committed captures: the set is
+        rebuilt byte for byte (a few seconds; pure Python)."""
+        with tempfile.TemporaryDirectory() as d:
+            _, _, lock = gen.generate(FIX / "captures.jsonl", Path(d), "review", FIX / "claims.toml",
+                                      FIX / "corpus.toml", FIX / "captures.lock.json")
+        self.assertEqual(gen.compare(lock, canon.read_json(FIX / "verification-review.lock.json")), [])
 
 
 if __name__ == "__main__":
