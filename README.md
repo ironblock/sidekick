@@ -207,12 +207,16 @@ The name is one of the model's `named_prompts` in `/v1/models` (name to
 prompt, `{}` for a model with none), copied from the checkpoint's
 sentence-transformers configuration, and matches exactly, case included.
 Another name is a 400 that lists the model's, and so is a request that
-sends `prompt_name` with any `input_type`, `"none"` included. A named
-prompt is sidekick's, so `truncate: "START"` keeps it whole.
+sends `prompt_name` with any `input_type`, `"none"` included. On
+`/v2/embed`, whose Cohere clients always send `input_type`, a
+`prompt_name` overrides Cohere's names (`search_query`,
+`search_document`, `classification`, `clustering`). A named prompt is
+sidekick's, so `truncate: "START"` keeps it whole.
 Qwen3-Embedding and F2LLM take a free-text instruction per task instead:
 send it with `input_type: "none"`, in the model's format
-([docs/MODELS.md](docs/MODELS.md#named-prompts-prompt_name)). D45
-records the choice.
+([docs/MODELS.md](docs/MODELS.md#named-prompts-prompt_name)), and
+truncate with `END`, since `START` would cut an instruction it can't
+tell from the text. D45 records the choice.
 
 An input longer than the model's limit is a 400 `invalid_request_error`.
 OpenAI's `/v1/embeddings` refuses it too, and Hugging Face TEI returns an

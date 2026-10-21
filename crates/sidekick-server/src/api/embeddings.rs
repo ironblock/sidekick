@@ -36,7 +36,7 @@ pub async fn embeddings(
         )));
     }
 
-    let prompt = prompt(&state, &req.model, req.input_type.as_deref(), req.prompt_name, purpose)?;
+    let prompt = prompt(&state, &req.model, req.input_type.as_deref(), req.prompt_name, purpose, &[])?;
 
     let as_base64 = match req.encoding_format.as_deref() {
         None | Some("float") => false,
@@ -136,26 +136,38 @@ impl Prompt {
     }
 }
 
+/// Cohere's `input_type` names, which a `prompt_name` overrides on
+/// /v2/embed and /tokenize: Cohere's SDK always sends one (D45).
+pub(super) const COHERE_INPUT_TYPES: &[&str] = &["search_query", "search_document", "classification", "clustering"];
+
 /// `input_type` (read by the route's `parse`) or `prompt_name`, the shared
-/// parser behind /v1/embeddings, /v2/embed and /tokenize. Naming both is a
-/// 400, `input_type: "none"` included: a named prompt replaces the
-/// `input_type` prompt, and `none` asks for no prompt at all, so the two
-/// never agree. A name is checked against the model's manifest, exactly,
-/// case included, so one the model doesn't have is refused before the
-/// model loads; an unknown model is left to the route.
+/// parser behind /v1/embeddings, /v2/embed and /tokenize. A name overrides
+/// the `input_type` values in `overridden` (Cohere's, where the route takes
+/// them); with any other `input_type` it is a 400, sidekick's `none`
+/// included: a named prompt replaces the `input_type` prompt, and `none`
+/// asks for no prompt at all, so the two never agree. A name is checked
+/// against the model's manifest, exactly, case included, so one the model
+/// doesn't have is refused before the model loads; an unknown model is left
+/// to the route.
 pub(super) fn prompt(
     state: &AppState,
     model: &str,
     input_type: Option<&str>,
     prompt_name: Option<String>,
     parse: fn(Option<&str>) -> Result<EmbedPurpose<'static>, ApiError>,
+    overridden: &[&str],
 ) -> Result<Prompt, ApiError> {
     let Some(name) = prompt_name else {
         return Ok(Prompt { by_type: parse(input_type)?, name: None });
     };
-    if let Some(t) = input_type {
+    if let Some(t) = input_type.filter(|t| !overridden.contains(t)) {
+        let overrides = if overridden.is_empty() {
+            String::new()
+        } else {
+            format!(" (prompt_name overrides only Cohere's input_type names: {})", overridden.join(", "))
+        };
         return Err(ApiError::invalid(format!(
-            "send input_type or prompt_name, not both: prompt_name `{name}` replaces input_type `{t}`'s prompt"
+            "send input_type or prompt_name, not both: prompt_name `{name}` replaces input_type `{t}`'s prompt{overrides}"
         )));
     }
     if let Ok(m) = state.registry.get(model) {

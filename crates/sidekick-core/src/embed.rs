@@ -5,8 +5,10 @@ use std::collections::BTreeMap;
 /// a backend puts before each text. Models like EmbeddingGemma use
 /// different prompts for queries and documents (the manifest's
 /// `[prefixes]`, D9), and some name prompts for other tasks (its
-/// `[prompts]`, D45).
+/// `[prompts]`, D45). Non-exhaustive: a match outside this crate needs an
+/// arm for purposes added later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum EmbedPurpose<'a> {
     /// The manifest's document prefix: the default.
     #[default]

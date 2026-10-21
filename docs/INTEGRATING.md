@@ -125,12 +125,18 @@ own, so `truncate: "START"` keeps it whole, which a host's prompt sent
 with `none` doesn't get. Sending `prompt_name` with any `input_type`,
 `none` included, is a 400, and so is a name the model doesn't have; the
 message lists the model's names. `/v2/embed` and `/tokenize` take it too.
-Over the C ABI, `sk_embed_named` takes a name where `sk_embed` takes a
-purpose, and `sk_model_info` lists `named_prompts`. Qwen3-Embedding and
-F2LLM take a free-text instruction per task instead of a fixed set, so
-their only names are `query` and `document`. For another task, send
-`Instruct: <task>\nQuery:` (F2LLM: `Instruct: <task>\nQuery: `, with a
-trailing space) before the text with `input_type: "none"` (D45).
+There, because Cohere's SDK always sends `input_type`, a `prompt_name`
+overrides Cohere's names (`search_query`, `search_document`,
+`classification`, `clustering`); with sidekick's own (`query`,
+`document`, `passage`, `none`) it is still a 400. Over the C ABI,
+`sk_embed_named` takes a name where `sk_embed` takes a purpose, and
+`sk_model_info` lists `named_prompts`. Qwen3-Embedding and F2LLM take a
+free-text instruction per task instead of a fixed set, so their only
+names are `query` and `document`. For another task, send `Instruct:
+<task>\nQuery:` (F2LLM: `Instruct: <task>\nQuery: `, with a trailing
+space) before the text with `input_type: "none"`, and truncate with
+`END` or keep inputs within the limit: on symmetric tasks the
+instruction goes on every input, and `START` would cut it (D45).
 
 **Over-length input.** `/v1/embeddings` refuses an input longer than the
 model's limit with a 400 `invalid_request_error`, as OpenAI's embeddings
@@ -229,8 +235,8 @@ Notes:
   (JSON: `{"id","backend","dims","matryoshka","max_seq_len","prompts",
   "named_prompts"}`).
 - `sk_embed_named` is `sk_embed` with one of the model's `named_prompts`
-  in place of `purpose`, as the daemon's `prompt_name`. It was added
-  without an ABI version bump, so resolve it with `dlsym` if the host
+  in place of `purpose`, as the daemon's `prompt_name`. It was added in
+  0.15.0 without an ABI version bump, so resolve it with `dlsym` if the host
   must also run against older libraries.
 - The first `sk_embed` per model loads it (Core ML: ~1s for bge-small,
   seconds for large encoders) and it stays resident until `sk_pool_close`.

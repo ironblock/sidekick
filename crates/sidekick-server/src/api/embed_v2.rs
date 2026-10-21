@@ -35,7 +35,7 @@ pub async fn embed_v2(
     if texts.len() > MAX_TEXTS {
         return Err(ApiError::invalid(format!("{} texts exceed the maximum of {MAX_TEXTS}", texts.len())));
     }
-    let prompt = embeddings::prompt(&state, &req.model, req.input_type.as_deref(), req.prompt_name.clone(), purpose)?;
+    let prompt = embeddings::prompt(&state, &req.model, req.input_type.as_deref(), req.prompt_name.clone(), purpose, embeddings::COHERE_INPUT_TYPES)?;
     let types: Vec<String> = req.embedding_types.clone().unwrap_or_else(|| vec!["float".into()]);
     if types.is_empty() {
         return Err(ApiError::invalid("`embedding_types` must not be empty"));

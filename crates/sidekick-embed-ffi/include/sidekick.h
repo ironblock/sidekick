@@ -62,7 +62,9 @@ char *sk_pool_skipped(const sk_pool *pool, char **err);
  * "prompts" accepts purpose 2. The ABI version is unchanged, and an older
  * library refuses purpose 2 only when sk_embed is called.
  * "named_prompts" maps each prompt name sk_embed_named takes to its text
- * ({} for a model with none); it was added with sk_embed_named.
+ * ({} for a model with none). It was added in 0.15.0 (additive), with
+ * sk_embed_named: a library whose sk_model_info reports "named_prompts"
+ * exports sk_embed_named.
  * Free with sk_string_free. Returns NULL on failure with *err set. */
 char *sk_model_info(const sk_pool *pool, const char *model_id, char **err);
 
@@ -90,7 +92,7 @@ float *sk_embed(const sk_pool *pool, const char *model_id,
  * prompt_name is a key of "named_prompts" in sk_model_info, matched
  * exactly, case included (the daemon's "prompt_name"). A name the model
  * doesn't have fails before the model loads, with *err listing the names
- * it has. Added after 0.13.0 without an ABI version bump (additive):
+ * it has. Added in 0.15.0 without an ABI version bump (additive):
  * resolve it with dlsym if the host must also run against older
  * libraries. */
 float *sk_embed_named(const sk_pool *pool, const char *model_id,

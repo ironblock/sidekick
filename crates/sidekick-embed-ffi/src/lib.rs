@@ -274,7 +274,7 @@ pub unsafe extern "C" fn sk_embed(
 /// `sk_model_info`) in place of a purpose: `prompt_name` is matched
 /// exactly, case included, and a name the model doesn't have fails
 /// before the model loads, with `*err` listing the names it has. The
-/// daemon's `prompt_name`. Added after 0.13.0 (additive); resolve it with
+/// daemon's `prompt_name`. Added in 0.15.0 (additive); resolve it with
 /// `dlsym` if the host must also run against older libraries.
 ///
 /// # Safety
@@ -296,7 +296,11 @@ pub unsafe extern "C" fn sk_embed_named(
         let p = pool.as_ref().ok_or("pool is NULL")?;
         let id = utf8(model_id, "model_id")?;
         let model = p.registry.get(id).map_err(|e| e.to_string())?;
-        named_prompt(id, &model.manifest.prompts, name).map_err(|e| e.to_string())?;
+        // The message alone, as sk_embed's own refusals are.
+        named_prompt(id, &model.manifest.prompts, name).map_err(|e| match e {
+            sidekick_core::Error::InvalidRequest(message) => message,
+            e => e.to_string(),
+        })?;
         embed(pool, model_id, texts, n_texts, EmbedPurpose::Named(name), requested_dims, dims_out)
     })
 }
@@ -658,7 +662,7 @@ output = "logits"
             // "gamma beta": the mean of rows 2 and 1.
             let h = 0.5f32.sqrt();
             assert!(embed("STS").unwrap().iter().zip([0.0, h, h]).all(|(a, b)| (a - b).abs() < 1e-6));
-            assert_eq!(embed("sts").unwrap_err(), "invalid request: model `static-floor` has no prompt named `sts` (its prompts: `STS`)");
+            assert_eq!(embed("sts").unwrap_err(), "model `static-floor` has no prompt named `sts` (its prompts: `STS`)");
             let mut dims = 0usize;
             let null_name = sk_embed_named(pool, id.as_ptr(), texts.as_ptr(), 1, std::ptr::null(), 0, &mut dims, &mut err);
             assert!(null_name.is_null() && !err.is_null());

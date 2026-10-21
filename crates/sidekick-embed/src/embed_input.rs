@@ -104,6 +104,7 @@ impl EmbedInput {
             EmbedPurpose::Document => Ok(&self.prefix_document),
             EmbedPurpose::Raw => Ok(""),
             EmbedPurpose::Named(name) => named_prompt(&self.model, &self.prompts, name),
+            other => Err(Error::InvalidRequest(format!("model `{}` doesn't support purpose {other:?}", self.model))),
         }
     }
 

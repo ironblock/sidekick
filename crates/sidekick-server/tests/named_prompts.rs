@@ -1,7 +1,8 @@
 //! `prompt_name` and the manifest's `[prompts]` (D45): a request names one
 //! of the model's prompts, by its exact name, in place of an `input_type`
 //! prompt, on /v1/embeddings, /v2/embed and /tokenize alike. Naming both is
-//! a 400, and so is a name the model doesn't have. /v1/models lists each
+//! a 400, except that on /v2/embed and /tokenize a name overrides Cohere's
+//! `input_type` names; so is a name the model doesn't have. /v1/models lists each
 //! embedder's named prompts. Over static test models, whose vectors are
 //! worked out by hand: a manifest's `[prompts]` changes no request that
 //! doesn't name one.
@@ -97,10 +98,24 @@ async fn a_named_prompt_replaces_the_input_type_prompt() {
         embed(&state, json!({"model": "named", "input": "hello", "prompt_name": "document"})).await,
         embed(&state, json!({"model": "named", "input": "hello"})).await,
     );
-    // /v2/embed, without input_type.
-    let (status, body) = post(&state, "/v2/embed", json!({"model": "named", "texts": ["hello"], "prompt_name": "STS"})).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(close(&floats(&body), &[c, d, 0.0, 0.0]), "{body}");
+    // /v2/embed, without input_type, and over each of Cohere's names,
+    // which Cohere's SDK always sends; /tokenize counts the same way.
+    for input_type in [None, Some("search_query"), Some("search_document"), Some("classification"), Some("clustering")] {
+        let mut body = json!({"model": "named", "texts": ["hello"], "prompt_name": "STS"});
+        let mut count = json!({"model": "named", "prompt": "hello", "prompt_name": "STS"});
+        if let Some(t) = input_type {
+            body["input_type"] = json!(t);
+            count["input_type"] = json!(t);
+        }
+        let (status, body) = post(&state, "/v2/embed", body).await;
+        assert_eq!(status, StatusCode::OK, "{input_type:?}: {body}");
+        assert!(close(&floats(&body), &[c, d, 0.0, 0.0]), "{input_type:?}: {body}");
+        let (status, count) = post(&state, "/tokenize", count).await;
+        assert_eq!((status, count["count"].as_u64()), (StatusCode::OK, Some(3)), "{input_type:?}: {count}");
+    }
+    // Without a name, Cohere's classification and clustering stay refused.
+    let body = json!({"model": "named", "texts": ["hello"], "input_type": "classification"});
+    assert_eq!(post(&state, "/v2/embed", body).await.0, StatusCode::BAD_REQUEST);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -114,10 +129,18 @@ async fn a_name_with_an_input_type_or_not_the_models_is_refused() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert!(message(&body).starts_with("send input_type or prompt_name, not both"), "{body}");
     }
-    let body = json!({"model": "named", "texts": ["hello"], "input_type": "search_query", "prompt_name": "STS"});
-    assert_eq!(post(&state, "/v2/embed", body).await.0, StatusCode::BAD_REQUEST);
-    let body = json!({"model": "named", "prompt": "hello", "input_type": "none", "prompt_name": "STS"});
-    assert_eq!(post(&state, "/tokenize", body).await.0, StatusCode::BAD_REQUEST);
+    // /v1/embeddings doesn't take Cohere's names, so they conflict too.
+    let body = json!({"model": "named", "input": "hello", "input_type": "search_query", "prompt_name": "STS"});
+    assert_eq!(post(&state, "/v1/embeddings", body).await.0, StatusCode::BAD_REQUEST);
+    // /v2/embed and /tokenize: sidekick's own names conflict.
+    for input_type in ["query", "document", "none"] {
+        let body = json!({"model": "named", "texts": ["hello"], "input_type": input_type, "prompt_name": "STS"});
+        let (status, body) = post(&state, "/v2/embed", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{input_type}: {body}");
+        assert!(message(&body).contains("overrides only Cohere's input_type names"), "{body}");
+        let body = json!({"model": "named", "prompt": "hello", "input_type": input_type, "prompt_name": "STS"});
+        assert_eq!(post(&state, "/tokenize", body).await.0, StatusCode::BAD_REQUEST, "{input_type}");
+    }
     // A name the model doesn't have, case included, lists the ones it has.
     for route in ["/v1/embeddings", "/v2/embed", "/tokenize"] {
         let body = json!({"model": "named", "input": "hello", "texts": ["hello"], "prompt": "hello", "prompt_name": "sts"});
@@ -154,6 +177,12 @@ async fn start_truncation_keeps_a_named_prompt_whole() {
     // cuts it: "hello hello hello".
     let typed = start(json!({"input_type": "none"}), "world world hello hello hello hello").await;
     assert!(close(&typed, &[1.0, 0.0, 0.0, 0.0]), "{typed:?}");
+    // Under END, as for an input_type prefix, a max_tokens the prompt
+    // fills keeps the prompt's first tokens and no text: "world".
+    let body = json!({"model": "named", "texts": ["hello"], "prompt_name": "STS", "truncate": "END", "max_tokens": 1});
+    let (status, body) = post(&state, "/v2/embed", body).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(close(&floats(&body), &[0.0, 1.0, 0.0, 0.0]), "{body}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

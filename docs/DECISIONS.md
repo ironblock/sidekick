@@ -3191,19 +3191,32 @@ do, and the prompts are copied from the checkpoint into the manifest.
 - **Request.** `/v1/embeddings`, `/v2/embed` and `/tokenize` take an
   optional `prompt_name`, read by the one parser behind all three, so
   `/tokenize`'s count and `fits` follow it. It replaces the `input_type`
-  prompt. Sending it with any `input_type` is a 400, `"none"` included:
-  `none` asks for no prompt and a name asks for one, so any answer would
-  silently drop one of them. On `/v2/embed`, a client therefore leaves
-  out `input_type`, which Cohere requires and sidekick doesn't. A request
-  without `prompt_name` is unchanged, and tests pin its vectors.
+  prompt. Sending it with one of sidekick's `input_type` values (`query`,
+  `document`, `passage`, `none`) is a 400 on every route: each asks for a
+  prompt of its own (`none` for no prompt at all), so honoring either
+  field would silently drop the other. Cohere's names are different.
+  Cohere's SDK always sends `input_type`, so on `/v2/embed` a
+  `prompt_name` overrides `search_query`, `search_document`,
+  `classification` and `clustering`. A name is the more specific request,
+  and `classification` and `clustering` name no prompt of a model's own
+  anyway. `/tokenize` follows the same rule, so a `/v2/embed` client can
+  pass its fields through and get `/v2/embed`'s count. `/v1/embeddings`
+  doesn't take Cohere's names, so there any `input_type` with a name is a
+  400. A request without `prompt_name` is unchanged, and tests pin its
+  vectors.
 - **Names match exactly, case included.** TEI and sentence-transformers
   look the name up as a dictionary key, and EmbeddingGemma 2's
   checkpoint has both `document` and `Document`. A name the model
   doesn't have is a 400 that lists the names it has, refused from the
   manifest before the model loads. A model with none says so.
 - **A named prompt is sidekick's prompt.** It goes before the text as
-  an `input_type` prefix does, so `truncate: "START"` keeps it whole,
-  and a `max_tokens` it fills is a 400 before any input is embedded.
+  an `input_type` prefix does, so `truncate: "START"` keeps it whole.
+  Under `START`, a `max_tokens` that leaves no room for text after it is
+  a 400 before any input is embedded. Under `END` (`/v2/embed`'s
+  default), the tokenizer keeps the first `max_tokens` tokens, so such a
+  `max_tokens` embeds a cut prompt and no text, with a 200. The default
+  prefixes on `END` have always done the same, and this change leaves
+  `END` as it was.
 - **Manifest.** A `[prompts]` table maps name to text. `[prefixes]`
   stays as it was: it holds the `input_type` prompts, which sidekick
   chose. A manifest without `[prompts]` reads as before, and older
@@ -3230,20 +3243,29 @@ do, and the prompts are copied from the checkpoint into the manifest.
   of the purpose, added without changing `sk_embed` or
   `SK_ABI_VERSION`, as `sk_pool_skipped` was. The library's
   `EmbedPurpose` gains `Named(&str)`, and so it gains a lifetime
-  parameter.
+  parameter. Since that breaks code that names the type, it is also
+  marked `#[non_exhaustive]` now, so a later purpose won't break
+  matches on it again.
 - **Instruction models.** Qwen3-Embedding and F2LLM take a free-text
   instruction per task (`Instruct: {task}\nQuery:`), not a fixed set,
   and their checkpoints name only `query` and `document`. An
   `instruction` field that fills the model's template was considered and
   left out for now. It would add a template to the manifest, a field to
-  three routes and another C function, for two models. What it would
-  save the client is small: the template is one line, and those models
-  put the instruction on queries only, which are short enough that
-  `START` rarely cuts them. These clients send the whole instruction with
-  `input_type: "none"`, and docs/MODELS.md gives each model's format,
-  trailing space included. If more instruction models arrive, an
-  `instruction` field can be added beside `prompt_name` without changing
-  it.
+  three routes and another C function, for two models, and the template
+  it would fill is one line. The cost of leaving it out is truncation.
+  On retrieval the instruction goes on queries only, which are short.
+  On symmetric tasks (classification, clustering, similarity), MTEB puts
+  it on every input, and those inputs can be long. An instruction typed
+  into the text with `input_type: "none"` is text to sidekick, so
+  `truncate: "START"` cuts it. Measured on EmbeddingGemma, an
+  over-length input with its prompt typed into the text gave cosine 0.79
+  under `START` against the same prompt sent by name. These clients send the
+  whole instruction with `input_type: "none"` and truncate with `END`, or
+  keep inputs within the limit (`/tokenize`'s `fits`). docs/MODELS.md and
+  docs/INTEGRATING.md give each model's format, trailing space included,
+  and say so. If a client needs `START` with an instruction, or more
+  instruction models arrive, an `instruction` field can be added beside
+  `prompt_name` without changing it.
 
 ## Hardware verification status
 

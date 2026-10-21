@@ -457,7 +457,8 @@ pub struct CohereEmbedRequest {
     #[serde(default)]
     pub input_type: Option<String>,
     /// Extension (Hugging Face TEI's): one of the model's named prompts,
-    /// in place of `input_type`'s (D45).
+    /// in place of `input_type`'s. It overrides Cohere's `input_type`
+    /// names, which Cohere's SDK always sends (D45).
     #[serde(default)]
     pub prompt_name: Option<String>,
     #[serde(default)]
@@ -518,7 +519,8 @@ pub struct TokenizeRequest {
     #[serde(default)]
     pub input_type: Option<String>,
     /// Extension, embedders: one of the model's named prompts, in place of
-    /// `input_type`'s, as on the embedding routes (D45).
+    /// `input_type`'s, by /v2/embed's rule: it overrides Cohere's
+    /// `input_type` names and conflicts with sidekick's (D45).
     #[serde(default)]
     pub prompt_name: Option<String>,
     /// Extension, embedders: /v2/embed's `max_tokens`, which `fits` then

@@ -1486,7 +1486,11 @@ than a fixed set, so their named prompts are only `query` and `document`.
 For another task, send the instruction in the model's format with
 `input_type: "none"`: `Instruct: <task>\nQuery:` before the text for
 Qwen3-Embedding, with no space after `Query:`, and `Instruct:
-<task>\nQuery: ` for F2LLM, with one.
+<task>\nQuery: ` for F2LLM, with one. On symmetric tasks
+(classification, clustering, similarity) the instruction goes on every
+input, and sidekick can't tell a typed-in instruction from the text, so
+`truncate: "START"` would cut it from a long input: truncate with `END`,
+or keep inputs within the limit.
 
 ## Benchmark scores
 

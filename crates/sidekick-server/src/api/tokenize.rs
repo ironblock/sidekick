@@ -61,7 +61,7 @@ pub async fn tokenize(
     };
     let (chosen, max_tokens) = match model.kind {
         Kind::Embedder => (
-            Some(embeddings::prompt(&state, &req.model, req.input_type.as_deref(), req.prompt_name, purpose)?),
+            Some(embeddings::prompt(&state, &req.model, req.input_type.as_deref(), req.prompt_name, purpose, embeddings::COHERE_INPUT_TYPES)?),
             embed_v2::max_tokens(&state, &req.model, req.max_tokens)?,
         ),
         Kind::Classifier if req.input_type.is_some() || req.prompt_name.is_some() || req.max_tokens.is_some() => {
