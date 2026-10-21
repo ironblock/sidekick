@@ -173,16 +173,19 @@ up to 256), `dimensions` for Matryoshka models, and `encoding_format:
 
 Most embedders were trained with a prompt before each input, so sidekick
 puts the model's own prompt before every input, chosen by `input_type`:
-- **No `input_type`, or `"document"`:** the model's document prompt, such
-  as e5-small-v2's `passage: ` or EmbeddingGemma's `title: none | text: `.
-  This is the default.
+- **No `input_type`, `"document"` or `"passage"`:** the model's document
+  prompt, such as e5-small-v2's `passage: ` or EmbeddingGemma's `title:
+  none | text: `. This is the default.
 - **`"query"`:** the model's query prompt, for the search side of
   retrieval.
 - **`"none"`:** no prompt. The text is embedded exactly as sent, with the
   tokenizer's special tokens. Send it when your text already carries a
   prompt, such as an MTEB task prompt or a Qwen3 or F2LLM instruction for
   a symmetric task. Otherwise sidekick's prompt goes before yours, and the
-  model sees a prompt it was never trained on.
+  model sees a prompt it was never trained on. Under `truncate: "START"`,
+  sidekick keeps its own prompt whole but can't tell yours from the text,
+  so it may cut yours: with `none`, use `END`, or keep inputs within the
+  limit.
 
 Some models have no prompt for one side or both, and then that
 `input_type` is the same as `"none"`. Each model's prompts are in

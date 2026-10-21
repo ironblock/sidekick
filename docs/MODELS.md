@@ -1412,7 +1412,15 @@ including when a request sends no `input_type`. `input_type: "none"` puts
 nothing: the text is embedded exactly as sent, with the tokenizer's
 special tokens. Send it when the text already carries its prompt, such as
 an MTEB task prompt or a Qwen3 or F2LLM instruction for a symmetric task.
-`/v1/models` lists each installed model's prompts as `prompts`.
+`/v1/models` lists each installed model's prompts as `prompts`. Under
+`truncate: "START"`, which keeps the end of an over-length text, sidekick
+keeps its own prompt whole but can't tell one inside the text from the
+text, so it may cut it. Measured on a 900-word text, the model's own
+document prompt typed into the text under `none` against the default
+request, both truncated the same way: under `START`, cosine 0.877 for
+EmbeddingGemma and 0.893 for LFM2.5-Embedding-350M; under `END`,
+identical vectors. With `none`, use `END`, or keep inputs within the
+limit.
 
 From each build's committed manifest (`[prefixes]`); a code span shows
 the prompt exactly, its trailing space included, and `\n` is a newline:

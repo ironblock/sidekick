@@ -56,7 +56,10 @@ char *sk_pool_skipped(const sk_pool *pool, char **err);
  * "matryoshka" lists the dims values sk_embed accepts as requested_dims;
  * empty means native dims only. "prompts" is {"query","document"}: the
  * prefix sk_embed puts before each text for that purpose ("" for none;
- * purpose 2 puts none). "prompts" was added after 0.13.0 (additive).
+ * purpose 2 puts none). "prompts" was added after 0.13.0 (additive),
+ * with sk_embed's purpose 2: a library whose sk_model_info reports
+ * "prompts" accepts purpose 2. The ABI version is unchanged, and an older
+ * library refuses purpose 2 only when sk_embed is called.
  * Free with sk_string_free. Returns NULL on failure with *err set. */
 char *sk_model_info(const sk_pool *pool, const char *model_id, char **err);
 
@@ -66,8 +69,9 @@ size_t sk_embed_dims(const sk_pool *pool, const char *model_id, char **err);
 
 /* Embed n_texts strings. purpose: 0 = document (applies the model's
  * document prefix), 1 = query (its query prefix), 2 = none (no prefix: the
- * text as sent, for a caller with its own prompt; added after 0.13.0, and
- * refused by older libraries). requested_dims: 0 for native dims, or one
+ * text as sent, for a caller with its own prompt; added after 0.13.0 and
+ * refused by older libraries, so check sk_model_info for "prompts" before
+ * sending it). requested_dims: 0 for native dims, or one
  * of the model's matryoshka dims for truncated + renormalized vectors — the same
  * semantics as the daemon's "dimensions" parameter. On success returns
  * n_texts * (*dims_out) floats, row-major, each row unit-normalized; free

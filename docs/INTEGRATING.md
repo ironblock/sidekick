@@ -107,7 +107,10 @@ MTEB-style task prompts (EmbeddingGemma's `task: classification | query:
 `), an instruction for a Qwen3-Embedding or F2LLM symmetric task such as
 clustering or similarity, or no prompt where a model's evaluation used
 none (e5-small-v2 outside retrieval). Without `none`, sidekick's prompt
-goes before the host's. `/tokenize` takes the same `input_type`, so its
+goes before the host's. Truncating with `truncate: "START"` keeps the end
+of the text and sidekick's own prompt whole, but sidekick can't tell a
+host's prompt from its text, so `START` may cut it: with `none`, truncate
+with `END`, or keep inputs within the limit (`/tokenize`'s `fits`). `/tokenize` takes the same `input_type`, so its
 count and `fits` match. Over the C ABI, `sk_embed`'s purpose 2 is the
 same, and `sk_model_info` reports the prompts.
 
@@ -191,7 +194,7 @@ char *models = sk_pool_models(pool, &err);         /* JSON id array */
 size_t dims = 0;
 const char *texts[] = {"the quick brown fox"};
 float *v = sk_embed(pool, "bge-small-en-v1.5", texts, 1,
-                    /*purpose: 0=document, 1=query*/ 0,
+                    /*purpose: 0=document, 1=query, 2=none*/ 0,
                     /*requested_dims: 0=native, or a matryoshka value*/ 0,
                     &dims, &err);
 /* ... use v[0..dims) ... */
