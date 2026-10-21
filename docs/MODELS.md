@@ -813,6 +813,17 @@ What a long input costs:
   `/v2/embed`, or `START`); `max_tokens` on `/v2/embed` cuts at a lower
   limit of the client's choosing (512, say, for vectors that match the
   earlier releases' and the Core ML build's).
+- **Core ML past 512, measured but not yet published.** The same chunked
+  recipe converts buckets of 1,024, 2,048 and 4,096 tokens (D46). On the
+  GPU they grade A on both corpora (worst cosine 0.999997) at 152,
+  349–350 and 938–943 ms per input, about 14–15× faster than onnx-cpu's
+  figure at 4,096 (measured another way). On the ANE they take 377–384
+  ms, 1.2 s and 5.0–5.6 s; the 1,024 and 2,048 buckets, graded as an
+  install of their own, grade A there (0.999986) and pass every gate. The
+  4,096 bucket compiles for 29 minutes on the ANE, and 7 of its 51 timed
+  predictions failed, so it waits for an ANE length cap like D33's for
+  the CPU. The published Core ML build stays at 512 for now; D46 gives
+  the plan for each model.
 
 ### Recommendations
 
