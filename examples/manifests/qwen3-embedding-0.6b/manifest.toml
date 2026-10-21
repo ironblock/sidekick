@@ -45,3 +45,12 @@ output = "embedding"
 [prefixes]
 query = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
 document = ""
+
+# Named prompts, which a request chooses by prompt_name (docs/DECISIONS.md
+# D45): the checkpoint's config_sentence_transformers.json prompts at the
+# revision in source, copied exactly. They are the two above; for another
+# task, send input_type "none" with "Instruct: <task>\nQuery:" before the
+# text (docs/INTEGRATING.md).
+[prompts]
+query = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
+document = ""

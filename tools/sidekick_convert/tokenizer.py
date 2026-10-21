@@ -91,6 +91,13 @@ def st_config(src):
     return json.loads(p.read_text()) if p.exists() else {}
 
 
+def st_prompts(src):
+    """sentence-transformers' named prompts (config_sentence_transformers.json
+    `prompts`, name to text), or {}."""
+    p = Path(src) / "config_sentence_transformers.json"
+    return dict(json.loads(p.read_text()).get("prompts") or {}) if p.exists() else {}
+
+
 def st_pooling(src):
     """sentence-transformers' pooling mode ("cls", "mean", "lasttoken", ...),
     or None without a Pooling module."""
