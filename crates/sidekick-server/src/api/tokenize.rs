@@ -109,12 +109,12 @@ pub async fn detokenize(
 
 /// `input_type` by /v1/embeddings' names or /v2/embed's, which map alike:
 /// `query`, `search_query`; `document` (the default), `passage`,
-/// `search_document`.
+/// `search_document`; and `none`, no prompt.
 fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
     embeddings::purpose(input_type).or_else(|_| embed_v2::purpose(input_type)).map_err(|_| {
         ApiError::invalid(format!(
-            "unsupported input_type `{}` (use `query` or `search_query`, or `document`, `passage` or \
-             `search_document`)",
+            "unsupported input_type `{}` (use `query` or `search_query`; `document`, `passage` or \
+             `search_document`; or `none`)",
             input_type.unwrap_or_default()
         ))
     })

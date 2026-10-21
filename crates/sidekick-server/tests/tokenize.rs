@@ -201,7 +201,7 @@ async fn a_static_models_count_is_the_one_embeddings_checks() {
     assert_eq!(agrees(&state, "test-static", "", None).await, (0, 512, true));
 
     // The default input_type is /v1/embeddings': the document prefix.
-    for input_type in [None, Some("document"), Some("passage"), Some("query")] {
+    for input_type in [None, Some("document"), Some("passage"), Some("query"), Some("none")] {
         assert_eq!(agrees_with_embeddings(&state, "prefixed", "hello", input_type).await, 32);
     }
     assert_eq!(tokenize(&state, "prefixed", "hello", None).await.0, 3);
@@ -425,10 +425,24 @@ async fn an_onnx_models_count_includes_its_special_tokens_and_prefix() {
     }
     let state = state_over(&dir);
 
-    for input_type in [None, Some("query")] {
+    for input_type in [None, Some("query"), Some("none")] {
         assert_eq!(agrees_with_embeddings(&state, "tiny", "d", input_type).await, 16);
         assert_eq!(agrees_with_embeddings(&state, "tiny-truncating", "d", input_type).await, 10);
     }
+    // `none`: the text as sent, special tokens still added. The document
+    // prompt sent as text gives the default's vector.
+    assert_eq!(tokenize(&state, "tiny", "d", Some("none")).await.0, 3);
+    let embedding = |input: &str, input_type: &str| {
+        let state = state.clone();
+        let body = json!({"model": "tiny", "input": input, "input_type": input_type});
+        async move {
+            let (status, body) = post(&state, "/v1/embeddings", body).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body["data"][0]["embedding"].clone()
+        }
+    };
+    assert_eq!(embedding("b c d", "none").await, embedding("d", "document").await);
+    assert_ne!(embedding("d", "none").await, embedding("d", "document").await);
     assert_eq!(listed_max_seq_len(&state, "tiny").await, 16);
     // /v1/models lists the manifest's; /tokenize the tokenizer's, which
     // /v1/embeddings applies (D44).
@@ -470,12 +484,15 @@ async fn a_core_ml_models_count_is_the_one_embeddings_checks() {
         }
     }
     let state = state_over(&dir);
-    assert_eq!(agrees_with_embeddings(&state, "tiny-qwen3-embed", "a", None).await, 32);
+    for input_type in [None, Some("query"), Some("none")] {
+        assert_eq!(agrees_with_embeddings(&state, "tiny-qwen3-embed", "a", input_type).await, 32);
+    }
     assert_eq!(agrees_with_embeddings(&state, "tiny-truncating", "x", None).await, 20);
     assert_eq!(listed_max_seq_len(&state, "tiny-qwen3-embed").await, 32);
     // No special tokens and no document prefix: an empty text has no
     // tokens, which a Core ML model can't run. Its query prefix is one.
     assert_eq!(agrees(&state, "tiny-qwen3-embed", "", None).await, (0, 32, false));
     assert_eq!(agrees(&state, "tiny-qwen3-embed", "", Some("query")).await, (1, 32, true));
+    assert_eq!(agrees(&state, "tiny-qwen3-embed", "", Some("none")).await, (0, 32, false));
     std::fs::remove_dir_all(&dir).unwrap();
 }

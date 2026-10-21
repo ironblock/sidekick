@@ -151,14 +151,17 @@ pub async fn embed_v2(
 /// `input_type` on /v2/embed, and its names on /tokenize: which of the
 /// model's prompt prefixes applies. Cohere requires it; vLLM makes it
 /// optional. Absent, the document prefix applies, as on /v1/embeddings (a
-/// deliberate default).
+/// deliberate default). `none`, sidekick's, applies none (D9). Cohere's
+/// `classification` and `clustering` are refused: no manifest declares a
+/// prompt for them, and a client that has its own sends `none`.
 pub(super) fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
     match input_type {
         None | Some("search_document") | Some("document") => Ok(EmbedPurpose::Document),
         Some("search_query") | Some("query") => Ok(EmbedPurpose::Query),
+        Some("none") => Ok(EmbedPurpose::Raw),
         Some(other) => Err(ApiError::invalid(format!(
             "unsupported input_type `{other}`: embedders here declare prompts for \
-             `search_query` (`query`) and `search_document` (`document`) only"
+             `search_query` (`query`) and `search_document` (`document`) only; send `none` for no prompt"
         ))),
     }
 }

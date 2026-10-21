@@ -215,8 +215,9 @@ pub struct EmbeddingsRequest {
     pub dimensions: Option<usize>,
     #[serde(default)]
     pub encoding_format: Option<String>,
-    /// Non-standard extension (Cohere-style): "query" applies the model's
-    /// query prefix instead of the document prefix.
+    /// Non-standard extension (Cohere-style): `query` applies the model's
+    /// query prefix instead of the document prefix (the default), and
+    /// `none` applies no prefix (D9).
     #[serde(default)]
     pub input_type: Option<String>,
     /// Non-standard extension: what to do with an input longer than the
@@ -504,7 +505,7 @@ pub struct TokenizeRequest {
     pub return_token_strs: Option<bool>,
     /// Extension, embedders: which prompt prefix applies, by
     /// /v1/embeddings' names or /v2/embed's (`query`, `search_query`;
-    /// `document`, the default, `passage`, `search_document`).
+    /// `document`, the default, `passage`, `search_document`; `none`).
     #[serde(default)]
     pub input_type: Option<String>,
     /// Extension, embedders: /v2/embed's `max_tokens`, which `fits` then
@@ -570,6 +571,12 @@ pub struct ModelObject {
     /// it sends none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hypothesis_template: Option<String>,
+    /// Extension, embedders: the prompt put before each input, by
+    /// `input_type` (`""` for none). `document`'s is the default, applied
+    /// when a request sends no `input_type`; `input_type: "none"` applies
+    /// none (D9).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<Prompts>,
     /// Extension, classifiers: most inputs per request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_batch: Option<usize>,
@@ -635,6 +642,7 @@ impl ModelObject {
             labels: None,
             max_labels: None,
             hypothesis_template: None,
+            prompts: None,
             max_batch: None,
             extensions: None,
             required: None,
@@ -647,6 +655,13 @@ impl ModelObject {
             calibration: None,
         }
     }
+}
+
+/// An embedder's prompts, by `input_type`.
+#[derive(Debug, Serialize)]
+pub struct Prompts {
+    pub query: String,
+    pub document: String,
 }
 
 pub fn now_unix() -> u64 {

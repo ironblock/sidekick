@@ -121,12 +121,16 @@ pub async fn embeddings(
 }
 
 /// `input_type` on /v1/embeddings, and on /tokenize for an embedder: which
-/// of the model's prompt prefixes applies. Absent, the document prefix.
+/// of the model's prompt prefixes applies. Absent, the document prefix;
+/// `none`, no prefix (D9).
 pub(super) fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
     match input_type {
         None | Some("document") | Some("passage") => Ok(EmbedPurpose::Document),
         Some("query") => Ok(EmbedPurpose::Query),
-        Some(other) => Err(ApiError::invalid(format!("unsupported input_type `{other}` (use `query` or `document`)"))),
+        Some("none") => Ok(EmbedPurpose::Raw),
+        Some(other) => {
+            Err(ApiError::invalid(format!("unsupported input_type `{other}` (use `query`, `document` or `none`)")))
+        }
     }
 }
 

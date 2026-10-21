@@ -177,9 +177,11 @@ pub unsafe extern "C" fn sk_pool_skipped(
 }
 
 /// JSON description of one embedding model from its manifest (the model is not
-/// loaded): `{"id","backend","dims","matryoshka","max_seq_len"}`.
+/// loaded): `{"id","backend","dims","matryoshka","max_seq_len","prompts"}`.
 /// `matryoshka` lists the dims values `sk_embed` accepts as
-/// `requested_dims`; empty means native dims only. Free with
+/// `requested_dims`; empty means native dims only. `prompts` is
+/// `{"query","document"}`: the prefix `sk_embed` puts before each text for
+/// that purpose (`""` for none; purpose 2 puts none). Free with
 /// `sk_string_free`. Returns NULL on failure with `*err` set.
 ///
 /// # Safety
@@ -200,6 +202,7 @@ pub unsafe extern "C" fn sk_model_info(
             "dims": m.dims,
             "matryoshka": m.matryoshka,
             "max_seq_len": m.max_seq_len,
+            "prompts": {"query": m.prefixes.query, "document": m.prefixes.document},
         });
         Ok(CString::new(json.to_string()).unwrap_or_default().into_raw())
     })
@@ -224,8 +227,9 @@ pub unsafe extern "C" fn sk_embed_dims(
     })
 }
 
-/// Embed `n_texts` UTF-8 strings with a model. `purpose`: 0 = document,
-/// 1 = query (applies the model's query prefix). `requested_dims`: 0 for
+/// Embed `n_texts` UTF-8 strings with a model. `purpose`: 0 = document
+/// (applies the model's document prefix), 1 = query (its query prefix),
+/// 2 = none (no prefix: the text as sent, for a caller with its own prompt). `requested_dims`: 0 for
 /// the model's native dims, or one of its matryoshka dims (see
 /// `sk_model_info`) to get truncated + renormalized vectors — the same
 /// semantics as the daemon's `dimensions` parameter. On success returns a
@@ -265,7 +269,8 @@ pub unsafe extern "C" fn sk_embed(
         let purpose = match purpose {
             0 => EmbedPurpose::Document,
             1 => EmbedPurpose::Query,
-            other => return Err(format!("purpose must be 0 (document) or 1 (query), got {other}")),
+            2 => EmbedPurpose::Raw,
+            other => return Err(format!("purpose must be 0 (document), 1 (query) or 2 (none), got {other}")),
         };
         let mut owned = Vec::with_capacity(n_texts);
         for i in 0..n_texts {
@@ -529,6 +534,44 @@ output = "logits"
             assert!(!err2.is_null());
             sk_string_free(err2);
 
+            sk_pool_close(pool);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn purpose_picks_the_prompt_and_two_applies_none() {
+        let dir = fixture_dir();
+        let manifest = dir.join("floor").join("manifest.toml");
+        let with_prefix = std::fs::read_to_string(&manifest).unwrap() + "\n[prefixes]\ndocument = \"gamma \"\n";
+        std::fs::write(&manifest, with_prefix).unwrap();
+        let mut err: *mut c_char = std::ptr::null_mut();
+        unsafe {
+            let dir_c = CString::new(dir.to_str().unwrap()).unwrap();
+            let pool = sk_pool_open(dir_c.as_ptr(), &mut err);
+            assert!(!pool.is_null());
+            let id = CString::new("static-floor").unwrap();
+            let info = sk_model_info(pool, id.as_ptr(), &mut err);
+            let info_json: serde_json::Value = serde_json::from_str(CStr::from_ptr(info).to_str().unwrap()).unwrap();
+            sk_string_free(info);
+            assert_eq!(info_json["prompts"], serde_json::json!({"query": "", "document": "gamma "}));
+            let t = CString::new("beta").unwrap();
+            let texts = [t.as_ptr()];
+            let embed = |purpose| {
+                let mut dims = 0usize;
+                let mut err: *mut c_char = std::ptr::null_mut();
+                let out = sk_embed(pool, id.as_ptr(), texts.as_ptr(), 1, purpose, 0, &mut dims, &mut err);
+                assert!(!out.is_null(), "purpose {purpose}");
+                let v = std::slice::from_raw_parts(out, dims).to_vec();
+                sk_floats_free(out, dims);
+                v
+            };
+            // document: "gamma beta", the mean of rows 2 and 1; query (no
+            // prefix) and none: "beta" alone.
+            let h = 0.5f32.sqrt();
+            assert!(embed(0).iter().zip([0.0, h, h]).all(|(a, b)| (a - b).abs() < 1e-6));
+            assert_eq!(embed(1), vec![0.0, 1.0, 0.0]);
+            assert_eq!(embed(2), vec![0.0, 1.0, 0.0]);
             sk_pool_close(pool);
         }
         let _ = std::fs::remove_dir_all(dir);

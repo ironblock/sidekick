@@ -68,11 +68,42 @@ no schema to constrain against. Unsupported schema keywords fail loudly in
 the shim rather than being silently dropped. D21 extends the fail-loudly rule to
 errors (typed classification, real HTTP statuses) and to `stop`.
 
-## D9 — Embedding purpose via non-standard `input_type`
+## D9 — Embedding purpose via non-standard `input_type` (amended: `none` turns the prompt off)
 OpenAI's embeddings API has no query/document distinction, but EmbeddingGemma
 and bge-family models want prompt prefixes. Added the Cohere-style optional
 `input_type: "query" | "document"` field (default `document`); prefixes come
 from the model manifest, so standard OpenAI clients work unchanged.
+
+**Amendment (October 2026): `input_type: "none"` embeds the text as sent,
+and the prompts are disclosed.** The prefix had no opt-out, and nothing
+showed it to a client. A client that brought its own prompt got two: on
+EmbeddingGemma, `task: classification | query: …` became `title: none |
+text: task: classification | query: …`, a prompt the model never saw. So
+MTEB's classification, clustering and similarity scores for EmbeddingGemma
+couldn't be reproduced through sidekick, and neither could e5-small-v2's
+non-retrieval scores, which MTEB measured with no prefix.
+- **`none`.** `input_type: "none"` puts no prefix before the text: the
+  tokenizer still adds its special tokens, and nothing else is added. It
+  is accepted on `/v1/embeddings`, on `/v2/embed` beside Cohere's names,
+  and on `/tokenize`, through the same parsers, so a count and `fits` are
+  the route's. The library's `EmbedPurpose::Raw` is the same, and so is
+  `sk_embed`'s purpose 2.
+- **The default stays.** No `input_type`, or `document`, still applies the
+  document prefix, and `query` the query prefix, so no existing request's
+  vectors change; tests pin them. `/v2/embed` still refuses Cohere's
+  `classification` and `clustering`. No manifest declares a prompt for
+  them, and mapping them to `none` would silently change what those
+  names have meant here. A client with its own prompt for them sends
+  `none`.
+- **Disclosure.** `/v1/models` lists each embedder's prefixes as `prompts`,
+  `{"query", "document"}`, beside the nli format's `hypothesis_template`,
+  with `""` for none. `sk_model_info` reports the same. docs/MODELS.md
+  has a table of every build's prompts, generated from the committed
+  manifests by `tools/models_table.py`. The README says the document
+  prompt is the default and when to send `none`.
+
+Named prompts (a model's task-specific prompts, chosen by name) are a
+separate question.
 
 ## D10 — `dimensions` only honors manifest-declared Matryoshka dims
 Truncating a non-Matryoshka embedding silently degrades quality, so a

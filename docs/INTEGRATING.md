@@ -94,9 +94,22 @@ without running them (docs/MODELS.md, D27).
 
 `POST /v1/chat/completions`-style OpenAI compatibility, documented in the
 README. Embeddings: `POST /v1/embeddings` with optional `input_type:
-"query"`, `dimensions` (matryoshka models), `encoding_format: "base64"`,
-and `truncate`. Classification: `POST /v1/classify`; see
+"query"` or `"none"`, `dimensions` (matryoshka models), `encoding_format:
+"base64"`, and `truncate`. Classification: `POST /v1/classify`; see
 [Classification](#classification) below.
+
+**Prompts.** sidekick puts the model's own prompt before every input:
+its document prompt by default, its query prompt for `input_type:
+"query"` (each model's are in `/v1/models` as `prompts`, and in
+docs/MODELS.md). A host that brings its own prompts must send
+`input_type: "none"`, which embeds the text exactly as sent. Examples are
+MTEB-style task prompts (EmbeddingGemma's `task: classification | query:
+`), an instruction for a Qwen3-Embedding or F2LLM symmetric task such as
+clustering or similarity, or no prompt where a model's evaluation used
+none (e5-small-v2 outside retrieval). Without `none`, sidekick's prompt
+goes before the host's. `/tokenize` takes the same `input_type`, so its
+count and `fits` match. Over the C ABI, `sk_embed`'s purpose 2 is the
+same, and `sk_model_info` reports the prompts.
 
 **Over-length input.** `/v1/embeddings` refuses an input longer than the
 model's limit with a 400 `invalid_request_error`, as OpenAI's embeddings

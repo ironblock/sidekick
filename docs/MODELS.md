@@ -1402,6 +1402,35 @@ for the document).
   includes five near-duplicate documents with fp32 logits from 7.1 to 9.7,
   the closest two 0.24 apart.
 
+## Prompts (`input_type`)
+
+Most of these embedders were trained with a prompt before each input, one
+for queries and one for documents. An OpenAI client has no field for it,
+so sidekick puts the model's own prompt before every input (D9): the
+query prompt for `input_type: "query"`, and the document prompt otherwise,
+including when a request sends no `input_type`. `input_type: "none"` puts
+nothing: the text is embedded exactly as sent, with the tokenizer's
+special tokens. Send it when the text already carries its prompt, such as
+an MTEB task prompt or a Qwen3 or F2LLM instruction for a symmetric task.
+`/v1/models` lists each installed model's prompts as `prompts`.
+
+From each build's committed manifest (`[prefixes]`); a code span shows
+the prompt exactly, its trailing space included, and `\n` is a newline:
+
+<!-- generated: prompts -->
+| model | `query` | `document`, and no `input_type` |
+|---|---|---|
+| all-MiniLM-L6-v2 | none | none |
+| bge-small-en-v1.5 | `Represent this sentence for searching relevant passages: ` | none |
+| e5-small-v2 | `query: ` | `passage: ` |
+| gte-modernbert-base | none | none |
+| embeddinggemma-300m | `task: search result \| query: ` | `title: none \| text: ` |
+| embeddinggemma-2 | `task: search result \| query: ` | `title: none \| text: ` |
+| F2LLM-v2-160M | `Instruct: Given a question, retrieve passages that can help answer the question.\nQuery: ` | none |
+| LFM2.5-Embedding-350M | `query: ` | `document: ` |
+| Qwen3-Embedding-0.6B | `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:` | none |
+<!-- /generated -->
+
 ## Benchmark scores
 
 The grades above say how faithfully a sidekick build reproduces its model.
@@ -1452,23 +1481,21 @@ MTEB results: [mteb/results at 3b0980076221](https://huggingface.co/datasets/mte
 - **Prompts.** MTEB prompts many models: an instruction per task
   (Qwen3-Embedding, F2LLM), a prompt per task type (EmbeddingGemma), or
   query and document prefixes on retrieval and reranking tasks only
-  (mteb counts reranking as retrieval). sidekick always
-  adds the manifest's prefix for the request's `input_type` (the document
-  prefix when none is given), so whether a client can reproduce the run's
-  prompts depends on the model:
+  (mteb counts reranking as retrieval). sidekick puts the manifest's
+  prompt for the request's `input_type` before each input (the document
+  prompt when none is given; see [Prompts](#prompts-input_type)), and
+  `input_type: "none"` puts none. So a client can reproduce every run's
+  prompts:
   - all-MiniLM-L6-v2, gte-modernbert-base: no prompts in either.
-  - bge-small-en-v1.5, Qwen3-Embedding-0.6B, F2LLM-v2-160M: yes. Their
-    document prefix is empty, so send the run's instruction in the text
-    with `input_type: "document"` (bge's `query` prefix is its query
-    prompt for retrieval and reranking).
-  - LFM2.5-Embedding-350M: its one score is retrieval, where sidekick's
-    query and document prefixes are the run's.
-  - e5-small-v2: only on retrieval and reranking. Its runs used no
-    prefix on other tasks, and sidekick always adds `query: ` or
-    `passage: `.
-  - embeddinggemma-300m, embeddinggemma-2: no. Every input gets a prefix
-    (`title: none | text: ` for documents), so a task-type prompt such as
-    `task: classification | query: ` sent by a client ends up inside it.
+  - Every other model, on any task: send the run's prompt in the text
+    with `input_type: "none"`, and nothing else is added. For example,
+    EmbeddingGemma's `task: classification | query: ` before the text, or
+    nothing at all for e5-small-v2 outside retrieval and reranking, where
+    its runs used no prefix.
+  - On retrieval and reranking, the runs' query and document prompts are
+    sidekick's own for bge-small-en-v1.5 (query only), e5-small-v2 and
+    LFM2.5-Embedding-350M, so `input_type: "query"` and the default
+    `document` reproduce them.
 
   Without the run's prompts, expect lower classification, clustering and
   STS scores than these.

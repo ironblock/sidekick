@@ -94,6 +94,7 @@ impl EmbedInput {
         match purpose {
             EmbedPurpose::Query => &self.prefix_query,
             EmbedPurpose::Document => &self.prefix_document,
+            EmbedPurpose::Raw => "",
         }
     }
 
