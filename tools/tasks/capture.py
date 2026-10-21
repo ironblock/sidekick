@@ -384,6 +384,8 @@ def main(argv=None) -> int:
     r.add_argument("--root", type=Path, help="working root (default: recipes.toml's)")
     r.add_argument("--toolchain", action="append", default=[], metavar="NAME=DIR",
                    help="link a toolchain the lock names (rust=<rustup toolchain dir>)")
+    r.add_argument("--strict", action="store_true",
+                   help="fail, rather than warn, on a misconfigured scan ($SIDEKICK_SCAN_DENYLIST missing)")
     r.add_argument("--allow-host-drift", action="store_true",
                    help="with --check, report a different host git, python3 or sh instead of failing")
     r.add_argument("--include-pending", action="store_true",
@@ -395,6 +397,8 @@ def main(argv=None) -> int:
     if a.cmd == "fetch":
         fetch(a.cache, load_toml(TOOLS_LOCK))
         return 0
+    if a.strict:
+        os.environ["SIDEKICK_SCAN_STRICT"] = "1"
     toolchains = dict(t.split("=", 1) for t in a.toolchain)
     return run(a.cache, a.out, a.root, a.update_lock, a.check, a.include_pending, a.allow_host_drift,
                {k: Path(v) for k, v in toolchains.items()})

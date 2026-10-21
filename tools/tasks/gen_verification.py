@@ -877,6 +877,13 @@ def generate(captures: Path, out: Path, set_name: str, claims_path: Path, corpus
     return triples, sorted(set(pending)), lock
 
 
+def historical_message(lock: dict) -> str:
+    """A validated set from an earlier round regenerates only from the inputs
+    it was built from, which its lock names by commit."""
+    return (f"{lock['set']}: historical set, validated at {lock['source_commit'][:7]}; "
+            f"check out that commit to regenerate")
+
+
 def compare(got: dict, want: dict) -> list[str]:
     diffs = []
     for k in ("generator", "length_unit", "corpus_sha256", "claims_sha256", "captures_set_sha256", "set_sha256",
@@ -1020,10 +1027,17 @@ def main(argv=None) -> int:
     g.add_argument("--update-lock", action="store_true")
     g.add_argument("--check", action="store_true")
     ap.add_argument("--export", action="store_true", help="also write the reviewer's copy under <out>/review/")
+    ap.add_argument("--strict", action="store_true",
+                    help="fail, rather than warn, on a misconfigured scan ($SIDEKICK_SCAN_DENYLIST missing)")
     a = ap.parse_args(argv)
+    if a.strict:
+        import os
+        os.environ["SIDEKICK_SCAN_STRICT"] = "1"
     if not a.set:
         a.set = f"review-{load_toml(a.corpus).get('batch', 2)}"
     lock_path = a.lock or FIXTURES / f"verification-{a.set}.lock.json"
+    if lock_path.exists() and "source_commit" in canon.read_json(lock_path):
+        raise SystemExit(historical_message(canon.read_json(lock_path)))
     triples, pending, lock = generate(a.captures, a.out, a.set, a.claims, a.corpus, a.captures_lock)
     by_type = {}
     for t in triples:

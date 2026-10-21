@@ -195,6 +195,13 @@ class SetLock(unittest.TestCase):
         lock = canon.read_json(FIX / "verification-review.lock.json")
         schema.validate(lock, "lock")
         self.assertEqual(lock["set_sha256"], "8db0030b10bca4c849dcfb4b54291aef2cec1ea7eb83500abab1f0033ca4803b")
+        self.assertEqual(lock["source_commit"], "3c59ef7561eeadacac3a2d479bdae08450c537cf")
+
+    def test_a_historical_set_says_how_to_regenerate_it(self):
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit) as ctx:
+            gen.main(["--set", "review", "--out", d, "--check"])
+        self.assertEqual(str(ctx.exception),
+                         "review: historical set, validated at 3c59ef7; check out that commit to regenerate")
 
     def test_review_lock_is_consistent(self):
         lock = canon.read_json(FIX / f"verification-{current_set()}.lock.json")

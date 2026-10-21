@@ -75,6 +75,40 @@ class RefusalScan(unittest.TestCase):
             with self.subTest(planted=planted):
                 self.assertIn("path", rules(planted + "\n"))
 
+    def test_format_characters_inside_a_path_are_stripped(self):
+        for cf in ("​", "‍", "­", "⁠"):  # ZWSP, ZWJ, soft hyphen, word joiner
+            with self.subTest(char=hex(ord(cf))):
+                self.assertIn("path", rules(f"/U{cf}sers/bob/x\n"))
+
+    def test_short_base64_paths_are_decoded(self):
+        import base64
+        enc = base64.b64encode(b"/Users/bob/x").decode()
+        self.assertEqual(len(enc), 16)
+        self.assertIn("path", rules(f"cfg {enc}\n"))
+        self.assertIn("path", rules(f"cfg {base64.urlsafe_b64encode(b'/home/bob/notes').decode()}\n"))
+        self.assertEqual(rules("change kkmpptxzrspxrzommnulwmwkkqwworpl\n"), set())
+
+    def test_per_user_temporary_directories(self):
+        for planted in ("/tmp/claude-501/T/x", "/tmp/501/x", "/tmp/user_1000/x", "/private/tmp/claude-501/x"):
+            with self.subTest(planted=planted):
+                self.assertIn("path", rules(planted + "\n"))
+        self.assertEqual(rules("cache in /tmp/build/x\n"), set())
+
+    def test_a_missing_denylist_file_warns_or_fails(self):
+        import contextlib
+        import io
+        env = {"SIDEKICK_SCAN_DENYLIST": "/nonexistent/deny.txt"}
+        with mock.patch.dict(os.environ, env):
+            os.environ.pop("CI", None)
+            os.environ.pop("SIDEKICK_SCAN_STRICT", None)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(scrub.denylist(), [])
+            self.assertIn("not a file", err.getvalue())
+            for strict in ({"CI": "true"}, {"SIDEKICK_SCAN_STRICT": "1"}):
+                with mock.patch.dict(os.environ, strict), self.assertRaises(SystemExit):
+                    scrub.denylist()
+
     def test_refuses_hosts_users_and_trailers(self):
         self.assertIn("host", rules("ssh alice-mbp.local\n"))
         self.assertIn("user@host", rules("logged in as alice@mbp\n"))

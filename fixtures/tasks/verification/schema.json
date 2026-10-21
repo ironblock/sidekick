@@ -206,7 +206,10 @@
           "properties": {"id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/sha256"},
                          "evidence_sha256": {"$ref": "#/$defs/variant_sha"}}}},
         "pending": {"type": "array", "items": {"type": "string"}},
-        "set_sha256": {"$ref": "#/$defs/sha256"}
+        "set_sha256": {"$ref": "#/$defs/sha256"},
+        "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$",
+                          "description": "a validated set from an earlier review round: the commit whose inputs regenerate it"},
+        "validated": {"type": "string", "description": "who validated the set, and the outcome"}
       }
     },
     "captures_lock": {

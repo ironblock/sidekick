@@ -10,13 +10,17 @@ HOME and clock (tools/tasks/capture.py), then:
    The capture stage refuses to write a capture with any finding that the
    recipe does not allowlist with a reason.
 
-The scan first normalizes the text (NFKC, JSON-escaped slashes unescaped, percent-decoding)
-and scans both the text and its normal form. It looks for:
+The scan first normalizes the text (NFKC, invisible format characters such
+as zero-width spaces and soft hyphens removed, JSON-escaped slashes
+unescaped, percent-decoding) and scans both the text and its normal form,
+plus the decoded text of any base64-looking token of 12 or more characters
+that decodes to readable UTF-8. It looks for:
 - the real home directory, user name and host name of the machine running it
   (`machine_identity`), and any literal listed, one per line, in the file
   named by $SIDEKICK_SCAN_DENYLIST (a local, uncommitted list);
 - absolute paths under /Users/, /home/, /root/, /var/folders/, /private/,
-  /Volumes/ and /opt/homebrew/, in any letter case, and /tmp/<number>/;
+  /Volumes/ and /opt/homebrew/, in any letter case, and per-user temporary
+  directories (/tmp/501/, /tmp/name-501/);
 - `name.local` host names, and bare `user@host` pairs;
 - `Signed-off-by:`-style trailers naming anyone outside the example domains;
 - IPv4 addresses other than loopback, 0.0.0.0 and the documentation ranges
@@ -30,6 +34,10 @@ and scans both the text and its normal form. It looks for:
   private-key blocks, hex keys named as such (`token: 3fa9…`), and long
   high-entropy tokens (mixed case and digits; bare hex ids such as commit
   hashes are exempt).
+
+Known limits: a path split across lines (`/Us` + newline + `ers/…`), a hex
+key with no name beside it (indistinguishable from a commit id), and dates
+in other than ISO form (`Oct 21, 2026`, `21/10/2026`) are not caught.
 """
 
 from __future__ import annotations
@@ -39,7 +47,10 @@ import ipaddress
 import math
 import os
 import re
+import base64
+import binascii
 import socket
+import sys
 import unicodedata
 import urllib.parse
 from dataclasses import dataclass
@@ -86,12 +97,24 @@ def machine_identity() -> dict:
     return {"home": home, "user": user, "hosts": sorted(hosts), "extra": denylist()}
 
 
+def strict() -> bool:
+    """In CI, or with $SIDEKICK_SCAN_STRICT set (the tools' --strict), a
+    misconfigured scan fails instead of warning."""
+    return bool(os.environ.get("CI") or os.environ.get("SIDEKICK_SCAN_STRICT"))
+
+
 def denylist() -> list[str]:
     """Literals from $SIDEKICK_SCAN_DENYLIST, a local file never committed:
     one per line (a real name, a project name), blank lines and # comments
-    ignored."""
+    ignored. A variable naming a missing file warns, or fails when strict."""
     path = os.environ.get("SIDEKICK_SCAN_DENYLIST")
-    if not path or not os.path.exists(path):
+    if not path:
+        return []
+    if not os.path.isfile(path):
+        msg = f"$SIDEKICK_SCAN_DENYLIST names {path!r}, which is not a file; the denylist is not applied"
+        if strict():
+            raise SystemExit(msg)
+        print(f"warning: {msg}", file=sys.stderr)
         return []
     with open(path, encoding="utf-8") as f:
         return [x.strip() for x in f if x.strip() and not x.lstrip().startswith("#")]
@@ -108,15 +131,43 @@ def local_identity() -> dict:
 
 
 def normalize(text: str) -> str:
-    """NFKC, `\\/` unescaped (JSON), and percent-encoding decoded."""
-    text = unicodedata.normalize("NFKC", text).replace("\\/", "/")
+    """NFKC, format characters (Unicode category Cf: zero-width space and
+    joiner, soft hyphen) removed, `\\/` unescaped (JSON), and percent-encoding
+    decoded."""
+    text = unicodedata.normalize("NFKC", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf").replace("\\/", "/")
     if "%" in text:
         text = urllib.parse.unquote(text)
     return text
 
 
+_B64_RE = re.compile(r"[A-Za-z0-9+/_-]{12,}={0,2}")
+
+
+def decoded_tokens(text: str) -> list[str]:
+    """The readable decodings of base64-looking tokens (12 or more
+    characters, standard or URL-safe alphabet): a short encoded path such as
+    `L1VzZXJzL2JvYi94` is below the entropy rule's length."""
+    out = []
+    for m in _B64_RE.finditer(text):
+        tok = m.group(0).rstrip("=")
+        if re.fullmatch(r"[0-9a-f]+", tok) or len(tok) % 4 == 1:
+            continue  # hex ids, or not a possible base64 length
+        tok += "=" * (-len(tok) % 4)
+        for alt in (tok, tok.replace("-", "+").replace("_", "/")):
+            try:
+                raw = base64.b64decode(alt, validate=True)
+                s = raw.decode("utf-8")
+            except (binascii.Error, ValueError):
+                continue
+            if s and sum(ch.isprintable() or ch in "\n\t" for ch in s) / len(s) >= 0.9:
+                out.append(s)
+                break
+    return out
+
+
 _PATH_RE = re.compile(r"(?<![\w.])/(?:users|home|root|var/folders|private|volumes|opt/homebrew)/[^\s'\"`)]*"
-                      r"|(?<![\w.])/tmp/\d+(?:/[^\s'\"`)]*)?", re.I)
+                      r"|(?<![\w.])/tmp/(?:\d+|[\w.]+[-_.]\d+|[\w.-]*(?:uid|user)[\w.-]*)(?:/[^\s'\"`)]*)?", re.I)
 _LOCAL_HOST_RE = re.compile(r"(?<![\w.-])[A-Za-z0-9][\w-]*\.local(?![\w-])(?!\.\w)")
 _USER_AT_HOST_RE = re.compile(r"(?<![\w.+%-])([A-Za-z][\w.+-]*)@([A-Za-z][\w-]*)(?![\w.@\\-])")
 _TRAILER_RE = re.compile(r"^\s*(?:signed-off-by|co-authored-by|reviewed-by|acked-by|reported-by):\s*(.+)$",
@@ -165,13 +216,17 @@ def scan(text: str, identity: dict | None = None, clock: tuple[str, str] = ("202
     `extra_literals` are more strings to refuse (the capture's own working
     root, for one)."""
     identity = identity if identity is not None else machine_identity()
+    out = _scan(text, identity, clock, extra_literals)
+    seen = {(f.rule, f.text) for f in out}
     norm = normalize(text)
-    if norm != text:
-        seen = {(f.rule, f.text) for f in _scan(text, identity, clock, extra_literals)}
-        out = _scan(text, identity, clock, extra_literals)
-        out += [f for f in _scan(norm, identity, clock, extra_literals) if (f.rule, f.text) not in seen]
-        return sorted(set(out), key=lambda f: (f.offset, f.rule, f.text))
-    return _scan(text, identity, clock, extra_literals)
+    extra = [norm] if norm != text else []
+    extra += [normalize(d) for d in decoded_tokens(norm)]
+    for alt in extra:
+        for f in _scan(alt, identity, clock, extra_literals):
+            if (f.rule, f.text) not in seen:
+                seen.add((f.rule, f.text))
+                out.append(f)
+    return sorted(set(out), key=lambda f: (f.offset, f.rule, f.text))
 
 
 def _scan(text: str, identity: dict, clock: tuple[str, str], extra_literals) -> list[Finding]:
