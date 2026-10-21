@@ -374,3 +374,14 @@ effective maximum under `seq_cap`, beside the manifest's own (its
 inputs to a model served on the GPU or the ANE (`docs/design/classify.md`,
 "The CPU sequence cap"). The cap is Core ML's: an ONNX model reports
 `compute_units: "cpu"` but has no cap and no `seq_cap`.
+
+Likewise, a Core ML model served on the ANE (`cpu_and_ne`, the default, or
+`all`) runs no longer than 2,048 tokens, or its manifest's
+`ane_max_seq_len`: past that, a bucket can take half an hour to compile
+for the ANE and then fail some predictions. The same artifact served on
+the GPU (`cpu_and_gpu`) has no cap. Its `/v1/models` entry shows
+`seq_cap` the same way, `/tokenize`'s `max_model_len` and `fits` use the
+capped limit, and a longer input to `/v1/embeddings` is refused (or
+truncated) at it. For longer inputs, serve the model on the GPU, in its
+manifest or with the daemon config's `[models."<id>"] compute_units`
+(`docs/design/classify.md`, "The ANE sequence cap").

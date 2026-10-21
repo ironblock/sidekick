@@ -38,6 +38,7 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         compute_units: config.compute_units(),
         ignore_ane_weight_cap: config.ignore_ane_weight_cap,
         ignore_cpu_seq_cap: config.ignore_cpu_seq_cap,
+        ignore_ane_seq_cap: config.ignore_ane_seq_cap,
     };
     let onnx_threads = config.onnx_threads()?;
     let mut registry = ModelRegistry::scan_with(&config.models_dir(), &options)?;

@@ -233,7 +233,8 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     state.chat_model.set(info.variant_id.clone());
     let embedding_models: Vec<&str> = state.registry.ids().collect();
     let classifier_models: Vec<&str> = state.registry.classifier_ids().collect();
-    // Models running with a sequence-length cap (D33), by id.
+    // Models running with a sequence-length cap (D33's on the CPU, D48's on
+    // the ANE), by id.
     let seq_caps: serde_json::Map<String, serde_json::Value> = state
         .registry
         .iter()
@@ -322,7 +323,7 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         },
         // Manifests the registry couldn't use, and why.
         "skipped_models": state.registry.skipped(),
-        // Models served with a shorter maximum than their manifest's (D33).
+        // Models served with a shorter maximum than their manifest's (D33, D48).
         "seq_caps": seq_caps,
         // Where Core ML places each bucket's operations: recorded at
         // conversion, or read live after a bucket's first load.

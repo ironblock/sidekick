@@ -37,6 +37,11 @@ struct Args {
     /// slightly bucket-dependent CPU results there (D33)
     #[arg(long)]
     ignore_cpu_seq_cap: bool,
+    /// Serve models on the ANE past their ANE length cap (2,048 tokens, or
+    /// the manifest's ane_max_seq_len), where long buckets compile slowly
+    /// and can fail predictions (D48)
+    #[arg(long)]
+    ignore_ane_seq_cap: bool,
 }
 
 /// `sidekickd --version`: the crate version plus the SDK the Foundation
@@ -90,6 +95,9 @@ async fn main() -> anyhow::Result<()> {
     if args.ignore_cpu_seq_cap {
         config.ignore_cpu_seq_cap = true;
     }
+    if args.ignore_ane_seq_cap {
+        config.ignore_ane_seq_cap = true;
+    }
 
     let state = build_state(&config)?;
     let availability = state.chat.availability().await;
@@ -133,5 +141,7 @@ mod tests {
         assert!(args.ignore_ane_weight_cap);
         assert!(!Args::try_parse_from(["sidekickd"]).unwrap().ignore_ane_weight_cap);
         assert!(Args::try_parse_from(["sidekickd", "--ignore-cpu-seq-cap"]).unwrap().ignore_cpu_seq_cap);
+        assert!(Args::try_parse_from(["sidekickd", "--ignore-ane-seq-cap"]).unwrap().ignore_ane_seq_cap);
+        assert!(!Args::try_parse_from(["sidekickd"]).unwrap().ignore_ane_seq_cap);
     }
 }

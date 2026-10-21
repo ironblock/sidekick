@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 /// The format version this suite reads.
 const FORMAT: u32 = 1;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Reference {
     pub format: u32,
     pub corpus_sha256: String,
@@ -114,7 +114,7 @@ pub fn long_corpus_reaches(max_seq_len: usize) -> Result<bool, String> {
     Ok(max_seq_len >= shortest_case(&text).map_err(|e| format!("{}: {e}", path.display()))?)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RefModel {
     pub id: String,
     pub dims: usize,
@@ -123,7 +123,7 @@ pub struct RefModel {
     pub prefixes: RefPrefixes,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RefPrefixes {
     pub query: String,
     pub document: String,
@@ -179,6 +179,27 @@ impl Reference {
             Some(rev) => format!("{id}@{}", &rev[..rev.len().min(10)]),
             None => id.to_string(),
         }
+    }
+
+    /// The cases of at most `max_tokens` reference ids, with their vectors,
+    /// and the ids of the cases left out: what an ane path capped at
+    /// `max_tokens` (D48) is graded against, since it doesn't run the rest.
+    pub fn within(&self, max_tokens: usize) -> (Reference, Vec<String>) {
+        let keep: Vec<bool> = self.cases.iter().map(|c| c.ids.len() <= max_tokens).collect();
+        let mut sub = self.clone();
+        sub.cases = self.cases.iter().zip(&keep).filter(|(_, k)| **k).map(|(c, _)| c.clone()).collect();
+        for (name, vectors) in &self.vectors {
+            let kept = vectors.iter().zip(&keep).filter(|(_, k)| **k).map(|(v, _)| v.clone()).collect();
+            sub.vectors.insert(name.clone(), kept);
+        }
+        let left_out = self.cases.iter().zip(&keep).filter(|(_, k)| !**k).map(|(c, _)| c.id.clone()).collect();
+        (sub, left_out)
+    }
+
+    /// Whether any case is graded on its own (not a stress case): grading
+    /// needs one.
+    pub fn has_core_case(&self) -> bool {
+        self.cases.iter().any(|c| !c.tags.iter().any(|t| t == crate::grade::STRESS_TAG))
     }
 
     /// Load `dir/reference.{json,safetensors}`.

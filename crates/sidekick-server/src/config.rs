@@ -46,6 +46,12 @@ pub struct Config {
     /// slightly bucket-dependent CPU results there (D33). A manifest's
     /// `cpu_seq_limit = "ignore"` does the same for one model.
     pub ignore_cpu_seq_cap: bool,
+    /// Serve models on the ANE (`cpu_and_ne` or `all`) past their ANE cap:
+    /// 2,048 tokens, or the manifest's `ane_max_seq_len` (D48). Past it a
+    /// bucket can take half an hour to compile for the ANE and then fail
+    /// some predictions. For measurement; to serve long inputs, serve the
+    /// model on the GPU (`[models."<id>"] compute_units = "cpu_and_gpu"`).
+    pub ignore_ane_seq_cap: bool,
     /// Read where Core ML places each loaded bucket's operations on this
     /// machine (`placement` in /v1/models, `compute_plans` in /health). Off
     /// by default: reading a plan compiles the bucket a second time, as
@@ -74,8 +80,8 @@ pub struct Config {
 #[serde(default, deny_unknown_fields)]
 pub struct ModelConfig {
     /// Serve the model on these compute units instead of its manifest's: a
-    /// Core ML model only. The weight limit (D32) and the CPU cap (D33)
-    /// judge it as they would the manifest's choice, and /v1/models and
+    /// Core ML model only. The weight limit (D32) and the length caps (D33,
+    /// D48) judge it as they would the manifest's choice, and /v1/models and
     /// /health report that the operator chose.
     pub compute_units: Option<ComputeUnits>,
     /// Inference threads for an `onnx` model (D40).
@@ -125,6 +131,7 @@ impl Default for Config {
             load_timeout_secs: 900,
             ignore_ane_weight_cap: false,
             ignore_cpu_seq_cap: false,
+            ignore_ane_seq_cap: false,
             report_compute_plans: false,
             onnx_intra_op_threads: None,
             onnx_runtime: None,
@@ -267,6 +274,9 @@ mod tests {
         assert!(!Config::default().ignore_cpu_seq_cap, "the CPU sequence cap is enforced by default");
         let c: Config = toml::from_str("ignore_cpu_seq_cap = true").unwrap();
         assert!(c.ignore_cpu_seq_cap);
+        assert!(!Config::default().ignore_ane_seq_cap, "the ANE sequence cap is enforced by default");
+        let c: Config = toml::from_str("ignore_ane_seq_cap = true").unwrap();
+        assert!(c.ignore_ane_seq_cap);
         assert!(!Config::default().report_compute_plans, "live plan reads are opt-in");
         let c: Config = toml::from_str("report_compute_plans = true").unwrap();
         assert!(c.report_compute_plans);

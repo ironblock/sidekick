@@ -821,9 +821,15 @@ What a long input costs:
   ms, 1.2 s and 5.0–5.6 s; the 1,024 and 2,048 buckets, graded as an
   install of their own, grade A there (0.999986) and pass every gate. The
   4,096 bucket compiles for 29 minutes on the ANE, and 7 of its 51 timed
-  predictions failed, so it waits for an ANE length cap like D33's for
-  the CPU. The published Core ML build stays at 512 for now; D46 gives
-  the plan for each model.
+  predictions failed.
+- **Each Core ML path's limit.** Core ML's CPU path is capped at 1,024
+  tokens (D33), and its ANE path at 2,048, or a manifest's
+  `ane_max_seq_len` (D48): the buckets past the cap aren't loaded there,
+  and `/v1/models` shows the cap under `seq_cap`. The GPU path is
+  uncapped, so a 4,096-token bucket can serve the GPU from the same
+  artifact; to send a model's long inputs there, serve it on the GPU
+  (`[models."<id>"] compute_units = "cpu_and_gpu"`, D38). The published
+  Core ML build stays at 512 for now; D46 gives the plan for each model.
 
 ### Recommendations
 

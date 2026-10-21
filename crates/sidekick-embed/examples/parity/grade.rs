@@ -103,6 +103,11 @@ pub struct PathGrade {
     pub failures: Vec<String>,
     /// This chip's floors failed: less accurate than when last measured.
     pub regressions: Vec<String>,
+    /// The ane path of a model capped on the ANE (D48): the cases longer
+    /// than its cap, which it doesn't run, left out of every figure above
+    /// (and of `per_case`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub capped: Vec<String>,
 }
 
 /// Whether `result`, written outside the suite (`--external`), can be graded
@@ -366,6 +371,7 @@ pub fn grade(
         per_case,
         failures,
         regressions,
+        capped: Vec::new(),
     }
 }
 
@@ -484,6 +490,29 @@ mod tests {
     fn unit(v: &[f32]) -> Vec<f32> {
         let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         v.iter().map(|x| x / n).collect()
+    }
+
+    #[test]
+    fn a_capped_ane_path_is_graded_on_the_cases_within_its_cap() {
+        // Three cases of 2, 5 and 3 tokens; an ane path capped at 3 (D48)
+        // runs the first and the last.
+        let v = vec![unit(&[1.0, 0.0, 0.0]), unit(&[0.0, 1.0, 0.0]), unit(&[0.0, 0.0, 1.0])];
+        let mut full = reference(v.clone(), &[&[], &[], &[]]);
+        full.cases[1].ids = vec![1; 5];
+        full.cases[2].ids = vec![1; 3];
+        let (sub, capped) = full.within(3);
+        assert_eq!(capped, ["c1"]);
+        assert_eq!(sub.cases.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["c0", "c2"]);
+        assert_eq!(sub.vectors["torch"], [v[0].clone(), v[2].clone()]);
+        assert!(sub.has_core_case());
+        // Graded against it, the ane path's two results are exact.
+        let mut r = result(vec![v[0].clone(), v[2].clone()]);
+        r.cases[1].id = "c2".into();
+        let g = grade(&sub, &r, Path3::Ane, &gates(), &Grades::committed(), None, &[]);
+        assert!(g.failures.is_empty(), "{:?}", g.failures);
+        assert_eq!((g.per_case.len(), g.worst_case.as_str()), (2, "c0"));
+        // Nothing within the cap: nothing to grade.
+        assert!(!full.within(1).0.has_core_case());
     }
 
     #[test]

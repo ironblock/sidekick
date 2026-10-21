@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 const FORMAT: u32 = 1;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ClassifyReference {
     pub format: u32,
     pub corpus_sha256: String,
@@ -28,7 +28,7 @@ pub struct ClassifyReference {
     pub logits: BTreeMap<String, Vec<Vec<f32>>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RefModel {
     pub id: String,
     pub task: ClassifyTask,
@@ -57,7 +57,7 @@ pub struct RefNli {
     pub hypothesis_template: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RefSource {
     pub repo: String,
     pub revision: Option<String>,
@@ -130,6 +130,12 @@ pub struct ClassifyCase {
 pub const TRUNCATED_TAG: &str = "truncated";
 
 impl ClassifyCase {
+    /// The longest sequence the case runs: its ids, or an nli case's
+    /// longest pair.
+    pub fn tokens(&self) -> usize {
+        self.pair_ids.iter().map(Vec::len).chain([self.ids.len()]).max().unwrap_or(0)
+    }
+
     /// The rerank request this case stands for: the pair, truncated like
     /// `params` when tagged `truncated`.
     pub fn pair_params(&self, max_seq_len: usize) -> sidekick_core::PairParams {
@@ -199,6 +205,22 @@ pub fn corpus_sha256(manifest: &ClassifierManifest) -> Result<String, String> {
 }
 
 impl ClassifyReference {
+    /// The cases whose sequences are at most `max_tokens` long, with their
+    /// logits, and the ids of the cases left out: what an ane path capped
+    /// at `max_tokens` (D48) is graded against, since it doesn't run the
+    /// rest.
+    pub fn within(&self, max_tokens: usize) -> (ClassifyReference, Vec<String>) {
+        let keep: Vec<bool> = self.cases.iter().map(|c| c.tokens() <= max_tokens).collect();
+        let mut sub = self.clone();
+        sub.cases = self.cases.iter().zip(&keep).filter(|(_, k)| **k).map(|(c, _)| c.clone()).collect();
+        for (name, logits) in &self.logits {
+            let kept = logits.iter().zip(&keep).filter(|(_, k)| **k).map(|(l, _)| l.clone()).collect();
+            sub.logits.insert(name.clone(), kept);
+        }
+        let left_out = self.cases.iter().zip(&keep).filter(|(_, k)| !**k).map(|(c, _)| c.id.clone()).collect();
+        (sub, left_out)
+    }
+
     pub fn source_label(&self) -> String {
         match &self.source.revision {
             Some(rev) => format!("{}@{}", self.source.repo, &rev[..rev.len().min(10)]),
