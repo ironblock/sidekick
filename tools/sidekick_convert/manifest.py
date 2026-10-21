@@ -241,6 +241,17 @@ def nli_indices(config):
     return entail % n, contra % n
 
 
+def nli_classes(config):
+    """The checkpoint's classes in output order, lowercased: config.json's
+    label2id inverted, the names `[classify.nli] classes` lists and a
+    request's `nli_probs` reports (D47)."""
+    n = int(config.num_labels)
+    by_index = {int(i): label.lower() for label, i in config.label2id.items()}
+    if sorted(by_index) != list(range(n)):
+        raise SystemExit(f"label2id {config.label2id} doesn't name each of the {n} outputs once")
+    return [by_index[i] for i in range(n)]
+
+
 def valid_template(t):
     """A hypothesis template the server accepts: exactly one "{}" and no other
     brace, so Python's str.format and the server's substitution agree."""
@@ -251,7 +262,8 @@ def valid_template(t):
 def check_nli(m, *, src, buckets, backbone, head, tok, token_type_input):
     """An nli-format manifest (docs/design/classify.md) vs the checkpoint:
     zero-shot, [classify.nli]'s indices and class count as transformers'
-    pipeline resolves them, its template, and io naming token_type_ids
+    pipeline resolves them, its classes as config.json names them, its
+    template, and io naming token_type_ids
     exactly when the model reads pair segment ids."""
     errors = []
     _common(m, errors, src=src, buckets=buckets, backbone=backbone, strict_max_seq_len=True)
@@ -269,6 +281,9 @@ def check_nli(m, *, src, buckets, backbone, head, tok, token_type_input):
            f"[classify.nli] contradiction {nli.get('contradiction')} != {contra}")
     _check(errors, nli.get("n_classes") == head.num_labels,
            f"[classify.nli] n_classes {nli.get('n_classes')} != the checkpoint's {head.num_labels}")
+    classes = nli_classes(backbone.config)
+    _check(errors, nli.get("classes") == classes,
+           f"[classify.nli] classes {nli.get('classes')} != the checkpoint's id2label, lowercased: {classes}")
     _check(errors, valid_template(nli.get("hypothesis_template", "This example is {}.")),
            f"hypothesis_template {nli.get('hypothesis_template')!r} needs exactly one {{}} and no other braces")
     _, types = _tok.encode_pair(tok, "a", "b")

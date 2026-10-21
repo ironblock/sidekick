@@ -1184,6 +1184,7 @@ mod tests {
             entailment: 2,
             contradiction: 0,
             n_classes: 3,
+            classes: None,
             hypothesis_template: "{} fits".into(),
         });
         m.classify.io.token_type_ids = segment_ids.then(|| "token_type_ids".into());

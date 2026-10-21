@@ -387,7 +387,8 @@ marker_pos = "cand_end"
 output = "logits"
 "#;
 
-/// `classifier.toml` for an NLI cross-encoder in the nli format (D41).
+/// `classifier.toml` for a three-way NLI cross-encoder in the nli format
+/// (D41), in roberta-large-mnli's class order.
 pub const NLI_ZERO_SHOT: &str = r#"
 id = "nli-decider"
 task = "zero-shot-classification"
@@ -405,12 +406,31 @@ max_labels = 4
 entailment = 2
 contradiction = 0
 n_classes = 3
+classes = ["contradiction", "neutral", "entailment"]
 
 [classify.io]
 input_ids = "input_ids"
 attention_mask = "attention_mask"
 output = "logits"
 "#;
+
+/// A two-way NLI model (the zeroshot-v2.0 family's entailment vs
+/// not_entailment).
+pub fn nli_two_way() -> String {
+    NLI_ZERO_SHOT
+        .replace("id = \"nli-decider\"", "id = \"nli-two-way\"")
+        .replace(
+            "entailment = 2\ncontradiction = 0\nn_classes = 3\nclasses = [\"contradiction\", \"neutral\", \"entailment\"]",
+            "entailment = 0\ncontradiction = 1\nn_classes = 2\nclasses = [\"entailment\", \"not_entailment\"]",
+        )
+}
+
+/// An NLI model whose manifest predates `[classify.nli] classes` (D47).
+pub fn nli_unnamed() -> String {
+    NLI_ZERO_SHOT
+        .replace("id = \"nli-decider\"", "id = \"nli-unnamed\"")
+        .replace("classes = [\"contradiction\", \"neutral\", \"entailment\"]\n", "")
+}
 
 /// `classifier.toml` for a reranker that reports raw logits (the ms-marco
 /// cross-encoders' `Identity` activation).
@@ -465,7 +485,9 @@ output = "logits"
 ///   "reject" fails `prepare` with a client error.
 ///
 /// In the nli format, each label's pair is the bytes of `text|hypothesis`,
-/// and its value is 3 if the text contains the label, else 0.
+/// its class logits are [`mock_nli_logits`], and its value is derived
+/// from them as the Core ML classifier derives it: 3 if the text contains
+/// the label, else 0.
 ///
 /// As a reranker (`text-ranking`), a pair's ids are the bytes of
 /// `query|document` and its logit is the number of the query's words the
@@ -487,6 +509,44 @@ impl MockClassifier {
         let buckets = &self.manifest.buckets;
         *buckets.iter().find(|&&b| b >= n).unwrap_or_else(|| buckets.last().expect("validated non-empty"))
     }
+
+    /// An nli input's class logits, per pair, at the manifest's indices
+    /// ([`mock_nli_logits`]).
+    fn nli_logits(&self, prepared: &Prepared) -> Result<Vec<Vec<f32>>> {
+        let section = self.manifest.classify.nli.as_ref().unwrap();
+        let labels = LABELS.with(|l| l.borrow().clone());
+        let nli = prepared.nli.as_ref().unwrap();
+        nli.pairs
+            .iter()
+            .zip(&labels)
+            .map(|(pair, label)| {
+                let text: String = pair.ids.iter().map(|&b| b as u8 as char).collect();
+                let (text, _) = text.split_once('|').unwrap();
+                if text.contains("fail") {
+                    return Err(Error::Inference("mock failure".into()));
+                }
+                Ok(mock_nli_logits(text, label, section.entailment, section.contradiction, section.n_classes))
+            })
+            .collect()
+    }
+}
+
+/// The mock's class logits for a (text, label) pair: contradiction 3 when
+/// the text contains `not <label>`; else entailment 3 when it contains the
+/// label; else, on a three-way model, neutral 2. Every other class is 0.
+/// So a label's nli value is 3 when the text contains it and 0 when it
+/// doesn't, or −3 scored alone against a `not`.
+pub fn mock_nli_logits(text: &str, label: &str, entailment: usize, contradiction: usize, n_classes: usize) -> Vec<f32> {
+    let mut logits = vec![0.0; n_classes];
+    if text.contains(&format!("not {label}")) {
+        logits[contradiction] = 3.0;
+    } else if text.contains(label) {
+        logits[entailment] = 3.0;
+    } else if n_classes == 3 {
+        let neutral = (0..3).find(|&i| i != entailment && i != contradiction).unwrap();
+        logits[neutral] = 2.0;
+    }
+    logits
 }
 
 impl Classifier for MockClassifier {
@@ -614,23 +674,22 @@ impl Classifier for MockClassifier {
         })
     }
 
+    fn run_nli(&self, prepared: &Prepared) -> Result<Vec<Vec<f32>>> {
+        self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.nli_logits(prepared)
+    }
+
     fn run(&self, prepared: &Prepared) -> Result<Vec<f32>> {
         self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if let Some(nli) = &prepared.nli {
-            let labels = LABELS.with(|l| l.borrow().clone());
-            return nli
-                .pairs
+            // As the Core ML classifier does: each pair's value from its
+            // class logits.
+            let section = self.manifest.classify.nli.as_ref().unwrap();
+            return Ok(self
+                .nli_logits(prepared)?
                 .iter()
-                .zip(&labels)
-                .map(|(pair, label)| {
-                    let text: String = pair.ids.iter().map(|&b| b as u8 as char).collect();
-                    let (text, _) = text.split_once('|').unwrap();
-                    if text.contains("fail") {
-                        return Err(Error::Inference("mock failure".into()));
-                    }
-                    Ok(if text.contains(label.as_str()) { 3.0 } else { 0.0 })
-                })
-                .collect();
+                .map(|l| sidekick_core::nli_value(l, section.entailment, section.contradiction, nli.per_label))
+                .collect());
         }
         let text: String = prepared.ids.iter().map(|&b| b as u8 as char).collect();
         if self.manifest.task == ClassifyTask::TextRanking {
@@ -717,6 +776,7 @@ pub fn test_state_scanned(chat_available: bool, api_key: Option<&str>, options: 
     let capped = cpu_capped();
     let chunked = chunked();
     let julia = julia_zero_shot();
+    let (two_way, unnamed) = (nli_two_way(), nli_unnamed());
     let (fresh, stale, gpu) =
         (placed("placed", None, None), placed("placed-stale", Some("0Z000"), None), placed("placed-gpu", None, Some("cpu_and_gpu")));
     for (name, body) in [
@@ -731,6 +791,8 @@ pub fn test_state_scanned(chat_available: bool, api_key: Option<&str>, options: 
         ("fev-decider", FEV_ZERO_SHOT),
         ("jev-decider", AGENTJEV_ZERO_SHOT),
         ("nli-decider", NLI_ZERO_SHOT),
+        ("nli-two-way", two_way.as_str()),
+        ("nli-unnamed", unnamed.as_str()),
         ("julia", julia.as_str()),
         ("reranker", RERANKER),
         ("sigmoid-reranker", SIGMOID_RERANKER),

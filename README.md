@@ -344,6 +344,26 @@ statement hold: labels `false`, `true`). `probs` then follows
  "candidate_labels": ["billing: invoices and refunds", "account: login and passwords", "other"]}
 ```
 
+NLI cross-encoders (`nli-deberta-v3-*`, `roberta-large-mnli`, the
+zeroshot-v2.0 models) put each label into a hypothesis and score it as
+Hugging Face's zero-shot pipeline does. That score reduces the model's
+classes to one number, so a claim the text contradicts and one it never
+mentions can look alike. `nli_probs: true` adds each label's
+probabilities over the model's own classes:
+
+```json
+{"model": "nli-deberta-v3-base", "input": "All 214 tests passed in 3.2 seconds.",
+ "candidate_labels": ["some tests failed"], "hypothesis_template": "{}.", "nli_probs": true}
+```
+
+Each result then carries `"nli_probs": [{"contradiction": 0.97,
+"entailment": 0.01, "neutral": 0.02}]` (values illustrative), one object
+per label, beside the unchanged `probs`. The three-way (MNLI) models
+report `entailment`, `neutral` and `contradiction`. The two-way
+zeroshot-v2.0 models report `entailment` and `not_entailment`, so they
+can't separate contradicted from unmentioned. `/v1/models` lists each
+one's `nli_classes`.
+
 `calibration: "model"` applies the temperature the model declares for the
 question type and label count; `/v1/models` lists each classifier's
 temperatures, labels or `max_labels`, `max_batch`, and the extension fields

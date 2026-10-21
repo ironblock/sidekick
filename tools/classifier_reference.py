@@ -1222,7 +1222,7 @@ def run_nli(args, manifest):
     from tokenizers import Tokenizer
     from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
     sys.path.insert(0, str(REPO / "tools"))
-    from sidekick_convert.manifest import nli_indices, valid_template
+    from sidekick_convert.manifest import nli_classes, nli_indices, valid_template
     corpus_text = NLI_CORPUS.read_text()
     corpus = tomllib.loads(corpus_text)
     nli = manifest["classify"]["nli"]
@@ -1249,6 +1249,8 @@ def run_nli(args, manifest):
     entail, contra = nli_indices(model.config)
     if (entail, contra, model.config.num_labels) != (nli["entailment"], nli["contradiction"], nli["n_classes"]):
         raise SystemExit(f"[classify.nli] doesn't match the checkpoint: {(entail, contra, model.config.num_labels)}")
+    if "classes" in nli and nli["classes"] != nli_classes(model.config):
+        raise SystemExit(f"[classify.nli] classes {nli['classes']} != the checkpoint's {nli_classes(model.config)}")
     cases = limited(args, nli_cases(corpus))
     for c in cases:
         template = c["hypothesis_template"] or default

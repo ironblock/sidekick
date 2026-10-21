@@ -282,6 +282,21 @@ class NliManifest(unittest.TestCase):
         # no label starts with "entail": the pipeline's -1, the last index
         self.assertEqual(manifest.nli_indices(cfg(["LABEL_0", "LABEL_1", "LABEL_2"])), (2, 0))
 
+    def test_classes_are_id2label_lowercased(self):
+        cfg = lambda label2id: SimpleNamespace(num_labels=len(label2id), label2id=label2id)  # noqa: E731
+        # cross-encoder/nli-deberta-v3-*, nli-MiniLM2
+        self.assertEqual(manifest.nli_classes(cfg({"contradiction": 0, "entailment": 1, "neutral": 2})),
+                         ["contradiction", "entailment", "neutral"])
+        # roberta-large-mnli, in index order whatever label2id's order
+        self.assertEqual(manifest.nli_classes(cfg({"ENTAILMENT": 2, "CONTRADICTION": 0, "NEUTRAL": 1})),
+                         ["contradiction", "neutral", "entailment"])
+        # the zeroshot-v2.0 family
+        self.assertEqual(manifest.nli_classes(cfg({"entailment": 0, "not_entailment": 1})),
+                         ["entailment", "not_entailment"])
+        # an output named twice (and one unnamed) is refused
+        with self.assertRaises(SystemExit):
+            manifest.nli_classes(SimpleNamespace(num_labels=2, label2id={"entailment": 0, "ENTAILMENT": 0}))
+
     def test_template_rule(self):
         self.assertTrue(manifest.valid_template("This example is {}."))
         self.assertTrue(manifest.valid_template("{}"))
