@@ -3267,6 +3267,192 @@ do, and the prompts are copied from the checkpoint into the manifest.
   instruction models arrive, an `instruction` field can be added beside
   `prompt_name` without changing it.
 
+## D46 — How far each build goes toward its model's context
+Most builds stop short of their model's trained context, because the
+converters' default bucket list stops at 512, not because anyone chose
+that for each model. Qwen3-Embedding-0.6B takes 32,768 tokens,
+EmbeddingGemma-300m 2,048 and gte-modernbert-base 8,192. Since D43 an
+over-length input is a 400 on `/v1/embeddings`, so a build's cap is
+visible, but a short cap still costs whoever has long documents. Issue
+#117 asked how far each build should go, on each backend, and what that
+costs. A consumer's report there gives the scale of the demand: of 2,355
+documents it embedded with Qwen3-Embedding-0.6B, 35% were over 512
+tokens, 5.7% over 1,024 and 0.2% over 2,048, the longest 2,408.
+
+**What was measured.** Qwen3-Embedding-0.6B's chunked Core ML build
+(D37), converted with buckets of 1,024, 2,048 and 4,096 tokens
+(`convert_qwen3_embedding.py`, the committed recipe, with those buckets
+and `max_seq_len` 4,096 in a local copy of its manifest). M1 Max (32 GB),
+macOS 27.0. Sizes are in GiB and MiB.
+
+Latency and memory come from `examples/embed_timing`: sidekick's own
+Core ML path, one input at a time, on real token ids (the long corpus's
+4,096-token case, cut keeping its final token). Each bucket and compute
+units ran in two processes: one with an empty Core ML cache, timing the
+median of 3 predictions after two warm-ups, then one with the cache it
+left, timing the median of 10. The ranges below span both. Every figure
+is from one complete run, made from fresh caches with no gaps in its log;
+an earlier run agrees within 4%. Load average was 2.2–3.6 throughout. The
+grades come from the parity suite on both corpora, with references
+generated for each bucket list.
+
+- **Every bucket converts.** The converter's gates pass at all three
+  sizes: fp32 exactness, the chunks equal to the unchunked wrapper, the
+  GPU chain bit-identical to the unchunked program (bucket 1,024), pad
+  invariance 1.0000000, and 2,129 of 2,135 operations on the ANE in every
+  bucket. (The GPU plan it records puts all 2,135 on the GPU.) Each
+  bucket's two chunks hold 0.555–0.590 GiB of weights, under D32's limit
+  at every size. On disk a bucket is 1.12, 1.13 and 1.18 GiB at 1,024,
+  2,048 and 4,096 tokens, and the same artifact serves either device.
+- **Latency is the bucket's, not the input's.** A 1,024-token input in
+  the 4,096 bucket costs what a 4,096-token one does.
+
+  | bucket | GPU | ANE | Core ML CPU | onnx-cpu (D40) |
+  |---|---|---|---|---|
+  | 1,024 | 152 ms | 377–384 ms | 557–558 ms | |
+  | 2,048 | 349–350 ms | 1,227–1,250 ms | capped (D33) | 6.8–7.1 s at 2,400 (Python, busier machine) |
+  | 4,096 | 938–943 ms | 5.0–5.6 s, when it completes (below) | capped (D33) | 12.9–14.2 s |
+
+  The ANE takes 2.5× the GPU's time at 1,024, 3.5–3.6× at 2,048 and
+  5.3–5.9× at 4,096; agent-jev, the same backbone, measured 1.9× and
+  2.5× at 1,024 and 2,048 (docs/MODELS.md). At 4,096 the GPU is
+  13.7–15.1× faster than onnx-cpu's figure, which came from another
+  harness (`examples/onnx_memory`, load average 4–11; the Python bench
+  gave 15–17 s), so the ratio is approximate.
+- **First load.** With an empty Core ML cache, each bucket's first
+  prediction compiles it: 2.3–3.0 s on the GPU at every size, and on the
+  ANE 55 s at 1,024, 151 s at 2,048 and 1,759 s (29 minutes) at 4,096.
+  From the cache: 0.7–1.5 s on the GPU, 0.5, 1.4 and 5.2 s on the ANE,
+  though in the parity suite, which shares one cache between processes,
+  each new process compiled the 4,096 bucket again.
+- **Disk beyond the artifacts.** Core ML's compiled cache held 3.7 GiB
+  per bucket on the ANE (3.4 GiB on the CPU, 4.5–4.6 GiB on the GPU),
+  3–4 times the bucket's weights. Adding the 1,024 and 2,048 buckets to
+  an ANE-served install costs about 2.2 GiB of artifacts and 7.4 GiB of
+  cache.
+- **Memory.** After a bucket's predictions, the process's resident size
+  was 1.30–1.72 GiB on the GPU, which maps the weights into the process
+  (its `phys_footprint`, which leaves out clean mapped pages, 0.31–0.89
+  GiB), and 121–234 MiB on the ANE, which reads them through the file
+  cache. Core ML's CPU path: 1.08–1.10 GiB at 1,024. onnx-cpu's
+  footprint grows by 4.05 GiB after a 4,096-token input (D40).
+- **The ANE fails in the 4,096 bucket.** Some of its predictions fail
+  with Core ML's "Unable to compute the prediction using ML Program": 7
+  of 51 timed attempts, 3 of 15 in the process that compiled it and 4 of
+  36 in the next, from the cache. By input length that is 5 of 17 at
+  4,096 tokens, 2 of 17 at 1,024 and none of 17 at 2,048, so a short
+  input fails too; what the failures track is the 4,096 bucket. An
+  earlier pair of runs failed too, one of them on its first prediction.
+  The parity suite's main-corpus ANE worker stopped on one. The 1,024
+  and 2,048 buckets failed none of their predictions on the ANE, and no
+  other path failed any.
+- **Two of sidekick's limits are shorter than the ANE's compile at
+  4,096.**
+  - The compute-plan read (`compute_plan`, 300 s) compiles the bucket
+    for the ANE. The parity suite reads it before anything predicts; it
+    timed out, so the suite marked the bucket ineligible and skipped the
+    model. Every grade below, the 2,048 install's included, was taken
+    with that limit raised to 7,200 s in a local build. That is harmless
+    at 2,048, whose compile (151 s) is under 300 s. The daemon reads the
+    same plan when `report_compute_plans` is on (`placement.rs`), so it
+    would report a 4,096 ANE bucket's placement as failed.
+  - The daemon's `load_timeout_secs` (900 s by default) would give the
+    first request that needs the bucket a 504 (`load_timeout`), though
+    the load goes on and a retry finds it resident (docs/INTEGRATING.md).
+- **Grades.**
+  - **GPU: A** on both corpora: worst cosine 0.999997 on each, with
+    buckets within 0.999996 and exact pads. On the long corpus, 1 − cos
+    is 1.3e-6 at 600 tokens, 1.7–2.7e-6 at 1,500, 1.6e-6 at 2,400 and
+    2.1e-6 at 4,096.
+  - **ANE, to 4,096: fails the suite**, because its main-corpus worker
+    stopped on one of the prediction failures above. The long corpus ran
+    all six cases, both 4,096-token ones included, and grades A: 1 − cos
+    6.4e-6 at 600 tokens, 1.0–1.4e-5 at 1,500, 8.6e-6 at 2,400 and
+    8.0–9.0e-6 at 4,096.
+  - **ANE, to 2,048: A, every gate passed.** The same 1,024 and 2,048
+    artifacts, installed alone with `max_seq_len` 2,048 and references of
+    their own: worst cosine 0.999986 on both corpora, drift 0.0017, no
+    rank flips, buckets within 0.999985, exact pads, and identical output
+    in two processes. The GPU grades the same install A (0.999997).
+  - **Core ML's CPU** wasn't graded: D33 caps it at 1,024 tokens, and its
+    1,024 bucket is the only one it would serve.
+
+**Decision.**
+
+- **Targets per model and backend.** A build goes to its model's trained
+  context or 2,048 tokens, whichever is shorter, unless a measurement
+  shows that's not worth it; past 2,048, only where a backend has been
+  measured to serve it well, which so far is 4,096 on Qwen3-Embedding's
+  ONNX build and Core ML GPU path.
+
+  | model | trained context | today | target |
+  |---|---|---|---|
+  | all-MiniLM-L6-v2 | 256 | 256 | 256: done |
+  | bge-small-en-v1.5, e5-small-v2 | 512 | 512 | 512: done |
+  | LFM2.5-Embedding-350M | 512 (its sentence-transformers config) | 512 | 512: done |
+  | embeddinggemma-2 | 8,192 | 2,048 | 2,048, unless there's demand |
+  | EmbeddingGemma-300m | 2,048 | 512 | 2,048, all paths; to be measured |
+  | gte-modernbert-base | 8,192 | 512 | 2,048, when there's demand; to be measured |
+  | F2LLM-v2-160M | not stated (a 40,960-position table) | 512 | as Qwen3-Embedding, when there's demand |
+  | Qwen3-Embedding-0.6B | 32,768 | ONNX 4,096; Core ML 512 | ONNX 4,096 (unchanged); Core ML 2,048 on the ANE and GPU, 4,096 on the GPU once an ANE cap exists, 1,024 on the CPU (D33) |
+
+  Classifiers keep the lengths their formats set (docs/design/classify.md).
+- **Qwen3-Embedding's Core ML build: 2,048 next, 4,096 after an ANE
+  cap.** This record changes no manifest; publishing is its own change,
+  with release notes, because it changes the build users install.
+  - **2,048 is ready to grade as the published bucket list.** The 1,024
+    and 2,048 buckets grade A on the ANE and the GPU in an install of
+    their own. The published list would put them beside 128, 256 and
+    512, and that five-bucket install, including inputs that switch
+    between the 512 and 1,024 buckets, must be graded on every path
+    before it is published. It would add about 2.2 GiB on disk, plus
+    about 7.4 GiB of Core ML cache once both buckets have run on the ANE,
+    and cover the reported corpus but for 0.2% of its documents (which
+    `/v2/embed`'s `max_tokens` with `truncate: "END"` can cut). The first
+    request that needs the 2,048 bucket on the ANE waits about 2.5
+    minutes for its compile, inside `load_timeout_secs`. Its CPU path
+    stays capped at 1,024 (D33).
+  - **4,096 waits for an ANE cap.** One artifact serves every placement
+    (D37), and the model is ANE-served by default, so a published 4,096
+    bucket would compile for half an hour on its first long request and
+    then fail some of its predictions (7 of 51 here). The runtime needs
+    an ANE cap, as D33 caps the CPU: buckets past 2,048 aren't loaded for
+    a model served on the ANE unless the manifest or the daemon opts out,
+    and `/v1/models` and `/health` report the cap. With it, the published
+    build can add 4,096 (about 1.2 GiB more) for the GPU.
+    `compute_plan`'s limit also needs to cover a long bucket's compile,
+    or the parity suite can't grade one and the daemon can't report its
+    placement.
+  - The ONNX build keeps 4,096, the only path that takes it everywhere,
+    Linux included.
+- **Declined: anything past 4,096 tokens.** Not Qwen3-Embedding's 32,768,
+  gte-modernbert's 8,192 or F2LLM's position table:
+  - Attention's cost grows with the square of the length. onnx-cpu
+    already takes 13–14 s and 4 GiB at 4,096, from fp32 scores that
+    would be 64 times larger at 32,768. A Core ML bucket at 8,192 would
+    hold 2 GiB of fp16 scores per layer (16 heads × 8,192² × 2 bytes),
+    and the ANE's compile already takes 29 minutes at 4,096.
+  - Nothing grades it: the long corpus stops at 4,096, and references
+    past that length are torch runs of their own.
+  - sidekick runs a small model beside a large one. A client that splits
+    a long document into passages pays neither the seconds nor the
+    gigabytes, and retrieval usually wants passages anyway.
+
+  A fused or memory-efficient attention export for ONNX Runtime would
+  change the first point; this is revisited then, or on demand.
+- **How the cap shows.** A build's grades cover inputs up to its
+  `max_seq_len`, and no further.
+  - The published table gives each build's `max_seq_len` ("Max tokens")
+    beside the context its benchmark scores were measured at, and
+    `/v1/models` gives `max_seq_len` and `buckets` (#109).
+  - A build whose `max_seq_len` passes 512 is graded on the long corpus,
+    and its row says so (D40's amendment). Asked to grade a model whose
+    `max_seq_len` passes the main corpus, the suite fails it without a
+    long reference, so a longer cap isn't published ungraded.
+  - A cap that differs by compute path, as D33's does and the ANE cap
+    above would, is reported by the runtime, and the docs give each
+    path's limit beside its grade.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
