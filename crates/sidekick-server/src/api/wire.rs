@@ -638,8 +638,10 @@ pub struct ModelObject {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<&'static str>>,
     /// Extension, embedders and classifiers: a sequence-length cap in effect
-    /// (D33: a `cpu_only` model past 1,024 tokens), with the manifest's own
-    /// length and why.
+    /// for the compute units the model is served on (D33: a `cpu_only`
+    /// model past 1,024 tokens; D48: a model on the ANE past 2,048 tokens,
+    /// or its manifest's `ane_max_seq_len`), with the manifest's own length
+    /// and why.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seq_cap: Option<sidekick_core::manifest::SeqCap>,
     /// Extension, embedders and classifiers: the longest sequence the model

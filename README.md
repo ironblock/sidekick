@@ -518,13 +518,15 @@ request_timeout_secs = 60      # a request's work: generation, or a prediction a
 load_timeout_secs = 900        # how long a request waits on its model's and buckets' first loads
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
+ignore_ane_seq_cap = false     # serve ANE models past 2,048 tokens or their ane_max_seq_len (slow compiles, failures)
 report_compute_plans = false   # read each loaded bucket's Core ML placement live (costs a second compile)
 # onnx_intra_op_threads = 8    # inference threads for every onnx model (default: fast physical cores, at most 8)
 # onnx_runtime = "..."         # libonnxruntime to load instead of the bundled one (before ORT_DYLIB_PATH)
 
 # Per model, by id: serve it on other compute units than its manifest names,
-# e.g. keep a companion model off the GPU a larger model uses. Core ML models
-# only; the ANE weight limit and the CPU length cap apply as to the manifest's.
+# e.g. keep a companion model off the GPU a larger model uses, or serve a long
+# model's longest buckets on the GPU. Core ML models only; the ANE weight limit
+# and the CPU and ANE length caps apply as to the manifest's.
 # [models."agent-jev"]
 # compute_units = "cpu_and_ne"   # cpu_and_ne, cpu_and_gpu, cpu_only or all
 # [models."bge-small-en-v1.5"]

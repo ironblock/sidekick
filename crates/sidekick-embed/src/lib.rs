@@ -65,6 +65,17 @@ pub(crate) fn byte_cap(text: &str, max_tokens: usize) -> &str {
     &text[..end]
 }
 
+/// Whether this machine has a Neural Engine, for the registry's length caps
+/// (`ScanOptions::no_neural_engine`, D48), as Core ML reports it. A build
+/// without Core ML serves no Core ML model, so it reports the default,
+/// `true`, and lists Core ML models' limits as an Apple silicon Mac would.
+pub fn has_neural_engine() -> bool {
+    #[cfg(all(feature = "coreml", target_os = "macos"))]
+    return sidekick_coreml::has_neural_engine();
+    #[cfg(not(all(feature = "coreml", target_os = "macos")))]
+    return true;
+}
+
 /// The model backends this build can serve, as manifests and `/v1/models`
 /// name them: `coreml` (feature `coreml`, macOS), `onnx` (feature `onnx`)
 /// and `static`, always.

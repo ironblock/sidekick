@@ -124,7 +124,8 @@ fn main() {
     let before = footprint();
     // Like the parity suite: measure whatever the manifest says, past the caps.
     #[allow(clippy::needless_update)]
-    let options = ScanOptions { ignore_ane_weight_cap: true, ignore_cpu_seq_cap: true, ..Default::default() };
+    let options =
+        ScanOptions { ignore_ane_weight_cap: true, ignore_cpu_seq_cap: true, ignore_ane_seq_cap: true, ..Default::default() };
     let registry = ModelRegistry::scan_with(&dir, &options).expect("scan");
     let model = registry.get(&id).unwrap_or_else(|_| panic!("{id} not in {}: {:?}", dir.display(), registry.skipped()));
     let units = units.unwrap_or(model.manifest.compute_units.unwrap_or_default());

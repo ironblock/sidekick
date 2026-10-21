@@ -496,3 +496,79 @@ async fn a_core_ml_models_count_is_the_one_embeddings_checks() {
     assert_eq!(agrees(&state, "tiny-qwen3-embed", "", Some("none")).await, (0, 32, false));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A Core ML embedder's manifest over a word-level tokenizer: `units`,
+/// `buckets`, and any further top-level `extra` lines.
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+fn coreml_manifest(id: &str, units: &str, buckets: &[usize], extra: &str) -> String {
+    format!(
+        "id = \"{id}\"\nbackend = \"coreml\"\nartifact = \"model_{{seq}}.mlmodelc\"\ntokenizer = \"tokenizer.json\"\n\
+         dims = 32\npooling = \"none\"\nbuckets = {buckets:?}\nmax_seq_len = {}\ncompute_units = \"{units}\"\n{extra}\n\
+         [io]\ninput_ids = \"input_ids\"\nattention_mask = \"attention_mask\"\noutput = \"embedding\"\n",
+        buckets.last().unwrap()
+    )
+}
+
+/// The ANE cap (D48) is the limit /tokenize reports: one artifact with a
+/// 4,096-token bucket fits 3,000 tokens on the GPU and not on the ANE,
+/// where it is capped at 2,048. /tokenize reads only the tokenizer, so the
+/// artifacts needn't exist (but the build needs the Core ML backend).
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_ane_cap_is_the_limit_tokenize_reports() {
+    let words = ["[UNK]", "a", "b"];
+    let buckets = [128, 2048, 4096];
+    let dir = models_dir(
+        "ane-cap",
+        &[
+            ("long-ane", coreml_manifest("long-ane", "cpu_and_ne", &buckets, ""), tokenizer_json(&words, false, None)),
+            ("long-gpu", coreml_manifest("long-gpu", "cpu_and_gpu", &buckets, ""), tokenizer_json(&words, false, None)),
+        ],
+    );
+    let state = state_over(&dir);
+    let text = |n: usize| vec!["a"; n].join(" ");
+    assert_eq!(tokenize(&state, "long-ane", &text(3000), None).await, (3000, 2048, false));
+    assert_eq!(tokenize(&state, "long-ane", &text(2048), None).await, (2048, 2048, true));
+    assert_eq!(tokenize(&state, "long-gpu", &text(3000), None).await, (3000, 4096, true));
+    assert_eq!(listed_max_seq_len(&state, "long-ane").await, 2048);
+    assert_eq!(listed_max_seq_len(&state, "long-gpu").await, 4096);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// sidekick-embed's tiny Qwen3 Core ML model, in buckets 16 and 32, with a
+/// manifest ANE cap of 16 tokens (D48): on the ANE an input over 16 tokens
+/// is a 400 naming the limit of 16, and /tokenize says it doesn't fit; on
+/// the GPU the same artifact embeds it, and /tokenize says it fits.
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn on_the_ane_an_input_past_the_ane_cap_is_refused_and_fits_on_the_gpu() {
+    let words = ["[UNK]", "a", "b"];
+    let cap = "ane_max_seq_len = 16\n";
+    let dir = models_dir(
+        "coreml-ane-cap",
+        &[
+            ("tiny-ane", coreml_manifest("tiny-ane", "cpu_and_ne", &[16, 32], cap), tokenizer_json(&words, false, None)),
+            ("tiny-gpu", coreml_manifest("tiny-gpu", "cpu_and_gpu", &[16, 32], cap), tokenizer_json(&words, false, None)),
+        ],
+    );
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sidekick-embed/tests/fixtures/tiny-qwen3-embed-chunked");
+    for id in ["tiny-ane", "tiny-gpu"] {
+        for bucket in [16, 32] {
+            let name = format!("model_{bucket}.mlmodelc");
+            std::os::unix::fs::symlink(fixtures.join(&name), dir.join(id).join(&name)).unwrap();
+        }
+    }
+    let state = state_over(&dir);
+    assert_eq!(listed_max_seq_len(&state, "tiny-ane").await, 16);
+    assert_eq!(listed_max_seq_len(&state, "tiny-gpu").await, 32);
+    // /tokenize's `fits` and /v1/embeddings agree at every length, and a
+    // refusal names the effective limit.
+    assert_eq!(agrees_with_embeddings(&state, "tiny-ane", "a", None).await, 16);
+    assert_eq!(agrees_with_embeddings(&state, "tiny-gpu", "a", None).await, 32);
+    let twenty = vec!["a"; 20].join(" ");
+    assert_eq!(agrees(&state, "tiny-ane", &twenty, None).await, (20, 16, false));
+    assert_eq!(agrees(&state, "tiny-gpu", &twenty, None).await, (20, 32, true));
+    let message = refusal(&state, "tiny-ane", &twenty, None).await.unwrap();
+    assert!(message.starts_with("input 0: 20 tokens, over model `tiny-ane`'s limit of 16 tokens"), "{message}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

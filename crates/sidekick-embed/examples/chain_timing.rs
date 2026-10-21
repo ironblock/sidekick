@@ -61,7 +61,8 @@ fn main() {
     // Like the parity suite: measure whatever the manifest says, past the caps.
     // Any other option keeps its default.
     #[allow(clippy::needless_update)]
-    let options = ScanOptions { ignore_ane_weight_cap: true, ignore_cpu_seq_cap: true, ..Default::default() };
+    let options =
+        ScanOptions { ignore_ane_weight_cap: true, ignore_cpu_seq_cap: true, ignore_ane_seq_cap: true, ..Default::default() };
     let registry = ModelRegistry::scan_with(&dir, &options).expect("scan");
     for s in registry.skipped() {
         eprintln!("skipped {}: {}", s.path.display(), s.reason);

@@ -1,8 +1,8 @@
 //! How long an input `/v1/embeddings` takes, and what happens past it.
 //! `/v1/models` lists each embedder's `max_seq_len`, and a Core ML
-//! model's `buckets`, after the registry's CPU cap (D33). The request's
-//! `truncate` (Cohere's values, as on `/v2/embed` but in any case, or TEI's
-//! boolean) picks what happens to a longer input: `NONE`, the default,
+//! model's `buckets`, after the registry's CPU cap (D33) or ANE cap (D48).
+//! The request's `truncate` (Cohere's values, as on `/v2/embed` but in any
+//! case, or TEI's boolean) picks what happens to a longer input: `NONE`, the default,
 //! refuses the whole request with a 400 naming the input (D43), `END`
 //! keeps its start and `START` its end. `/v2/embed` keeps Cohere's
 //! default, `END`.
@@ -84,6 +84,46 @@ async fn models_list_each_embedders_effective_length() {
     let capped = entry(&models, "coreml-capped");
     assert_eq!((&capped["max_seq_len"], &capped["buckets"]), (&json!(1024), &json!([128, 1024])));
     assert_eq!(capped["seq_cap"]["manifest_max_seq_len"], 2048);
+    assert!(entry(&models, "coreml-ane").get("seq_cap").is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn models_list_the_ane_cap_for_the_units_they_are_served_on() {
+    // One artifact with a 4,096-token bucket, served four ways: on the ANE
+    // it is capped at 2,048 (D48), on the GPU it isn't.
+    let buckets = [128, 2048, 4096];
+    let measured = coreml_manifest("ane-measured", "cpu_and_ne", &buckets).replace("\n\n[io]", "\nane_max_seq_len = 4096\n\n[io]");
+    let (state, dir) = state_with(
+        "ane-cap",
+        &[
+            ("ane", coreml_manifest("ane", "cpu_and_ne", &buckets)),
+            ("ane-all", coreml_manifest("ane-all", "all", &buckets)),
+            ("gpu", coreml_manifest("gpu", "cpu_and_gpu", &buckets)),
+            ("ane-measured", measured),
+        ],
+    );
+    let models = models(state.clone()).await;
+    for id in ["ane", "ane-all"] {
+        let m = entry(&models, id);
+        assert_eq!((&m["max_seq_len"], &m["buckets"]), (&json!(2048), &json!([128, 2048])), "{id}");
+        assert_eq!((&m["seq_cap"]["limit"], &m["seq_cap"]["manifest_max_seq_len"]), (&json!(2048), &json!(4096)), "{id}");
+        assert!(m["seq_cap"]["reason"].as_str().unwrap().contains("D48"), "{m}");
+    }
+    assert_eq!(entry(&models, "ane")["compute_units"], "cpu_and_ne");
+    // The GPU, and a manifest measured on the ANE to its full length:
+    // every bucket, and no cap.
+    for id in ["gpu", "ane-measured"] {
+        let m = entry(&models, id);
+        assert_eq!((&m["max_seq_len"], &m["buckets"]), (&json!(4096), &json!([128, 2048, 4096])), "{id}");
+        assert!(m.get("seq_cap").is_none(), "{m}");
+    }
+    // /health lists the capped models, and only them.
+    let (status, health) = call(state, Request::get("/health").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::OK, "{health}");
+    let caps = health["seq_caps"].as_object().unwrap();
+    assert_eq!(caps.keys().map(String::as_str).collect::<Vec<_>>(), ["ane", "ane-all"]);
+    assert_eq!(caps["ane"]["limit"], 2048);
     // A static model has a limit and no buckets.
     let fixed = entry(&models, "test-static");
     assert_eq!(fixed["max_seq_len"], 512);

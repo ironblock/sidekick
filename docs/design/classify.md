@@ -420,7 +420,7 @@ restores invariance only at about 13 times the error, so no conversion
 fixes it (D33 records the measurement; `tools/repro_cpu_matmul_accumulation.py`
 reproduces it standalone).
 Up to 1,024 tokens the CPU is bucket-invariant, and the GPU and the ANE
-are unaffected.
+are unaffected by it (the ANE has a cap of its own, below).
 
 So a model served on the CPU runs no longer than
 `MAX_CPU_INVARIANT_SEQ` (1,024 tokens):
@@ -440,7 +440,7 @@ So a model served on the CPU runs no longer than
   `manifest_max_seq_len` and `reason`, plus `state_max_len` when the cap
   lowered a fev model's), and `/health` lists every capped
   model under `seq_caps`.
-- `all` isn't capped: Core ML chooses the device per operation, may not
+- `all` isn't capped by it: Core ML chooses the device per operation, may not
   use the CPU at all, and `all` exists for measuring what it does.
 - To serve every bucket anyway, accepting differences between buckets past
   1,024 tokens: `cpu_seq_limit = "ignore"` (top level, either manifest
@@ -452,6 +452,57 @@ So a model served on the CPU runs no longer than
   tokens the CPU's bucket gate stays exact, and the GPU and ANE paths are
   gated as before. Its worker output records each bucket comparison, so a
   saved run can be graded again under a changed rule.
+
+### The ANE sequence cap
+
+Long buckets compile slowly for the ANE, and past some length they fail.
+Measured on Qwen3-Embedding-0.6B (M1 Max, macOS 27.0; D46): its 2,048-token
+bucket compiled for the ANE in 151 s and graded A there, while its
+4,096-token bucket took 29 minutes to compile and then failed 7 of 51
+predictions ("Unable to compute the prediction using ML Program"). The GPU
+served the same artifact at 4,096 tokens in under a second, graded A.
+
+So a model served on the ANE runs no longer than its ANE cap (D48):
+`ane_max_seq_len` from its manifest, else `DEFAULT_ANE_MAX_SEQ` (2,048
+tokens):
+- For `compute_units = "cpu_and_ne"` (the default) or `"all"` and a
+  `max_seq_len` over the cap, the registry drops the buckets above it, as
+  the CPU cap does: the largest bucket kept becomes the effective
+  `max_seq_len`, longer inputs follow the model's over-length rules, the
+  capped manifest is validated again, fev's state limit follows the
+  capped window, and a model with no bucket within the cap is skipped with
+  the fixes as the reason. The buckets past it are never loaded or
+  compiled for the ANE.
+- `all` is capped too, by reasoning rather than measurement (D46 measured
+  `cpu_and_ne` only): Core ML compiles a bucket for the ANE whenever it
+  places operations there, and the long compile is expected to come with
+  it. The CPU cap reasons the other way, leaving `all` alone because Core
+  ML may not use the CPU there at all. `cpu_and_gpu` isn't capped, and
+  `cpu_only` has the CPU cap above. A model has at most one of the two
+  caps.
+- On a Mac without a Neural Engine (an Intel Mac), Core ML runs
+  `cpu_and_ne` on the CPU, so it gets the CPU cap instead (1,024 tokens,
+  `cpu_seq_limit` honoured, `ane_max_seq_len` ignored), and `all`, which
+  runs on the CPU and GPU there, isn't capped.
+- `/v1/models` shows it as `seq_cap`, whose `reason` names D48 and says
+  whether the manifest set the cap; `/health` lists it under `seq_caps`,
+  and the daemon logs it at startup.
+- `ane_max_seq_len` (top level, either manifest file, coreml backend only,
+  at least 1) is the cap measured for that artifact: lower for a model
+  that fails sooner, or at least its `max_seq_len` for one measured to
+  serve every bucket on the ANE.
+- To serve a model's long inputs, serve it on the GPU (`compute_units =
+  "cpu_and_gpu"` in its manifest, or `[models."<id>"] compute_units` in the
+  daemon config, D38). For measurement, `sidekickd --ignore-ane-seq-cap`
+  (`ignore_ane_seq_cap = true` in the config) lifts the cap for every
+  model.
+- The parity suite grades the ane path under the same cap: its ane worker
+  loads only the buckets within it and runs only the cases that fit it,
+  and the cases past it are listed as `capped` in the ane path's grade, not
+  failed. For a model served on the ANE it reads no compute plan for a
+  bucket past the cap, since that compiles the bucket for the ANE, and
+  records the plan as not read. The cpu and gpu paths run every bucket;
+  `--ignore-ane-seq-cap` grades the ane path past the cap.
 
 ### Where Core ML places operations
 

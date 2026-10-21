@@ -109,7 +109,9 @@ pub unsafe extern "C" fn sk_pool_open(
         } else {
             PathBuf::from(utf8(models_dir, "models_dir")?)
         };
-        let mut registry = ModelRegistry::scan(&dir).map_err(|e| e.to_string())?;
+        // Capped as the daemon caps them (D33, D48), on this Mac's hardware.
+        let options = sidekick_core::ScanOptions { no_neural_engine: !sidekick_embed::has_neural_engine(), ..Default::default() };
+        let mut registry = ModelRegistry::scan_with(&dir, &options).map_err(|e| e.to_string())?;
         // ONNX Runtime loads only for an onnx model (D40).
         let has_onnx = registry.iter().any(|m| m.manifest.backend == sidekick_core::EmbeddingBackendKind::Onnx);
         if has_onnx {

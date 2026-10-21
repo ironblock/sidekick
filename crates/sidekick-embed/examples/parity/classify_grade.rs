@@ -241,6 +241,11 @@ pub struct ClassifyGrade {
     /// reported, not graded. Its gate failures move to `reported`.
     pub not_served: Option<String>,
     pub reported: Vec<String>,
+    /// The ane path of a model capped on the ANE (D48): the cases longer
+    /// than its cap, which it doesn't run, left out of every figure above
+    /// (and of `per_case`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub capped: Vec<String>,
 }
 
 impl ClassifyGrade {
@@ -572,6 +577,7 @@ pub fn grade(
         failures,
         not_served: None,
         reported: Vec::new(),
+        capped: Vec::new(),
     }
 }
 
@@ -609,6 +615,7 @@ mod tests {
             compute_units: Default::default(),
             ane_weight_limit: Default::default(),
             cpu_seq_limit: Default::default(),
+            ane_max_seq_len: None,
             seq_cap: None,
             compute_units_source: Default::default(),
             placement: None,

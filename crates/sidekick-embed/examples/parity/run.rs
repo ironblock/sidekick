@@ -12,6 +12,8 @@ use crate::expect::{Expectations, Path3};
 use crate::grade::{check_external, fmt, grade, suggest_floor, CaseResult, Check, PathGrade, WorkerResult};
 use crate::metrics::cosine;
 use crate::reference::{corpus_sha256, corpus_sha256_of, long_corpus_reaches, sha256_hex, Corpus, Reference};
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+use crate::reference::Case;
 use serde::Serialize;
 use sidekick_core::manifest::{ModelRegistry, ResolvedClassifier, ResolvedModel};
 use sidekick_core::{EmbedPurpose, Embedder, EmbeddingBackendKind};
@@ -46,6 +48,11 @@ usage: parity [options]
                        (a warning, not a failure), provided its ANE output
                        isn't bit-identical to CPU_ONLY
   --timeout SECS       per worker (default 1200)
+  --ignore-ane-seq-cap grade a model's ane path past its ANE length cap
+                       (2,048 tokens, or its manifest's ane_max_seq_len;
+                       D48). By default the ane path loads no bucket past
+                       it, reads no compute plan for one, and reports the
+                       cases longer than it as capped, not graded
   --onnx-threads N     intra-op threads for onnx-cpu workers (default:
                        sidekick's default for the machine, D40)
   --external FILE      grade results written outside the suite, a worker's
@@ -63,12 +70,32 @@ usage: parity [options]
 /// The suite measures every compute path itself (its ANE plan check reports
 /// a model Core ML won't place on the ANE, and its CPU path reports the
 /// CPU's variation past 1,024 tokens, D33), so it loads models past the ANE
-/// weight cap and the CPU sequence cap too.
+/// weight cap and the CPU sequence cap too. It applies the ANE's length cap
+/// (D48) to its ane path itself ([`ane_path_cap`]), so the scan doesn't.
 const MEASURE_ALL: sidekick_core::ScanOptions = sidekick_core::ScanOptions {
     compute_units: std::collections::BTreeMap::new(),
     ignore_ane_weight_cap: true,
     ignore_cpu_seq_cap: true,
+    ignore_ane_seq_cap: true,
+    no_neural_engine: false,
 };
+
+/// The ANE length cap the ane path runs under (D48), as the runtime serves
+/// a model on the ANE: its worker loads no bucket past it, the suite reads
+/// no compute plan for one, and the cases longer than it are reported as
+/// capped rather than graded. `None` when the model is within it, or under
+/// `--ignore-ane-seq-cap` (`ignore`).
+pub fn ane_path_cap(ignore: bool, max_seq_len: usize, ane_max_seq_len: Option<usize>) -> Option<usize> {
+    let cap = sidekick_core::ane_seq_cap(ane_max_seq_len);
+    (!ignore && max_seq_len > cap).then_some(cap)
+}
+
+/// Pairs of `a`'s cases and `b`'s with the same id, in `b`'s order: the
+/// cases two paths both ran, when a capped ane path (D48) ran fewer.
+pub fn same_cases<'a, T>(a: &'a [T], b: &'a [T], id: impl Fn(&T) -> &str) -> Vec<(&'a T, &'a T)> {
+    let by_id: std::collections::HashMap<&str, &T> = a.iter().map(|c| (id(c), c)).collect();
+    b.iter().filter_map(|y| by_id.get(id(y)).map(|x| (*x, y))).collect()
+}
 
 /// Why a Core ML path or model can't run in this build.
 #[cfg_attr(all(target_os = "macos", feature = "coreml"), allow(dead_code))]
@@ -392,14 +419,17 @@ fn worker(args: &[String]) -> Result<(), String> {
         return Err("bad worker arguments".into());
     };
     // The optional rest: a case limit, `--bucket-invariance=MODE`,
-    // `--corpus=long` (an embedder's long-input reference) and
-    // `--onnx-threads=N`.
+    // `--corpus=long` (an embedder's long-input reference),
+    // `--onnx-threads=N` and `--ignore-ane-seq-cap`.
     let mut limit: Option<usize> = None;
     let mut bucket_mode = BucketInvariance::Auto;
     let mut corpus = Corpus::Main;
     let mut onnx_threads: Option<usize> = None;
+    let mut ignore_ane_cap = false;
     for a in rest {
-        if let Some(m) = a.strip_prefix("--bucket-invariance=") {
+        if a == "--ignore-ane-seq-cap" {
+            ignore_ane_cap = true;
+        } else if let Some(m) = a.strip_prefix("--bucket-invariance=") {
             bucket_mode = BucketInvariance::parse(m).ok_or("bad bucket-invariance mode")?;
         } else if let Some(c) = a.strip_prefix("--corpus=") {
             corpus = Corpus::parse(c).ok_or("bad corpus")?;
@@ -414,7 +444,11 @@ fn worker(args: &[String]) -> Result<(), String> {
     let registry = ModelRegistry::scan_with(Path::new(models_dir), &MEASURE_ALL).map_err(|e| e.to_string())?;
     if let Ok(model) = registry.classifier(id) {
         #[cfg(all(target_os = "macos", feature = "coreml"))]
-        return classify::worker(model, refs.as_deref(), path, out, limit, bucket_mode);
+        {
+            let m = &model.manifest;
+            let cap = ane_path_cap(ignore_ane_cap, m.max_seq_len, m.ane_max_seq_len).filter(|_| path == Path3::Ane);
+            return classify::worker(model, refs.as_deref(), path, out, limit, bucket_mode, cap);
+        }
         #[cfg(not(all(target_os = "macos", feature = "coreml")))]
         return Err(format!("{} is a Core ML classifier ({}): {CORE_ML_BUILD}", model.manifest.id, bucket_mode.name()));
     }
@@ -426,15 +460,39 @@ fn worker(args: &[String]) -> Result<(), String> {
         }
         return onnx_worker(&model, &reference, id, out, limit, onnx_threads);
     }
-    coreml_worker(&model, &reference, id, path, out, limit)
+    let m = &model.manifest;
+    let cap = ane_path_cap(ignore_ane_cap, m.max_seq_len, m.ane_max_seq_len).filter(|_| path == Path3::Ane);
+    coreml_worker(&model, &reference, id, path, out, limit, cap)
 }
 
 #[cfg(not(all(target_os = "macos", feature = "coreml")))]
-fn coreml_worker(model: &ResolvedModel, _: &Reference, _: &str, _: Path3, _: &str, _: Option<usize>) -> Result<(), String> {
+fn coreml_worker(
+    model: &ResolvedModel,
+    _: &Reference,
+    _: &str,
+    _: Path3,
+    _: &str,
+    _: Option<usize>,
+    _: Option<usize>,
+) -> Result<(), String> {
     Err(format!("{} is a Core ML model: {CORE_ML_BUILD}", model.manifest.id))
 }
 
-/// A Core ML embedder on one compute path.
+/// `model` as the runtime serves it on the ANE under a length cap of `cap`
+/// tokens (D48): the buckets past it dropped, and the largest kept one its
+/// `max_seq_len`.
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+fn ane_capped(model: &ResolvedModel, cap: usize) -> Result<ResolvedModel, String> {
+    let mut capped = model.clone();
+    capped.manifest.buckets.retain(|&b| b <= cap);
+    capped.manifest.max_seq_len =
+        *capped.manifest.buckets.last().ok_or(format!("every bucket is past the ANE cap of {cap} tokens (D48)"))?;
+    Ok(capped)
+}
+
+/// A Core ML embedder on one compute path. With `ane_cap` (the ane path
+/// of a model capped on the ANE, D48), only the buckets up to it load, and
+/// only the cases whose reference ids fit it run.
 #[cfg(all(target_os = "macos", feature = "coreml"))]
 fn coreml_worker(
     model: &ResolvedModel,
@@ -443,25 +501,37 @@ fn coreml_worker(
     path: Path3,
     out: &str,
     limit: Option<usize>,
+    ane_cap: Option<usize>,
 ) -> Result<(), String> {
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
         .map_err(|e| e.to_string())?
         .get_vocab_size(true) as u64;
 
+    let capped;
+    let model = match ane_cap {
+        Some(cap) => {
+            capped = ane_capped(model, cap)?;
+            &capped
+        }
+        None => model,
+    };
     let t0 = Instant::now();
     let emb = CoremlEmbedder::load_with(model, units(path)?).map_err(|e| e.to_string())?;
     let load_ms = t0.elapsed().as_secs_f64() * 1e3;
     let buckets = emb.buckets().to_vec();
-    let cases = &reference.cases[..limit
+    let cases: Vec<&Case> = reference.cases[..limit
         .unwrap_or(reference.cases.len())
-        .min(reference.cases.len())];
+        .min(reference.cases.len())]
+        .iter()
+        .filter(|c| ane_cap.is_none_or(|cap| c.ids.len() <= cap))
+        .collect();
     let full = limit.is_none();
     let mut rng = XorShift(0x5eed_1234_abcd_0001);
     let e = |e: sidekick_core::Error| e.to_string();
 
     let mut results = Vec::with_capacity(cases.len());
     let mut raw = Vec::with_capacity(cases.len());
-    for case in cases {
+    for &case in &cases {
         let purpose = if case.purpose == "query" {
             EmbedPurpose::Query
         } else {
@@ -521,7 +591,7 @@ fn coreml_worker(
 
     // After every bucket has run: the first cases again, bit for bit.
     let mut repeat_bitwise = true;
-    for (case, first) in cases.iter().zip(&raw).take(5) {
+    for (&case, first) in cases.iter().zip(&raw).take(5) {
         let purpose = if case.purpose == "query" {
             EmbedPurpose::Query
         } else {
@@ -569,6 +639,9 @@ struct Options {
     externals: Vec<PathBuf>,
     /// `--onnx-threads`: onnx-cpu workers' intra-op threads.
     onnx_threads: Option<usize>,
+    /// `--ignore-ane-seq-cap`: grade the ane path past the ANE length cap
+    /// (D48).
+    pub ignore_ane_cap: bool,
 }
 
 /// Which larger buckets a classifier case re-runs in for bucket invariance
@@ -610,6 +683,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         bucket_invariance: BucketInvariance::Auto,
         externals: Vec::new(),
         onnx_threads: None,
+        ignore_ane_cap: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -647,6 +721,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--json" => o.json = Some(val()?.into()),
             "--suggest-floors" => o.suggest = true,
             "--allow-unverified-plans" => o.allow_unverified = true,
+            "--ignore-ane-seq-cap" => o.ignore_ane_cap = true,
             "--timeout" => {
                 o.timeout = Duration::from_secs(val()?.parse().map_err(|_| "bad --timeout")?)
             }
@@ -785,9 +860,16 @@ struct BucketInfo {
     bucket: usize,
     model_mil: Option<String>,
     weights: Option<String>,
-    ane_ops: usize,
-    assigned_ops: usize,
-    plan: Result<(), String>,
+    /// `None` when the plan wasn't read (`not_read`).
+    ane_ops: Option<usize>,
+    assigned_ops: Option<usize>,
+    /// The plan's verdict; `None` when it wasn't read (`not_read`).
+    plan: Option<Result<(), String>>,
+    /// Why the plan wasn't read: the bucket is past the ANE length cap of a
+    /// model served on the ANE (D48), so the ANE never serves it, and
+    /// reading its plan would compile it for the ANE.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_read: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -891,24 +973,66 @@ fn chain_sha(artifacts: &[PathBuf], file: &str) -> Option<String> {
 /// ineligible or unreadable one as a warning, and every path still runs,
 /// the ANE path reporting what Core ML actually did. (A multi-shape
 /// artifact, which could abort a prediction, is refused at load by D27's
-/// guard, whatever the plan.)
+/// guard, whatever the plan.) For a model served on the ANE, a bucket past
+/// `ane_cap` (D48) has no plan read: the runtime never serves it there, and
+/// reading one compiles it for the ANE, which took half an hour for a
+/// 4,096-token one.
 #[allow(clippy::too_many_arguments)]
 fn check_plans(
     id: &str,
     buckets: &[usize],
     artifacts_for: impl Fn(usize) -> Vec<PathBuf>,
     units: ComputeUnits,
+    ane_cap: Option<usize>,
     o: &Options,
     scratch: &Path,
     failures: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> Plans {
+    let read = |arts: &[PathBuf], label: &str| read_chain_plan(arts, label, o.timeout, scratch);
+    check_plans_with(id, buckets, artifacts_for, units, ane_cap, o, failures, warnings, read)
+}
+
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+/// [`check_plans`], reading each bucket's plan with `read` (its artifacts
+/// and a label), so a test can see which buckets' plans are read.
+#[allow(clippy::too_many_arguments)]
+fn check_plans_with(
+    id: &str,
+    buckets: &[usize],
+    artifacts_for: impl Fn(usize) -> Vec<PathBuf>,
+    units: ComputeUnits,
+    ane_cap: Option<usize>,
+    o: &Options,
+    failures: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+    mut read: impl FnMut(&[PathBuf], &str) -> Result<Option<(PlanSummary, bool)>, String>,
+) -> Plans {
     let ane_here = has_ane();
-    let gated = plans_gate(matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All), ane_here);
+    let served_on_ane = matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All);
+    let gated = plans_gate(served_on_ane, ane_here);
     let mut plans = Plans { ok: true, unverified: Vec::new(), buckets: Vec::new() };
     for &b in buckets {
         let arts = artifacts_for(b);
-        let plan = read_chain_plan(&arts, &format!("{id}-{b}"), o.timeout, scratch);
+        if let Some(cap) = ane_cap.filter(|&cap| served_on_ane && b > cap) {
+            let why = format!("not read (past the ANE cap of {cap} tokens, D48)");
+            println!(
+                "  bucket {b:>4}: plan {why}; the ane path doesn't run it  model.mil {} weights {}",
+                chain_sha(&arts, "model.mil").unwrap_or("-".into()),
+                chain_sha(&arts, "weights/weight.bin").unwrap_or("-".into()),
+            );
+            plans.buckets.push(BucketInfo {
+                bucket: b,
+                model_mil: chain_sha(&arts, "model.mil"),
+                weights: chain_sha(&arts, "weights/weight.bin"),
+                ane_ops: None,
+                assigned_ops: None,
+                plan: None,
+                not_read: Some(why),
+            });
+            continue;
+        }
+        let plan = read(&arts, &format!("{id}-{b}"));
         let (ane, assigned, verdict) = match &plan {
             Ok(Some((p, _))) => (p.ane, p.assigned(), p.verdict()),
             Ok(None) => (0, 0, Ok(())),
@@ -972,9 +1096,10 @@ fn check_plans(
             bucket: b,
             model_mil: chain_sha(&arts, "model.mil"),
             weights: chain_sha(&arts, "weights/weight.bin"),
-            ane_ops: ane,
-            assigned_ops: assigned,
-            plan: verdict,
+            ane_ops: Some(ane),
+            assigned_ops: Some(assigned),
+            plan: Some(verdict),
+            not_read: None,
         });
     }
     plans
@@ -1029,6 +1154,9 @@ fn spawn_corpus_worker<T: serde::de::DeserializeOwned>(
     }
     if let Some(n) = o.onnx_threads {
         args.push(format!("--onnx-threads={n}").into());
+    }
+    if o.ignore_ane_cap {
+        args.push("--ignore-ane-seq-cap".into());
     }
     run_child(&args, &out, &log, timeout)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
@@ -1132,7 +1260,17 @@ fn parent(args: &[String]) -> Result<bool, String> {
             println!("  SKIPPED: an onnx model needs a parity build with --features onnx, or --external results");
             continue;
         }
-        let worker_paths = paths_for(&o, if onnx { Runtime::Onnx { native: native_onnx } } else { Runtime::CoreMl { ane: has_ane() } });
+        let mut worker_paths = paths_for(&o, if onnx { Runtime::Onnx { native: native_onnx } } else { Runtime::CoreMl { ane: has_ane() } });
+        // The ANE length cap (D48): the ane path runs the buckets and cases
+        // within it, or nothing when no bucket is.
+        let m = &model.manifest;
+        let ane_cap = ane_path_cap(o.ignore_ane_cap || onnx, m.max_seq_len, m.ane_max_seq_len);
+        if let Some(cap) = ane_cap.filter(|&cap| !m.buckets.iter().any(|&b| b <= cap)) {
+            if worker_paths.contains(&Path3::Ane) {
+                println!("  ane: skipped (every bucket is past the ANE cap of {cap} tokens, D48)");
+                worker_paths.retain(|&p| p != Path3::Ane);
+            }
+        }
         if worker_paths.is_empty() && external.is_empty() {
             println!("  SKIPPED: none of --paths runs on this model");
             unrunnable += 1;
@@ -1207,6 +1345,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
                 &model.manifest.buckets,
                 |b| model.artifact_paths_for_bucket(b),
                 model.manifest.compute_units.unwrap_or_default(),
+                ane_cap,
                 &o,
                 &scratch,
                 &mut mr.failures,
@@ -1223,6 +1362,15 @@ fn parent(args: &[String]) -> Result<bool, String> {
             ok = false;
             report.models.push(mr);
             continue;
+        }
+
+        // What a capped ane path is graded against: the cases within its cap.
+        let ane_reference = ane_cap.map(|cap| (cap, reference.within(cap)));
+        if let Some((cap, (sub, _))) = &ane_reference {
+            if !sub.has_core_case() && worker_paths.contains(&Path3::Ane) {
+                println!("  ane: skipped (no case within the ANE cap of {cap} tokens, D48)");
+                worker_paths.retain(|&p| p != Path3::Ane);
+            }
         }
 
         let mut results: Vec<(Path3, WorkerResult)> = Vec::new();
@@ -1277,15 +1425,18 @@ fn parent(args: &[String]) -> Result<bool, String> {
             .iter()
             .map(|(p, r)| {
                 let floor = expectations.floor(&chip, id, *p);
-                grade(
-                    &reference,
+                let (graded_on, capped) = path_reference(*p, &reference, ane_reference.as_ref());
+                let mut g = grade(
+                    graded_on,
                     r,
                     *p,
                     &expectations.gates,
                     &expectations.grades,
                     floor,
                     &model.manifest.matryoshka,
-                )
+                );
+                g.capped = capped;
+                g
             })
             .enumerate()
             // Results written outside the suite are a cross-check, named apart.
@@ -1300,8 +1451,15 @@ fn parent(args: &[String]) -> Result<bool, String> {
         // A bucket graded without a compute plan must show it ran somewhere
         // other than the CPU: bit-identical ANE and CPU_ONLY output means
         // the "ANE" path fell back to the CPU.
+        // Paired by case: a capped ane path (D48) runs fewer cases.
         let cpu = results.iter().find(|(p, _)| *p == Path3::Cpu);
         let ane = results.iter().find(|(p, _)| *p == Path3::Ane);
+        let both = |c: &WorkerResult, a: &WorkerResult| -> Vec<(CaseResult, CaseResult)> {
+            same_cases(&c.cases, &a.cases, |x: &CaseResult| x.id.as_str())
+                .into_iter()
+                .map(|(x, y)| (x.clone(), y.clone()))
+                .collect()
+        };
         for &b in &unverified {
             let (Some((_, c)), Some((_, a))) = (cpu, ane) else {
                 mr.failures.push(format!(
@@ -1310,16 +1468,15 @@ fn parent(args: &[String]) -> Result<bool, String> {
                 ));
                 continue;
             };
-            let in_bucket: Vec<usize> = (0..a.cases.len())
-                .filter(|&i| a.cases[i].bucket == b)
-                .collect();
+            let in_bucket: Vec<(CaseResult, CaseResult)> =
+                both(c, a).into_iter().filter(|(_, y)| y.bucket == b).collect();
             if in_bucket.is_empty() {
                 mr.failures.push(format!(
                     "bucket {b}: no compute plan and no case to check it with"
                 ));
             } else if in_bucket
                 .iter()
-                .all(|&i| bitwise_eq(&a.cases[i].vector, &c.cases[i].vector))
+                .all(|(x, y)| bitwise_eq(&y.vector, &x.vector))
             {
                 mr.failures.push(format!(
                     "bucket {b}: no compute plan, and its ANE output is bit-identical to CPU_ONLY: \
@@ -1331,19 +1488,15 @@ fn parent(args: &[String]) -> Result<bool, String> {
         // A full runtime fallback to the CPU would make the ANE path look
         // perfect. Only a complete fallback is visible this way.
         if let (Some((_, c)), Some((_, a))) = (cpu, ane) {
-            if c.cases
-                .iter()
-                .zip(&a.cases)
-                .all(|(x, y)| bitwise_eq(&x.vector, &y.vector))
-            {
+            let pairs = both(c, a);
+            if pairs.iter().all(|(x, y)| bitwise_eq(&x.vector, &y.vector)) {
                 mr.warnings.push("ANE output is bit-identical to CPU_ONLY: the model may be running entirely on the CPU".into());
             }
-            let med = |r: &WorkerResult| {
-                let mut ms: Vec<f64> = r.cases.iter().map(|c| c.ms).collect();
+            let med = |mut ms: Vec<f64>| {
                 ms.sort_by(f64::total_cmp);
-                ms[ms.len() / 2]
+                ms.get(ms.len() / 2).copied().unwrap_or(f64::NAN)
             };
-            let ratio = med(c) / med(a);
+            let ratio = med(pairs.iter().map(|(x, _)| x.ms).collect()) / med(pairs.iter().map(|(_, y)| y.ms).collect());
             if ratio < 1.1 {
                 mr.warnings.push(format!(
                     "CPU_ONLY/ANE median latency ratio {ratio:.2}x < 1.1x: possible runtime fallback (or a loaded machine)"
@@ -1351,7 +1504,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             }
         }
 
-        print_model(&reference, &grades, mr.determinism.as_ref());
+        print_grades(&reference, &grades, ane_reference.as_ref(), mr.determinism.as_ref());
         for g in &grades {
             mr.failures
                 .extend(g.failures.iter().map(|f| format!("{}: {f}", g.path)));
@@ -1364,7 +1517,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             }
         }
         let main_longest = reference.cases.iter().map(|c| c.ids.len()).max().unwrap_or(0);
-        mr.long = grade_long(model, models_dir, &worker_paths, main_longest, &tok_sha, &expectations, &o, &scratch, &mut mr);
+        mr.long = grade_long(model, models_dir, &worker_paths, ane_cap, main_longest, &tok_sha, &expectations, &o, &scratch, &mut mr);
         for f in &mr.failures {
             println!("  FAIL: {f}");
         }
@@ -1444,6 +1597,7 @@ fn grade_long(
     model: &ResolvedModel,
     models_dir: &Path,
     paths: &[Path3],
+    ane_cap: Option<usize>,
     main_longest: usize,
     tok_sha: &str,
     expectations: &Expectations,
@@ -1515,25 +1669,36 @@ fn grade_long(
         }
     );
     let id = &model.manifest.id;
+    let ane_reference = ane_cap.map(|cap| (cap, reference.within(cap)));
     let mut grades = Vec::new();
     for &path in paths {
+        let (graded_on, capped) = path_reference(path, &reference, ane_reference.as_ref());
+        if path == Path3::Ane && !graded_on.has_core_case() {
+            let cap = ane_cap.unwrap_or_default();
+            println!("  ane: skipped (no case within the ANE cap of {cap} tokens, D48)");
+            continue;
+        }
         match spawn_corpus_worker::<WorkerResult>(id, models_dir, path, None, corpus, scratch, o) {
-            Ok(r) => grades.push(grade(
-                &reference,
-                &r,
-                path,
-                &expectations.gates,
-                &expectations.grades,
-                None,
-                &model.manifest.matryoshka,
-            )),
+            Ok(r) => {
+                let mut g = grade(
+                    graded_on,
+                    &r,
+                    path,
+                    &expectations.gates,
+                    &expectations.grades,
+                    None,
+                    &model.manifest.matryoshka,
+                );
+                g.capped = capped;
+                grades.push(g);
+            }
             Err(e) => {
                 println!("  {}: CRASHED: {e}", path.name());
                 mr.failures.push(format!("long corpus: {}: worker failed: {e}", path.name()));
             }
         }
     }
-    print_model(&reference, &grades, None);
+    print_grades(&reference, &grades, ane_reference.as_ref(), None);
     for g in &grades {
         mr.failures.extend(g.failures.iter().map(|f| format!("long corpus: {}: {f}", g.path)));
     }
@@ -1543,6 +1708,43 @@ fn grade_long(
         skipped: reference.skipped.clone(),
         paths: grades,
     })
+}
+
+/// The reference a path is graded against, and the cases it leaves out:
+/// for the ane path under an ANE cap (D48), only the cases within it.
+fn path_reference<'a>(
+    path: Path3,
+    reference: &'a Reference,
+    ane: Option<&'a (usize, (Reference, Vec<String>))>,
+) -> (&'a Reference, Vec<String>) {
+    match ane {
+        Some((_, (sub, capped))) if path == Path3::Ane => (sub, capped.clone()),
+        _ => (reference, Vec::new()),
+    }
+}
+
+/// Print the grades: those over the whole reference in one table, and a
+/// capped ane path (D48) in its own, over the cases it ran, after a line
+/// naming the cases it didn't.
+fn print_grades(
+    reference: &Reference,
+    grades: &[PathGrade],
+    ane: Option<&(usize, (Reference, Vec<String>))>,
+    determinism: Option<&Check>,
+) {
+    let (capped, full): (Vec<PathGrade>, Vec<PathGrade>) = grades.iter().cloned().partition(|g| !g.capped.is_empty());
+    print_model(reference, &full, determinism);
+    if let (Some((cap, (sub, _))), false) = (ane, capped.is_empty()) {
+        for g in &capped {
+            println!(
+                "  {}: capped at {cap} tokens on the ANE (D48); {} case(s) past it not run: {}",
+                g.path,
+                g.capped.len(),
+                g.capped.join(", ")
+            );
+        }
+        print_model(sub, &capped, None);
+    }
 }
 
 fn print_model(reference: &Reference, grades: &[PathGrade], determinism: Option<&Check>) {
@@ -1733,6 +1935,68 @@ mod tests {
         assert!(!long_reference_required(false, 4096, 700));
         // EmbeddingGemma-2: its over-length cases already fill its 2,048.
         assert!(!long_reference_required(true, 2048, 2048));
+    }
+
+    #[test]
+    fn the_ane_path_runs_under_the_ane_cap() {
+        use sidekick_core::DEFAULT_ANE_MAX_SEQ;
+        // Past the default cap: capped at it.
+        assert_eq!(ane_path_cap(false, 4096, None), Some(DEFAULT_ANE_MAX_SEQ));
+        // Within it, or at it: nothing to cap.
+        assert_eq!(ane_path_cap(false, 2048, None), None);
+        assert_eq!(ane_path_cap(false, 512, None), None);
+        // The manifest's own cap, either way.
+        assert_eq!(ane_path_cap(false, 2048, Some(1024)), Some(1024));
+        assert_eq!(ane_path_cap(false, 4096, Some(4096)), None);
+        // --ignore-ane-seq-cap grades every bucket.
+        assert_eq!(ane_path_cap(true, 4096, None), None);
+    }
+
+    /// D48: a bucket past the ANE cap of a model served on the ANE has no
+    /// compute plan read (reading one compiles it for the ANE); served on
+    /// the GPU, every bucket's plan is read.
+    #[cfg(all(target_os = "macos", feature = "coreml"))]
+    #[test]
+    fn no_plan_is_read_for_a_bucket_past_the_ane_cap_of_an_ane_served_model() {
+        let o = parse(&["--models-dir".into(), "unused".into()]).unwrap();
+        let read_for = |units: ComputeUnits| {
+            let mut read: Vec<String> = Vec::new();
+            let plans = check_plans_with(
+                "m",
+                &[128, 2048, 4096],
+                |_| Vec::new(),
+                units,
+                Some(2048),
+                &o,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                |_: &[PathBuf], label: &str| {
+                    read.push(label.to_string());
+                    let plan = PlanSummary { ane: 9, cpu: 1, gpu: 0, unassigned: 0, off_ane_ops: Default::default() };
+                    Ok(Some((plan, false)))
+                },
+            );
+            (read, plans.buckets)
+        };
+        for units in [ComputeUnits::CpuAndNeuralEngine, ComputeUnits::All] {
+            let (read, buckets) = read_for(units);
+            assert_eq!(read, ["m-128", "m-2048"], "{units:?}");
+            let capped = &buckets[2];
+            assert_eq!((capped.ane_ops, capped.assigned_ops, &capped.plan), (None, None, &None));
+            assert_eq!(capped.not_read.as_deref(), Some("not read (past the ANE cap of 2048 tokens, D48)"));
+            assert_eq!((buckets[0].ane_ops, &buckets[0].not_read), (Some(9), &None));
+        }
+        let (read, buckets) = read_for(ComputeUnits::CpuAndGpu);
+        assert_eq!(read, ["m-128", "m-2048", "m-4096"]);
+        assert!(buckets.iter().all(|b| b.not_read.is_none() && b.plan.is_some()));
+    }
+
+    #[test]
+    fn a_capped_path_is_compared_on_the_cases_both_paths_ran() {
+        let cpu = ["a", "b", "c", "d"];
+        let ane = ["a", "c"];
+        let pairs = same_cases(&cpu, &ane, |s: &&str| *s);
+        assert_eq!(pairs, [(&"a", &"a"), (&"c", &"c")]);
     }
 
     #[test]
