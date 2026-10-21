@@ -1,11 +1,15 @@
 use crate::Result;
+use std::collections::BTreeMap;
 
 /// What the caller will do with the vectors, which picks the prompt prefix
 /// a backend puts before each text. Models like EmbeddingGemma use
 /// different prompts for queries and documents (the manifest's
-/// `[prefixes]`, D9).
+/// `[prefixes]`, D9), and some name prompts for other tasks (its
+/// `[prompts]`, D45). Non-exhaustive: a match outside this crate needs an
+/// arm for purposes added later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum EmbedPurpose {
+#[non_exhaustive]
+pub enum EmbedPurpose<'a> {
     /// The manifest's document prefix: the default.
     #[default]
     Document,
@@ -15,6 +19,31 @@ pub enum EmbedPurpose {
     /// own prompt (the daemon's `input_type: "none"`). The tokenizer's
     /// special tokens are still added.
     Raw,
+    /// One of the manifest's named prompts (`[prompts]`), by its exact
+    /// name (the daemon's `prompt_name`, as in Hugging Face Text
+    /// Embeddings Inference). A name the model doesn't have is an
+    /// `InvalidRequest` ([`named_prompt`]).
+    Named(&'a str),
+}
+
+/// The text of `model`'s prompt named `name` among its `prompts` (the
+/// manifest's `[prompts]`), matched exactly, case included, as
+/// sentence-transformers and Text Embeddings Inference match it. Any other
+/// name is an `InvalidRequest` that lists the model's names.
+pub fn named_prompt<'p>(model: &str, prompts: &'p BTreeMap<String, String>, name: &str) -> Result<&'p str> {
+    if let Some(text) = prompts.get(name) {
+        return Ok(text);
+    }
+    let message = if prompts.is_empty() {
+        format!(
+            "model `{model}` has no named prompts, so prompt_name `{name}` isn't one of them \
+             (send input_type instead, or input_type `none` with your own prompt in the text)"
+        )
+    } else {
+        let names: Vec<String> = prompts.keys().map(|k| format!("`{k}`")).collect();
+        format!("model `{model}` has no prompt named `{name}` (its prompts: {})", names.join(", "))
+    };
+    Err(crate::Error::InvalidRequest(message))
 }
 
 /// Which end of an over-long input to keep (Cohere's `truncate`).
@@ -128,6 +157,25 @@ pub fn truncate_normalized(v: &[f32], dims: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_named_prompt_is_matched_exactly() {
+        let prompts: BTreeMap<String, String> =
+            [("STS", "task: sentence similarity | query: "), ("document", "title: none | text: ")]
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .into();
+        assert_eq!(named_prompt("m", &prompts, "STS").unwrap(), "task: sentence similarity | query: ");
+        let message = |e| match e {
+            crate::Error::InvalidRequest(m) => m,
+            e => panic!("not a 400: {e:?}"),
+        };
+        assert_eq!(
+            message(named_prompt("m", &prompts, "sts").unwrap_err()),
+            "model `m` has no prompt named `sts` (its prompts: `STS`, `document`)"
+        );
+        let none = BTreeMap::new();
+        assert!(message(named_prompt("m", &none, "STS").unwrap_err()).starts_with("model `m` has no named prompts"));
+    }
 
     #[test]
     fn truncation_renormalizes() {

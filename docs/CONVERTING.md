@@ -304,6 +304,15 @@ run on any mismatch with the checkpoint, where the field exists:
   exactly when pairs carry segment ids (older daemons would feed a
   text-classification model no segment ids). An ONNX embedder's manifest
   names it when its graph takes it (BERT-family published exports);
+- embedders: `[prompts]` equals the checkpoint's sentence-transformers
+  `prompts` (`config_sentence_transformers.json`), every name and text
+  exactly, so the named prompts a request chooses by `prompt_name` are
+  the checkpoint's (D45). On a mismatch the message gives the table to
+  paste into the committed manifest, and `python -m
+  sidekick_convert.manifest prompts <hf-model-dir>`, run from `tools/`,
+  prints it for a new one. A checkpoint that publishes no prompts leaves
+  the table to the manifest: prompts its model card gives only in prose
+  go there by hand, with the source cited in a comment;
 - `source.revision` equals the snapshot's revision.
 
 Buckets and `[placement]` are Core ML's; an ONNX install has neither (see

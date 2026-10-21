@@ -30,3 +30,20 @@ output = "embedding"
 [prefixes]
 query = "query: "
 document = "document: "
+
+# Named prompts, which a request chooses by prompt_name (docs/DECISIONS.md
+# D45): the checkpoint's config_sentence_transformers.json prompts at
+# revision f35ae2c91d687658dbf1f2b449382f0b019b9808, copied exactly.
+# "positive" and "negative_0" to "negative_6" have the document prompt's
+# text.
+[prompts]
+query = "query: "
+positive = "document: "
+negative_0 = "document: "
+negative_1 = "document: "
+negative_2 = "document: "
+negative_3 = "document: "
+negative_4 = "document: "
+negative_5 = "document: "
+negative_6 = "document: "
+document = "document: "

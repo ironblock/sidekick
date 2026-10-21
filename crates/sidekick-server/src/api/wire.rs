@@ -220,6 +220,10 @@ pub struct EmbeddingsRequest {
     /// `none` applies no prefix (D9).
     #[serde(default)]
     pub input_type: Option<String>,
+    /// Non-standard extension (Hugging Face TEI's): one of the model's
+    /// named prompts, by its exact name, in place of `input_type`'s (D45).
+    #[serde(default)]
+    pub prompt_name: Option<String>,
     /// Non-standard extension: what to do with an input longer than the
     /// model's limit. Cohere's values, as on /v2/embed but in any case:
     /// `NONE` (the default here, D43) refuses the request, `END` keeps its
@@ -452,6 +456,11 @@ pub struct CohereEmbedRequest {
     pub inputs: Option<Value>,
     #[serde(default)]
     pub input_type: Option<String>,
+    /// Extension (Hugging Face TEI's): one of the model's named prompts,
+    /// in place of `input_type`'s. It overrides Cohere's `input_type`
+    /// names, which Cohere's SDK always sends (D45).
+    #[serde(default)]
+    pub prompt_name: Option<String>,
     #[serde(default)]
     pub embedding_types: Option<Vec<String>>,
     #[serde(default)]
@@ -488,7 +497,8 @@ pub struct CohereEmbeddings {
 
 // ---------- tokenize ----------
 
-/// vLLM's `/tokenize` request, plus `input_type`. Only the completion form
+/// vLLM's `/tokenize` request, plus `input_type`, `prompt_name` and
+/// `max_tokens`. Only the completion form
 /// (`prompt`): `messages`, vLLM's chat form, is a 400, since encoders have
 /// no chat template.
 #[derive(Debug, Deserialize)]
@@ -508,6 +518,11 @@ pub struct TokenizeRequest {
     /// `document`, the default, `passage`, `search_document`; `none`).
     #[serde(default)]
     pub input_type: Option<String>,
+    /// Extension, embedders: one of the model's named prompts, in place of
+    /// `input_type`'s, by /v2/embed's rule: it overrides Cohere's
+    /// `input_type` names and conflicts with sidekick's (D45).
+    #[serde(default)]
+    pub prompt_name: Option<String>,
     /// Extension, embedders: /v2/embed's `max_tokens`, which `fits` then
     /// measures against.
     #[serde(default)]
@@ -577,6 +592,10 @@ pub struct ModelObject {
     /// none (D9).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompts: Option<Prompts>,
+    /// Extension, embedders: the model's named prompts, name to text, that
+    /// a request chooses by `prompt_name` (D45); `{}` when it has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named_prompts: Option<std::collections::BTreeMap<String, String>>,
     /// Extension, classifiers: most inputs per request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_batch: Option<usize>,
@@ -643,6 +662,7 @@ impl ModelObject {
             max_labels: None,
             hypothesis_template: None,
             prompts: None,
+            named_prompts: None,
             max_batch: None,
             extensions: None,
             required: None,

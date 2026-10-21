@@ -6,9 +6,14 @@ committed file (examples/manifests/<id>/manifest.toml for embedders,
 examples/classifiers/<id>/classifier.toml for classifiers) and never
 generate one. Before converting, the manifest is checked against the
 checkpoint and the recipe; any mismatch stops the conversion. A check runs
-only where its field exists.
+only where its field exists. An embedder's named prompts are copied from
+the checkpoint: a manifest whose `[prompts]` differ from the checkpoint's
+stops the conversion with the table to paste (`python -m
+sidekick_convert.manifest prompts <hf-model-dir>` prints it too).
 """
 
+import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -127,10 +132,31 @@ def _common(m, errors, *, src, buckets, backbone, strict_max_seq_len):
         _check(errors, rev == snap, f"source.revision {rev} != snapshot revision {snap}")
 
 
+def prompts_toml(prompts):
+    """A `[prompts]` table for a manifest: each of `prompts` (name to text)
+    in the order given, the checkpoint's, as a TOML key and basic string."""
+    def key(name):
+        return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name, ensure_ascii=False)
+    return "\n".join(["[prompts]"] + [f"{key(k)} = {json.dumps(v, ensure_ascii=False)}" for k, v in prompts.items()])
+
+
+def check_prompts(m, src, errors):
+    """The manifest's `[prompts]` are the checkpoint's sentence-transformers
+    prompts, every name and text exactly (D45). A checkpoint that publishes
+    none leaves the table to the manifest: prompts a model card gives only in
+    prose are written there by hand, with their source cited."""
+    published = _tok.st_prompts(src)
+    if published and m.get("prompts", {}) != published:
+        errors.append("[prompts] != the checkpoint's config_sentence_transformers.json prompts; "
+                      "copy them into the manifest:\n" + prompts_toml(published))
+
+
 def check_embedder(m, *, src, buckets, backbone, head, dims=None, strict_max_seq_len=True):
-    """Embedder manifest vs the checkpoint: sequence limits, dims, pooling, io."""
+    """Embedder manifest vs the checkpoint: sequence limits, dims, pooling,
+    io, named prompts."""
     errors = []
     _common(m, errors, src=src, buckets=buckets, backbone=backbone, strict_max_seq_len=strict_max_seq_len)
+    check_prompts(m, src, errors)
     want_dims = dims if dims is not None else backbone.hidden_size
     _check(errors, m.get("dims") == want_dims, f"dims {m.get('dims')} != the head's output size {want_dims}")
     st_mode = _tok.st_pooling(src)
@@ -314,3 +340,11 @@ def check_agentjev(m, *, src, buckets, backbone, head, temperatures=None):
                f"calibration lacks {sorted(reached - set(c.get('calibration', {})))}: AgentJev's temperatures apply at every label count")
     if errors:
         raise SystemExit("manifest check failed:\n  " + "\n  ".join(errors))
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 3 or sys.argv[1] != "prompts":
+        raise SystemExit("usage: python -m sidekick_convert.manifest prompts <hf-model-dir>")
+    published = _tok.st_prompts(sys.argv[2])
+    print(prompts_toml(published) if published else "# the checkpoint publishes no prompts")

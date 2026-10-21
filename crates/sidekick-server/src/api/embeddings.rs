@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::Engine as _;
 use serde_json::Value;
-use sidekick_core::{truncate_normalized, EmbedLimits, EmbedPurpose, Truncate};
+use sidekick_core::{named_prompt, truncate_normalized, EmbedLimits, EmbedPurpose, Truncate};
 
 /// Hard cap on batch size to keep one request from monopolizing the ANE.
 const MAX_BATCH: usize = 256;
@@ -36,7 +36,7 @@ pub async fn embeddings(
         )));
     }
 
-    let purpose = purpose(req.input_type.as_deref())?;
+    let prompt = prompt(&state, &req.model, req.input_type.as_deref(), req.prompt_name, purpose, &[])?;
 
     let as_base64 = match req.encoding_format.as_deref() {
         None | Some("float") => false,
@@ -85,7 +85,7 @@ pub async fn embeddings(
         let task = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
             let mut tx = Some(loaded_tx);
-            embedder.embed_staged(&refs, purpose, limits, &mut |b| signal(&mut tx, b))
+            embedder.embed_staged(&refs, prompt.purpose(), limits, &mut |b| signal(&mut tx, b))
         });
         deadline.finish(loaded, task, "embed").await?
     };
@@ -120,10 +120,68 @@ pub async fn embeddings(
     ))
 }
 
+/// The prompt a request on an embedding route asks for: its `input_type`'s
+/// prefix, or one of the model's named prompts by `prompt_name` (D45).
+pub(super) struct Prompt {
+    by_type: EmbedPurpose<'static>,
+    name: Option<String>,
+}
+
+impl Prompt {
+    pub(super) fn purpose(&self) -> EmbedPurpose<'_> {
+        match &self.name {
+            Some(name) => EmbedPurpose::Named(name),
+            None => self.by_type,
+        }
+    }
+}
+
+/// Cohere's `input_type` names, which a `prompt_name` overrides on
+/// /v2/embed and /tokenize: Cohere's SDK always sends one (D45).
+pub(super) const COHERE_INPUT_TYPES: &[&str] = &["search_query", "search_document", "classification", "clustering"];
+
+/// `input_type` (read by the route's `parse`) or `prompt_name`, the shared
+/// parser behind /v1/embeddings, /v2/embed and /tokenize. A name overrides
+/// the `input_type` values in `overridden` (Cohere's, where the route takes
+/// them); with any other `input_type` it is a 400, sidekick's `none`
+/// included: a named prompt replaces the `input_type` prompt, and `none`
+/// asks for no prompt at all, so the two never agree. A name is checked
+/// against the model's manifest, exactly, case included, so one the model
+/// doesn't have is refused before the model loads; an unknown model is left
+/// to the route.
+pub(super) fn prompt(
+    state: &AppState,
+    model: &str,
+    input_type: Option<&str>,
+    prompt_name: Option<String>,
+    parse: fn(Option<&str>) -> Result<EmbedPurpose<'static>, ApiError>,
+    overridden: &[&str],
+) -> Result<Prompt, ApiError> {
+    let Some(name) = prompt_name else {
+        return Ok(Prompt { by_type: parse(input_type)?, name: None });
+    };
+    if let Some(t) = input_type.filter(|t| !overridden.contains(t)) {
+        // A value the route doesn't take is refused as such first.
+        parse(input_type)?;
+        let overrides = if overridden.is_empty() {
+            String::new()
+        } else {
+            format!(" (prompt_name overrides only Cohere's input_type names: {})", overridden.join(", "))
+        };
+        return Err(ApiError::invalid(format!(
+            "send input_type or prompt_name, not both: prompt_name `{name}` replaces input_type `{t}`'s prompt{overrides}"
+        )));
+    }
+    if let Ok(m) = state.registry.get(model) {
+        named_prompt(model, &m.manifest.prompts, &name)?;
+    }
+    Ok(Prompt { by_type: EmbedPurpose::Document, name: Some(name) })
+}
+
 /// `input_type` on /v1/embeddings, and on /tokenize for an embedder: which
 /// of the model's prompt prefixes applies. Absent, the document prefix;
 /// `none`, no prefix (D9).
-pub(super) fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
+pub(super) fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose<'static>, ApiError> {
     match input_type {
         None | Some("document") | Some("passage") => Ok(EmbedPurpose::Document),
         Some("query") => Ok(EmbedPurpose::Query),

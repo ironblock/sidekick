@@ -75,7 +75,7 @@ impl StaticEmbedder {
         if limits.max_tokens == Some(0) {
             return Err(Error::InvalidRequest("max_tokens must be at least 1".into()));
         }
-        let prefix = self.input.prefix(purpose);
+        let prefix = self.input.prefix(purpose)?;
         let tokenizers = &self.input.tokenizers;
         // Byte caps bound tokenizer work on the text; the prefix stays whole.
         let ids = match limits.truncate {
@@ -221,6 +221,7 @@ mod tests {
                 max_seq_len: 512,
                 io: Default::default(),
                 prefixes: Default::default(),
+                prompts: Default::default(),
                 source: None,
                 compute_units: None,
                 ane_weight_limit: None,

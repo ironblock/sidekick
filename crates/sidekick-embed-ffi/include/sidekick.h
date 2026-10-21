@@ -52,7 +52,8 @@ char *sk_pool_models(const sk_pool *pool, char **err);
 char *sk_pool_skipped(const sk_pool *pool, char **err);
 
 /* JSON description of one embedding model from its manifest (not loaded):
- *   {"id","backend","dims","matryoshka","max_seq_len","prompts"}
+ *   {"id","backend","dims","matryoshka","max_seq_len","prompts",
+ *    "named_prompts"}
  * "matryoshka" lists the dims values sk_embed accepts as requested_dims;
  * empty means native dims only. "prompts" is {"query","document"}: the
  * prefix sk_embed puts before each text for that purpose ("" for none;
@@ -60,6 +61,10 @@ char *sk_pool_skipped(const sk_pool *pool, char **err);
  * with sk_embed's purpose 2: a library whose sk_model_info reports
  * "prompts" accepts purpose 2. The ABI version is unchanged, and an older
  * library refuses purpose 2 only when sk_embed is called.
+ * "named_prompts" maps each prompt name sk_embed_named takes to its text
+ * ({} for a model with none). It was added in 0.15.0 (additive), with
+ * sk_embed_named: a library whose sk_model_info reports "named_prompts"
+ * exports sk_embed_named.
  * Free with sk_string_free. Returns NULL on failure with *err set. */
 char *sk_model_info(const sk_pool *pool, const char *model_id, char **err);
 
@@ -82,6 +87,18 @@ size_t sk_embed_dims(const sk_pool *pool, const char *model_id, char **err);
 float *sk_embed(const sk_pool *pool, const char *model_id,
                 const char *const *texts, size_t n_texts, int purpose,
                 size_t requested_dims, size_t *dims_out, char **err);
+
+/* sk_embed with one of the model's named prompts in place of a purpose:
+ * prompt_name is a key of "named_prompts" in sk_model_info, matched
+ * exactly, case included (the daemon's "prompt_name"). A name the model
+ * doesn't have fails before the model loads, with *err listing the names
+ * it has. Added in 0.15.0 without an ABI version bump (additive):
+ * resolve it with dlsym if the host must also run against older
+ * libraries. */
+float *sk_embed_named(const sk_pool *pool, const char *model_id,
+                      const char *const *texts, size_t n_texts,
+                      const char *prompt_name, size_t requested_dims,
+                      size_t *dims_out, char **err);
 
 void sk_floats_free(float *ptr, size_t n_floats);
 void sk_string_free(char *ptr);

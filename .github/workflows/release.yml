@@ -111,7 +111,7 @@ jobs:
           vtool -show-build target/release/sidekickd | grep -E 'minos 26\.0'
           otool -l target/release/sidekickd | grep -q LC_DYLD_CHAINED_FIXUPS
           # C ABI: the exported surface must be present.
-          for sym in _sk_abi_version _sk_pool_open _sk_embed _sk_model_info; do
+          for sym in _sk_abi_version _sk_pool_open _sk_embed _sk_embed_named _sk_model_info; do
             nm -gU target/release/libsidekick.dylib | grep -q " $sym\$"
           done
 

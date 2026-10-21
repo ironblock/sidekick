@@ -18,7 +18,7 @@
 //!   unlocked, so calls on other, already-loaded models are unaffected;
 //!   loaded models stay resident until `sk_pool_close`.
 
-use sidekick_core::{truncate_normalized, EmbedPurpose, Embedder, ModelRegistry};
+use sidekick_core::{named_prompt, truncate_normalized, EmbedPurpose, Embedder, ModelRegistry};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -177,12 +177,13 @@ pub unsafe extern "C" fn sk_pool_skipped(
 }
 
 /// JSON description of one embedding model from its manifest (the model is not
-/// loaded): `{"id","backend","dims","matryoshka","max_seq_len","prompts"}`.
-/// `matryoshka` lists the dims values `sk_embed` accepts as
-/// `requested_dims`; empty means native dims only. `prompts` is
+/// loaded): `{"id","backend","dims","matryoshka","max_seq_len","prompts",
+/// "named_prompts"}`. `matryoshka` lists the dims values `sk_embed` accepts
+/// as `requested_dims`; empty means native dims only. `prompts` is
 /// `{"query","document"}`: the prefix `sk_embed` puts before each text for
-/// that purpose (`""` for none; purpose 2 puts none). Free with
-/// `sk_string_free`. Returns NULL on failure with `*err` set.
+/// that purpose (`""` for none; purpose 2 puts none). `named_prompts` maps
+/// each name `sk_embed_named` takes to its prompt (`{}` for none). Free
+/// with `sk_string_free`. Returns NULL on failure with `*err` set.
 ///
 /// # Safety
 /// Pointer rules as above.
@@ -203,6 +204,7 @@ pub unsafe extern "C" fn sk_model_info(
             "matryoshka": m.matryoshka,
             "max_seq_len": m.max_seq_len,
             "prompts": {"query": m.prefixes.query, "document": m.prefixes.document},
+            "named_prompts": m.prompts,
         });
         Ok(CString::new(json.to_string()).unwrap_or_default().into_raw())
     })
@@ -258,96 +260,144 @@ pub unsafe extern "C" fn sk_embed(
     err: *mut *mut c_char,
 ) -> *mut f32 {
     ffi_guard(err, std::ptr::null_mut(), || {
-        let pool = pool.as_ref().ok_or("pool is NULL")?;
-        let id = utf8(model_id, "model_id")?;
-        if dims_out.is_null() {
-            return Err("dims_out is NULL".into());
-        }
-        if texts.is_null() && n_texts > 0 {
-            return Err("texts is NULL".into());
-        }
         let purpose = match purpose {
             0 => EmbedPurpose::Document,
             1 => EmbedPurpose::Query,
             2 => EmbedPurpose::Raw,
             other => return Err(format!("purpose must be 0 (document), 1 (query) or 2 (none), got {other}")),
         };
-        let mut owned = Vec::with_capacity(n_texts);
-        for i in 0..n_texts {
-            owned.push(utf8(*texts.add(i), "text")?);
+        embed(pool, model_id, texts, n_texts, purpose, requested_dims, dims_out)
+    })
+}
+
+/// `sk_embed` with one of the model's named prompts (`named_prompts` in
+/// `sk_model_info`) in place of a purpose: `prompt_name` is matched
+/// exactly, case included, and a name the model doesn't have fails
+/// before the model loads, with `*err` listing the names it has. The
+/// daemon's `prompt_name`. Added in 0.15.0 (additive); resolve it with
+/// `dlsym` if the host must also run against older libraries.
+///
+/// # Safety
+/// As `sk_embed`; `prompt_name` must be a valid NUL-terminated string.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn sk_embed_named(
+    pool: *const SkPool,
+    model_id: *const c_char,
+    texts: *const *const c_char,
+    n_texts: usize,
+    prompt_name: *const c_char,
+    requested_dims: usize,
+    dims_out: *mut usize,
+    err: *mut *mut c_char,
+) -> *mut f32 {
+    ffi_guard(err, std::ptr::null_mut(), || {
+        let name = utf8(prompt_name, "prompt_name")?;
+        let p = pool.as_ref().ok_or("pool is NULL")?;
+        let id = utf8(model_id, "model_id")?;
+        let model = p.registry.get(id).map_err(|e| e.to_string())?;
+        // The message alone, as sk_embed's own refusals are.
+        named_prompt(id, &model.manifest.prompts, name).map_err(|e| match e {
+            sidekick_core::Error::InvalidRequest(message) => message,
+            e => e.to_string(),
+        })?;
+        embed(pool, model_id, texts, n_texts, EmbedPurpose::Named(name), requested_dims, dims_out)
+    })
+}
+
+/// `sk_embed`'s and `sk_embed_named`'s work, once the purpose is read.
+unsafe fn embed(
+    pool: *const SkPool,
+    model_id: *const c_char,
+    texts: *const *const c_char,
+    n_texts: usize,
+    purpose: EmbedPurpose,
+    requested_dims: usize,
+    dims_out: *mut usize,
+) -> Result<*mut f32, String> {
+    let pool = pool.as_ref().ok_or("pool is NULL")?;
+    let id = utf8(model_id, "model_id")?;
+    if dims_out.is_null() {
+        return Err("dims_out is NULL".into());
+    }
+    if texts.is_null() && n_texts > 0 {
+        return Err("texts is NULL".into());
+    }
+    let mut owned = Vec::with_capacity(n_texts);
+    for i in 0..n_texts {
+        owned.push(utf8(*texts.add(i), "text")?);
+    }
+
+    // Look up under the lock; load with it RELEASED so a multi-second
+    // Core ML load can't stall calls on other, already-loaded models
+    // (same pattern as the daemon's EmbedderPool). A poisoned lock is
+    // recovered, not propagated: the critical sections only read or
+    // insert-as-last-op, so no invariant can be left broken.
+    let cached = pool
+        .loaded
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(id)
+        .cloned();
+    let embedder = match cached {
+        Some(e) => e,
+        None => {
+            let model = pool.registry.get(id).map_err(|e| e.to_string())?;
+            let loaded_model: Arc<dyn Embedder> =
+                Arc::from(sidekick_embed::load_embedder(model).map_err(|e| e.to_string())?);
+            pool.loaded
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(id.to_string())
+                .or_insert(loaded_model)
+                .clone()
         }
+    };
 
-        // Look up under the lock; load with it RELEASED so a multi-second
-        // Core ML load can't stall calls on other, already-loaded models
-        // (same pattern as the daemon's EmbedderPool). A poisoned lock is
-        // recovered, not propagated: the critical sections only read or
-        // insert-as-last-op, so no invariant can be left broken.
-        let cached = pool
-            .loaded
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(id)
-            .cloned();
-        let embedder = match cached {
-            Some(e) => e,
-            None => {
-                let model = pool.registry.get(id).map_err(|e| e.to_string())?;
-                let loaded_model: Arc<dyn Embedder> =
-                    Arc::from(sidekick_embed::load_embedder(model).map_err(|e| e.to_string())?);
-                pool.loaded
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .entry(id.to_string())
-                    .or_insert(loaded_model)
-                    .clone()
-            }
-        };
-
-        let native_dims = embedder.dims();
-        let out_dims = match requested_dims {
-            0 => native_dims,
-            d if d == native_dims => native_dims,
-            d if embedder.matryoshka_dims().contains(&d) => d,
-            d => {
-                return Err(format!(
-                    "model `{id}` supports dimensions {:?}, got {d}",
-                    if embedder.matryoshka_dims().is_empty() {
-                        vec![native_dims]
-                    } else {
-                        embedder.matryoshka_dims().to_vec()
-                    }
-                ))
-            }
-        };
-
-        let vectors = embedder.embed(&owned, purpose).map_err(|e| e.to_string())?;
-        if vectors.len() != n_texts {
-            // Never violate the n_texts * dims buffer contract the caller
-            // frees/reads with — a mismatched length would be heap UB.
+    let native_dims = embedder.dims();
+    let out_dims = match requested_dims {
+        0 => native_dims,
+        d if d == native_dims => native_dims,
+        d if embedder.matryoshka_dims().contains(&d) => d,
+        d => {
             return Err(format!(
-                "embedder returned {} vectors for {n_texts} texts",
-                vectors.len()
+                "model `{id}` supports dimensions {:?}, got {d}",
+                if embedder.matryoshka_dims().is_empty() {
+                    vec![native_dims]
+                } else {
+                    embedder.matryoshka_dims().to_vec()
+                }
+            ))
+        }
+    };
+
+    let vectors = embedder.embed(&owned, purpose).map_err(|e| e.to_string())?;
+    if vectors.len() != n_texts {
+        // Never violate the n_texts * dims buffer contract the caller
+        // frees/reads with — a mismatched length would be heap UB.
+        return Err(format!(
+            "embedder returned {} vectors for {n_texts} texts",
+            vectors.len()
+        ));
+    }
+    let mut flat = Vec::with_capacity(n_texts * out_dims);
+    for v in &vectors {
+        if v.len() != native_dims {
+            return Err(format!(
+                "embedder returned {} dims, expected {native_dims}",
+                v.len()
             ));
         }
-        let mut flat = Vec::with_capacity(n_texts * out_dims);
-        for v in &vectors {
-            if v.len() != native_dims {
-                return Err(format!(
-                    "embedder returned {} dims, expected {native_dims}",
-                    v.len()
-                ));
-            }
-            if out_dims == native_dims {
-                flat.extend_from_slice(v);
-            } else {
-                flat.extend_from_slice(&truncate_normalized(v, out_dims));
-            }
+        if out_dims == native_dims {
+            flat.extend_from_slice(v);
+        } else {
+            flat.extend_from_slice(&truncate_normalized(v, out_dims));
         }
-        *dims_out = out_dims;
-        // Boxed slice: len == capacity, so sk_floats_free can rebuild it
-        // from (ptr, n) alone.
-        Ok(Box::into_raw(flat.into_boxed_slice()) as *mut f32)
-    })
+    }
+    *dims_out = out_dims;
+    // Boxed slice: len == capacity, so sk_floats_free can rebuild it
+    // from (ptr, n) alone.
+    Ok(Box::into_raw(flat.into_boxed_slice()) as *mut f32)
 }
 
 /// Free a buffer returned by `sk_embed`. `n_floats` must be exactly
@@ -572,6 +622,51 @@ output = "logits"
             assert!(embed(0).iter().zip([0.0, h, h]).all(|(a, b)| (a - b).abs() < 1e-6));
             assert_eq!(embed(1), vec![0.0, 1.0, 0.0]);
             assert_eq!(embed(2), vec![0.0, 1.0, 0.0]);
+            sk_pool_close(pool);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_named_prompt_is_chosen_by_its_exact_name() {
+        let dir = fixture_dir();
+        let manifest = dir.join("floor").join("manifest.toml");
+        let with_prompts = std::fs::read_to_string(&manifest).unwrap() + "\n[prompts]\nSTS = \"gamma \"\n";
+        std::fs::write(&manifest, with_prompts).unwrap();
+        let mut err: *mut c_char = std::ptr::null_mut();
+        unsafe {
+            let dir_c = CString::new(dir.to_str().unwrap()).unwrap();
+            let pool = sk_pool_open(dir_c.as_ptr(), &mut err);
+            assert!(!pool.is_null());
+            let id = CString::new("static-floor").unwrap();
+            let info = sk_model_info(pool, id.as_ptr(), &mut err);
+            let info_json: serde_json::Value = serde_json::from_str(CStr::from_ptr(info).to_str().unwrap()).unwrap();
+            sk_string_free(info);
+            assert_eq!(info_json["named_prompts"], serde_json::json!({"STS": "gamma "}));
+            let t = CString::new("beta").unwrap();
+            let texts = [t.as_ptr()];
+            let embed = |name: &str| {
+                let name = CString::new(name).unwrap();
+                let mut dims = 0usize;
+                let mut err: *mut c_char = std::ptr::null_mut();
+                let out = sk_embed_named(pool, id.as_ptr(), texts.as_ptr(), 1, name.as_ptr(), 0, &mut dims, &mut err);
+                if out.is_null() {
+                    let message = CStr::from_ptr(err).to_str().unwrap().to_string();
+                    sk_string_free(err);
+                    return Err(message);
+                }
+                let v = std::slice::from_raw_parts(out, dims).to_vec();
+                sk_floats_free(out, dims);
+                Ok(v)
+            };
+            // "gamma beta": the mean of rows 2 and 1.
+            let h = 0.5f32.sqrt();
+            assert!(embed("STS").unwrap().iter().zip([0.0, h, h]).all(|(a, b)| (a - b).abs() < 1e-6));
+            assert_eq!(embed("sts").unwrap_err(), "model `static-floor` has no prompt named `sts` (its prompts: `STS`)");
+            let mut dims = 0usize;
+            let null_name = sk_embed_named(pool, id.as_ptr(), texts.as_ptr(), 1, std::ptr::null(), 0, &mut dims, &mut err);
+            assert!(null_name.is_null() && !err.is_null());
+            sk_string_free(err);
             sk_pool_close(pool);
         }
         let _ = std::fs::remove_dir_all(dir);

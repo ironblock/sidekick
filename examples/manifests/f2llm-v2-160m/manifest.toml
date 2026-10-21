@@ -33,3 +33,12 @@ output = "embedding"
 [prefixes]
 query = "Instruct: Given a question, retrieve passages that can help answer the question.\nQuery: "
 document = ""
+
+# Named prompts, which a request chooses by prompt_name (docs/DECISIONS.md
+# D45): the checkpoint's config_sentence_transformers.json prompts at
+# revision 4ffe22c31406fc321b65a05b15563d38275ee51f, copied exactly. They
+# are the two above; for another task, send input_type "none" with
+# "Instruct: <task>\nQuery: " before the text (docs/INTEGRATING.md).
+[prompts]
+query = "Instruct: Given a question, retrieve passages that can help answer the question.\nQuery: "
+document = ""

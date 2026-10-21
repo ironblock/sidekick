@@ -30,7 +30,7 @@ Inputs:
 - each build's committed manifest (examples/manifests/, with an onnx.toml
   beside it for an ONNX build that differs, and examples/classifiers/):
   its `max_seq_len`, on every row of that build, and an embedder's
-  `[prefixes]`, for docs/MODELS.md's prompts table.
+  `[prefixes]` and `[prompts]`, for docs/MODELS.md's prompts tables.
 - benchmark scores, published beside the rows as the results file's
   `benchmarks`: docs/data/benchmarks.mteb.json (MTEB, collected by
   tools/fetch_benchmarks.py) and docs/data/benchmarks.toml (curated,
@@ -1143,23 +1143,45 @@ def self_reported(rows, models, bench):
                   "note"], out)
 
 
+def prompt_cell(prompt):
+    """A prompt as a table cell: a code span shows its characters, its
+    trailing space included; a newline is shown escaped, and a pipe escaped
+    for the table."""
+    if not prompt:
+        return "none"
+    return "`" + prompt.replace("\n", "\\n").replace("|", "\\|") + "`"
+
+
+def embedder_manifests(models):
+    """(model, its committed manifest) for each embedder that has one."""
+    for mid, m in models.items():
+        manifest = MANIFESTS / mid / "manifest.toml"
+        if m.get("task") == "embed" and manifest.exists():
+            yield m, load_toml(manifest)
+
+
 def prompts(rows, models):
     """Each embedder's prompts by `input_type`, from its committed manifest's
     [prefixes]: what sidekick puts before every input (D9)."""
-    def cell(prompt):
-        if not prompt:
-            return "none"
-        # A code span shows the prompt's characters, its trailing space
-        # included; a newline is shown escaped, and a pipe escaped for the table.
-        return "`" + prompt.replace("\n", "\\n").replace("|", "\\|") + "`"
     out = []
-    for mid, m in models.items():
-        manifest = MANIFESTS / mid / "manifest.toml"
-        if m.get("task") != "embed" or not manifest.exists():
-            continue
-        p = load_toml(manifest).get("prefixes", {})
-        out.append([m["name"], cell(p.get("query", "")), cell(p.get("document", ""))])
+    for m, manifest in embedder_manifests(models):
+        p = manifest.get("prefixes", {})
+        out.append([m["name"], prompt_cell(p.get("query", "")), prompt_cell(p.get("document", ""))])
     return table(["model", "`query`", "`document`, and no `input_type`"], out)
+
+
+def named_prompts(rows, models):
+    """Each embedder's named prompts, from its committed manifest's [prompts]
+    (D45): one row per prompt text, with every name that has it, in the
+    manifest's order."""
+    out = []
+    for m, manifest in embedder_manifests(models):
+        by_text = {}
+        for name, text in manifest.get("prompts", {}).items():
+            by_text.setdefault(text, []).append(name)
+        for text, names in by_text.items():
+            out.append([m["name"], ", ".join(f"`{n}`" for n in names), prompt_cell(text)])
+    return table(["model", "`prompt_name`", "prompt"], out)
 
 
 def mteb_source(rows, models, bench):
@@ -1171,7 +1193,7 @@ def mteb_source(rows, models, bench):
 
 TABLES = {"coreml-grades": coreml_grades, "onnx-accuracy": onnx_accuracy, "latency": latency,
           "threads": threads, "memory": memory, "cosine-scale": cosine_scale,
-          "classifier-scales": classifier_scales, "prompts": prompts}
+          "classifier-scales": classifier_scales, "prompts": prompts, "named-prompts": named_prompts}
 # Tables from the results file's benchmark scores.
 BENCH_TABLES = {"mteb-eng-v2": mteb_table("MTEB(eng, v2)", every_embedder=True),
                 "mteb-multilingual-v2": mteb_table("MTEB(Multilingual, v2)"),

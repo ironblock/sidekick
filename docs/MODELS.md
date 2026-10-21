@@ -1439,6 +1439,59 @@ the prompt exactly, its trailing space included, and `\n` is a newline:
 | Qwen3-Embedding-0.6B | `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:` | none |
 <!-- /generated -->
 
+### Named prompts (`prompt_name`)
+
+Some checkpoints name prompts for tasks besides retrieval in their
+sentence-transformers configuration (`config_sentence_transformers.json`),
+as EmbeddingGemma does for classification, clustering and similarity. A
+request chooses one by `prompt_name`, in place of `input_type`, as Hugging
+Face Text Embeddings Inference and sentence-transformers'
+`encode(prompt_name=…)` do (D45). The name matches exactly, case
+included. A named prompt is sidekick's own, so `truncate: "START"` keeps
+it whole, as it keeps an `input_type` prompt. `/v1/models` lists each
+installed model's as `named_prompts`.
+
+From each build's committed manifest (`[prompts]`, copied from the
+checkpoint at the revision the build pins); a model not listed publishes
+none:
+
+<!-- generated: named-prompts -->
+| model | `prompt_name` | prompt |
+|---|---|---|
+| embeddinggemma-300m | `query`, `BitextMining`, `Reranking`, `Retrieval`, `Retrieval-query` | `task: search result \| query: ` |
+| embeddinggemma-300m | `document`, `Retrieval-document` | `title: none \| text: ` |
+| embeddinggemma-300m | `Clustering` | `task: clustering \| query: ` |
+| embeddinggemma-300m | `Classification`, `MultilabelClassification` | `task: classification \| query: ` |
+| embeddinggemma-300m | `InstructionRetrieval` | `task: code retrieval \| query: ` |
+| embeddinggemma-300m | `PairClassification`, `STS` | `task: sentence similarity \| query: ` |
+| embeddinggemma-300m | `Summarization` | `task: summarization \| query: ` |
+| embeddinggemma-2 | `BitextMining`, `Reranking`, `Retrieval`, `Retrieval-query`, `SearchQuery`, `query` | `task: search result \| query: ` |
+| embeddinggemma-2 | `Classification`, `MultilabelClassification` | `task: classification \| query: ` |
+| embeddinggemma-2 | `Clustering` | `task: clustering \| query: ` |
+| embeddinggemma-2 | `CodeRetrieval`, `InstructionRetrieval` | `task: code retrieval \| query: ` |
+| embeddinggemma-2 | `Document`, `Retrieval-document`, `document` | `title: none \| text: ` |
+| embeddinggemma-2 | `FactChecking` | `task: fact checking \| query: ` |
+| embeddinggemma-2 | `PairClassification`, `STS`, `SentenceSimilarity`, `Summarization` | `task: sentence similarity \| query: ` |
+| embeddinggemma-2 | `QuestionAnswering` | `task: question answering \| query: ` |
+| F2LLM-v2-160M | `query` | `Instruct: Given a question, retrieve passages that can help answer the question.\nQuery: ` |
+| F2LLM-v2-160M | `document` | none |
+| LFM2.5-Embedding-350M | `query` | `query: ` |
+| LFM2.5-Embedding-350M | `positive`, `negative_0`, `negative_1`, `negative_2`, `negative_3`, `negative_4`, `negative_5`, `negative_6`, `document` | `document: ` |
+| Qwen3-Embedding-0.6B | `query` | `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:` |
+| Qwen3-Embedding-0.6B | `document` | none |
+<!-- /generated -->
+
+Qwen3-Embedding and F2LLM take a free-text instruction per task rather
+than a fixed set, so their named prompts are only `query` and `document`.
+For another task, send the instruction in the model's format with
+`input_type: "none"`: `Instruct: <task>\nQuery:` before the text for
+Qwen3-Embedding, with no space after `Query:`, and `Instruct:
+<task>\nQuery: ` for F2LLM, with one. On symmetric tasks
+(classification, clustering, similarity) the instruction goes on every
+input, and sidekick can't tell a typed-in instruction from the text, so
+`truncate: "START"` would cut it from a long input: truncate with `END`,
+or keep inputs within the limit.
+
 ## Benchmark scores
 
 The grades above say how faithfully a sidekick build reproduces its model.
@@ -1499,7 +1552,9 @@ MTEB results: [mteb/results at 3b0980076221](https://huggingface.co/datasets/mte
     with `input_type: "none"`, and nothing else is added. For example,
     EmbeddingGemma's `task: classification | query: ` before the text, or
     nothing at all for e5-small-v2 outside retrieval and reranking, where
-    its runs used no prefix.
+    its runs used no prefix. EmbeddingGemma's task prompts are also its
+    [named prompts](#named-prompts-prompt_name), so `prompt_name:
+    "Classification"` puts the same prompt without the client copying it.
   - On retrieval and reranking, the runs' query and document prompts are
     sidekick's own for bge-small-en-v1.5 (query only), e5-small-v2 and
     LFM2.5-Embedding-350M, so `input_type: "query"` and the default

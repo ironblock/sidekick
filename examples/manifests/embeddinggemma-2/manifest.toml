@@ -40,3 +40,29 @@ output = "embedding"
 [prefixes]
 query = "task: search result | query: "
 document = "title: none | text: "
+
+# Named prompts, which a request chooses by prompt_name (docs/DECISIONS.md
+# D45): the checkpoint's config_sentence_transformers.json prompts at the
+# revision in source, copied exactly. "document" and "Document" are two
+# names, as in the checkpoint: names match exactly, case included.
+[prompts]
+BitextMining = "task: search result | query: "
+Classification = "task: classification | query: "
+Clustering = "task: clustering | query: "
+CodeRetrieval = "task: code retrieval | query: "
+Document = "title: none | text: "
+FactChecking = "task: fact checking | query: "
+InstructionRetrieval = "task: code retrieval | query: "
+MultilabelClassification = "task: classification | query: "
+PairClassification = "task: sentence similarity | query: "
+QuestionAnswering = "task: question answering | query: "
+Reranking = "task: search result | query: "
+Retrieval = "task: search result | query: "
+Retrieval-document = "title: none | text: "
+Retrieval-query = "task: search result | query: "
+STS = "task: sentence similarity | query: "
+SearchQuery = "task: search result | query: "
+SentenceSimilarity = "task: sentence similarity | query: "
+Summarization = "task: sentence similarity | query: "
+document = "title: none | text: "
+query = "task: search result | query: "

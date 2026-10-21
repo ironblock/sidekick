@@ -25,9 +25,10 @@ pub struct Measured {
 
 /// What to measure a text for.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct MeasureOptions {
-    /// An embedder's prompt prefix; a classifier takes none.
-    pub purpose: Option<EmbedPurpose>,
+pub struct MeasureOptions<'a> {
+    /// An embedder's prompt prefix, or named prompt; a classifier takes
+    /// none.
+    pub purpose: Option<EmbedPurpose<'a>>,
     /// An embedder's `max_tokens`, as `/v2/embed` takes it, for `fits`.
     pub max_tokens: Option<usize>,
     /// Count the special tokens the route adds (vLLM's default).
@@ -76,11 +77,15 @@ impl ModelTokenizer {
         // (special tokens included), which is then the count.
         let verdict = match self {
             Self::Embedder { input, longest } => {
+                // A prompt name the model doesn't have is the request's
+                // error, not a text that doesn't fit.
+                input.prefix(o.purpose.unwrap_or_default())?;
                 input.check_whole(text, o.purpose.unwrap_or_default(), o.max_tokens, *longest)
             }
             Self::Classifier(_) if o.purpose.is_some() || o.max_tokens.is_some() => {
                 return Err(Error::InvalidRequest(
-                    "input_type and max_tokens are embedding models' options; a classifier takes neither".into(),
+                    "input_type, prompt_name and max_tokens are embedding models' options; a classifier takes none of them"
+                        .into(),
                 ))
             }
             Self::Classifier(builder) => builder.check_text(text),
