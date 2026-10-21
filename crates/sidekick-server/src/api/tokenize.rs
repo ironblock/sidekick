@@ -9,8 +9,9 @@
 //! counted whole, a tokenizer.json's own truncation included. `fits` is the
 //! route's own verdict on the text, by the check the route runs, so a
 //! client needn't re-derive it from the count. The request body limit
-//! (2 MiB) bounds the text; at most one tokenization per core runs at once,
-//! within the request timeout.
+//! (2 MiB) bounds one text, and a byte budget (`BUDGET_BYTES`) bounds the
+//! text tokenized at once across requests; the wait for room in it is
+//! bounded by the request timeout.
 
 use super::deadline::{Deadline, Work};
 use super::wire::*;
@@ -24,12 +25,25 @@ use sidekick_embed::tokenize::{MeasureOptions, ModelTokenizer};
 use std::sync::{Arc, LazyLock};
 use tokio::sync::Semaphore;
 
-/// Tokenizations running at once: one per core. A 2 MiB text can be over a
-/// million tokens and take a few hundred megabytes while it is tokenized.
-static TURNS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| {
-    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
-    Arc::new(Semaphore::new(cores))
-});
+/// Text tokenized at once, across requests. Tokenizing takes memory in
+/// proportion to the text: 24 concurrent 2 MiB requests of random
+/// alphanumerics (1.6 million tokens each to LFM2.5-Embedding's tokenizer)
+/// peaked at 0.45 GB under this budget, the allocator's cache of freed
+/// large blocks aside (D44). A request waits until its text fits; one of
+/// the largest size the body limit allows always fits alone.
+const BUDGET_BYTES: usize = 4 * 1024 * 1024;
+
+/// The budget's unit: a request takes one permit per 64 KiB of text, and
+/// at least one.
+const BYTES_PER_PERMIT: usize = 64 * 1024;
+
+static BUDGET: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(BUDGET_BYTES / BYTES_PER_PERMIT)));
+
+/// The permits a request of `bytes` of text takes from the budget.
+fn permits(bytes: usize) -> u32 {
+    let budget = BUDGET_BYTES / BYTES_PER_PERMIT;
+    bytes.div_ceil(BYTES_PER_PERMIT).clamp(1, budget) as u32
+}
 
 pub async fn tokenize(
     State(state): State<AppState>,
@@ -63,7 +77,7 @@ pub async fn tokenize(
         token_strs: req.return_token_strs.unwrap_or(false),
         ..options
     };
-    let (max_model_len, measured) = run(&state, &req.model, move |t| {
+    let (max_model_len, measured) = run(&state, &req.model, prompt.len(), move |t| {
         Ok((t.max_model_len(), t.measure(&prompt, options)?))
     })
     .await?;
@@ -87,7 +101,9 @@ pub async fn detokenize(
 ) -> Result<Response, ApiError> {
     let model = served(&state, &req.model, "/detokenize")?;
     let ids = req.tokens;
-    let prompt = run(&state, &req.model, move |t| t.decode(&ids)).await?;
+    // The text decoded is a few bytes per id.
+    let bytes = ids.len().saturating_mul(4);
+    let prompt = run(&state, &req.model, bytes, move |t| t.decode(&ids)).await?;
     Ok(model.provenance.apply(Json(DetokenizeResponse { prompt }).into_response()))
 }
 
@@ -104,21 +120,24 @@ fn purpose(input_type: Option<&str>) -> Result<EmbedPurpose, ApiError> {
     })
 }
 
-/// `work` with the model's tokenizer, on a blocking thread when a turn is
-/// free: the tokenizer's load bounded as a model's is, and the wait for a
-/// turn and the work by the request timeout (api::deadline). A request
-/// that times out waiting never runs.
+/// `work` on `bytes` of text with the model's tokenizer, on a blocking
+/// thread once the text fits in the budget: the tokenizer's load bounded
+/// as a model's is, and the wait for room and then the work by the request
+/// timeout (api::deadline). A request that times out waiting never runs;
+/// one that times out running gets its 504, while the work finishes and
+/// holds its share of the budget until it does.
 async fn run<T: Send + 'static>(
     state: &AppState,
     model: &str,
+    bytes: usize,
     work: impl FnOnce(&ModelTokenizer) -> sidekick_core::Result<T> + Send + 'static,
 ) -> Result<T, ApiError> {
     let mut deadline = Deadline::new(Work::Tokenizing, model, state.request_timeout, state.load_timeout);
     let tokenizer = deadline.model(state.tokenizers.get_tracked(model)).await?;
     let turn = deadline
-        .within(TURNS.clone().acquire_owned())
+        .within(BUDGET.clone().acquire_many_owned(permits(bytes)))
         .await?
-        .map_err(|e| ApiError::from(Error::Other(format!("tokenize turns: {e}"))))?;
+        .map_err(|e| ApiError::from(Error::Other(format!("tokenize budget: {e}"))))?;
     // Nothing loads from here: the loading phase is over.
     let (_, loaded) = tokio::sync::oneshot::channel();
     let task = tokio::task::spawn_blocking(move || {
@@ -167,4 +186,19 @@ fn served(state: &AppState, id: &str, route: &str) -> Result<Served, ApiError> {
         )));
     }
     Err(ApiError::model_not_found(id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{permits, BUDGET_BYTES, BYTES_PER_PERMIT};
+
+    #[test]
+    fn the_largest_body_fits_the_budget_alone() {
+        assert_eq!(permits(0), 1);
+        assert_eq!(permits(BYTES_PER_PERMIT + 1), 2);
+        // The request body limit is 2 MiB, so a prompt is at most that.
+        assert_eq!(permits(2 * 1024 * 1024), 32);
+        assert!(permits(2 * 1024 * 1024) as usize * BYTES_PER_PERMIT <= BUDGET_BYTES);
+        assert_eq!(permits(usize::MAX) as usize, BUDGET_BYTES / BYTES_PER_PERMIT);
+    }
 }

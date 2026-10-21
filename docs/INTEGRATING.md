@@ -125,9 +125,10 @@ with. A tokenizer of your own, or an estimate from characters, can
 disagree with that count at the edge: it may miss the prompt prefix or the
 special tokens, or tokenize differently. A client that truncates some
 documents on purpose can send `/tokenize` first, log the ones that don't
-fit, with their counts, and send those with `truncate: "END"`. At most one
-tokenization per core runs at once, within the request timeout, and the
-request body limit (2 MiB) bounds the text. See the README's Tokenize
+fit, with their counts, and send those with `truncate: "END"`. At most
+4 MiB of text is tokenized at once across requests, and a request waits
+for room within the request timeout. The request body limit (2 MiB)
+bounds the text. See the README's Tokenize
 section for the full shape (D44).
 
 To truncate instead, send `truncate: "END"` (or TEI's `truncate: true`;

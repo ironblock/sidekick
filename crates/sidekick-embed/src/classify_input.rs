@@ -86,7 +86,7 @@ impl InputBuilder {
     /// The classifier's builder: the copy already in use (by the
     /// classifier, or by the daemon's `/tokenize`), or a new one.
     pub fn shared(model: &ResolvedClassifier) -> Result<Arc<Self>> {
-        BUILDERS.get_or_load(&model.dir, &model.manifest.id, || Self::load(model))
+        BUILDERS.get_or_load(&model.dir, crate::shared::fingerprint(&model.manifest), || Self::load(model))
     }
 
     /// A copy of its own, outside the cache.

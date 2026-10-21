@@ -42,7 +42,7 @@ impl EmbedInput {
     /// one. Every backend and `/tokenize` get it this way, so the two count
     /// alike and hold one tokenizer between them.
     pub fn shared(model: &ResolvedModel) -> Result<Arc<Self>> {
-        INPUTS.get_or_load(&model.dir, &model.manifest.id, || Self::load(model))
+        INPUTS.get_or_load(&model.dir, crate::shared::fingerprint(&model.manifest), || Self::load(model))
     }
 
     /// A copy of its own, outside the cache.

@@ -3106,13 +3106,29 @@ them at the root, and their clients call them there.
   token counts but not token ids, and counting for chat belongs with the
   Responses and Messages token-count routes. `messages`, vLLM's chat form,
   needs a chat template, which encoders don't have.
-- **Cost is bounded.** A 2 MiB text can be over a million tokens and a
-  few hundred megabytes while it is tokenized, so at most one
-  tokenization per core runs at once. A request's wait for its turn, and
-  its work, are bounded by the request timeout, as other routes' work is,
-  and the tokenizer's load by the load timeout. A request that times out
-  waiting never runs. Token strings are built only when
-  `return_token_strs` asks for them.
+- **Cost is bounded by a byte budget.** Tokenizing takes memory in
+  proportion to the text: a 2 MiB text of random alphanumerics is 1.6
+  million tokens to LFM2.5-Embedding's tokenizer. At most 4 MiB of text
+  is tokenized at once, across requests. A request takes one 64 KiB
+  permit per 64 KiB of its text, at least one, and waits until its text
+  fits. One of the largest size the 2 MiB body limit allows always fits
+  alone. The wait is bounded by the request timeout and the tokenizer's
+  load by the load timeout, as on the other routes. A request that times
+  out waiting never runs. One whose work outlasts the timeout gets its
+  504, but the work runs to the end and holds its share of the budget
+  until it does, as `api::deadline` describes for every route. Token
+  strings are built only when `return_token_strs` asks for them.
+  Measured on an M1 Max, 24 concurrent 2 MiB requests on LFM2.5's
+  tokenizer peaked at 0.45 GB physical footprint with macOS's cache of
+  freed large blocks turned off (`MallocLargeCache=0`), which is the
+  memory the budget bounds. With the default allocator they peaked at
+  2.1 GB, against 4.1 GB with the earlier one-tokenization-per-core
+  limit. The difference is libmalloc's large-block cache: freed buffers
+  over about 1 MB that it keeps dirty for reuse. It grows to about 1.5 GB
+  whatever the concurrency (eight 2 MiB requests one at a time reach it),
+  and `malloc_zone_pressure_relief` releases none of it. An operator who
+  wants the lower footprint can set `MallocLargeCache=0` in the daemon's
+  environment.
 - **One tokenizer per model.** `/tokenize` loads a model's tokenizer
   without its weights, into a pool dropped after the same idle time as
   models. The tokenizer is shared: a model's backend and `/tokenize` get
@@ -3120,7 +3136,10 @@ them at the root, and their clients call them there.
   `InputBuilder::shared`), which holds it weakly. Concurrent first loads of
   one model wait for one load instead of each loading a copy. A model
   loaded while `/tokenize` holds its tokenizer reuses it, and the other
-  way round. `/detokenize` keeps special tokens, as vLLM's does, and an id
+  way round. The cache is keyed by the model's directory and a
+  fingerprint of its manifest as resolved, so a manifest that reads
+  differently (other prefixes, a capped `max_seq_len`) never gets another's
+  copy. `/detokenize` keeps special tokens, as vLLM's does, and an id
   outside the vocabulary is a 400.
 
 ## Hardware verification status
