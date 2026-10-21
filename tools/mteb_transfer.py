@@ -31,10 +31,17 @@ shows the adapter reproduces mteb's run, so a difference elsewhere belongs
 to the build or the cap. `run --reference` also compares every input's
 vector with the reference's (worst and mean cosine).
 
+A published run may have used another revision of the checkpoint than
+sidekick's pin. `reference --revision <rev>` compares that revision's files
+with the pin's, file by file (LFS sha256 or git blob id), and runs the
+tasks given at it; `record` keeps both as `revision_checks`, not as the
+fp32 run.
+
 `record` collects the runs into docs/data/mteb_transfer.json, with each
 published per-task score read from the same pinned mteb/results commit as
-docs/data/benchmarks.mteb.json (by tools/fetch_benchmarks.py's query), and
-tools/models_table.py --docs publishes them in docs/MODELS.md.
+docs/data/benchmarks.mteb.json, at the revision tools/fetch_benchmarks.py's
+`choose` picks for it there, and tools/models_table.py --docs publishes them
+in docs/MODELS.md.
 
 Usage (a Python 3.12 virtualenv with mteb==2.26.14, sentence-transformers
 and duckdb; the models' checkpoints at sidekick's pinned revisions):
@@ -44,6 +51,7 @@ and duckdb; the models' checkpoints at sidekick's pinned revisions):
         --model bge-small-en-v1.5 --path coreml-ane --out <dir> \\
         [--tasks STSBenchmark ...] [--build <installed model dir>] [--reference <dir>]
     python tools/mteb_transfer.py reference --model bge-small-en-v1.5 --out <dir> [--tasks STSBenchmark]
+        [--revision <rev>] [--batch N]
     python tools/mteb_transfer.py record <dir> [<dir> ...] [--out docs/data/mteb_transfer.json]
 
     --path:      the compute path the daemon serves the model on: coreml-ane,
@@ -52,7 +60,8 @@ and duckdb; the models' checkpoints at sidekick's pinned revisions):
                  build's files (sha256 over its weights, tokenizer and manifest)
     --reference: a `reference` output directory; compare vectors with it
 
-Each run writes one JSON file per task to --out. A Core ML model's
+Each run writes one JSON file per task to --out, with the daemon's version
+as it reports it (its `sidekick-version` response header). A Core ML model's
 `compute_units` come from its manifest or the daemon's config
 (`[models."<id>"] compute_units`); /v1/models reports what is in use.
 Requests carry 32 inputs; raise the daemon's `request_timeout_secs` for a
@@ -131,12 +140,13 @@ def task_score(task, result):
     return sum(values) / len(values)
 
 
-def load_wrapper(model):
-    """mteb's own wrapper for the model, at sidekick's pinned revision, on
-    the CPU in fp32."""
+def load_wrapper(model, revision=None):
+    """mteb's own wrapper for the model, at sidekick's pinned revision (or
+    `revision`), on the CPU in fp32. The wrapper takes its prompts from that
+    revision's sentence-transformers config."""
     import mteb
     repo, rev = checkpoint(model)
-    meta = mteb.get_model_meta(repo).model_copy(update={"revision": rev})
+    meta = mteb.get_model_meta(repo).model_copy(update={"revision": revision or rev})
     wrapper = meta.load_model(device="cpu")
     wrapper.model.float()
     return wrapper
@@ -149,6 +159,7 @@ class Sidekick:
         u = urllib.parse.urlsplit(url)
         self.host, self.port, self.model = u.hostname, u.port or 80, model
         self.conn = None
+        self.version = None
         self.reset()
 
     def reset(self):
@@ -171,6 +182,11 @@ class Sidekick:
                 continue
             if r.status != 200:
                 raise SystemExit(f"{method} {path}: HTTP {r.status}: {payload[:500]!r}")
+            version = r.getheader("sidekick-version")
+            if version:
+                if self.version not in (None, version):
+                    raise SystemExit(f"the daemon's version changed during the run: {self.version}, {version}")
+                self.version = version
             return json.loads(payload)
 
     def info(self):
@@ -258,13 +274,6 @@ def machine():
     return chip, f"macOS {platform.mac_ver()[0]}"
 
 
-def sidekick_version():
-    version = tomllib.loads((REPO / "Cargo.toml").read_text())["workspace"]["package"]["version"]
-    commit = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short=7", "HEAD"], capture_output=True,
-                            text=True).stdout.strip()
-    return f"{version} (commit {commit})" if commit else version
-
-
 def fingerprint(build):
     """sha256 over the build's weights, tokenizer and manifest: (relative
     path, file sha256) pairs in path order, first 12 hex digits."""
@@ -300,7 +309,7 @@ def cmd_run(args):
     chip, os_ = machine()
     common = {"model": args.model, "mteb_model": repo, "revision": rev, "path": path,
               "backend": info["backend"], "compute_units": info["compute_units"], "max_seq_len": info["max_seq_len"],
-              "build": fingerprint(args.build) if args.build else None, "sidekick": args.sidekick or sidekick_version(),
+              "build": fingerprint(args.build) if args.build else None,
               "chip": chip, "os": os_, "mteb_version": mteb.__version__, "benchmark": BENCHMARK}
     wrapper = load_wrapper(args.model)
     for task in benchmark_tasks(args.tasks):
@@ -314,7 +323,8 @@ def cmd_run(args):
         score, seconds = evaluate(wrapper, task)
         counts = list(client.counts.values())
         cap = info["max_seq_len"]
-        record = dict(common, task=name, category=task.metadata.type, metric=task.metadata.main_score,
+        record = dict(common, sidekick=client.version, task=name, category=task.metadata.type,
+                      metric=task.metadata.main_score,
                       score=round(score, 6), seconds=round(seconds, 1), inputs=len(counts),
                       over_cap=sum(1 for c, _ in counts if c > cap), longest=max((c for c, _ in counts), default=0),
                       date=datetime.date.today().isoformat())
@@ -337,62 +347,97 @@ def cmd_reference(args):
     import sentence_transformers
     import torch
     import transformers
-    repo, rev = checkpoint(args.model)
+    repo, pin = checkpoint(args.model)
+    rev = args.revision or pin
     chip, os_ = machine()
-    wrapper = load_wrapper(args.model)
+    out = Path(args.out)
+    wrapper = load_wrapper(args.model, rev)
+    runtime = (f"sentence-transformers {sentence_transformers.__version__}, transformers {transformers.__version__}, "
+               f"torch {torch.__version__}, fp32 on the CPU")
+    common = {"model": args.model, "mteb_model": repo, "revision": rev, "path": "reference", "runtime": runtime,
+              "max_seq_len": wrapper.model.max_seq_length, "chip": chip, "os": os_,
+              "mteb_version": mteb.__version__, "benchmark": BENCHMARK}
+    if rev != pin:
+        # Another revision than the one sidekick converts: what differs
+        # between the two, file by file. Its runs aren't the reference.
+        write(out, f"{args.model}__revision-{rev[:12]}", dict(common, pin=pin, files=compare_revisions(repo, pin, rev)))
     for task in benchmark_tasks(args.tasks):
         name = task.metadata.name
         store = {}
         patch_capture(wrapper, store)
         score, seconds = evaluate(wrapper, task, args.batch)
         texts = list(store)
-        out = Path(args.out)
-        out.mkdir(parents=True, exist_ok=True)
-        np.savez(out / f"{args.model}__{name}.npz", texts=json.dumps(texts),
-                 vectors=np.stack([store[t] for t in texts]))
-        record = {"model": args.model, "mteb_model": repo, "revision": rev, "path": "reference",
-                  "runtime": f"sentence-transformers {sentence_transformers.__version__}, transformers "
-                             f"{transformers.__version__}, torch {torch.__version__}, fp32 on the CPU",
-                  "chip": chip, "os": os_, "mteb_version": mteb.__version__, "benchmark": BENCHMARK,
-                  "task": name, "category": task.metadata.type, "metric": task.metadata.main_score,
-                  "score": round(score, 6), "seconds": round(seconds, 1), "inputs": len(texts),
-                  "date": datetime.date.today().isoformat()}
-        print(json.dumps({k: record[k] for k in ("model", "task", "score", "seconds", "inputs")}), flush=True)
-        write(out, f"{args.model}__reference__{name}", record)
+        record = dict(common, task=name, category=task.metadata.type, metric=task.metadata.main_score,
+                      score=round(score, 6), seconds=round(seconds, 1), inputs=len(texts),
+                      date=datetime.date.today().isoformat())
+        print(json.dumps({k: record[k] for k in ("model", "revision", "task", "score", "seconds", "inputs")}),
+              flush=True)
+        if rev == pin:
+            out.mkdir(parents=True, exist_ok=True)
+            np.savez(out / f"{args.model}__{name}.npz", texts=json.dumps(texts),
+                     vectors=np.stack([store[t] for t in texts]))
+            write(out, f"{args.model}__reference__{name}", record)
+        else:
+            write(out, f"{args.model}__revision-{rev[:12]}__{name}", record)
+
+
+def compare_revisions(repo, a, b):
+    """{"same": [...], "different": [...], "only_in_<rev>": [...]}: every
+    file of two revisions, compared by its LFS sha256 (or git blob id)."""
+    from huggingface_hub import HfApi
+    api = HfApi()
+
+    def tree(rev):
+        return {f.path: (f.lfs.sha256 if f.lfs else f.blob_id)
+                for f in api.list_repo_tree(repo, revision=rev, recursive=True) if hasattr(f, "size")}
+
+    ta, tb = tree(a), tree(b)
+    return {"same": sorted(p for p in ta if tb.get(p) == ta[p]),
+            "different": sorted(p for p in ta if p in tb and tb[p] != ta[p]),
+            "only_in_pin": sorted(set(ta) - set(tb)), "only_in_revision": sorted(set(tb) - set(ta))}
 
 
 def published(models, tasks, results):
     """{(sidekick model, task): published score} at the pinned mteb/results
-    commit: the revision tools/fetch_benchmarks.py would choose for the
-    task (sidekick's pin, else the revision with the task, a model card's
-    import last), with every (split, subset) cell present."""
+    commit, each task's revision chosen as tools/fetch_benchmarks.py chooses
+    it for docs/data/benchmarks.mteb.json (its `choose`, over the whole
+    benchmark, so the most-tasks tiebreak counts the same tasks)."""
     import duckdb
+    import mteb
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import fetch_benchmarks as fb
-    by_name = {t.metadata.name: t for t in benchmark_tasks(tasks)}
-    cells = {BENCHMARK: [(n, t.metadata.type, sp, ss, t.metadata.main_score)
-                         for n, t in by_name.items() for sp in t.eval_splits for ss in t.hf_subsets]}
-    need = {n: len(t.eval_splits) * len(t.hf_subsets) for n, t in by_name.items()}
+    cells, _ = fb.benchmark_cells(mteb, BENCHMARK)
     pins = {checkpoint(m)[0]: (m, checkpoint(m)[1]) for m in models}
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
-    rows = fb.query_scores(con, results, sorted(pins), cells)
+    rows = fb.query_scores(con, results, sorted(pins), {BENCHMARK: cells})
     out = {}
-    for _, repo, task, rev, score, n, trained in sorted(
-            rows, key=lambda r: (r[3] != pins[r[1]][1], r[3] in fb.MODEL_CARD, r[3])):
-        model = pins[repo][0]
-        if n == need[task] and (model, task) not in out:
-            out[(model, task)] = {"score": round(score, 6), "revision": rev,
-                                  "source": "model card" if rev in fb.MODEL_CARD else "mteb",
-                                  "trained_on": bool(trained)}
+    for repo, (model, pin) in pins.items():
+        chosen = fb.choose([r for r in rows if r[1] == repo], cells, pin)
+        for task in tasks:
+            if task in chosen:
+                rev, score, trained = chosen[task]
+                out[(model, task)] = {"score": round(score, 6), "revision": rev,
+                                      "source": "model card" if rev in fb.MODEL_CARD else "mteb",
+                                      "trained_on": bool(trained)}
     return out
 
 
 def cmd_record(args):
     import mteb
-    records = []
+    records, revisions = [], {}
     for d in args.dirs:
-        records += [json.loads(p.read_text()) for p in sorted(Path(d).glob("*.json"))]
+        for p in sorted(Path(d).glob("*.json")):
+            r = json.loads(p.read_text())
+            if r["revision"] == checkpoint(r["model"])[1]:
+                records.append(r)
+            elif "files" in r:              # another revision's comparison with the pin
+                revisions.setdefault((r["model"], r["revision"]), {"scores": []}).update(
+                    {k: r[k] for k in ("model", "pin", "revision", "files", "runtime", "max_seq_len", "chip", "os",
+                                       "mteb_version")})
+            else:                           # a task run at that revision
+                revisions.setdefault((r["model"], r["revision"]), {"scores": []})["scores"].append(
+                    {k: r[k] for k in ("task", "score", "inputs", "date")})
     if not records:
         raise SystemExit("no runs found")
     bench = json.loads((DATA / "benchmarks.mteb.json").read_text())
@@ -408,7 +453,8 @@ def cmd_record(args):
     for r in records:
         key = (r["model"], r["path"])
         if r["path"] == "reference":
-            run = {k: r[k] for k in ("model", "path", "revision", "runtime", "chip", "os", "mteb_version", "date")}
+            run = {k: r[k] for k in ("model", "path", "revision", "runtime", "max_seq_len", "chip", "os",
+                                     "mteb_version", "date")}
         else:
             run = {k: r[k] for k in ("model", "path", "revision", "backend", "compute_units", "max_seq_len", "build",
                                      "sidekick", "chip", "os", "mteb_version", "date")}
@@ -422,7 +468,7 @@ def cmd_record(args):
         p = pub.get((r["model"], r["task"]))
         s = {"model": r["model"], "path": r["path"], "task": r["task"], "category": r["category"],
              "metric": r["metric"], "score": r["score"], "seconds": r["seconds"], "inputs": r["inputs"],
-             "over_cap": r.get("over_cap"), "longest": r.get("longest"),
+             **({} if r["path"] == "reference" else {"over_cap": r["over_cap"], "longest": r["longest"]}),
              "published": p["score"] if p else None, "published_revision": p["revision"] if p else None,
              "published_source": p["source"] if p else None,
              "published_trained_on": p["trained_on"] if p else None}
@@ -443,6 +489,11 @@ def cmd_record(args):
                       "splits": list(meta[t].eval_splits), "subsets": list(meta[t].hf_subsets)} for t in tasks},
         "runs": sorted(runs.values(), key=lambda r: (order.index(r["model"]), path_order.index(r["path"]))),
         "scores": scores,
+        # Other revisions than sidekick's pin (the published runs'),
+        # compared with it file by file, and any tasks run at them.
+        "revision_checks": sorted(
+            ({**v, "scores": sorted(v["scores"], key=lambda s: tasks.index(s["task"]) if s["task"] in tasks else 99)}
+             for v in revisions.values()), key=lambda v: (order.index(v["model"]), v["revision"])),
     }
     args.out.write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n")
     print(f"{len(scores)} scores, {len(runs)} runs -> {args.out}")
@@ -459,11 +510,12 @@ def main():
     r.add_argument("--tasks", nargs="+", default=TASKS)
     r.add_argument("--build", help="the installed model directory, to fingerprint")
     r.add_argument("--reference", help="a `reference` output directory to compare vectors with")
-    r.add_argument("--sidekick", help="the daemon's version, as recorded (default: this checkout's)")
     f = sub.add_parser("reference", help="the same tasks with sentence-transformers, fp32 on the CPU")
     f.add_argument("--model", required=True)
     f.add_argument("--out", required=True)
-    f.add_argument("--tasks", nargs="+", default=CHECK_TASKS)
+    f.add_argument("--tasks", nargs="*", default=CHECK_TASKS)
+    f.add_argument("--revision", help="another revision of the checkpoint (the published run's, say): compare its "
+                                      "files with sidekick's pin, and run the tasks at it")
     f.add_argument("--batch", type=int, default=BATCH,
                    help="inputs per sentence-transformers batch (lower it for long inputs at a long context)")
     c = sub.add_parser("record", help="collect runs into docs/data/mteb_transfer.json")

@@ -1485,10 +1485,10 @@ MTEB results: [mteb/results at 3b0980076221](https://huggingface.co/datasets/mte
   model's advertised context, an upper bound on what the run used.
   sidekick's builds stop at their `max_seq_len`, most at 512 tokens. On
   tasks with long documents, mostly retrieval, a build capped below the
-  run may score lower. On the two long-input tasks measured on the
-  builds ([below](#measured-on-sidekicks-builds)), the 512-token cap cost
-  at most 0.27 point; tasks whose answers sit deep in long documents
-  haven't been measured.
+  run may score lower. What the cap cost on the few tasks run through
+  sidekick's builds, for EmbeddingGemma and Qwen3-Embedding, is
+  [below](#measured-on-sidekicks-builds); tasks whose answers sit deep
+  in long documents haven't been measured.
 - **Prompts.** MTEB prompts many models: an instruction per task
   (Qwen3-Embedding, F2LLM), a prompt per task type (EmbeddingGemma), or
   query and document prefixes on retrieval and reranking tasks only
@@ -1516,9 +1516,9 @@ MTEB results: [mteb/results at 3b0980076221](https://huggingface.co/datasets/mte
   within 1.25× the model's fp16 ceiling (the scales above). A C, D or int8
   path may not carry it over. A task with large margins, such as a
   decision between well-separated classes, may be fine on a C path; a
-  fine-grained ranking needs A. Measured for three embedders' A paths
-  ([below](#measured-on-sidekicks-builds)): within 0.1 point of an fp32
-  run of the same tasks, outside one small clustering task.
+  fine-grained ranking needs A. For three embedders' A paths, how close
+  a build's MTEB score comes to an fp32 run of the same task, where both
+  see the same tokens, is measured [below](#measured-on-sidekicks-builds).
 - **Revisions.** Most MTEB runs evaluated an earlier revision than the one
   sidekick pins; the last column says whether the weight files are
   identical. bge-small-en-v1.5 and e5-small-v2 complete some benchmarks
@@ -1550,93 +1550,115 @@ The primary English benchmark: 41 tasks.
 ### Measured on sidekick's builds
 
 The scores above were measured with sentence-transformers, at each
-model's full context. This section runs six fast MTEB(eng, v2) tasks
+model's full context. This section runs a few fast MTEB(eng, v2) tasks
 through sidekick itself, on each model's ANE build and its onnx-cpu
-build, and sets the result beside the published score and beside the
+build, and sets each result beside the published score and beside the
 same task run here with sentence-transformers in fp32 on the CPU (the
-reference). [tools/mteb_transfer.py](../tools/mteb_transfer.py) drives
+fp32 run). [tools/mteb_transfer.py](../tools/mteb_transfer.py) drives
 `sidekickd` through mteb's own wrapper for the model, so every input
 carries the prompt mteb gives it, sent with `input_type: "none"`, and
 `truncate: "END"` cuts an input over the build's cap to its first
-`max_seq_len` tokens. Two of the tasks have inputs past 512 tokens:
-ArguAna (arguments, as both queries and documents) and STS22.v2 (news
-articles, English subset). ArXivHierarchicalClusteringP2P scores a 4%
-sample of its abstracts, 81 of them, as mteb defines it, so it moves
-more than the others from small changes in the vectors.
+`max_seq_len` tokens. ArguAna (arguments, as both queries and documents)
+and STS22.v2 (news articles, English subset) have inputs past most
+builds' caps. ArXivHierarchicalClusteringP2P scores only a small sample
+of its abstracts, as mteb defines it (the inputs column of the table of
+every score, below), so it moves more than the others from small changes
+in the vectors.
 
-What it shows:
-- **A grade-A build reproduces the model.** Run the same way, onnx-cpu
-  scores what sentence-transformers in fp32 scores to every printed digit
-  on every task where both see the same tokens: all six for
-  bge-small-en-v1.5 (its MTEB run also stops at 512), and every task
-  with no input over the build's cap for the other two. The ANE builds
-  are within 0.1 point of the reference on those tasks except the
-  81-abstract clustering task (bge −0.44, Qwen3 +0.25). Their vectors
-  stay above 0.99994 cosine of fp32 (table below).
-- **The published score carries over where the published run can be
-  reproduced.** bge-small-en-v1.5's MTEB runs were made at sidekick's
-  revision, and both builds match them on STSBenchmark, ArguAna and
-  STS22.v2 (within 0.07). Its Banking77 and AskUbuntu scores come from
-  the model card, an older protocol: the reference here is 3.99 and 0.77
-  points lower, and so are both builds. For EmbeddingGemma and
-  Qwen3-Embedding, the reference itself misses the published score on
-  some tasks where nothing is cut, by up to 0.49 (EmbeddingGemma) and
-  1.72 points (Qwen3, AskUbuntu): mteb's registered wrapper at 2.26.14,
-  fp32 on the CPU, doesn't reproduce those runs exactly. EmbeddingGemma's
-  ArguAna is the largest gap: 71.54 published, 65.97 for the reference
-  at its full 2,048 tokens, 66.05 and 66.10 for the builds. The published
-  run doesn't record its prompts; this one used the model's own
-  sentence-transformers prompts, as mteb's registry does.
-- **The 512-token cap cost little on these tasks.** On STS22.v2, where
-  42–44% of inputs are over 512 tokens (the longest, 11,678 of Qwen3's),
-  Qwen3's reference embeds every article whole and scores 70.84; its ANE
-  build (512) scores 70.57 and its onnx-cpu build (4,096, 0.8% over)
-  70.65. EmbeddingGemma's builds at 512 score 67.08 and 67.06, above its
-  reference at 2,048 (66.17). On ArguAna (2.1–2.4% over 512) the capped
-  builds are within 0.13 of the uncapped runs. Both tasks are scored on
-  text whose start carries most of its meaning; a task whose answers sit
-  deep in long documents may lose more, and isn't measured here.
+The grade column is each build's committed parity report. The
+bge-small-en-v1.5 and EmbeddingGemma builds measured here are the ones
+installed on the measuring machine; Qwen3-Embedding's ANE build was
+converted for this run with the committed recipe
+(`tools/convert_qwen3_embedding.py`), not the conversion its parity
+report graded. Each build's fingerprint is below.
 
 <!-- generated: mteb-transfer-source -->
-Measured on Apple M1 Max (macOS 27.0) with sidekick 0.14.0 (commit 65561fc), 2026-10-20 to 2026-10-21; reference: sentence-transformers 6.1.0, transformers 5.20.2, torch 2.14.1, fp32 on the CPU. Tasks as mteb 2.26.14 defines MTEB(eng, v2); published scores from [mteb/results at 3b0980076221](https://huggingface.co/datasets/mteb/results/tree/3b098007622127a024fb9065b23b6898aa936b34). Data: [mteb_transfer.json](data/mteb_transfer.json).
+Measured on Apple M1 Max (macOS 27.0) with sidekick 0.14.0, 2026-10-20 to 2026-10-21; fp32 run: sentence-transformers 6.1.0, transformers 5.20.2, torch 2.14.1, fp32 on the CPU. Tasks as mteb 2.26.14 defines MTEB(eng, v2); published scores from [mteb/results at 3b0980076221](https://huggingface.co/datasets/mteb/results/tree/3b098007622127a024fb9065b23b6898aa936b34). Data: [mteb_transfer.json](data/mteb_transfer.json).
+
+Builds measured (`build`: sha256 over each build's weights, tokenizer and manifest) and each fp32 run's context: bge-small-en-v1.5: fp32 512 tokens, ANE `ee77eb54ccf5` (512 tokens), onnx-cpu `c8fd8219c99f` (512 tokens); embeddinggemma-300m: fp32 2,048 tokens, ANE `8870c14bb6ce` (512 tokens), onnx-cpu `09b3fb9c9936` (512 tokens); Qwen3-Embedding-0.6B: fp32 32,768 tokens, ANE `d7d7dc99a6e7` (512 tokens), onnx-cpu `2779ceece204` (4,096 tokens).
 <!-- /generated -->
 
+What it shows (every figure computed from the data):
+
+<!-- generated: mteb-transfer-findings -->
+- **Same tokens, same score.** Over the model–task pairs where a build and the fp32 run embed the same tokens (neither cuts an input, or both cut at the same length): ANE is within 0.09 point of the fp32 run on 11 of them and differs on clustering by −0.44 (bge-small-en-v1.5); onnx-cpu scores what the fp32 run scores to every printed digit on 14 of them. Over every input the adapter check compares, the builds' vectors are at least 0.99994 cosine of the fp32 run's.
+- **The fp32 run against the published scores**, on the tasks where it sees the tokens the MTEB run saw:
+  - bge-small-en-v1.5: MTEB ran it at sidekick's revision. On its 4 tasks run by MTEB (both runs' context: 512 tokens), the fp32 run is within 0.07 of the published score. Its 2 scores imported from the model card differ from the fp32 run by up to 3.99.
+  - embeddinggemma-300m: MTEB ran it at revision 64614b0b, whose files are identical to sidekick's pin's except README.md and notebook.ipynb (so the same weights, tokenizer and prompts); the fp32 run at that revision scores 65.97 on ArguAna, the same as at the pin. On its 6 tasks run by MTEB (both runs' context: 2,048 tokens), the fp32 run is within 5.57 of the published score (the largest, ArguAna).
+  - Qwen3-Embedding-0.6B: MTEB ran it at revision b22da495, whose files are identical to sidekick's pin's except README.md (so the same weights, tokenizer and prompts). On its 6 tasks run by MTEB (both runs' context: 32,768 tokens), the fp32 run is within 1.72 of the published score (the largest, AskUbuntuDupQuestions).
+<!-- /generated -->
+
+So where a build sees the same tokens as an fp32 run, it carries that
+run's score. Whether that is the published score depends on whether
+the published run can be reproduced: mteb's registered wrapper, fp32 on
+the CPU, doesn't reproduce every published EmbeddingGemma and
+Qwen3-Embedding score even where nothing is cut. The published runs
+don't record their prompts or precision; the runs here use each model's
+own sentence-transformers prompts, as mteb's registry does.
+
+**What the cap cost.** Each build that cut inputs its fp32 run embeds
+whole, or cuts later, against that fp32 run. That is measured for
+EmbeddingGemma and Qwen3-Embedding only: bge-small-en-v1.5's fp32 run,
+like its MTEB run, stops where its builds do. An ANE row mixes the cap
+with the ANE's own rounding; an onnx-cpu row doesn't. The cap moved
+scores both up and down. Neither ArguAna nor STS22.v2 asks for text deep
+in a long document; a task that does may lose more, and isn't measured
+here.
+
+<!-- generated: mteb-transfer-cap -->
+| model | task | build | cap | inputs over the cap | longest input (tokens) | fp32 run's cap | build | fp32 run | difference |
+|---|---|---|---|---|---|---|---|---|---|
+| embeddinggemma-300m | ArXivHierarchicalClusteringP2P | ANE | 512 | 1 of 81 (1.2%) | 538 | 2,048 | 63.50 | 63.46 | +0.04 |
+| embeddinggemma-300m | ArXivHierarchicalClusteringP2P | onnx-cpu | 512 | 1 of 81 (1.2%) | 538 | 2,048 | 63.37 | 63.46 | −0.09 |
+| embeddinggemma-300m | ArguAna | ANE | 512 | 241 of 9,924 (2.4%) | 1,413 | 2,048 | 66.05 | 65.97 | +0.08 |
+| embeddinggemma-300m | ArguAna | onnx-cpu | 512 | 241 of 9,924 (2.4%) | 1,413 | 2,048 | 66.10 | 65.97 | +0.12 |
+| embeddinggemma-300m | STS22.v2 | ANE | 512 | 172 of 392 (43.9%) | 11,478 | 2,048 | 67.08 | 66.17 | +0.91 |
+| embeddinggemma-300m | STS22.v2 | onnx-cpu | 512 | 172 of 392 (43.9%) | 11,478 | 2,048 | 67.06 | 66.17 | +0.89 |
+| Qwen3-Embedding-0.6B | ArXivHierarchicalClusteringP2P | ANE | 512 | 1 of 81 (1.2%) | 577 | 32,768 | 64.79 | 64.54 | +0.25 |
+| Qwen3-Embedding-0.6B | ArguAna | ANE | 512 | 243 of 9,924 (2.4%) | 1,398 | 32,768 | 69.21 | 69.34 | −0.13 |
+| Qwen3-Embedding-0.6B | STS22.v2 | ANE | 512 | 169 of 392 (43.1%) | 11,678 | 32,768 | 70.57 | 70.84 | −0.27 |
+| Qwen3-Embedding-0.6B | STS22.v2 | onnx-cpu | 4,096 | 3 of 392 (0.8%) | 11,678 | 32,768 | 70.65 | 70.84 | −0.19 |
+<!-- /generated -->
+
+Every score, beside the published one (in parentheses, the difference
+from it):
+
 <!-- generated: mteb-transfer -->
-| model | grade (M1 Max) | task (category) | MTEB run | sentence-transformers fp32, here | sidekick ANE | sidekick onnx-cpu | inputs over the cap: ANE / onnx-cpu |
-|---|---|---|---|---|---|---|---|
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | Banking77Classification (Classification) | 85.74 (model card) | 81.75 (−3.99) | 81.75 (−3.99) | 81.75 (−3.99) | none over 512 / none over 512 |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | STSBenchmark (STS) | 85.86 | 85.86 (±0.00) | 85.87 (+0.01) | 85.86 (±0.00) | none over 512 / none over 512 |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | ArXivHierarchicalClusteringP2P (Clustering) | 59.53 | 59.46 (−0.07) | 59.02 (−0.51) | 59.46 (−0.07) | 1.2% over 512 / 1.2% over 512 |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | AskUbuntuDupQuestions (Reranking) | 62.59 (model card) | 61.82 (−0.77) | 61.82 (−0.77) | 61.82 (−0.77) | none over 512 / none over 512 |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | ArguAna (Retrieval) | 60.35 | 60.35 (±0.00) | 60.28 (−0.07) | 60.35 (±0.00) | 2.1% over 512 / 2.1% over 512 |
-| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | STS22.v2 (STS) | 65.79 | 65.79 (±0.00) | 65.84 (+0.05) | 65.79 (±0.00) | 41.8% over 512 / 41.8% over 512 |
-| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | Banking77Classification (Classification) | 91.45 | 91.31 (−0.14) | 91.31 (−0.14) | 91.31 (−0.14) | none over 512 / none over 512 |
-| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | STSBenchmark (STS) | 88.16 | 88.18 (+0.02) | 88.17 (+0.01) | 88.18 (+0.02) | none over 512 / none over 512 |
-| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | ArXivHierarchicalClusteringP2P (Clustering) | 63.59 | 63.46 (−0.13) | 63.50 (−0.09) | 63.37 (−0.22) | 1.2% over 512 / 1.2% over 512 |
-| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | AskUbuntuDupQuestions (Reranking) | 62.95 | 62.46 (−0.49) | 62.52 (−0.43) | 62.46 (−0.49) | none over 512 / none over 512 |
-| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | ArguAna (Retrieval) | 71.54 | 65.97 (−5.57) | 66.05 (−5.49) | 66.10 (−5.44) | 2.4% over 512 / 2.4% over 512 |
-| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | STS22.v2 (STS) | 67.52 | 66.17 (−1.35) | 67.08 (−0.44) | 67.06 (−0.46) | 43.9% over 512 / 43.9% over 512 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | Banking77Classification (Classification) | 81.01 | 80.74 (−0.27) | 80.77 (−0.24) | 80.74 (−0.27) | none over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | STSBenchmark (STS) | 91.13 | 91.22 (+0.09) | 91.21 (+0.08) | 91.22 (+0.09) | none over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | ArXivHierarchicalClusteringP2P (Clustering) | 63.72 | 64.54 (+0.82) | 64.79 (+1.07) | 64.54 (+0.82) | 1.2% over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | AskUbuntuDupQuestions (Reranking) | 65.13 | 63.41 (−1.72) | 63.32 (−1.81) | 63.41 (−1.72) | none over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | ArguAna (Retrieval) | 70.97 | 69.34 (−1.63) | 69.21 (−1.76) | 69.34 (−1.63) | 2.4% over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | STS22.v2 (STS) | 71.11 | 70.84 (−0.27) | 70.57 (−0.54) | 70.65 (−0.46) | 43.1% over 512 / 0.8% over 4,096 |
+| model | grade (M1 Max) | task (category) | inputs | MTEB run | sentence-transformers fp32, here | sidekick ANE | sidekick onnx-cpu | inputs over the cap: ANE / onnx-cpu |
+|---|---|---|---|---|---|---|---|---|
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | Banking77Classification (Classification) | 7,696 | 85.74 (model card) | 81.75 (−3.99) | 81.75 (−3.99) | 81.75 (−3.99) | none over 512 / none over 512 |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | STSBenchmark (STS) | 2,552 | 85.86 | 85.86 (±0.00) | 85.87 (+0.01) | 85.86 (±0.00) | none over 512 / none over 512 |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | ArXivHierarchicalClusteringP2P (Clustering) | 81 | 59.53 | 59.46 (−0.07) | 59.02 (−0.51) | 59.46 (−0.07) | 1.2% over 512 / 1.2% over 512 |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | AskUbuntuDupQuestions (Reranking) | 7,103 | 62.59 (model card) | 61.82 (−0.77) | 61.82 (−0.77) | 61.82 (−0.77) | none over 512 / none over 512 |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | ArguAna (Retrieval) | 9,924 | 60.35 | 60.35 (±0.00) | 60.28 (−0.07) | 60.35 (±0.00) | 2.1% over 512 / 2.1% over 512 |
+| bge-small-en-v1.5 | ANE **A**, onnx-cpu **A** | STS22.v2 (STS) | 392 | 65.79 | 65.79 (±0.00) | 65.84 (+0.05) | 65.79 (±0.00) | 41.8% over 512 / 41.8% over 512 |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | Banking77Classification (Classification) | 7,696 | 91.45 | 91.31 (−0.14) | 91.31 (−0.14) | 91.31 (−0.14) | none over 512 / none over 512 |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | STSBenchmark (STS) | 2,552 | 88.16 | 88.18 (+0.02) | 88.17 (+0.01) | 88.18 (+0.02) | none over 512 / none over 512 |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | ArXivHierarchicalClusteringP2P (Clustering) | 81 | 63.59 | 63.46 (−0.13) | 63.50 (−0.09) | 63.37 (−0.22) | 1.2% over 512 / 1.2% over 512 |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | AskUbuntuDupQuestions (Reranking) | 7,066 | 62.95 | 62.46 (−0.49) | 62.52 (−0.43) | 62.46 (−0.49) | none over 512 / none over 512 |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | ArguAna (Retrieval) | 9,924 | 71.54 | 65.97 (−5.57) | 66.05 (−5.49) | 66.10 (−5.44) | 2.4% over 512 / 2.4% over 512 |
+| embeddinggemma-300m | ANE **A**, onnx-cpu **A** | STS22.v2 (STS) | 392 | 67.52 | 66.17 (−1.35) | 67.08 (−0.44) | 67.06 (−0.46) | 43.9% over 512 / 43.9% over 512 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | Banking77Classification (Classification) | 7,696 | 81.01 | 80.74 (−0.27) | 80.77 (−0.24) | 80.74 (−0.27) | none over 512 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | STSBenchmark (STS) | 2,552 | 91.13 | 91.22 (+0.09) | 91.21 (+0.08) | 91.22 (+0.09) | none over 512 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | ArXivHierarchicalClusteringP2P (Clustering) | 81 | 63.72 | 64.54 (+0.82) | 64.79 (+1.07) | 64.54 (+0.82) | 1.2% over 512 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | AskUbuntuDupQuestions (Reranking) | 7,103 | 65.13 | 63.41 (−1.72) | 63.32 (−1.81) | 63.41 (−1.72) | none over 512 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | ArguAna (Retrieval) | 9,924 | 70.97 | 69.34 (−1.63) | 69.21 (−1.76) | 69.34 (−1.63) | 2.4% over 512 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | STS22.v2 (STS) | 392 | 71.11 | 70.84 (−0.27) | 70.57 (−0.54) | 70.65 (−0.46) | 43.1% over 512 / 0.8% over 4,096 |
 <!-- /generated -->
 
 The adapter check: on STSBenchmark, where no input is over any cap, every
-input's vector from each build against the reference's, for the same
+input's vector from each build against the fp32 run's, for the same
 text and prompt:
 
 <!-- generated: mteb-transfer-check -->
 | model | path | task | inputs | over the cap | sentence-transformers fp32, here | sidekick | worst cosine | mean cosine |
 |---|---|---|---|---|---|---|---|---|
-| bge-small-en-v1.5 | coreml-ane | STSBenchmark | 2,552 | none | 85.86 | 85.87 | 0.99998 | 0.99999 |
-| bge-small-en-v1.5 | onnx-cpu | STSBenchmark | 2,552 | none | 85.86 | 85.86 | 0.9999999 | 1.0000000 |
-| embeddinggemma-300m | coreml-ane | STSBenchmark | 2,552 | none | 88.18 | 88.17 | 0.99995 | 0.999997 |
+| bge-small-en-v1.5 | coreml-ane | STSBenchmark | 2,552 | none | 85.86 | 85.87 | 0.99997 | 0.99998 |
+| bge-small-en-v1.5 | onnx-cpu | STSBenchmark | 2,552 | none | 85.86 | 85.86 | 0.9999998 | 1.0000000 |
+| embeddinggemma-300m | coreml-ane | STSBenchmark | 2,552 | none | 88.18 | 88.17 | 0.99994 | 0.999997 |
 | embeddinggemma-300m | onnx-cpu | STSBenchmark | 2,552 | none | 88.18 | 88.18 | 0.9999998 | 1.0000000 |
-| Qwen3-Embedding-0.6B | coreml-ane | STSBenchmark | 2,552 | none | 91.22 | 91.21 | 0.99998 | 0.999996 |
-| Qwen3-Embedding-0.6B | onnx-cpu | STSBenchmark | 2,552 | none | 91.22 | 91.22 | 0.9999999 | 1.0000000 |
+| Qwen3-Embedding-0.6B | coreml-ane | STSBenchmark | 2,552 | none | 91.22 | 91.21 | 0.99997 | 0.999996 |
+| Qwen3-Embedding-0.6B | onnx-cpu | STSBenchmark | 2,552 | none | 91.22 | 91.22 | 0.9999998 | 1.0000000 |
 <!-- /generated -->
 
 ### MTEB(Multilingual, v2)
