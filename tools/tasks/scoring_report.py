@@ -106,9 +106,9 @@ def ceiling_of(run: dict, ceilings: dict | None) -> float | None:
     fam = run["family"]
     model = run["checker"].split(":", 1)[1] if ":" in run["checker"] else None
     binary = run["mode"] == "binary"
-    if fam in ("H", "J"):
+    if fam == "J":
         return 1.0
-    if fam == "F":
+    if fam in ("F", "H"):  # whole-haystack checkers: the share of triples that fit (all variants run)
         rs = [i for i in run["items"] if not i["item"].startswith("ctl:")]
         by = defaultdict(list)
         for i in rs:

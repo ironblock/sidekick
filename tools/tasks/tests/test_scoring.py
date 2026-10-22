@@ -667,6 +667,15 @@ class Report(unittest.TestCase):
                                   rules.binary(gold)})
         return {"checker": name, "family": fam, "mode": mode, "items": items}
 
+    def test_whole_haystack_ceilings_count_what_ran(self):
+        for fam in ("F", "H"):
+            run = {"checker": f"{fam}:x", "family": fam, "mode": "binary", "items": [
+                {"item": "a.1k:s"}, {"item": "a.1k:c"}, {"item": "a.1k:nm"},
+                {"item": "b.32k:s", "not_run": True}, {"item": "b.32k:c"}, {"item": "b.32k:nm"}]}
+            self.assertEqual(report.ceiling_of(run, {"checkers": {}}), 0.5)
+        self.assertEqual(report.ceiling_of({"checker": "J", "family": "J", "mode": "three-way", "items": []},
+                                           {"checkers": {}}), 1.0)
+
     def test_scores_and_section(self):
         cfg = {**scoring_set.config(), "resamples": 300}
         runs = [self.run_("A3:m", "A3", "three-way", lambda i: i % 4 != 0),

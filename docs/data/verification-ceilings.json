@@ -5746,9 +5746,9 @@
           "window": true,
           "window_binary": true,
           "windows": {
-            "C": 10,
-            "NM": 10,
-            "S": 10
+            "C": 9,
+            "NM": 9,
+            "S": 9
           }
         },
         {
@@ -5906,7 +5906,7 @@
           "window": true,
           "window_binary": true,
           "windows": {
-            "C": 68,
+            "C": 69,
             "NM": 68,
             "S": 69
           }
@@ -6106,9 +6106,9 @@
           "window": true,
           "window_binary": true,
           "windows": {
-            "C": 68,
+            "C": 67,
             "NM": 67,
-            "S": 68
+            "S": 67
           }
         },
         {
@@ -6346,9 +6346,9 @@
           "window": false,
           "window_binary": false,
           "windows": {
-            "C": 71,
-            "NM": 70,
-            "S": 71
+            "C": 70,
+            "NM": 69,
+            "S": 70
           }
         },
         {
@@ -6674,9 +6674,9 @@
         },
         {
           "anchored_windows": {
-            "C": 4,
-            "NM": 3,
-            "S": 4
+            "C": 5,
+            "NM": 4,
+            "S": 5
           },
           "gate": true,
           "gate_binary": true,
@@ -6707,9 +6707,9 @@
           "window": true,
           "window_binary": true,
           "windows": {
-            "C": 71,
-            "NM": 71,
-            "S": 71
+            "C": 70,
+            "NM": 70,
+            "S": 70
           }
         },
         {
@@ -6836,7 +6836,7 @@
           "anchored_windows": {
             "C": 5,
             "NM": 4,
-            "S": 6
+            "S": 5
           },
           "gate": false,
           "gate_binary": true,
@@ -6851,7 +6851,7 @@
             "C": {
               "gate": false,
               "gated_window": false,
-              "window": true
+              "window": false
             },
             "NM": {
               "gate": true,
@@ -6874,9 +6874,9 @@
         },
         {
           "anchored_windows": {
-            "C": 23,
-            "NM": 17,
-            "S": 23
+            "C": 20,
+            "NM": 18,
+            "S": 20
           },
           "gate": false,
           "gate_binary": true,
@@ -6908,7 +6908,7 @@
           "window_binary": true,
           "windows": {
             "C": 68,
-            "NM": 63,
+            "NM": 62,
             "S": 68
           }
         },
@@ -7553,7 +7553,7 @@
           }
         }
       ],
-      "unit": "chunk (approximate: line-granular; MiniCheck splits sentences with nltk)",
+      "unit": "chunk (exact: MiniCheck's sentence chunker, nltk 3.10.4 punkt_tab)",
       "window_reachable": {
         "by_length": {
           "12k": {
