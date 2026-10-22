@@ -3785,12 +3785,23 @@ reports a path whose hash moved, or a shared file that split, as a change
 to the weights layer. The ledger isn't implemented yet; this is the shape
 its entries take.
 
-**Measured** (M1 Max, macOS 27.0, coremltools 9.0, reconverted from the
-same checkpoints): weight files on disk, and the parity suite's grades,
-for separate and shared builds. Every program was bit-identical to its
-separate build on CPU, GPU and ANE.
+**Measured** (M1 Max, macOS 27.0, coremltools 9.0, converted from the same
+checkpoints): weight files on disk, and the parity suite's grades, for
+separate and shared builds. The converter found every program
+bit-identical to its separate build on CPU, GPU and ANE, and the suite's
+grades, worst cases and per-case cosines were identical between the two
+builds on every path.
 
-MEASURED_TABLE
+| model | buckets | weight files, separate → shared | grades, CPU / GPU / ANE |
+|---|---|---|---|
+| bge-small-en-v1.5 | 128, 256, 512 | 199.5 → 67.4 MB (34%) | A / A / A |
+| F2LLM-v2-160M | 128, 256, 512 | 956.3 → 319.5 MB (33%) | B / A / A |
+| Qwen3-Embedding-0.6B, chunked | 1,024, 2,048 | 2,407.3 → 1,215.7 MB (51%) | F / A / A, both corpora |
+
+With two buckets the files halve, and with three they fall to a third.
+Qwen3's separate build is the 2,048-token release candidate (D46, D48).
+Its CPU F is that build's own: bucket invariance of 0.999894 against a
+0.999999 gate, which D33's CPU cap covers.
 
 ## Hardware verification status
 

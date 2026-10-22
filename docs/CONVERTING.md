@@ -563,9 +563,9 @@ converter stores them once per chunk (`shared_weights.py`):
 
   | model | buckets | separate | shared |
   |---|---|---|---|
-  | bge-small-en-v1.5 | 128, 256, 512 | SEP_BGE | SH_BGE |
-  | F2LLM-v2-160M | 128, 256, 512 | SEP_F2 | SH_F2 |
-  | Qwen3-Embedding-0.6B, chunked | 1,024, 2,048 | SEP_QW | SH_QW |
+  | bge-small-en-v1.5 | 128, 256, 512 | 199.5 MB | 67.4 MB |
+  | F2LLM-v2-160M | 128, 256, 512 | 956.3 MB | 319.5 MB |
+  | Qwen3-Embedding-0.6B, chunked | 1,024, 2,048 | 2,407.3 MB | 1,215.7 MB |
 
 ## Adding a family
 
@@ -742,7 +742,13 @@ refine two points there:
   with `CFFIXED_USER_HOME` set to a temporary home, deleted when it exits:
   the conversion loads each bucket from a temporary directory and then
   moves it, so every cache entry it would leave behind is orphaned (about
-  11 GB for agent-jev). Set `CFFIXED_USER_HOME` yourself to keep a cache.
+  11 GB for agent-jev). The conversion also empties that cache as it goes,
+  once each compute path's gate is done with a program
+  (`core.purge_coreml_cache`): it never loads the same path again, and an
+  entry holds a few times the program's weights, so the cache otherwise
+  peaked at 3.9 GB for F2LLM-v2-160M's three buckets and would not have fit
+  a chunked 0.6B model on a nearly full disk. Set `CFFIXED_USER_HOME`
+  yourself to keep a cache; it is then never emptied.
 - **An empty compute plan can come from a stale cache.** Core ML's cache of
   compiled bundles (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`)
   can hold a broken entry for an artifact's path; plans for that path then
