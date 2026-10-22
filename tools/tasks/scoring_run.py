@@ -50,6 +50,7 @@ from tasks import scoring_set, scoring_windows as sw  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 RUN_SCHEMA = "sidekick-verification-run/1"
+_T0 = time.monotonic()  # reset when a run starts
 
 
 # ---------------------------------------------------------------- provenance
@@ -87,7 +88,8 @@ def provenance(lock: dict, cfg: dict, extra: dict) -> dict:
             "scoring_sha256": canon.sha256_file(scoring_set.SCORING),
             "harness_commit": head, "harness_dirty": bool(dirty),
             "macos_build": _cmd(["sw_vers", "-buildVersion"]), "macos_version": _cmd(["sw_vers", "-productVersion"]),
-            "machine": platform.machine(), "tau": cfg["tau"], "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "machine": platform.machine(), "tau": cfg["tau"], "wall_clock_s": round(time.monotonic() - _T0, 1),
+            "finished": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             **extra}
 
 
@@ -134,8 +136,21 @@ def load_items(which: str, limit: int | None):
 
 
 def write_run(out: Path, name: str, record: dict) -> Path:
+    """Write a checker's run record. An earlier record of the same checker
+    on the same set (a controls-only stage, say) is merged in: its items are
+    kept unless this run answered them again, and its provenance is kept
+    under `earlier_runs`."""
     out.mkdir(parents=True, exist_ok=True)
     p = out / f"{name.replace(':', '__')}.json"
+    if p.exists():
+        old = canon.read_json(p)
+        if old["provenance"].get("set_sha256") != record["provenance"].get("set_sha256"):
+            raise SystemExit(f"{p.name} holds a run on another set; move it aside first")
+        mine = {i["item"] for i in record["items"]}
+        record["items"] = [i for i in old["items"] if i["item"] not in mine] + record["items"]
+        record["provenance"]["earlier_runs"] = (old["provenance"].pop("earlier_runs", [])
+                                                + [old["provenance"]])
+    record["items"].sort(key=lambda i: i["item"])
     canon.write_json(p, record)
     return p
 
@@ -203,6 +218,7 @@ def run_nli(a) -> int:
         if k not in cache:
             by_claim.setdefault(claim, []).append(k)
     buckets_seen, version = set(), None
+    t_req = time.monotonic()
     with open(cache_path, "a", encoding="utf-8") as cf:
         for claim, ks in by_claim.items():
             for i in range(0, len(ks), max_batch):
@@ -234,6 +250,7 @@ def run_nli(a) -> int:
                     cache[k] = rec
                     cf.write(json.dumps(rec, sort_keys=True) + "\n")
                 cf.flush()
+    requests_s = time.monotonic() - t_req
     if version is None and todo:  # everything was cached: ask once for the daemon's version
         text, claim, _n = next(iter(todo.values()))
         _st, hdr, _ = http(a.base_url, "/v1/classify", {"model": a.model, "input": [text],
@@ -244,6 +261,9 @@ def run_nli(a) -> int:
     prov = provenance(lock, cfg, {
         "route": "/v1/classify", "model": a.model, "model_revision": model["revision"],
         "model_sha256": tree_sha256(mdir), "tokenizer_sha256": tok.sha256, "max_seq_len": seq,
+        "served_manifest_sha256": (canon.sha256_file(Path(a.served_dir) / "classifier.toml")
+                                   if a.served_dir else canon.sha256_file(mdir / "classifier.toml")),
+        "requests_s": round(requests_s, 1),
         "sidekick_version": version, "nli_classes": classes, "buckets_seen": sorted(buckets_seen, key=int),
         "request_shape_sha256": shape_hash("/v1/classify", body_shape, {"tau": cfg["tau"]}),
         "interface": {"requests": iface.requests, "pairs": iface.pairs, "nli_probs_checked": iface.probs_checked,
@@ -344,15 +364,30 @@ def run_minicheck(a) -> int:
         raise SystemExit(f"{mc['model']}: cached main is {snap}, not the pinned {mc['revision']}")
     from minicheck.minicheck import MiniCheck  # noqa: E402  (MiniCheck's package, at code_revision)
 
+    from nltk.tokenize import sent_tokenize  # noqa: E402  (MiniCheck's own splitter)
+
     scorer = MiniCheck(model_name="deberta-v3-large")
-    out_items = []
+    inf = scorer.model
+    tok = inf.tokenizer
+
+    def count(s):
+        return len(tok(s, padding=False, add_special_tokens=False, max_length=inf.max_model_len,
+                       truncation=True)["input_ids"])
+
+    out_items, mismatched = [], []
     for it in items:
-        label, prob, chunks_, per_chunk = scorer.score(docs=[it["evidence"]], claims=[it["claim"]])
+        label, prob, _used, per_chunk = scorer.score(docs=[it["evidence"]], claims=[it["claim"]])
+        n = len(per_chunk[0])
+        # The harness's exact chunker must cut what MiniCheck cut (the ceiling rests on it).
+        mine = len(sw.minicheck_chunks(it["evidence"], count, sent_tokenize, inf.chunk_size))
+        if mine != n:
+            mismatched.append(it["item"])
         out_items.append({"item": it["item"], "verdict": "S" if label[0] == 1 else "not-S", "E": float(prob[0]),
-                          "windows": len(chunks_[0]), "chunk_sha256": [canon.sha256_text(c) for c in chunks_[0]]})
+                          "windows": n, "chunk_probs": [round(float(x), 6) for x in per_chunk[0]]})
     prov = provenance(lock, cfg, {"model": mc["model"], "model_revision": mc["revision"], "code": mc["code"],
-                                  "code_revision": mc["code_revision"], "chunk_size": mc["chunk_size"],
-                                  "defaults": True})
+                                  "code_revision": mc["code_revision"], "chunk_size": inf.chunk_size,
+                                  "max_model_len": inf.max_model_len, "device": str(inf.model.device),
+                                  "defaults": True, "harness_chunker_mismatches": mismatched})
     p = write_run(Path(a.out), f"M:{mc['id']}", {"schema": RUN_SCHEMA, "checker": f"M:{mc['id']}", "family": "M",
                                                  "mode": "binary", "provenance": prov, "items": out_items})
     print(f"wrote {p}")
@@ -399,9 +434,13 @@ def main(argv=None) -> int:
         if name == "nli":
             p.add_argument("--model", required=True)
             p.add_argument("--model-dir", required=True, help="the installed model's directory")
+            p.add_argument("--served-dir", help="the directory the daemon serves the model from, when its "
+                                                "manifest differs (e.g. a `classes` line added, D47)")
         if name == "hhem":
             p.add_argument("--max-premise-tokens", type=int)
     a = ap.parse_args(argv)
+    global _T0
+    _T0 = time.monotonic()
     return {"nli": run_nli, "fm": run_fm, "minicheck": run_minicheck, "hhem": run_hhem}[a.cmd](a)
 
 

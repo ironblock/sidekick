@@ -155,6 +155,8 @@ def main(argv=None) -> int:
     ap.add_argument("--tokenizer", action="append", default=[], metavar="ID=PATH",
                     help="a checker id from scoring.toml (or `minicheck`) and its tokenizer.json")
     ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--minicheck-exact", action="store_true",
+                    help="cut MiniCheck's chunks with its own sentence chunker (needs nltk and its punkt_tab data)")
     a = ap.parse_args(argv)
     cfg = scoring_set.config()
     paths = dict(t.split("=", 1) for t in a.tokenizer)
@@ -182,9 +184,20 @@ def main(argv=None) -> int:
               f"gate {c['gate']['overall']['reachable']}/54, gated {c['gated_window_reachable']['overall']['reachable']}/54")
     mc = cfg["minicheck"]
     tok = sw.HFTokenizer(Path(paths["minicheck"]), mc["sha256_tokenizer"])
-    c = ceilings_for(mc["id"], tok, triples, claims, lambda text, claim: sw.chunks(text, tok, mc["chunk_size"]))
-    c.update({"chunk_size": mc["chunk_size"], "unit": "chunk (approximate: line-granular; MiniCheck splits "
-              "sentences with nltk)"})
+    if a.minicheck_exact:
+        import nltk  # MiniCheck's own sentence splitter
+        from nltk.tokenize import sent_tokenize
+
+        def mcut(text, claim):
+            return sw.minicheck_chunks(text, lambda s: min(tok.count(s), mc["max_model_len"]), sent_tokenize,
+                                       mc["chunk_size"])
+        unit = f"chunk (exact: MiniCheck's sentence chunker, nltk {nltk.__version__} punkt_tab)"
+    else:
+        def mcut(text, claim):
+            return sw.chunks(text, tok, mc["chunk_size"])
+        unit = "chunk (approximate: line-granular; MiniCheck splits sentences with nltk)"
+    c = ceilings_for(mc["id"], tok, triples, claims, mcut)
+    c.update({"chunk_size": mc["chunk_size"], "unit": unit})
     for k in ("gate", "gated_window_reachable"):
         c.pop(k)  # MiniCheck has no gated variant
         c["binary"].pop(k)

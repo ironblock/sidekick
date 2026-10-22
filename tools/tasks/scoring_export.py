@@ -246,12 +246,18 @@ def sha256sums(root: Path) -> None:
 
 
 def read_responses(path: Path, requests: list[dict]) -> dict:
-    """{"model", "by_id": {id: {"verdict", "parsed", "strict"}}, "missing",
-    "bad_sha"}. `parsed` is the lenient (scored) rule, `strict` the strict one.
+    """{"model", "by_id": {id: {"verdict", "parsed", "strict", "fenced"}},
+    "missing", "bad_sha", "errors", "bad_prompt"}. `parsed` is the lenient
+    (scored) rule, `strict` the strict one. Only `content` is read; any
+    reasoning field, `usage` and timing fields are ignored. A line with a
+    non-null `error`, or whose `prompt_sha256` differs from its request's,
+    gets no verdict, as does a missing line.
     A request with no response, or one whose `sha256` doesn't match its
     content, gets no verdict (wrong, and counted)."""
     want = {r["id"] for r in requests}
     by_id, models, bad = {}, set(), []
+    prompt_of = {r["id"]: r.get("prompt_sha256") for r in requests}
+    errors, bad_prompt = [], []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -259,6 +265,12 @@ def read_responses(path: Path, requests: list[dict]) -> dict:
         content = scoring_judge.final_content(r)
         if "sha256" in r and content is not None and hashlib.sha256(content.encode("utf-8")).hexdigest() != r["sha256"]:
             bad.append(r["id"])
+            content = None
+        if r.get("error"):  # a transport or server error: no answer
+            errors.append(r["id"])
+            content = None
+        if r.get("prompt_sha256") and prompt_of.get(r["id"]) and r["prompt_sha256"] != prompt_of[r["id"]]:
+            bad_prompt.append(r["id"])  # answered a different prompt than the request names
             content = None
         verdict, ok = scoring_judge.parse(content)
         by_id[r["id"]] = {"verdict": verdict, "parsed": ok, "strict": scoring_judge.parse_strict(content)[1],
@@ -270,7 +282,8 @@ def read_responses(path: Path, requests: list[dict]) -> dict:
     missing = sorted(want - set(by_id))
     for rid in missing:
         by_id[rid] = {"verdict": None, "parsed": False, "strict": False, "fenced": False}
-    return {"model": next(iter(models), None), "by_id": by_id, "missing": missing, "bad_sha": bad}
+    return {"model": next(iter(models), None), "by_id": by_id, "missing": missing, "bad_sha": bad,
+            "errors": errors, "bad_prompt": bad_prompt}
 
 
 def parse_rates(requests: list[dict], responses: dict) -> dict[str, dict]:

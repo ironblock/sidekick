@@ -223,6 +223,51 @@ def chunks(text: str, tok: Tokenizer, size: int = 400) -> list[Window]:
     return res
 
 
+def minicheck_chunks(text: str, count, sent_tokenize, size: int = 400) -> list[Window]:
+    """MiniCheck's own chunks (Liyan06/MiniCheck, `Inferencer.inference_per_example`
+    for roberta and deberta): the document split at newlines, each line split
+    into sentences by `sent_tokenize` (nltk), a newline kept as a sentence of
+    its own between lines; sentences grouped while their token counts
+    (`count`, without special tokens) stay within `size`; each chunk joined
+    with spaces, " \\n " turned back into "\\n", stripped, and empty chunks
+    dropped. Each chunk keeps MiniCheck's text and the evidence span from its
+    first to its last sentence, so deciding spans can be checked against it."""
+    sents: list[tuple[str, int, int]] = []  # (text, start, end) in the evidence
+    pos = 0
+    lines = text.split("\n")
+    for n, line in enumerate(lines):
+        at = 0
+        for s in sent_tokenize(line):
+            i = line.find(s, at)
+            if i < 0:
+                raise ValueError(f"sentence not found in its line: {s[:60]!r}")
+            sents.append((s, pos + i, pos + i + len(s)))
+            at = i + len(s)
+        if n < len(lines) - 1:
+            sents.append(("\n", pos + len(line), pos + len(line) + 1))
+        pos += len(line) + 1
+    sents = sents or [("", 0, 0)]
+    groups, cur, n = [], [], 0
+    for s in sents:
+        k = count(s[0])
+        if n + k > size:
+            groups.append(cur)
+            cur, n = [s], k
+        else:
+            cur.append(s)
+            n += k
+    if cur:
+        groups.append(cur)
+    out = []
+    for g in groups:
+        body = " ".join(s[0] for s in g).replace(" \n ", "\n").strip()
+        if not body:
+            continue
+        real = [s for s in g if s[0] != "\n" and s[0].strip()]
+        out.append(Window(real[0][1], real[-1][2], body))
+    return out
+
+
 def key(text: str, claim: str) -> str:
     """Dedupe key for one (window, claim) prediction."""
     return hashlib.sha256((text + "\x1f" + claim).encode("utf-8")).hexdigest()

@@ -87,7 +87,9 @@ def reader_runs(requests: list[dict], responses: dict, tau: float) -> list[dict]
             name = short + ("g" if gated else "")
             runs.append({"checker": name, "family": name, "mode": "three-way", "items": out, "reader_form": form,
                          "provenance": {"model": responses["model"], "missing": len(responses["missing"]),
-                                        "bad_sha256": len(responses["bad_sha"])},
+                                        "bad_sha256": len(responses["bad_sha"]),
+                                        "errors": len(responses.get("errors", [])),
+                                        "bad_prompt": len(responses.get("bad_prompt", []))},
                          "parse_rates": rates.get(form)})
     return runs
 
@@ -132,7 +134,8 @@ def score_run(run: dict, triples: list[dict], cfg: dict, ceilings: dict | None) 
         if item.startswith("ctl:"):
             _, _cid, group, form = item.split(":")
             ctl.append({"group": group, "form": form, "gold": {"positive": "S", "contradiction": "C",
-                                                               "null": "NM"}[group], "verdict": r["verdict"]})
+                                                               "null": "NM"}[group], "verdict": r["verdict"],
+                        "not_run": bool(r.get("not_run"))})
     gate = rules.control_gate(ctl, answers, cfg["gate"]["short"], cfg["gate"]["long"])
     correct, shape_of, pairs, cells = {}, {}, [], defaultdict(list)
     e_pos, e_neg, c_pos, c_neg = [], [], [], []

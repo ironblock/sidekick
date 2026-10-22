@@ -73,6 +73,43 @@ class Windows(unittest.TestCase):
         self.assertTrue(all(TOK.count(c.text) <= 400 for c in cs))
 
 
+def sentences(line):
+    """A stand-in for nltk's sent_tokenize: split after ". "."""
+    out, at = [], 0
+    for i in range(len(line)):
+        if line[i] == "." and line[i + 1:i + 2] == " ":
+            out.append(line[at:i + 1].strip())
+            at = i + 2
+    tail = line[at:].strip()
+    return [s for s in out if s] + ([tail] if tail else [])
+
+
+class MiniCheckChunks(unittest.TestCase):
+    def test_sentences_grouped_within_the_size(self):
+        text = "".join(f"Alpha {i} one. Beta {i} two three. Gamma {i}\n" for i in range(60)) + "\nlast line"
+        cs = sw.minicheck_chunks(text, TOK.count, sentences, 40)
+        self.assertGreater(len(cs), 5)
+        for c in cs:
+            self.assertLessEqual(TOK.count(c.text), 40)
+            self.assertEqual(c.text, c.text.strip())
+            # The span runs from the chunk's first sentence to its last (the text
+            # differs only in whitespace: MiniCheck joins sentences with spaces
+            # and collapses " \n " but not " \n \n ").
+            self.assertEqual(text[c.start:c.end].split(), c.text.split())
+        for a, b in zip(cs, cs[1:]):
+            self.assertLessEqual(a.end, b.start)
+        self.assertTrue(cs[-1].text.endswith("last line"))
+
+    def test_minicheck_joins_sentences_with_spaces(self):
+        cs = sw.minicheck_chunks("A b. C d.\nE f.\n", TOK.count, sentences, 400)
+        self.assertEqual([c.text for c in cs], ["A b. C d.\nE f."])
+        self.assertEqual((cs[0].start, cs[0].end), (0, 14))
+
+    def test_a_sentence_over_the_size_stands_alone(self):
+        cs = sw.minicheck_chunks("a b c d e f g h\ni j\n", TOK.count, sentences, 4)
+        self.assertEqual([c.text for c in cs], ["a b c d e f g h", "i j"])
+
+
 class Dedupe(unittest.TestCase):
     def test_windows_outside_the_needle_are_shared_by_variants(self):
         base = lines(200)
@@ -216,6 +253,22 @@ class ControlGate(unittest.TestCase):
         g = rules.control_gate(res, ("positive", "null"))
         self.assertTrue(g["passed"])
         self.assertNotIn("contradiction/short", g["groups"])
+
+    def test_controls_over_the_context_are_not_run_not_wrong(self):
+        all3 = ("positive", "contradiction", "null")
+        res = [{**r, "verdict": None, "not_run": True} if r["form"] == "long" else r for r in self.results()]
+        g = rules.control_gate(res, all3)
+        self.assertTrue(g["passed"])
+        self.assertIsNone(g["groups"]["positive/long"]["passed"])
+        self.assertEqual(g["groups"]["positive/long"]["not_run"], 6)
+        # A wrong short answer still fails; a partly run long group needs its share of those run.
+        self.assertFalse(rules.control_gate([{**r, "verdict": "C"} if r["form"] == "short" and r["gold"] == "S"
+                                             else r for r in res], all3)["passed"])
+        part = [{**r, "verdict": None, "not_run": True} if r["form"] == "long" and n % 2 else r
+                for n, r in enumerate(self.results())]
+        g = rules.control_gate(part, all3)
+        self.assertTrue(g["passed"])
+        self.assertEqual(g["groups"]["null/long"]["need"], 3)
 
     def test_a_two_way_model_through_the_three_way_rule_fails(self):
         res = [r if r["group"] != "contradiction" else {**r, "verdict": "NM"} for r in self.results()]
@@ -494,6 +547,40 @@ class JudgeAndExport(unittest.TestCase):
         wins = ex.reader_windows(reqs, resp, "window-512")
         self.assertEqual([w["index"] for w in wins["t1:s"]], [0, 1])
         self.assertIn("ctl:k:null:short", wins)
+
+    def test_the_endpoints_response_format(self):
+        """Lines as the judge endpoint returns them: reasoning apart, timing,
+        usage and an `error` field; the model's public id."""
+        reqs, prompt = self.batch()
+
+        def line(r, content, **kw):
+            return {"id": r["id"], "request_sha256": "0" * 64, "prompt_sha256": prompt["sha256"],
+                    "elapsed_s": 1.0, "error": None, "model": "example/model-1", "content": content,
+                    "reasoning_content": '{"verdict": "contradicted"}', "finish_reason": "stop",
+                    "usage": {"prompt_tokens": 800, "completion_tokens": 150}, **kw}
+        rows = [line(reqs[0], '\n\n{"verdict": "not_mentioned"}'),
+                line(reqs[1], 'Use it like:\n```json\n{"x": 1}\n```\nso:\n{"verdict": "supported"}'),
+                line(reqs[2], '{"verdict": "supported"}', error="timeout"),
+                line(reqs[3], '{"verdict": "supported"}', prompt_sha256="f" * 64)]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "responses.jsonl"
+            p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+            resp = ex.read_responses(p, reqs[:4])
+        self.assertEqual(resp["model"], "example/model-1")
+        self.assertEqual(resp["by_id"][reqs[0]["id"]],
+                         {"verdict": "NM", "parsed": True, "strict": True, "fenced": False})
+        # A fence inside the prose, ending with bare JSON: a lenient parse, and not a fenced answer.
+        self.assertEqual(resp["by_id"][reqs[1]["id"]],
+                         {"verdict": None, "parsed": False, "strict": False, "fenced": False})
+        self.assertEqual(resp["errors"], [reqs[2]["id"]])
+        self.assertEqual(resp["by_id"][reqs[2]["id"]]["verdict"], None)
+        self.assertEqual(resp["bad_prompt"], [reqs[3]["id"]])
+        self.assertEqual(resp["missing"], [])
+
+    def test_a_fence_in_the_prose_then_bare_json(self):
+        content = 'The evidence shows:\n```\n$ gh stack sync\n```\n\n{"verdict": "supported"}'
+        self.assertEqual(judge.parse(content), ("S", True))
+        self.assertFalse(judge.fenced(content))
 
     def test_parse_rates_per_form(self):
         reqs, _ = self.batch()

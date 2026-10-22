@@ -190,22 +190,34 @@ def compare(x: dict[str, bool], y: dict[str, bool], shape_of: dict[str, str], re
 def control_gate(results: list[dict], answers: tuple[str, ...], short: int = 6, long: int = 5) -> dict:
     """results: [{"group", "form", "gold", "verdict"}]. `answers` is the
     groups the checker answers (two-way checkers: positive and null). A
-    two-way answer of not-S counts as right for the null group."""
-    cells = defaultdict(lambda: [0, 0])
+    two-way answer of not-S counts as right for the null group.
+
+    A control marked `not_run` (over the checker's context, which the design
+    reports as "not run" rather than wrong) is left out. A group and form
+    with none run is "not run" (`passed` None) and doesn't count against
+    the gate; one with some run must still reach its share of those run."""
+    cells = defaultdict(lambda: [0, 0, 0])
     for r in results:
         if r["group"] not in answers:
             continue
-        right = r["verdict"] == r["gold"] or (r["gold"] == NM and r["verdict"] == NOT_S)
         cell = cells[(r["group"], r["form"])]
+        if r.get("not_run"):
+            cell[2] += 1
+            continue
+        right = r["verdict"] == r["gold"] or (r["gold"] == NM and r["verdict"] == NOT_S)
         cell[0] += 1
         cell[1] += int(right)
     out, ok = {}, True
     for g in answers:
         for form, need in (("short", short), ("long", long)):
-            n, right = cells.get((g, form), [0, 0])
-            passed = n > 0 and right >= need
+            n, right, skipped = cells.get((g, form), [0, 0, 0])
+            if n == 0 and skipped:
+                out[f"{g}/{form}"] = {"right": 0, "of": 0, "not_run": skipped, "need": need, "passed": None}
+                continue
+            need_here = need if not skipped else math.ceil(need * n / (n + skipped))
+            passed = n > 0 and right >= need_here
             ok &= passed
-            out[f"{g}/{form}"] = {"right": right, "of": n, "need": need, "passed": passed}
+            out[f"{g}/{form}"] = {"right": right, "of": n, "not_run": skipped, "need": need_here, "passed": passed}
     return {"passed": ok, "groups": out}
 
 
