@@ -15,7 +15,8 @@
 # CPU (docs/MODELS.md; D37's amendment).
 #
 # max_seq_len 512 is the largest Core ML bucket. Each bucket is a program
-# with its own copy of the weights (about 1.1 GiB in fp16), and attention at
+# that maps its own copy of the weights when loaded (about 1.1 GiB in fp16;
+# on disk, chunk k of every bucket shares one file, D49), and attention at
 # 4,096 tokens would hold about 0.5 GiB of fp16 scores per layer, so the
 # Core ML buckets stop at 512. The ONNX build, one dynamic-shape graph, has
 # its own limit of 4,096 (onnx.toml beside this file). The model itself

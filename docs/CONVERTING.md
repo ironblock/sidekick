@@ -28,6 +28,7 @@ each rule exists (entries cited as Dnn).
 - [Manifests](#manifests)
 - [Converters](#converters)
 - [ONNX export](#onnx-export)
+- [Shared weights across buckets](#shared-weights-across-buckets)
 - [Adding a family](#adding-a-family)
 - [Refactoring a converter: the acceptance method](#refactoring-a-converter-the-acceptance-method)
 - [Gotchas](#gotchas)
@@ -104,7 +105,11 @@ For a Core ML job, for every bucket, `core.run()`:
      same output. It catches a dropped attention mask (D25) and a mixer that
      reads pad states (D19) in seconds;
    - **finite output**;
-6. installs `model_{seq}.mlmodelc`, then the tokenizer and manifest.
+6. with more than one bucket, re-exports every bucket against one shared
+   weights file, gated ([Shared weights across buckets](#shared-weights-across-buckets));
+7. installs `model_{seq}.mlmodelc`, hard-linking identical weight files,
+   then the tokenizer and manifest. Nothing is installed until every bucket
+   has passed every gate.
 
 Every metric is NaN-safe (`metrics.py`): Python's `min(worst, nan)` returns
 `worst`, which once hid a NaN-producing CPU path behind "parity 1.000000"
@@ -418,9 +423,9 @@ backbone, head and gate texts, gated against the same fp32 references
   onnx`.
 - **Bucket lists and ONNX caps are per-model decisions.** Nothing derives
   them: each is chosen for its model and recorded, with the reason, in the
-  committed manifest or `onnx.toml`. A Core ML bucket is a program with its
-  own copy of the weights, and its attention scores grow with the square of
-  its length, so the bucket list is a cost the model's size sets (most
+  committed manifest or `onnx.toml`. A Core ML bucket is a program that
+  maps its own copy of the weights when loaded (its file on disk is shared,
+  D49), and its attention scores grow with the square of its length, so the bucket list is a cost the model's size sets (most
   models stop at 512; EmbeddingGemma-2's reaches 2,048). The ONNX graph
   runs each input at its own length, so its cap costs nothing until a long
   input arrives, and can be the length the model was trained for, once it
@@ -492,6 +497,75 @@ suite's worker result for the same model, which `parity --external
 result.json` grades beside the native run. An int8 build fails the floors
 by design. `tools/bench_onnx.py` measures load time, resident memory and
 latency per length, batch size and thread count.
+
+## Shared weights across buckets
+
+Each Core ML bucket is its own program, and each program (each chunk of a
+chunked bucket) reads its constants from `weights/weight.bin`. The weights
+are the same in every bucket, but separately converted files aren't:
+coremltools writes constants in program order, and the few that depend on
+the bucket (folded position and token-type tables, RoPE tables, the causal
+mask, all under 1 MB at 512 tokens) shift every tensor after them. So a
+model with three buckets stored its weights three times. Since D49 the
+converter stores them once per chunk (`shared_weights.py`):
+
+- **The re-export.** After every bucket has passed its gates, the
+  converter loads each bucket's saved `.mlpackage` back into MIL and writes
+  it again, with no graph passes, against one union weights file per chunk:
+  each distinct tensor (by dtype, shape and bytes) is written once, in
+  bucket order, so the tensors every bucket holds come first and each
+  bucket's own follow. Every bucket's program then points into the same
+  file, and is compiled with `xcrun coremlcompiler` as before.
+- **Gates.** The union build replaces the separate one only if:
+  - every compiled `weights/weight.bin` in the chunk is the union file,
+    byte for byte;
+  - every compiled `model.mil` equals the separate build's once weight
+    offsets are set aside: the same program, with its constants elsewhere;
+  - on CPU_ONLY, CPU_AND_GPU and CPU_AND_NE, every program gives the
+    separate build's outputs on the gate cases, bit for bit (each chunk fed
+    the separate build's input, so each program is judged alone). Each
+    comparison runs in a child process with a Core ML cache of its own,
+    deleted when it exits, so the check leaves no compiled copies behind.
+
+  A failure stops the conversion; `--no-shared-weights` converts with one
+  file per bucket, as before D49.
+- **Per chunk, never across chunks.** The ANE's weight limit (D32) is
+  judged on the whole weights file a program references, not on the
+  tensors it reads: a file spanning both of Qwen3-Embedding-0.6B's chunks
+  (about 1.2 GB) put every chunk on the CPU. So chunk k of every bucket
+  shares one file, and no file spans chunks. For a model served on the ANE,
+  a union file over the limit keeps that chunk's files separate, and the
+  converter says so; the union is the shared weights plus every bucket's
+  own tables, so it is a little larger than any one bucket's file.
+- **Install.** The union files are installed as one file with a hard link
+  per bucket. A move within one filesystem keeps the links; after a move
+  across filesystems, or a copy that doesn't preserve hard links (`cp -R`),
+  `python -m sidekick_convert.shared_weights link <model-dir>` links
+  identical weight files again. It keeps a copy wherever the filesystem
+  refuses a link. `ditto` and `rsync -aH` preserve hard links; `cp -Rc`
+  (APFS clones) saves the disk too, with a separate file per bucket.
+- **What is shared:** the files on disk, and so the download (D49 records
+  the publishing format). The daemon needs no change: each bucket is still
+  its own program at its own path, and the weight-limit check sums each
+  program's own files.
+- **What isn't:**
+  - **Core ML's compile cache** keeps a specialized copy of the weights
+    per bucket, per compute path, per executable and per path, as it did
+    (for Qwen3-Embedding-0.6B, about 3.6 GB on the GPU or CPU for three
+    buckets).
+  - **Memory.** Each loaded bucket maps its own copy from that cache, so
+    two loaded buckets map the weights twice, as before.
+  - **Compile time.** Every bucket is compiled for each compute path on
+    its first load, as before.
+- **Measured** (M1 Max, macOS 27.0, coremltools 9.0): weight files on disk,
+  separate buckets → shared, with every output bit-identical on CPU, GPU
+  and ANE and every parity grade unchanged:
+
+  | model | buckets | separate | shared |
+  |---|---|---|---|
+  | bge-small-en-v1.5 | 128, 256, 512 | 199.5 MB | 67.4 MB |
+  | F2LLM-v2-160M | 128, 256, 512 | 956.3 MB | 319.5 MB |
+  | Qwen3-Embedding-0.6B, chunked | 1,024, 2,048 | 2,407.3 MB | 1,215.7 MB |
 
 ## Adding a family
 
@@ -668,7 +742,13 @@ refine two points there:
   with `CFFIXED_USER_HOME` set to a temporary home, deleted when it exits:
   the conversion loads each bucket from a temporary directory and then
   moves it, so every cache entry it would leave behind is orphaned (about
-  11 GB for agent-jev). Set `CFFIXED_USER_HOME` yourself to keep a cache.
+  11 GB for agent-jev). The conversion also empties that cache as it goes,
+  once each compute path's gate is done with a program
+  (`core.purge_coreml_cache`): it never loads the same path again, and an
+  entry holds a few times the program's weights, so the cache otherwise
+  peaked at 3.9 GB for F2LLM-v2-160M's three buckets and would not have fit
+  a chunked 0.6B model on a nearly full disk. Set `CFFIXED_USER_HOME`
+  yourself to keep a cache; it is then never emptied.
 - **An empty compute plan can come from a stale cache.** Core ML's cache of
   compiled bundles (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`)
   can hold a broken entry for an artifact's path; plans for that path then
@@ -755,7 +835,9 @@ The logic that decides artifacts has torch-only unit tests (no Core ML), in
 `tools/sidekick_convert/tests`: the calibration guard, the tokenizer rule,
 masks, one-hots, the blocked max, the K choice, activations, pooling, the
 manifest rules, the ideal-fp16 simulation, and the gates' prediction
-inputs. From the repository root:
+inputs. The shared-weights tests also re-export two tiny programs built
+with coremltools' MIL builder, and are skipped without coremltools and
+Xcode's `coremlcompiler`. From the repository root:
 
     python -m pytest tools/sidekick_convert/tests
 

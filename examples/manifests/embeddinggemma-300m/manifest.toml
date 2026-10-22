@@ -9,9 +9,9 @@
 # pooling are required — flexible shapes and raw hidden-state outputs
 # silently push the encoder off the ANE.
 #
-# Note the size tradeoff: ~600 MB per bucket artifact (300m params, fp16
-# weights duplicated per bucket). Weight-sharing via multifunction
-# mlprograms is a possible future optimization.
+# Note the size tradeoff: ~600 MB of fp16 weights (300m params). Since
+# docs/DECISIONS.md D49 every bucket shares one weights file on disk, but
+# each loaded bucket still maps its own copy.
 
 id = "embeddinggemma-300m"
 backend = "coreml"

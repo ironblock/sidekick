@@ -11,8 +11,10 @@ Engine's per-program weight limit with a warning instead of an error
 over the weight budget as a chain of programs split at layer boundaries
 (chunking.py, D37); `--chunks auto|N|cuts` chooses the split, and
 `--chunks 1` keeps one program per bucket; `--chunk-identity-all` runs the
-chain's bit-identity gate on every bucket, not only the smallest. A
-converter passes these on with job_options().
+chain's bit-identity gate on every bucket, not only the smallest. Every
+bucket of a chunk shares one weights file (shared_weights.py, D49);
+`--no-shared-weights` gives each bucket its own. A converter passes these
+on with job_options().
 
 Core ML caches a compiled bundle for every model a process loads, keyed by
 the model's path, under ~/Library/Caches/<executable>. A conversion loads
@@ -20,8 +22,10 @@ each bucket from a temporary directory and then moves it, so every entry it
 leaves is orphaned: about the bucket's weights again per compute path
 (~11 GB for one 0.6B model). parse() therefore runs the converter in a
 child process whose Core ML cache lives in a temporary home
-(CFFIXED_USER_HOME), deleted when it exits. A caller that sets
-CFFIXED_USER_HOME itself keeps that cache. A
+(CFFIXED_USER_HOME), deleted when it exits, and the conversion empties it
+as it goes (core.purge_coreml_cache), once each compute path's gate is
+done with a program: a 0.6B model's bucket leaves about 2.3 GB per path.
+A caller that sets CFFIXED_USER_HOME itself keeps that cache. A
 converter adds its own flags (negative controls) through `flags`.
 """
 
@@ -43,7 +47,8 @@ def _private_coreml_cache():
     if sys.platform != "darwin" or "CFFIXED_USER_HOME" in os.environ:
         return
     with tempfile.TemporaryDirectory(prefix="sidekick-convert-cache-") as home:
-        child = subprocess.Popen([sys.executable, *sys.orig_argv[1:]], env={**os.environ, "CFFIXED_USER_HOME": home})
+        child = subprocess.Popen([sys.executable, *sys.orig_argv[1:]],
+                                 env={**os.environ, "CFFIXED_USER_HOME": home, "SIDEKICK_CONVERT_PRIVATE_CACHE": home})
         while True:
             try:
                 code = child.wait()
@@ -78,6 +83,9 @@ def parse(description, *, flags=(), default_buckets=(128, 256, 512), argv=None):
                         "the first begin (10,20), or 1 for one program per bucket; D37")
     p.add_argument("--chunk-identity-all", action="store_true",
                    help="run a chunked bucket's GPU bit-identity gate in every bucket, not only the smallest")
+    p.add_argument("--no-shared-weights", action="store_true",
+                   help="give every bucket its own weights file, as before D49, instead of one file per chunk "
+                        "shared by every bucket")
     p.add_argument("--format", choices=("coreml", "onnx"), default="coreml",
                    help="coreml: per-bucket .mlmodelc for the ANE (the default); onnx: one dynamic-shape "
                         "fp32 model.onnx for ONNX Runtime's CPU backend")
@@ -100,4 +108,4 @@ def job_options(args):
     from .chunking import parse_spec
     return {"int8_embedding": args.int8_embedding, "ignore_ane_weight_cap": args.ignore_ane_weight_cap,
             "chunks": parse_spec(args.chunks), "chunk_identity_all": args.chunk_identity_all,
-            "format": args.format, "onnx_weights": args.onnx_weights}
+            "shared_weights": not args.no_shared_weights, "format": args.format, "onnx_weights": args.onnx_weights}

@@ -27,7 +27,7 @@ import time
 import numpy as np
 
 from . import plan as _plan
-from .core import GateFailure
+from .core import GateFailure, purge_coreml_cache
 from .metrics import activate, cosine, finite, largest, max_abs_diff, worst
 
 PATHS = {"CPU_AND_NE": "CPU_AND_NE", "CPU_ONLY": "CPU_ONLY"}
@@ -129,6 +129,8 @@ class EmbeddingGates:
             if timing:
                 r["ms"] = _latency_ms(m, cases[0].feed(seq, job.ports))
             out[path] = r
+            del m
+            purge_coreml_cache()
         return out
 
     def describe_coreml(self, r):
@@ -277,6 +279,8 @@ class ClassifierGates:
             if timing:
                 r["ms"] = _latency_ms(m, cases[0].feed(seq, job.ports))
             out[path] = r
+            del m
+            purge_coreml_cache()
         return out
 
     def describe_coreml(self, r):
