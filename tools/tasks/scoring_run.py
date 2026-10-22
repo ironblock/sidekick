@@ -158,6 +158,78 @@ def write_run(out: Path, name: str, record: dict) -> Path:
 # ---------------------------------------------------------------- sidekick nli
 
 
+def nli_body(model: str, windows: list[str], claim: str, three: bool) -> dict:
+    """The harness's /v1/classify request: the evidence windows are the
+    inputs (the premise, first in each pair), the claim the one candidate
+    label, put whole into the hypothesis by the template `{}` (second). The
+    server lays each pair out as MNLI was trained: premise, then hypothesis."""
+    body = {"model": model, "input": list(windows), "candidate_labels": [claim], "hypothesis_template": "{}"}
+    if three:
+        body["nli_probs"] = True
+    return body
+
+
+# The textbook MNLI check: one premise, an entailed, a contradicted and a
+# neutral hypothesis. A three-way model must favour E, C and N in turn; a
+# two-way model must put only the first above τ.
+MNLI_PREMISE = "A man plays a guitar."
+MNLI_HYPOTHESES = (("A man plays an instrument.", "entailment"), ("A woman plays a guitar.", "contradiction"),
+                   ("The sky is overcast.", "neutral"))
+
+
+def run_sanity(a) -> int:
+    """The MNLI check through the harness's exact client path (windowing,
+    `nli_body`, the three-way or two-way rule), and the same pair sent as
+    D47's stock request (one input, all three labels, `{}.`), compared."""
+    cfg = scoring_set.config()
+    model = next(m for m in cfg["nli"] if m["id"] == a.model)
+    three = model["ways"] == 3
+    mdir = Path(a.model_dir)
+    tok = sw.HFTokenizer(mdir / "tokenizer.json", model["sha256_tokenizer"])
+    key = os.environ.get("SIDEKICK_API_KEY")
+    rows, ok = [], True
+    for hyp, want in MNLI_HYPOTHESES:
+        ws = sw.windows(MNLI_PREMISE, tok, hyp, model["max_seq_len"], cfg["overlap"], cfg["margin"])
+        lens = sw.fits(ws, tok, hyp, model["max_seq_len"])
+        st, _h, resp = http(a.base_url, "/v1/classify", nli_body(a.model, [w.text for w in ws], hyp, three), key)
+        if st != 200:
+            raise SystemExit(f"/v1/classify {st}: {json.dumps(resp)[:300]}")
+        if resp["usage"]["prompt_tokens"] != sum(lens):
+            raise SystemExit("usage.prompt_tokens differs from the harness's count")
+        res = resp["data"][0]
+        if three:
+            p = res["nli_probs"][0]
+            agg = rules.three_way([p], cfg["tau"])
+            top = max(p, key=p.get)
+            good = top == want
+        else:
+            p = {"entailment": res["probs"][0]}
+            agg = rules.two_way([res["probs"][0]], cfg["tau"])
+            good = (agg["verdict"] == rules.S) == (want == "entailment")
+        ok &= good
+        rows.append({"hypothesis": hyp, "expected": want, "window": ws[0].text, "scores": p,
+                     "verdict": agg["verdict"], "right": good})
+    # D47's stock request: one input, every label, `nli_probs` (each label's
+    # own softmax over the model's classes, whatever the number of labels).
+    stock = {"model": a.model, "input": MNLI_PREMISE, "candidate_labels": [h.rstrip(".") for h, _ in MNLI_HYPOTHESES],
+             "hypothesis_template": "{}.", "nli_probs": True}
+    st, _h, sresp = http(a.base_url, "/v1/classify", stock, key)
+    if st != 200:
+        raise SystemExit(f"stock request {st}: {json.dumps(sresp)[:300]}")
+    sres = sresp["data"][0]
+    for n, r in enumerate(rows):
+        theirs = sres["nli_probs"][n]
+        r["stock_scores"] = theirs
+        r["max_abs_difference"] = max(abs(theirs[c] - r["scores"][c]) for c in r["scores"])
+    out = {"model": a.model, "ways": model["ways"], "premise": MNLI_PREMISE, "passed": ok, "rows": rows,
+           "stock_request": stock, "stock_probs": sres.get("probs")}
+    print(json.dumps(out, indent=1))
+    if a.out:
+        Path(a.out).mkdir(parents=True, exist_ok=True)
+        canon.write_json(Path(a.out) / f"mnli-{a.model}.json", out)
+    return 0 if ok else 1
+
+
 class Interface:
     """Assertions on every request (design §2.1)."""
 
@@ -223,10 +295,7 @@ def run_nli(a) -> int:
         for claim, ks in by_claim.items():
             for i in range(0, len(ks), max_batch):
                 batch = ks[i:i + max_batch]
-                body = {"model": a.model, "input": [todo[k][0] for k in batch], "candidate_labels": [claim],
-                        "hypothesis_template": "{}"}
-                if three:
-                    body["nli_probs"] = True
+                body = nli_body(a.model, [todo[k][0] for k in batch], claim, three)
                 body_shape = body_shape or body
                 st, hdr, resp = http(a.base_url, "/v1/classify", body, key)
                 iface.requests += 1
@@ -441,10 +510,17 @@ def main(argv=None) -> int:
                                                 "manifest differs (e.g. a `classes` line added, D47)")
         if name == "hhem":
             p.add_argument("--max-premise-tokens", type=int)
+    p = sub.add_parser("sanity", help="the textbook MNLI check through the exact client path, and D47's stock "
+                                      "request, for one nli model")
+    p.add_argument("--model", required=True)
+    p.add_argument("--model-dir", required=True)
+    p.add_argument("--base-url", default="http://127.0.0.1:8790")
+    p.add_argument("--out", type=Path)
     a = ap.parse_args(argv)
     global _T0
     _T0 = time.monotonic()
-    return {"nli": run_nli, "fm": run_fm, "minicheck": run_minicheck, "hhem": run_hhem}[a.cmd](a)
+    return {"nli": run_nli, "fm": run_fm, "minicheck": run_minicheck, "hhem": run_hhem,
+            "sanity": run_sanity}[a.cmd](a)
 
 
 if __name__ == "__main__":

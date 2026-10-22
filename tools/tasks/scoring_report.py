@@ -350,9 +350,15 @@ READER_OF_WINDOWS = ("R512", "R512g", "R2048", "R2048g")
 
 def diagnosis(scored: dict, runs: list[dict], comparisons: list[dict], cfg: dict) -> list[str]:
     """The diagnosis beside the instrument-limited verdicts (design §7). The
-    verdicts themselves are never changed; this says why, from the runs.
-    Also attaches each failed checker's own lines as `diagnosis`."""
+    verdicts themselves are never changed; this says why, from the runs and
+    the audit's declared attributions (scoring.toml `[audit]`,
+    `[[attribution]]`). Each failed checker gets "instrument-limited; cause
+    not yet attributed" with the open candidates, unless an attribution
+    names its family. Also attaches each failed checker's own lines as
+    `diagnosis`."""
     tau = cfg["tau"]
+    audit = cfg.get("audit", {})
+    attributions = cfg.get("attribution", [])
     out = []
     readers = [scored[n] for n in READER_OF_WINDOWS if n in scored]
     passed = [r for r in readers if r["gate"]["passed"]]
@@ -361,13 +367,17 @@ def diagnosis(scored: dict, runs: list[dict], comparisons: list[dict], cfg: dict
     if passed and failed_window:
         right = sum(v["right"] for v in passed[0]["gate"]["groups"].values())
         of = sum(v["of"] for v in passed[0]["gate"]["groups"].values())
-        harness = (f"The harness is validated: the second reader passes {right}/{of} controls through identical "
-                   f"windows and the same max rule ({', '.join(r['checker'] for r in passed)}), so the per-window "
-                   "checkers' control failures lie in their per-window calibration.")
+        harness = (f"The second reader passes {right}/{of} controls through identical windows and the same max rule "
+                   f"({', '.join(r['checker'] for r in passed)}). "
+                   + audit.get("second_reader", "That rules out the information missing from the windows and the "
+                               "max rule losing it, not each checker's own interface, label mapping, tokenizer cuts "
+                               "or τ."))
         out.append(harness)
+    if audit.get("construction"):
+        out.append(audit["construction"])
     scope = (f"Scope: these results hold under max-aggregation at τ = {tau}, not for NLI on tool output in "
-             "general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; "
-             "they are the next question once the corpus can be tuned on dev.")
+             "general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; "
+             "tuning waits until the corpus can be tuned on dev.")
     gating = []
     for c in comparisons:
         if c["what"] == "gated against ungated" and c["x"] in scored and c["y"] in scored:
@@ -386,16 +396,24 @@ def diagnosis(scored: dict, runs: list[dict], comparisons: list[dict], cfg: dict
             fm_line = (f"Foundation Models answers C on {k} of the {len(nm)} NOT MENTIONED variants that fit its "
                        "context: it reads an absence as a contradiction (a behaviour, not only a score).")
             out.append(fm_line)
+    failed_fams = {s.get("family") for s in scored.values() if not s["gate"]["passed"]}
+    open_ = audit.get("open", "interface, label mapping, tokenizer cuts, τ, domain")
+    for a in attributions:
+        if failed_fams & set(a["families"]):
+            out.append(a["text"])
+    if failed_fams - {f for a in attributions for f in a["families"]}:
+        out.append(f"Otherwise: instrument-limited; cause not yet attributed (open: {open_}).")
     for s in scored.values():
         if s["gate"]["passed"]:
             continue
-        lines = []
+        att = next((a["text"] for a in attributions if s.get("family") in a["families"]), None)
+        lines = ["instrument-limited; " + ("cause attributed by the audit: " + att if att
+                                           else f"cause not yet attributed (open: {open_})")]
         if s.get("family") in WINDOW_FAMILIES:
             lines += [x for x in (harness, scope) if x]
         if s.get("family") == "F" and fm_line:
             lines.append(fm_line)
-        if lines:
-            s["diagnosis"] = lines
+        s["diagnosis"] = lines
     return out
 
 

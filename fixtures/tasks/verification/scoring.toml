@@ -125,6 +125,44 @@ note = "approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts 
 id = "lenient-parse-quoted-json"
 text = "Written down post-data, after the judge's responses were seen: the lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose, so only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form."
 
+# What the failed checkers' control failures are attributed to, from the
+# audit after the first scored round, written down post-data. The verdicts don't change:
+# every failed checker stays instrument-limited. A family without an entry
+# here reads "cause not yet attributed". The audit verified the
+# construction (the checkpoints' id2label against the classes the harness
+# used; premise first and hypothesis second on the wire for the nli
+# format, MiniCheck and HHEM; the textbook MNLI triple right for every nli
+# model, MiniCheck and HHEM, and the harness's requests identical to D47's
+# stock request); its raw evidence is staged beside the report.
+[audit]
+second_reader = "The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain."
+construction = "The audit after the first scored round found no construction bug: each three-way checkpoint's id2label matches the classes the harness read; the evidence is the premise and the claim the hypothesis on the wire for the nli format, MiniCheck and HHEM; every nli model, MiniCheck and HHEM gets the textbook MNLI triple right through the harness's own client path, which gives exactly what D47's stock request gives; every short control is a single window."
+open = "interface, label mapping, tokenizer cuts, τ, domain"
+
+[[attribution]]
+families = ["A3", "A3g"]
+text = "Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified."
+
+[[attribution]]
+families = ["A2g"]
+text = "Two-way nli models, gated: attributed to τ. Post hoc, at τ ≤ 0.1 both pass every control group (deberta-v3-large-zeroshot-v2.0-c at 0.05 and 0.1, bge-m3-zeroshot-v2.0-c at 0.05); their entailment on CLI evidence runs low. This is exploratory and not applied: τ was fixed at 0.5 in advance, and tuning waits for a dev split."
+
+[[attribution]]
+families = ["A2"]
+text = "Two-way nli models, ungated: τ and max-aggregation together. No τ passes. deberta-v3-large-zeroshot-v2.0-c passes its short forms at τ = 0.05 but not its long ones (at best 21 of 24 controls, at τ = 0.35); bge-m3-zeroshot-v2.0-c's long nulls are 0 of 6 at the τ that passes its positives, as some window of a long form crosses a threshold that low."
+
+[[attribution]]
+families = ["M"]
+text = "MiniCheck: attributed to the domain. No threshold passes: the refutation-format positive (`was: … wrong because …`) scores 0.018 short and 0.089 long; its interface is verified (evidence first, the MNLI triple right)."
+
+[[attribution]]
+families = ["H"]
+text = "HHEM: attributed to τ. Post hoc, at a threshold of 0.15 or below it passes every control it ran (its long forms are over the premise cap); its interface is verified. Exploratory and not applied."
+
+[[attribution]]
+families = ["F"]
+text = "Foundation Models: the model's own behaviour. On the 16 NOT MENTIONED variants that fit its context, rerun without the prompt's rules block it still answers C on 13 (exploratory); the rules block accounts for 3."
+
 # Findings for the next corpus round, from the reviewer's reading of this
 # round's results. This round's labels and scores don't change.
 [[finding]]
