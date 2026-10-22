@@ -1899,14 +1899,14 @@ Rerankers, NLI models and the bespoke classifiers have no MTEB results.
 
 ### Verification checkers (pilot)
 
-This round is a pilot: 54 triples from 32 claim shapes. Its minimum detectable effect (MDE, 2.8 × the bootstrap SE of a paired difference) is about 18 (median; 7–24 over the 20 paired comparisons) points of triple accuracy, so differences between checkers smaller than that cannot be seen. Results are per checker, each with its verdict; no ranking is claimed until the corpus reaches about 150 claims.
+This round is a pilot: 54 triples from 32 claim shapes. Its minimum detectable effect (MDE, 2.8 × the bootstrap SE of a paired difference) is about 18 points (7–24 across the paired comparisons) of triple accuracy, so differences between checkers smaller than that cannot be seen. Results are per checker, each with its verdict; no ranking is claimed until the corpus reaches about 150 claims.
 
 Deviations from the pre-registered design:
 
 1. Controls a checker can't run (Foundation Models' long forms, over its context) are left out of its gate and reported as not run.
 2. HHEM's premise is capped at 8,192 tokens. It ran 29 of 54 triples, and its ceiling counts only those.
 3. chunk-400 shadows MiniCheck only approximately: 40% of chunks match exactly, and 181 of 198 chunk counts agree.
-4. The lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose: only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form.
+4. Written down post-data, after the judge's responses were seen: the lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose, so only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form.
 
 Diagnosis beside the instrument-limited verdicts (the verdicts are unchanged):
 
@@ -1917,6 +1917,8 @@ Diagnosis beside the instrument-limited verdicts (the verdicts are unchanged):
 - The task, as the LLM judge (J), Foundation Models and the second reader are asked it, includes the corpus's rules for which evidence is current: a later record of the same thing supersedes an earlier one (by timestamp where records carry one); a `was: X …, wrong because Y` note refutes X; an override applies over what it overrides; a tool's help and output speak for the version that produced them. These rules define the labels for every item alike. The nli checkers, MiniCheck and HHEM receive only the claim and the evidence, as their interfaces take nothing else.
 - The 512-token second reader sees windows cut with nli-deberta-v3-base's tokenizer, so it shadows that model (and deberta-v3-large-zeroshot-v2.0-c, whose cuts differ slightly) closely, and nli-minilm2-l6-h768 and roberta-large-mnli only approximately: their own tokenizers cut the evidence at other places.
 - J's and the second reader's verdicts are read from the final answer only. The scored (lenient) rule accepts one verdict object at the end of the answer, with prose before it (a JSON record quoted from the evidence is prose); the strict rule needs the answer to be exactly that object. Both are reported per reader form, with the lenient rule's literal reading beside them; a failure counts as wrong. A verdict object inside a Markdown code fence fails both rules and is counted on its own line, so its frequency can be reviewed. An answer cut off by the output budget (finish_reason `length`) is wrong, and is listed by id.
+
+J and the second reader: `ada48-tabbyapi-exl3-qwen38flashnext-2p05`; served as `Qwen3.8-Flash-Next-exl3-2.05bpw-yarn2`; quantization: EXL3, 2.05 bpw; context: 524,288 tokens (yarn); reasoning effort: medium; sampler: the server's thinking sampler preset.
 
 Reader answers, by form (lenient is the scored rule; a failure counts as wrong):
 
@@ -2002,6 +2004,37 @@ By obstacle and decision rule (triples right; descriptive only, no comparisons):
 | R400 | 5/8 | 11/11 | 32/39 | 0/2 | 5/6 | 3/4 | 2/2 | 0/1 |
 | R512 | 5/8 | 11/11 | 32/39 | 0/2 | 6/6 | 3/4 | 2/2 | 1/1 |
 | R512g | 4/8 | 5/11 | 17/39 | 0/2 | 3/6 | 4/4 | 2/2 | 0/1 |
+
+Findings for the next corpus round (this round's labels and scores don't change):
+
+- Five NOT MENTIONED variants keep the needle's call with its output emptied and its nonzero exit visible (`empty-output-nonzero-exit`: 002, 025, 026, 031, 032); the other 49 remove it. A visible nonzero exit supports a claim that the call failed, so these items are a gray zone for NOT MENTIONED. They are scored apart below. J's NOT MENTIONED → S misses are on 002, 025, 031, 032; 4 of 4 fall in this group, where a visible nonzero exit supports “the call failed”.
+- In 027 and 028 (a refuted belief's reason), CONTRADICTED rests on a `[notes]` entry alone, with no tool output behind it.
+
+By NOT MENTIONED kind (triples right; the two groups scored apart, descriptive only):
+
+| checker | removed (NOT MENTIONED removes the call) | empty-output-nonzero-exit (keeps it, output emptied, nonzero exit) |
+|---|---|---|
+| A2:bge-m3-zeroshot-v2.0-c | 2/49 | 0/5 |
+| A2:deberta-v3-large-zeroshot-v2.0-c | 12/49 | 0/5 |
+| A2g:bge-m3-zeroshot-v2.0-c | 2/49 | 0/5 |
+| A2g:deberta-v3-large-zeroshot-v2.0-c | 4/49 | 0/5 |
+| A3:nli-deberta-v3-base | 1/49 | 0/5 |
+| A3:nli-minilm2-l6-h768 | 0/49 | 0/5 |
+| A3:nli-minilm2-l6-h768-ane | 0/49 | 0/5 |
+| A3:roberta-large-mnli | 0/49 | 0/5 |
+| A3g:nli-deberta-v3-base | 6/49 | 0/5 |
+| A3g:nli-minilm2-l6-h768 | 0/49 | 0/5 |
+| A3g:nli-minilm2-l6-h768-ane | 0/49 | 0/5 |
+| A3g:roberta-large-mnli | 0/49 | 0/5 |
+| F:foundation-models | 0/49 | 0/5 |
+| H:HHEM-2.1-Open | 1/49 | 0/5 |
+| J | 44/49 | 1/5 |
+| M:minicheck-deberta-v3-large | 7/49 | 0/5 |
+| R2048 | 43/49 | 1/5 |
+| R2048g | 27/49 | 0/5 |
+| R400 | 40/49 | 2/5 |
+| R512 | 44/49 | 0/5 |
+| R512g | 26/49 | 0/5 |
 
 Item 050 (`jj-bare-fileset-path-prefix-glob.4k.start.none`): version scope: NOT MENTIONED keeps the jj 0.30.0 note and `jj --version` printing 0.46.0; the note names its own version, so a reader that respects that scope answers NOT MENTIONED from the note alone (the primary ceiling). `nm_strict` is the stricter reading: the note and the version line in one window.
 

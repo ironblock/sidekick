@@ -54,7 +54,7 @@ MD_START = "<!-- verification-scores:start -->"
 MD_END = "<!-- verification-scores:end -->"
 READER_FORMS = {"window-512": "R512", "window-2048": "R2048", "chunk-400": "R400", "full": "J"}
 LEAD = ("This round is a pilot: {triples} triples from {shapes} claim shapes. Its minimum detectable effect "
-        "(MDE, 2.8 × the bootstrap SE of a paired difference) is about {mde} points of triple accuracy, so "
+        "(MDE, 2.8 × the bootstrap SE of a paired difference) is about {mde} of triple accuracy, so "
         "differences between checkers smaller than that cannot be seen. Results are per checker, each with its "
         "verdict; no ranking is claimed until the corpus reaches about 150 claims.")
 NOTES = [
@@ -174,7 +174,8 @@ def score_run(run: dict, triples: list[dict], cfg: dict, ceilings: dict | None) 
         verdicts[t["id"]] = {scoring_set.VARIANT_NAME[v]: vs[v] for v in scoring_set.VARIANTS}
         shape_of[t["id"]] = t["claim"]["shape"]
         for dim, val in (("obstacle", t["config"]["obstacle"]), ("mechanism", t["claim"]["mechanism"]),
-                         ("type", t["claim"]["type"]), ("length", t["config"]["length"])):
+                         ("type", t["claim"]["type"]), ("length", t["config"]["length"]),
+                         ("nm_kind", t.get("nm_kind", "removed"))):
             cells[(dim, val)].append(ok)
         for v in scoring_set.VARIANTS:
             g = scoring_set.GOLD[v]
@@ -284,6 +285,7 @@ def build(runs: list[dict], triples: list[dict], cfg: dict, ceilings: dict | Non
             if v is not None:
                 row["answers"][name] = {**v, "triple_right": s["_correct"][note["id"]]}
         label_items.append(row)
+    findings = gray_zone_findings(scored, triples, cfg)
     for s in scored.values():
         s.pop("_correct", None)
         s.pop("_correct_binary", None)
@@ -307,15 +309,39 @@ def build(runs: list[dict], triples: list[dict], cfg: dict, ceilings: dict | Non
     diag = diagnosis(scored, runs, comparisons, cfg)
     return {"schema": SCHEMA, "status": "pilot",
             "lead": LEAD.format(triples=len(triples), shapes=len(set(shape_of.values())),
-                                mde=(f"{mde} (median; {mde_range[0]}–{mde_range[1]} over the {len(mdes)} paired "
-                                     "comparisons)") if mde is not None else "20–25 (a priori)"),
+                                mde=(f"{mde} points ({mde_range[0]}–{mde_range[1]} across the paired comparisons)"
+                                     if mde is not None else "20–25 points (a priori)")),
             "mde_points_range": mde_range,
             "deviations": [{"id": d["id"], "text": d["text"]} for d in deviations],
             "diagnosis": diag,
             "notes": list(NOTES), "reader_parse_rates": parse_rates,
             "set": cfg["set"], "tau": cfg["tau"], "mde_points_median": mde,
             "ceilings_sha256": canon.sha256_file(CEILINGS) if CEILINGS.exists() else None,
-            "checkers": scored, "comparisons": comparisons, "label_items": label_items}
+            "checkers": scored, "comparisons": comparisons, "label_items": label_items, "findings": findings}
+
+
+def gray_zone_findings(scored: dict, triples: list[dict], cfg: dict) -> list[dict]:
+    """The reviewer's findings for the next corpus round (scoring.toml
+    `[[finding]]`), each with what the judge did on it. A finding naming an
+    `nm_kind` says which of J's NOT MENTIONED → S misses fall in that group.
+    This round's labels and scores don't change."""
+    nums = scoring_set.review_numbers(triples)
+    kind = {t["id"]: t.get("nm_kind", "removed") for t in triples}
+    j = scored.get("J", {}).get("_verdicts", {})
+    out = []
+    for f in cfg.get("finding", []):
+        row = {"id": f["id"], "text": f["text"]}
+        if f.get("nm_kind") and j:
+            miss = sorted((nums[t], t) for t, v in j.items() if v["NM"] == "S")
+            inside = [n for n, t in miss if kind[t] == f["nm_kind"]]
+            if miss:
+                row["judge"] = (f"J's NOT MENTIONED → S misses are on {', '.join(f'{n:03d}' for n, _ in miss)}; "
+                                f"{len(inside)} of {len(miss)} fall in this group"
+                                + (", where a visible nonzero exit supports “the call failed”."
+                                   if inside else "."))
+            row["triples"] = sum(1 for t in kind.values() if t == f["nm_kind"])
+        out.append(row)
+    return out
 
 
 WINDOW_FAMILIES = ("A3", "A3g", "A2", "A2g", "M")
@@ -383,6 +409,12 @@ def render_md(scores: dict) -> str:
         lines += ["Diagnosis beside the instrument-limited verdicts (the verdicts are unchanged):", ""]
         lines += [f"- {d}" for d in scores["diagnosis"]] + [""]
     lines += [f"- {n}" for n in scores.get("notes", [])] + [""]
+    rp = scores.get("reader_provenance")
+    if rp:
+        bits = [f"`{rp['registry_id']}`" if rp.get("registry_id") else None,
+                f"served as `{rp['served_name']}`" if rp.get("served_name") else None]
+        bits += [f"{k.replace('_', ' ')}: {v}" for k, v in rp.items() if k not in ("registry_id", "served_name")]
+        lines += ["J and the second reader: " + "; ".join(b for b in bits if b) + ".", ""]
 
     def note(x):
         return f" ({'; '.join(x['notes'])})" if x.get("notes") else ""
@@ -431,6 +463,21 @@ def render_md(scores: dict) -> str:
             x = d.get(f"{dim}:{v}")
             cells.append(f"{round(x['accuracy'] * x['triples'])}/{x['triples']}" if x else "–")
         lines.append(f"| {name} | " + " | ".join(cells) + " |")
+    if scores.get("findings"):
+        lines += ["", "Findings for the next corpus round (this round's labels and scores don't change):", ""]
+        for f in scores["findings"]:
+            lines.append(f"- {f['text']}" + (f" {f['judge']}" if f.get("judge") else ""))
+    kinds = [("removed", "NOT MENTIONED removes the call"),
+             ("empty-output-nonzero-exit", "keeps it, output emptied, nonzero exit")]
+    lines += ["", "By NOT MENTIONED kind (triples right; the two groups scored apart, descriptive only):", "",
+              "| checker | " + " | ".join(f"{k} ({d})" for k, d in kinds) + " |", "|---|" + "---|" * len(kinds)]
+    for name, s in sorted(scores["checkers"].items()):
+        d = s.get("descriptive", {})
+        cells = []
+        for k, _ in kinds:
+            x = d.get(f"nm_kind:{k}")
+            cells.append(f"{round(x['accuracy'] * x['triples'])}/{x['triples']}" if x else "–")
+        lines.append(f"| {name} | " + " | ".join(cells) + " |")
     for item in scores.get("label_items", []):
         lines += ["", f"Item {item['n']:03d} (`{item['id']}`): {item['note']}", "",
                   "| checker | S | C | NM | triple right |", "|---|---|---|---|---|"]
@@ -456,18 +503,26 @@ def main(argv=None) -> int:
     ap.add_argument("--responses", type=Path)
     ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--models-md", type=Path, help="splice the section into this MODELS.md")
+    ap.add_argument("--reader", action="append", default=[], metavar="KEY=VALUE",
+                    help="the readers' model provenance, given at run time and never kept in code: registry_id, "
+                         "quantization, context, reasoning_effort, sampler (the served name is read from the "
+                         "responses). Name no host, endpoint or machine.")
     a = ap.parse_args(argv)
     cfg = scoring_set.config()
     triples, _claims, _lock = scoring_set.load(cfg["set"])
     runs = [json.loads(p.read_text()) for p in sorted(a.runs.glob("*.json"))]
     if not runs and not a.responses:
         raise SystemExit("no runs to score")
+    reader_prov = None
     if a.responses:
         reqs = canon.read_jsonl(a.batch / "requests.jsonl")
         resp = scoring_export.read_responses(a.responses, reqs)
         runs += reader_runs(reqs, resp, cfg["tau"])
+        reader_prov = {"served_name": resp["model"], **dict(x.split("=", 1) for x in a.reader)}
     ceilings = json.loads(CEILINGS.read_text()) if CEILINGS.exists() else None
     scores = build(runs, triples, cfg, ceilings)
+    if reader_prov:
+        scores["reader_provenance"] = reader_prov
     canon.write_json(a.out, scores)
     print(f"wrote {a.out}")
     if a.models_md:

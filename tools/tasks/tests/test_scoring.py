@@ -750,6 +750,28 @@ class Report(unittest.TestCase):
         self.assertNotIn("diagnosis", s["checkers"]["R512"])
         self.assertIn("Diagnosis beside the instrument-limited verdicts", md)
 
+    def test_nm_kind_scored_apart_and_findings(self):
+        cfg = {**scoring_set.config(), "resamples": 50}
+        triples = self.triples()
+        for i, t in enumerate(triples):
+            t["nm_kind"] = "empty-output-nonzero-exit" if i < 3 else "removed"
+        j = self.run_("J", "J", "three-way", lambda i: True)
+        for it in j["items"]:
+            if it["item"].endswith(":nm") and it["item"].split(".")[0] in ("t0", "t1", "t5"):
+                it["verdict"] = "S"
+        s = report.build([j], triples, cfg, None)
+        d = s["checkers"]["J"]["descriptive"]
+        self.assertEqual(d["nm_kind:empty-output-nonzero-exit"]["triples"], 3)
+        self.assertEqual(d["nm_kind:removed"]["triples"], 13)
+        f = {x["id"]: x for x in s["findings"]}
+        self.assertEqual(set(f), {"nm-empty-output-nonzero-exit", "c-rests-on-notes"})
+        self.assertIn("2 of 3 fall in this group", f["nm-empty-output-nonzero-exit"]["judge"])
+        md = report.render_md({**s, "reader_provenance": {"registry_id": "example-id", "served_name": "example"}})
+        self.assertIn("By NOT MENTIONED kind", md)
+        self.assertIn("Findings for the next corpus round", md)
+        self.assertIn("J and the second reader: `example-id`; served as `example`.", md)
+        self.assertIn("points (", s["lead"]) if s["mde_points_range"] else self.assertIn("a priori", s["lead"])
+
     def test_the_gate_rule_is_declared(self):
         cfg = scoring_set.config()
         self.assertTrue(cfg["gate"]["exclude_not_run"])

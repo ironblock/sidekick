@@ -1,5 +1,5 @@
 {
-  "ceilings_sha256": "cd4be5a3aa416fdc55ae0d4cf036e9093db708117f6f0be9d5e24550a6548276",
+  "ceilings_sha256": "b1d971457fc102f506a2eeb8a9ba678c0581326c35e229498b013ec2164ddd50",
   "checkers": {
     "A2:bge-m3-zeroshot-v2.0-c": {
       "auroc": {
@@ -61,6 +61,14 @@
         "mechanism:version": {
           "accuracy": 0.5,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0408,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.0,
@@ -303,6 +311,14 @@
           "accuracy": 0.5,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.2449,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.125,
           "triples": 8
@@ -539,6 +555,14 @@
         "mechanism:version": {
           "accuracy": 0.5,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0408,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.0,
@@ -780,6 +804,14 @@
         "mechanism:version": {
           "accuracy": 0.0,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0816,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.125,
@@ -1027,6 +1059,14 @@
         "mechanism:version": {
           "accuracy": 0.0,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0204,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.0,
@@ -1304,6 +1344,14 @@
           "accuracy": 0.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.0,
           "triples": 8
@@ -1579,6 +1627,14 @@
         "mechanism:version": {
           "accuracy": 0.0,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.0,
@@ -1856,6 +1912,14 @@
           "accuracy": 0.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.0,
           "triples": 8
@@ -2131,6 +2195,14 @@
         "mechanism:version": {
           "accuracy": 0.0,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.1224,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.125,
@@ -2408,6 +2480,14 @@
           "accuracy": 0.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.0,
           "triples": 8
@@ -2683,6 +2763,14 @@
         "mechanism:version": {
           "accuracy": 0.0,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.0,
@@ -2960,6 +3048,14 @@
           "accuracy": 0.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.0,
           "triples": 8
@@ -3236,6 +3332,14 @@
           "accuracy": 0.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.0,
           "triples": 8
@@ -3482,6 +3586,14 @@
           "accuracy": 0.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.0204,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.0,
           "triples": 8
@@ -3682,6 +3794,14 @@
           "accuracy": 1.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.2,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.898,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.625,
           "triples": 8
@@ -3867,6 +3987,14 @@
         "mechanism:version": {
           "accuracy": 0.0,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.1429,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.0,
@@ -4082,6 +4210,14 @@
           "accuracy": 1.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.2,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.8776,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.625,
           "triples": 8
@@ -4278,6 +4414,14 @@
           "accuracy": 1.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.551,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.5,
           "triples": 8
@@ -4473,6 +4617,14 @@
         "mechanism:version": {
           "accuracy": 1.0,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.4,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.8163,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.625,
@@ -4673,6 +4825,14 @@
           "accuracy": 1.0,
           "triples": 2
         },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.898,
+          "triples": 49
+        },
         "obstacle:distractor": {
           "accuracy": 0.625,
           "triples": 8
@@ -4868,6 +5028,14 @@
         "mechanism:version": {
           "accuracy": 1.0,
           "triples": 2
+        },
+        "nm_kind:empty-output-nonzero-exit": {
+          "accuracy": 0.0,
+          "triples": 5
+        },
+        "nm_kind:removed": {
+          "accuracy": 0.5306,
+          "triples": 49
         },
         "obstacle:distractor": {
           "accuracy": 0.5,
@@ -5406,13 +5574,25 @@
     },
     {
       "id": "lenient-parse-quoted-json",
-      "text": "The lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose: only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form."
+      "text": "Written down post-data, after the judge's responses were seen: the lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose, so only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form."
     }
   ],
   "diagnosis": [
     "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
     "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev. Gating changes the result (deberta-v3-large-zeroshot-v2.0-c: 0.22 ungated, 0.07 gated; nli-deberta-v3-base: 0.02 ungated, 0.11 gated; R512: 0.81 ungated, 0.48 gated; R2048: 0.81 ungated, 0.50 gated).",
     "Foundation Models answers C on 16 of the 16 NOT MENTIONED variants that fit its context: it reads an absence as a contradiction (a behaviour, not only a score)."
+  ],
+  "findings": [
+    {
+      "id": "nm-empty-output-nonzero-exit",
+      "judge": "J's NOT MENTIONED → S misses are on 002, 025, 031, 032; 4 of 4 fall in this group, where a visible nonzero exit supports “the call failed”.",
+      "text": "Five NOT MENTIONED variants keep the needle's call with its output emptied and its nonzero exit visible (`empty-output-nonzero-exit`: 002, 025, 026, 031, 032); the other 49 remove it. A visible nonzero exit supports a claim that the call failed, so these items are a gray zone for NOT MENTIONED. They are scored apart below.",
+      "triples": 5
+    },
+    {
+      "id": "c-rests-on-notes",
+      "text": "In 027 and 028 (a refuted belief's reason), CONTRADICTED rests on a `[notes]` entry alone, with no tool output behind it."
+    }
   ],
   "label_items": [
     {
@@ -5815,7 +5995,7 @@
       "note": "labelled `start` under approx-v1 (position_at 0.318, 0.012 inside the boundary); flagged, not excluded. `position_by_tokenizer` gives the needle's position by each tokenizer's real token count."
     }
   ],
-  "lead": "This round is a pilot: 54 triples from 32 claim shapes. Its minimum detectable effect (MDE, 2.8 × the bootstrap SE of a paired difference) is about 18 (median; 7–24 over the 20 paired comparisons) points of triple accuracy, so differences between checkers smaller than that cannot be seen. Results are per checker, each with its verdict; no ranking is claimed until the corpus reaches about 150 claims.",
+  "lead": "This round is a pilot: 54 triples from 32 claim shapes. Its minimum detectable effect (MDE, 2.8 × the bootstrap SE of a paired difference) is about 18 points (7–24 across the paired comparisons) of triple accuracy, so differences between checkers smaller than that cannot be seen. Results are per checker, each with its verdict; no ranking is claimed until the corpus reaches about 150 claims.",
   "mde_points_median": 18,
   "mde_points_range": [
     7,
@@ -5888,6 +6068,14 @@
       "requests": 2882,
       "strict": 0.7797
     }
+  },
+  "reader_provenance": {
+    "context": "524,288 tokens (yarn)",
+    "quantization": "EXL3, 2.05 bpw",
+    "reasoning_effort": "medium",
+    "registry_id": "ada48-tabbyapi-exl3-qwen38flashnext-2p05",
+    "sampler": "the server's thinking sampler preset",
+    "served_name": "Qwen3.8-Flash-Next-exl3-2.05bpw-yarn2"
   },
   "schema": "sidekick-verification-scores/1",
   "set": "review-4",

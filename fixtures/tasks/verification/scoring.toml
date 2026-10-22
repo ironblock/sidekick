@@ -123,7 +123,18 @@ note = "approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts 
 
 [[deviation]]
 id = "lenient-parse-quoted-json"
-text = "The lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose: only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form."
+text = "Written down post-data, after the judge's responses were seen: the lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose, so only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form."
+
+# Findings for the next corpus round, from the reviewer's reading of this
+# round's results. This round's labels and scores don't change.
+[[finding]]
+id = "nm-empty-output-nonzero-exit"
+text = "Five NOT MENTIONED variants keep the needle's call with its output emptied and its nonzero exit visible (`empty-output-nonzero-exit`: 002, 025, 026, 031, 032); the other 49 remove it. A visible nonzero exit supports a claim that the call failed, so these items are a gray zone for NOT MENTIONED. They are scored apart below."
+nm_kind = "empty-output-nonzero-exit"
+
+[[finding]]
+id = "c-rests-on-notes"
+text = "In 027 and 028 (a refuted belief's reason), CONTRADICTED rests on a `[notes]` entry alone, with no tool output behind it."
 
 [judge]
 max_tokens = 2048            # output budget per request, reasoning included

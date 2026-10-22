@@ -66,7 +66,7 @@ def claim_for(triple: dict, claims: dict) -> dict:
 
 def review_numbers(triples: list[dict]) -> dict[str, int]:
     """Each triple's number in the reviewer's index (gen_verification.export_review)."""
-    order = sorted(triples, key=lambda t: (not t["worked"], t["claim"]["type"], t["id"]))
+    order = sorted(triples, key=lambda t: (not t.get("worked"), t["claim"].get("type", ""), t["id"]))
     return {t["id"]: n for n, t in enumerate(order, 1)}
 
 
