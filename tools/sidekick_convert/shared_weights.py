@@ -220,7 +220,7 @@ def compare(separate, union, feeds, units, log=print):
         (tmp / "spec.json").write_text(json.dumps(spec))
         home = tmp / "home"
         home.mkdir()
-        env = {**os.environ, "CFFIXED_USER_HOME": str(home),
+        env = {**os.environ, "CFFIXED_USER_HOME": str(home), "SIDEKICK_CONVERT_PRIVATE_CACHE": str(home),
                "PYTHONPATH": os.pathsep.join([str(_TOOLS)] + [p for p in [os.environ.get("PYTHONPATH")] if p])}
         child = subprocess.run([sys.executable, "-m", "sidekick_convert.shared_weights", "_compare",
                                 str(tmp / "spec.json"), str(tmp / "result.json")],
@@ -235,17 +235,20 @@ def _compare_child(spec_path, result_path):
     """The child side of compare(): load both builds for one compute path
     and compare every program's output on every case, bit for bit."""
     import coremltools as ct
+    from .core import purge_coreml_cache
     spec = json.loads(Path(spec_path).read_text())
     units = getattr(ct.ComputeUnit, spec["units"])
     keep = []     # Core ML releases a prediction's inputs later, on its own queue (gates._INPUTS)
-    load = lambda paths: [ct.models.CompiledMLModel(p, compute_units=units) for p in paths]
-    separate, union = load(spec["separate"]), load(spec["union"])
     feeds = np.load(spec["feeds"])
     result = {"units": spec["units"], "cases": spec["cases"], "outputs": 0, "identical": True}
-    for i in range(spec["cases"]):
-        hidden = None
-        for k, (a, b, names, output) in enumerate(zip(separate, union, spec["inputs"], spec["outputs"])):
-            feed = {n: (hidden if n == "hidden_in" else np.ascontiguousarray(feeds[f"{i}/{n}"])) for n in names}
+    hidden = [None] * spec["cases"]
+    # one chunk at a time, both builds of it, so the cache holds two programs at most
+    for k, (sep, uni, names, output) in enumerate(zip(spec["separate"], spec["union"], spec["inputs"],
+                                                      spec["outputs"])):
+        a = ct.models.CompiledMLModel(sep, compute_units=units)
+        b = ct.models.CompiledMLModel(uni, compute_units=units)
+        for i in range(spec["cases"]):
+            feed = {n: (hidden[i] if n == "hidden_in" else np.ascontiguousarray(feeds[f"{i}/{n}"])) for n in names}
             keep.append(feed)
             x = np.asarray(a.predict(feed)[output])
             y = np.asarray(b.predict(feed)[output])
@@ -256,7 +259,9 @@ def _compare_child(spec_path, result_path):
                 result.setdefault("first_difference", {
                     "case": i, "program": k, "dtypes": [str(x.dtype), str(y.dtype)],
                     "max_abs": None if diff is None else float(np.nanmax(diff))})
-            hidden = x
+            hidden[i] = x
+        del a, b
+        purge_coreml_cache()
     Path(result_path).write_text(json.dumps(result))
 
 

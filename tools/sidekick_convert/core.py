@@ -46,6 +46,7 @@ Two inputs are kept apart by type, so no recipe can mix them up:
 """
 
 import dataclasses
+import os
 import shutil
 import subprocess
 import sys
@@ -344,6 +345,27 @@ def note_bypass(manifest, notes):
         f.write("\n".join(lines) + "\n")
 
 
+PRIVATE_CACHE_ENV = "SIDEKICK_CONVERT_PRIVATE_CACHE"
+"""Set by cli.py to the temporary home whose Core ML cache the conversion
+owns (CFFIXED_USER_HOME), so purge_coreml_cache() may empty it."""
+
+
+def purge_coreml_cache():
+    """Delete the compiled bundles Core ML has cached so far, when the cache
+    is the conversion's own (cli.py's temporary home). A conversion loads
+    every program from a temporary path once per compute path and never
+    again, so an entry is dead once its model is released, and each holds
+    a few times the program's weights (about 2.3 GB per compute path for a
+    0.6B model's bucket). A no-op when the caller chose the cache."""
+    home = os.environ.get(PRIVATE_CACHE_ENV)
+    if not home or os.environ.get("CFFIXED_USER_HOME") != home:
+        return
+    import gc
+    gc.collect()
+    for entry in Path(home, "Library", "Caches").glob("*/com.apple.e5rt.e5bundlecache/*/*"):
+        shutil.rmtree(entry, ignore_errors=True)
+
+
 def _gate(job, fn, *args):
     try:
         return fn(*args)
@@ -639,6 +661,7 @@ def _chain_identity(job, seq, cases, wrapper, example, chain, work, report):
             same_nan = np.array_equal(np.isnan(x), np.isnan(y))
             worst = max(worst, float(np.nanmax(np.abs(x - y))) if same_nan else np.inf)
     del a, b
+    purge_coreml_cache()
     shutil.rmtree(whole_compiled.parent, ignore_errors=True)
     report["chain_gpu_vs_unchunked"] = worst
     if worst != 0.0:

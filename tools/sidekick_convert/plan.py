@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .core import FUSED_ATTENTION, GateFailure
+from .core import FUSED_ATTENTION, GateFailure, purge_coreml_cache
 
 HEAVY = ("linear", "matmul", "conv")
 
@@ -62,7 +62,9 @@ def read(compiled, units="CPU_AND_NE"):
     """Per-op devices of a compiled model, in program order, for the compute
     units Core ML is asked to use (a coremltools ComputeUnit name)."""
     try:
-        return _load(compiled, units)
+        ops = _load(compiled, units)
+        purge_coreml_cache()
+        return ops
     except Exception as first:
         with tempfile.TemporaryDirectory() as tmp:
             clone = Path(tmp) / Path(compiled).name
