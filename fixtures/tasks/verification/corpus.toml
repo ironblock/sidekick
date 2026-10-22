@@ -10,10 +10,9 @@ schema = "sidekick-verification-corpus/1"
 seed = 133
 # Sets are reviewed by hand in numbered rounds ("batches"): `batch` is the
 # round whose claims this corpus includes (a claim added for a later round
-# carries `since` and stays out), and `set` names the set it builds. Review
-# round 3's set was revised once after review, so it is review-3b.
-batch = 3
-set = "review-3b"
+# carries `since` and stays out), and `set` names the set it builds.
+batch = 4
+set = "review-4"
 # Call ids increase through each haystack; the claim's pointers follow.
 monotonic_calls = true
 max_per_shape = 3      # instances of one claim shape

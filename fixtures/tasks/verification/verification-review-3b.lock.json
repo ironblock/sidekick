@@ -8,6 +8,7 @@
   "schema": "sidekick-verification-lock/1",
   "set": "review-3b",
   "set_sha256": "fbc74be39d8b210420d2983bc872ad02b25e896dd53bda9f427453a12b9e525d",
+  "source_commit": "d5817196ccbea4c70fba7553f780792089078c12",
   "triples": [
     {
       "evidence_sha256": {
@@ -495,5 +496,6 @@
       "id": "users-csv-four-records.1k.middle.none",
       "sha256": "96140bb7dc5f86ad6dc3ebe4c6899c339db968c668350bae7f35f624bc4d057b"
     }
-  ]
+  ],
+  "validated": "host project review of review-3b: all 17 changed triples passed (54 of 54 across review-3 and review-3b)"
 }
