@@ -425,6 +425,30 @@ class Ceilings(unittest.TestCase):
         self.assertEqual(scoring_ceilings.context_ceiling(recs), {"triples": 2, "fit": 1, "share": 0.5})
 
 
+class NliRequest(unittest.TestCase):
+    """The harness's /v1/classify request, pinned: the evidence window is
+    the input (the premise, first in each pair), the claim the one label,
+    put whole into the hypothesis (second), as MNLI was trained. The audit
+    after the first scored round checked this end to end with the textbook MNLI triple
+    (`scoring_run.py sanity`) on every nli model."""
+
+    def test_premise_first_claim_whole(self):
+        from tasks import scoring_run as sr
+        b = sr.nli_body("m", [sr.MNLI_PREMISE], sr.MNLI_HYPOTHESES[0][0], True)
+        self.assertEqual(b, {"model": "m", "input": ["A man plays a guitar."],
+                             "candidate_labels": ["A man plays an instrument."], "hypothesis_template": "{}",
+                             "nli_probs": True})
+        self.assertNotIn("nli_probs", sr.nli_body("m", ["e"], "c", False))
+        self.assertEqual([e for _, e in sr.MNLI_HYPOTHESES], ["entailment", "contradiction", "neutral"])
+
+    def test_the_verdict_rules_read_classes_by_name(self):
+        # roberta-large-mnli's output order is contradiction, neutral, entailment; the rules key by name.
+        p = {"contradiction": 0.001, "neutral": 0.004, "entailment": 0.995}
+        self.assertEqual(rules.three_way([p], 0.5)["verdict"], "S")
+        self.assertEqual(rules.three_way([{"contradiction": 0.999, "neutral": 0.0, "entailment": 0.001}], 0.5)
+                         ["verdict"], "C")
+
+
 class JudgeAndExport(unittest.TestCase):
     def both(self, content):
         return judge.parse(content), judge.parse_strict(content)
@@ -741,14 +765,56 @@ class Report(unittest.TestCase):
         for name in ("A3:m", "A3g:m", "M:x", "F:fm"):
             acc = s["checkers"][name].get("triple_accuracy") or s["checkers"][name]["binary_triple_accuracy"]
             self.assertEqual(acc["verdict"], rules.LIMITED, name)
-        self.assertTrue(s["diagnosis"][0].startswith("The harness is validated: the second reader passes 36/36"))
-        self.assertIn("max-aggregation at τ = 0.5", s["diagnosis"][1])
-        self.assertIn("m: ", s["diagnosis"][1])  # the gated and ungated scores
-        self.assertIn("Foundation Models answers C on 16 of the 16 NOT MENTIONED variants", s["diagnosis"][2])
-        self.assertEqual(len(s["checkers"]["A3:m"]["diagnosis"]), 2)
-        self.assertEqual(s["checkers"]["F:fm"]["diagnosis"], [s["diagnosis"][2]])
+        d = s["diagnosis"]
+        self.assertTrue(d[0].startswith("The second reader passes 36/36 controls through identical windows"))
+        # What the second reader rules out, and what it doesn't.
+        self.assertIn("rules out two things", d[0])
+        self.assertIn("does not by itself rule out", d[0])
+        self.assertTrue(any("found no construction bug" in x for x in d))
+        scope = next(x for x in d if x.startswith("Scope:"))
+        self.assertIn("max-aggregation at τ = 0.5", scope)
+        self.assertIn("m: ", scope)  # the gated and ungated scores
+        self.assertTrue(any("Foundation Models answers C on 16 of the 16 NOT MENTIONED variants" in x for x in d))
+        # The audit's attributions, per family; the verdicts stay instrument-limited.
+        a3 = s["checkers"]["A3:m"]["diagnosis"]
+        self.assertTrue(a3[0].startswith("instrument-limited; cause not yet attributed; interface verified "
+                                         "(construction eliminated). Leading candidate: the domain"))
+        self.assertIn("a matching-kind complete artifact", a3[0])
+        self.assertTrue(s["checkers"]["M:x"]["diagnosis"][0].startswith(
+            "instrument-limited; cause not yet attributed; interface verified"))
+        self.assertTrue(s["checkers"]["F:fm"]["diagnosis"][0].startswith(
+            "instrument-limited; cause attributed by the audit: Foundation Models: the model's own behaviour"))
+        self.assertTrue(any(x.startswith("Three-way nli models: cause not yet attributed;") for x in d))
         self.assertNotIn("diagnosis", s["checkers"]["R512"])
         self.assertIn("Diagnosis beside the instrument-limited verdicts", md)
+        # Without an attribution, the cause is not yet attributed, with the open candidates.
+        bare = {**cfg, "attribution": []}
+        s2 = report.build(runs, self.triples(), bare, None)
+        self.assertEqual(s2["checkers"]["A3:m"]["diagnosis"][0],
+                         "instrument-limited; cause not yet attributed (open: interface, label mapping, tokenizer "
+                         "cuts, τ, domain)")
+        self.assertIn("Otherwise: instrument-limited; cause not yet attributed", s2["diagnosis"][-1])
+        self.assertEqual(s2["checkers"]["A3:m"]["triple_accuracy"]["verdict"], rules.LIMITED)
+
+    def test_attribution_wording_by_status(self):
+        att = {a["families"][0]: a for a in scoring_set.config()["attribution"]}
+        a2g = report.attribution_text(att["A2g"])
+        self.assertTrue(a2g.startswith("cause not yet attributed; candidates from the audit: τ (post-hoc sweep on "
+                                       "the gate's own controls; not held out). At τ ≤ 0.1"))
+        self.assertTrue(report.attribution_text(att["A2g"], header=True).startswith(
+            "cause not yet attributed; candidate: τ (post-hoc sweep on the gate's own controls; not held out)"))
+        self.assertTrue(report.attribution_text(att["H"]).startswith(
+            "cause not yet attributed; candidates from the audit: τ (post-hoc sweep"))
+        self.assertTrue(report.attribution_text(att["A2"]).startswith(
+            "cause not yet attributed; candidates from the audit: max-aggregation over long forms (the short forms "
+            "pass at τ = 0.05"))
+        self.assertIn("21 of 24", report.attribution_text(att["A2"]))
+        self.assertEqual(report.attribution_text(att["M"]), att["M"]["text"])
+        self.assertTrue(report.attribution_text(att["F"]).startswith("cause attributed by the audit: Foundation"))
+        for fam in ("A2g", "H", "A2", "A3", "M"):
+            self.assertNotIn("cause attributed by the audit", report.attribution_text(att[fam]), fam)
+        f = {x["id"]: x for x in scoring_set.config()["finding"]}
+        self.assertIn("The rustc contradiction control is a defect", f["controls-two-sets"]["text"])
 
     def test_nm_kind_scored_apart_and_findings(self):
         cfg = {**scoring_set.config(), "resamples": 50}
@@ -764,7 +830,7 @@ class Report(unittest.TestCase):
         self.assertEqual(d["nm_kind:empty-output-nonzero-exit"]["triples"], 3)
         self.assertEqual(d["nm_kind:removed"]["triples"], 13)
         f = {x["id"]: x for x in s["findings"]}
-        self.assertEqual(set(f), {"nm-empty-output-nonzero-exit", "c-rests-on-notes"})
+        self.assertEqual(set(f), {"nm-empty-output-nonzero-exit", "c-rests-on-notes", "controls-two-sets"})
         self.assertIn("2 of 3 fall in this group", f["nm-empty-output-nonzero-exit"]["judge"])
         md = report.render_md({**s, "reader_provenance": {"registry_id": "example-id", "served_name": "example"}})
         self.assertIn("By NOT MENTIONED kind", md)
