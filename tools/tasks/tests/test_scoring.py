@@ -667,6 +667,66 @@ class Report(unittest.TestCase):
                                   rules.binary(gold)})
         return {"checker": name, "family": fam, "mode": mode, "items": items}
 
+    def failing(self, run):
+        """The same run with every positive control answered wrong."""
+        run = dict(run)
+        run["items"] = [{**i, "verdict": "NM" if run["mode"] == "three-way" else "not-S"}
+                        if i["item"].startswith("ctl:") and ":positive:" in i["item"] else i for i in run["items"]]
+        return run
+
+    def test_deviations_notes_and_diagnosis(self):
+        cfg = {**scoring_set.config(), "resamples": 200}
+        a3 = self.failing(self.run_("A3:m", "A3", "three-way", lambda i: i % 8 == 0))
+        a3g = self.failing(self.run_("A3g:m", "A3g", "three-way", lambda i: i % 3 == 0))
+        r512 = {**self.run_("R512", "R512", "three-way", lambda i: True), "reader_form": "window-512"}
+        r400 = {**self.run_("R400", "R400", "three-way", lambda i: True), "reader_form": "chunk-400"}
+        m = self.failing(self.run_("M:x", "M", "binary", lambda i: i % 2 == 0))
+        f = self.failing(self.run_("F:fm", "F", "three-way", lambda i: True))
+        for i in f["items"]:
+            if i["item"].endswith(":nm"):
+                i["verdict"] = "C"
+        f["items"][0]["not_run"] = True
+        runs = [a3, a3g, r512, r400, m, f]
+        for r in runs:
+            if r.get("reader_form"):
+                r["parse_rates"] = {"requests": 10, "lenient": 1.0, "strict": 0.9, "fenced": 0.0}
+        s = report.build(runs, self.triples(), cfg, None)
+        # Deviations, from scoring.toml, in the header and the section.
+        self.assertEqual([d["id"] for d in s["deviations"]],
+                         ["not-run-controls", "hhem-premise-cap", "chunk-400-approximate"])
+        md = report.render_md(s)
+        for d in s["deviations"]:
+            self.assertIn(d["text"], md)
+        # The chunk-400 note beside every chunk-400 number, and nowhere else.
+        note = "approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree"
+        self.assertEqual(s["checkers"]["R400"]["notes"], [note])
+        self.assertNotIn("notes", s["checkers"]["R512"])
+        self.assertEqual(s["reader_parse_rates"]["chunk-400"]["notes"], [note])
+        m_cmp = [c for c in s["comparisons"] if "R400" in (c["x"], c["y"])]
+        self.assertTrue(m_cmp and all(c["notes"] == [note] for c in m_cmp))
+        self.assertEqual(md.count(note), 1 + 1 + len(m_cmp))
+        # Verdicts stay as pre-registered; the diagnosis sits beside them.
+        for name in ("A3:m", "A3g:m", "M:x", "F:fm"):
+            acc = s["checkers"][name].get("triple_accuracy") or s["checkers"][name]["binary_triple_accuracy"]
+            self.assertEqual(acc["verdict"], rules.LIMITED, name)
+        self.assertTrue(s["diagnosis"][0].startswith("The harness is validated: the second reader passes 36/36"))
+        self.assertIn("max-aggregation at τ = 0.5", s["diagnosis"][1])
+        self.assertIn("m: ", s["diagnosis"][1])  # the gated and ungated scores
+        self.assertIn("Foundation Models answers C on 16 of the 16 NOT MENTIONED variants", s["diagnosis"][2])
+        self.assertEqual(len(s["checkers"]["A3:m"]["diagnosis"]), 2)
+        self.assertEqual(s["checkers"]["F:fm"]["diagnosis"], [s["diagnosis"][2]])
+        self.assertNotIn("diagnosis", s["checkers"]["R512"])
+        self.assertIn("Diagnosis beside the instrument-limited verdicts", md)
+
+    def test_the_gate_rule_is_declared(self):
+        cfg = scoring_set.config()
+        self.assertTrue(cfg["gate"]["exclude_not_run"])
+        self.assertEqual(cfg["hhem"]["max_premise_tokens"], 8192)
+        res = [{"group": "positive", "form": "long", "gold": "S", "verdict": None, "not_run": True}] * 6
+        self.assertIsNone(rules.control_gate(res, ("positive",))["groups"]["positive/long"]["passed"])
+        self.assertFalse(rules.control_gate(res, ("positive",), exclude_not_run=False)["groups"]["positive/long"]
+                         ["passed"])
+
     def test_whole_haystack_ceilings_count_what_ran(self):
         for fam in ("F", "H"):
             run = {"checker": f"{fam}:x", "family": fam, "mode": "binary", "items": [

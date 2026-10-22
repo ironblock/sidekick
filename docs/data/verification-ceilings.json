@@ -18273,7 +18273,7 @@
   "margin": 8,
   "overlap": 128,
   "schema": "sidekick-verification-ceilings/1",
-  "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+  "scoring_sha256": "eb849856dd9813bb400945121f5c3b6703233e3f35e4eeb71b73cb67b82e2405",
   "set": "review-4",
   "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4"
 }

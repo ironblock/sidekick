@@ -23,6 +23,15 @@ readers' prompt defines the corpus's rules for current evidence, while the
 nli checkers get the claim and evidence only; the 512-token reader's windows
 match nli-deberta-v3-base's. J's and the second reader's parse rates,
 lenient (scored) and strict, are reported per reader form.
+
+Deviations from the pre-registered design are declared in scoring.toml
+(`[[deviation]]`) and listed in the header and the section; one with a
+`beside` form (chunk-400) puts its note beside every number of that form.
+Verdicts are never relabelled. Beside each failed checker's verdict, the
+diagnosis (design §7) is computed from the runs: whether the second reader
+passed its controls through the same windows and max rule, the scope
+(max-aggregation at τ), what gating changed, and Foundation Models' answers
+on NOT MENTIONED variants.
 """
 
 from __future__ import annotations
@@ -136,7 +145,8 @@ def score_run(run: dict, triples: list[dict], cfg: dict, ceilings: dict | None) 
             ctl.append({"group": group, "form": form, "gold": {"positive": "S", "contradiction": "C",
                                                                "null": "NM"}[group], "verdict": r["verdict"],
                         "not_run": bool(r.get("not_run"))})
-    gate = rules.control_gate(ctl, answers, cfg["gate"]["short"], cfg["gate"]["long"])
+    gate = rules.control_gate(ctl, answers, cfg["gate"]["short"], cfg["gate"]["long"],
+                              cfg["gate"].get("exclude_not_run", False))
     correct, shape_of, pairs, cells = {}, {}, [], defaultdict(list)
     e_pos, e_neg, c_pos, c_neg = [], [], [], []
     per_variant = {"S": [0, 0], "C": [0, 0], "NM": [0, 0]}
@@ -188,10 +198,12 @@ def score_run(run: dict, triples: list[dict], cfg: dict, ceilings: dict | None) 
            "provenance": run.get("provenance", {}), "_correct": correct}
     if mode == "three-way":
         out["confusion"] = rules.confusion(pairs)
-        out["binary_view"] = {"triples_right": sum(rules.triple_correct(
+        out["_correct_binary"] = {t: rules.triple_correct(
             {v: by_item.get(scoring_set.item_id(t, v), {}).get("verdict") for v in scoring_set.VARIANTS}, "binary")
-            for t in correct), "of": len(correct)}
+            for t in correct}
+        out["binary_view"] = {"triples_right": sum(out["_correct_binary"].values()), "of": len(correct)}
     else:
+        out["_correct_binary"] = correct
         out["three_way"] = "not applicable"
     return out
 
@@ -205,24 +217,33 @@ def build(runs: list[dict], triples: list[dict], cfg: dict, ceilings: dict | Non
     comparisons = []
 
     def pair(x, y, why):
+        """X against Y on the same triples. When their modes differ (a
+        three-way reader shadowing a two-way checker), both are compared on
+        binary terms, as the two-way checker answers."""
         sx, sy = scored[x], scored[y]
-        if not sx.get("_correct") or not sy.get("_correct") or sx["mode"] != sy["mode"]:
+        if not sx.get("_correct") or not sy.get("_correct"):
             return
-        cmp = rules.compare(sx["_correct"], sy["_correct"], shape_of, cfg["resamples"], cfg["seed"],
-                            cfg["mde_factor"])
-        k = "triple_accuracy" if sx["mode"] == "three-way" else "binary_triple_accuracy"
+        mode = sx["mode"] if sx["mode"] == sy["mode"] else "binary"
+        key = "_correct" if sx["mode"] == sy["mode"] else "_correct_binary"
+        cx, cy = sx[key], sy[key]
+        cmp = rules.compare(cx, cy, shape_of, cfg["resamples"], cfg["seed"], cfg["mde_factor"])
+        k = "triple_accuracy" if mode == "three-way" else "binary_triple_accuracy"
         loser = x if cmp["value"] < 0 else y
         shadow = SHADOW.get(scored[loser]["family"])
         share = None
         if shadow and shadow in scored and scored[shadow]["gate"]["passed"]:
-            winner = y if loser == x else x
-            disc = [t for t in sx["_correct"] if scored[winner]["_correct"].get(t) and
-                    not scored[loser]["_correct"].get(t)]
-            rc = scored[shadow].get("_correct", {})
+            cw, cl = (cy, cx) if loser == x else (cx, cy)
+            disc = [t for t in cx if cw.get(t) and not cl.get(t)]
+            rc = scored[shadow].get(key, {})
             share = sum(1 for t in disc if not rc.get(t, False)) / len(disc) if disc else None
-        v = rules.comparison_verdict(cmp, sx["gate"]["passed"], sy["gate"]["passed"], sx[k].get("ceiling"),
-                                     sy[k]["value"], sy[k].get("ceiling"), sx[k]["value"], share)
-        comparisons.append({"x": x, "y": y, "what": why, **cmp, **v})
+
+        def acc(s, c):  # (value, ceiling) on the comparison's terms
+            own = s.get(k)
+            return sum(c.values()) / len(c), (own or {}).get("ceiling")
+
+        (vx, cx_ceil), (vy, cy_ceil) = acc(sx, cx), acc(sy, cy)
+        v = rules.comparison_verdict(cmp, sx["gate"]["passed"], sy["gate"]["passed"], cx_ceil, vy, cy_ceil, vx, share)
+        comparisons.append({"x": x, "y": y, "what": why, "mode": mode, **cmp, **v})
 
     for name, s in scored.items():
         fam = s.get("family", "")
@@ -235,26 +256,110 @@ def build(runs: list[dict], triples: list[dict], cfg: dict, ceilings: dict | Non
     mde = round(100 * sum(mdes) / len(mdes)) if mdes else None
     for s in scored.values():
         s.pop("_correct", None)
-    parse_rates = {r["reader_form"]: r["parse_rates"] for r in runs if r.get("reader_form") and r.get("parse_rates")}
+        s.pop("_correct_binary", None)
+    parse_rates = {r["reader_form"]: dict(r["parse_rates"]) for r in runs
+                   if r.get("reader_form") and r.get("parse_rates")}
+    deviations = [dict(d) for d in cfg.get("deviation", [])]
+    # Each deviation that must stand beside the numbers of a form (chunk-400).
+    form_of = {r["checker"]: r.get("reader_form") for r in runs}
+    for d in deviations:
+        if not d.get("beside"):
+            continue
+        for name, s in scored.items():
+            if form_of.get(name) == d["beside"]:
+                s.setdefault("notes", []).append(d["note"])
+        for c in comparisons:
+            if d["beside"] in (form_of.get(c["x"]), form_of.get(c["y"])):
+                c.setdefault("notes", []).append(d["note"])
+        if d["beside"] in parse_rates:
+            parse_rates[d["beside"]].setdefault("notes", []).append(d["note"])
+    diag = diagnosis(scored, runs, comparisons, cfg)
     return {"schema": SCHEMA, "status": "pilot",
             "lead": LEAD.format(triples=len(triples), shapes=len(set(shape_of.values())),
                                 mde=mde if mde is not None else "20–25 (a priori)"),
+            "deviations": [{"id": d["id"], "text": d["text"]} for d in deviations],
+            "diagnosis": diag,
             "notes": list(NOTES), "reader_parse_rates": parse_rates,
             "set": cfg["set"], "tau": cfg["tau"], "mde_points_mean": mde,
             "ceilings_sha256": canon.sha256_file(CEILINGS) if CEILINGS.exists() else None,
             "checkers": scored, "comparisons": comparisons}
 
 
+WINDOW_FAMILIES = ("A3", "A3g", "A2", "A2g", "M")
+READER_OF_WINDOWS = ("R512", "R512g", "R2048", "R2048g")
+
+
+def diagnosis(scored: dict, runs: list[dict], comparisons: list[dict], cfg: dict) -> list[str]:
+    """The diagnosis beside the instrument-limited verdicts (design §7). The
+    verdicts themselves are never changed; this says why, from the runs.
+    Also attaches each failed checker's own lines as `diagnosis`."""
+    tau = cfg["tau"]
+    out = []
+    readers = [scored[n] for n in READER_OF_WINDOWS if n in scored]
+    passed = [r for r in readers if r["gate"]["passed"]]
+    failed_window = [s for s in scored.values() if s.get("family") in WINDOW_FAMILIES and not s["gate"]["passed"]]
+    harness = None
+    if passed and failed_window:
+        right = sum(v["right"] for v in passed[0]["gate"]["groups"].values())
+        of = sum(v["of"] for v in passed[0]["gate"]["groups"].values())
+        harness = (f"The harness is validated: the second reader passes {right}/{of} controls through identical "
+                   f"windows and the same max rule ({', '.join(r['checker'] for r in passed)}), so the per-window "
+                   "checkers' control failures lie in their per-window calibration.")
+        out.append(harness)
+    scope = (f"Scope: these results hold under max-aggregation at τ = {tau}, not for NLI on tool output in "
+             "general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; "
+             "they are the next question once the corpus can be tuned on dev.")
+    gating = []
+    for c in comparisons:
+        if c["what"] == "gated against ungated" and c["x"] in scored and c["y"] in scored:
+            gx, ux = scored[c["x"]], scored[c["y"]]
+            k = "triple_accuracy" if gx["mode"] == "three-way" else "binary_triple_accuracy"
+            if gx.get(k) and ux.get(k) and gx[k]["value"] != ux[k]["value"]:
+                gating.append(f"{c['y'].split(':', 1)[-1]}: {ux[k]['value']:.2f} ungated, {gx[k]['value']:.2f} gated")
+    if failed_window:
+        out.append(scope + (" Gating changes the result (" + "; ".join(gating) + ")." if gating else ""))
+    fm = next((r for r in runs if r.get("family") == "F"), None)
+    fm_line = None
+    if fm:
+        nm = [i for i in fm["items"] if i["item"].endswith(":nm") and not i.get("not_run")]
+        if nm:
+            k = sum(1 for i in nm if i.get("verdict") == "C")
+            fm_line = (f"Foundation Models answers C on {k} of the {len(nm)} NOT MENTIONED variants that fit its "
+                       "context: it reads an absence as a contradiction (a behaviour, not only a score).")
+            out.append(fm_line)
+    for s in scored.values():
+        if s["gate"]["passed"]:
+            continue
+        lines = []
+        if s.get("family") in WINDOW_FAMILIES:
+            lines += [x for x in (harness, scope) if x]
+        if s.get("family") == "F" and fm_line:
+            lines.append(fm_line)
+        if lines:
+            s["diagnosis"] = lines
+    return out
+
+
 def render_md(scores: dict) -> str:
     """The MODELS.md section."""
     lines = [MD_START, "", "### Verification checkers (pilot)", "", scores["lead"], ""]
+    if scores.get("deviations"):
+        lines += ["Deviations from the pre-registered design:", ""]
+        lines += [f"{n}. {d['text']}" for n, d in enumerate(scores["deviations"], 1)] + [""]
+    if scores.get("diagnosis"):
+        lines += ["Diagnosis beside the instrument-limited verdicts (the verdicts are unchanged):", ""]
+        lines += [f"- {d}" for d in scores["diagnosis"]] + [""]
     lines += [f"- {n}" for n in scores.get("notes", [])] + [""]
+
+    def note(x):
+        return f" ({'; '.join(x['notes'])})" if x.get("notes") else ""
+
     rates = scores.get("reader_parse_rates") or {}
     if rates:
         lines += ["| reader form | requests | parsed (lenient, scored) | parsed (strict) "
                   "| fenced (scored as failures) |", "|---|---|---|---|---|"]
-        lines += [f"| {f} | {r['requests']} | {r['lenient']:.3f} | {r['strict']:.3f} | {r.get('fenced', 0):.3f} |"
-                  for f, r in rates.items()]
+        lines += [f"| {f}{note(r)} | {r['requests']} | {r['lenient']:.3f} | {r['strict']:.3f} | "
+                  f"{r.get('fenced', 0):.3f} |" for f, r in rates.items()]
         lines.append("")
     lines += ["| checker | mode | controls | triple accuracy | 95% CI | chance | share of ceiling | verdict |",
               "|---|---|---|---|---|---|---|---|"]
@@ -262,13 +367,13 @@ def render_md(scores: dict) -> str:
         acc = s.get("triple_accuracy") or s.get("binary_triple_accuracy")
         if not acc:
             continue
-        lines.append(f"| {name} | {s['mode']} | {'pass' if s['gate']['passed'] else 'fail'} | {acc['value']:.3f} | "
-                     f"{acc['ci95'][0]:.3f}–{acc['ci95'][1]:.3f} | {acc['chance']:.3f} | "
+        lines.append(f"| {name}{note(s)} | {s['mode']} | {'pass' if s['gate']['passed'] else 'fail'} | "
+                     f"{acc['value']:.3f} | {acc['ci95'][0]:.3f}–{acc['ci95'][1]:.3f} | {acc['chance']:.3f} | "
                      f"{acc['share_of_ceiling'] if acc['share_of_ceiling'] is not None else '–'} | {acc['verdict']} |")
     if scores["comparisons"]:
         lines += ["", "| X | Y | what | difference | 95% CI | MDE | verdict |", "|---|---|---|---|---|---|---|"]
         for c in scores["comparisons"]:
-            lines.append(f"| {c['x']} | {c['y']} | {c['what']} | {c['value']:+.3f} | {c['ci95'][0]:+.3f}–"
+            lines.append(f"| {c['x']} | {c['y']} | {c['what']}{note(c)} | {c['value']:+.3f} | {c['ci95'][0]:+.3f}–"
                          f"{c['ci95'][1]:+.3f} | {c['mde']:.3f} | {c['verdict']} |")
     lines += ["", "Two-way checkers report binary triple accuracy (S against not-S), never three-way. Generated by "
               "tools/tasks/scoring_report.py from docs/data/verification-scores.json.", "", MD_END]

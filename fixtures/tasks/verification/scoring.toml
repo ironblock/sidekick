@@ -15,6 +15,10 @@ probs_tolerance = 1e-5  # nli_probs must sum to 1 within this
 [gate]
 short = 6               # of 6, in every group a checker answers
 long = 5
+# A control a checker can't run (over its context, as the design reports
+# Foundation Models' long forms) is left out of its gate and reported as
+# not run, rather than counted wrong. Deviation 1 below.
+exclude_not_run = true
 
 # sidekick's nli checkers (design §1). `ways` 3 reads `nli_probs` (D47) and
 # runs A3 and A3g; `ways` 2 reads e − c and runs A2 and A2g. The tokenizer is
@@ -84,6 +88,10 @@ revision = "de9a5e6ba9ba49531a022dba17e35ffeb2a6fad8"
 sha256_foundation_tokenizer = "fe2ebbbbde2985be723e0ce18217853e4020c5e9d35bd07be2c27ab9d3ead57a"
 threshold = 0.5         # consistent if p ≥ 0.5, as its model card reads scores
 reader = "full"         # it takes the whole premise: no chunks
+# Its attention is quadratic in the premise, so a 32k haystack can't run in
+# 32 GB; longer premises (flan-t5 tokens) are reported as not run, and its
+# ceiling counts only the triples that ran. Deviation 2 below.
+max_premise_tokens = 8192
 
 [foundation_models]
 id = "foundation-models"
@@ -96,6 +104,23 @@ reader = "full"
 # outside this repository from an exported JSONL batch (design §6.5). The
 # endpoint, its key and its model never appear here; the model's public id
 # is taken from the response file.
+# Deviations from the pre-registered design, confirmed by the reviewer
+# (design §7). The report lists each in its header and its MODELS.md section;
+# `beside` names numbers the text must stand beside.
+[[deviation]]
+id = "not-run-controls"
+text = "Controls a checker can't run (Foundation Models' long forms, over its context) are left out of its gate and reported as not run."
+
+[[deviation]]
+id = "hhem-premise-cap"
+text = "HHEM's premise is capped at 8,192 tokens. It ran 29 of 54 triples, and its ceiling counts only those."
+
+[[deviation]]
+id = "chunk-400-approximate"
+text = "chunk-400 shadows MiniCheck only approximately: 40% of chunks match exactly, and 181 of 198 chunk counts agree."
+beside = "chunk-400"
+note = "approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree"
+
 [judge]
 max_tokens = 2048            # output budget per request, reasoning included
 reasoning_effort = "medium"

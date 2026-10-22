@@ -187,15 +187,19 @@ def compare(x: dict[str, bool], y: dict[str, bool], shape_of: dict[str, str], re
 # ---------------------------------------------------------------- the control gate
 
 
-def control_gate(results: list[dict], answers: tuple[str, ...], short: int = 6, long: int = 5) -> dict:
+def control_gate(results: list[dict], answers: tuple[str, ...], short: int = 6, long: int = 5,
+                 exclude_not_run: bool = True) -> dict:
     """results: [{"group", "form", "gold", "verdict"}]. `answers` is the
     groups the checker answers (two-way checkers: positive and null). A
     two-way answer of not-S counts as right for the null group.
 
-    A control marked `not_run` (over the checker's context, which the design
-    reports as "not run" rather than wrong) is left out. A group and form
-    with none run is "not run" (`passed` None) and doesn't count against
-    the gate; one with some run must still reach its share of those run."""
+    With `exclude_not_run` (scoring.toml `[gate]`, a declared deviation), a
+    control marked `not_run` (over the checker's context) is left out. A
+    group and form with none run is "not run" (`passed` None) and doesn't
+    count against the gate; one with some run must still reach its share of
+    those run. Without it, a control not run counts as wrong."""
+    if not exclude_not_run:
+        results = [{**r, "not_run": False} for r in results]
     cells = defaultdict(lambda: [0, 0, 0])
     for r in results:
         if r["group"] not in answers:

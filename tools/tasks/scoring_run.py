@@ -395,11 +395,14 @@ def run_minicheck(a) -> int:
 
 
 def run_hhem(a) -> int:
-    """HHEM-2.1-Open at its defaults: the whole haystack as the premise.
-    `--max-premise-tokens` reports longer items as not run instead of
-    attempting them (its attention is quadratic in the premise)."""
+    """HHEM-2.1-Open at its defaults: the whole haystack as the premise, up
+    to scoring.toml's `max_premise_tokens` (a declared deviation: its
+    attention is quadratic in the premise). Longer items are reported as not
+    run; `--max-premise-tokens` overrides the cap for an experiment."""
     cfg, lock, items = load_items(a.items, a.limit)
     hh = cfg["hhem"]
+    if a.max_premise_tokens is None:
+        a.max_premise_tokens = hh.get("max_premise_tokens")
     from transformers import AutoModelForSequenceClassification  # noqa: E402
 
     m = AutoModelForSequenceClassification.from_pretrained(hh["model"], revision=hh["revision"],
