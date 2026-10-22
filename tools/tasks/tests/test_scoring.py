@@ -373,16 +373,49 @@ class Ceilings(unittest.TestCase):
 
 
 class JudgeAndExport(unittest.TestCase):
-    def test_parse_reads_the_final_json_only(self):
-        self.assertEqual(judge.parse('{"verdict": "supported"}'), ("S", True))
-        self.assertEqual(judge.parse('```json\n{"verdict": "contradicted"}\n```'), ("C", True))
-        self.assertEqual(judge.parse(' {"verdict":"not_mentioned"} '), ("NM", True))
-        self.assertEqual(judge.parse('I think {"verdict": "supported"}'), (None, False))
-        self.assertEqual(judge.parse('{"verdict": "maybe"}'), (None, False))
-        self.assertEqual(judge.parse(None), (None, False))
-        resp = {"response": {"choices": [{"message": {"content": '{"verdict": "supported"}',
+    def both(self, content):
+        return judge.parse(content), judge.parse_strict(content)
+
+    def test_bare_object(self):
+        self.assertEqual(self.both('{"verdict": "supported"}'), (("S", True), ("S", True)))
+        self.assertEqual(self.both(' {"verdict":"not_mentioned"} \n'), (("NM", True), ("NM", True)))
+
+    def test_leading_blank_line(self):
+        self.assertEqual(self.both('\n\n{"verdict": "contradicted"}'), (("C", True), ("C", True)))
+
+    def test_prose_then_json_is_lenient_only(self):
+        content = 'gh stack sync pushed 4 branches to origin.\n\n{"verdict": "not_mentioned"}'
+        self.assertEqual(self.both(content), (("NM", True), (None, False)))
+        self.assertEqual(self.both('\nThe excerpt says {nothing} here.\n{"verdict": "supported"}\n'),
+                         (("S", True), (None, False)))  # braces that aren't JSON are prose
+
+    def test_prose_only(self):
+        self.assertEqual(self.both("The claim is supported."), ((None, False), (None, False)))
+
+    def test_two_objects(self):
+        content = '{"verdict": "supported"}\n{"verdict": "contradicted"}'
+        self.assertEqual(self.both(content), ((None, False), (None, False)))
+        self.assertEqual(judge.parse('I first thought {"verdict": "supported"}, but\n{"verdict": "contradicted"}'),
+                         (None, False))
+
+    def test_json_then_trailing_prose(self):
+        self.assertEqual(self.both('{"verdict": "supported"}\nThat is my answer.'), ((None, False), (None, False)))
+        self.assertEqual(self.both('```json\n{"verdict": "supported"}\n```'), ((None, False), (None, False)))
+
+    def test_invalid_json_or_verdict(self):
+        for content in ('{"verdict": "supported"', "{'verdict': 'supported'}", '{"verdict": "maybe"}',
+                        '{"answer": "supported"}', '["supported"]', "", None):
+            self.assertEqual(self.both(content), ((None, False), (None, False)), content)
+
+    def test_nested_object_is_one_object(self):
+        self.assertEqual(judge.parse('Done.\n{"verdict": "supported", "why": {"line": 3}}'), ("S", True))
+
+    def test_reasoning_is_never_read(self):
+        resp = {"response": {"choices": [{"message": {"content": '\n{"verdict": "supported"}',
                                                       "reasoning_content": '{"verdict": "contradicted"}'}}]}}
         self.assertEqual(judge.parse(judge.final_content(resp)), ("S", True))
+        resp["response"]["choices"][0]["message"]["content"] = ""
+        self.assertEqual(judge.parse(judge.final_content(resp)), (None, False))
 
     def test_prompt_is_pinned_and_formats(self):
         p = judge.load()
@@ -444,11 +477,59 @@ class JudgeAndExport(unittest.TestCase):
         self.assertEqual(resp["model"], "example/model-1")
         self.assertEqual(resp["missing"], [reqs[-1]["id"]])
         self.assertEqual(resp["bad_sha"], [reqs[1]["id"]])
-        self.assertEqual(resp["by_id"][reqs[0]["id"]], {"verdict": "S", "parsed": True})
-        self.assertEqual(resp["by_id"][reqs[-1]["id"]], {"verdict": None, "parsed": False})
+        self.assertEqual(resp["by_id"][reqs[0]["id"]], {"verdict": "S", "parsed": True, "strict": True})
+        self.assertEqual(resp["by_id"][reqs[-1]["id"]], {"verdict": None, "parsed": False, "strict": False})
         wins = ex.reader_windows(reqs, resp, "window-512")
         self.assertEqual([w["index"] for w in wins["t1:s"]], [0, 1])
         self.assertIn("ctl:k:null:short", wins)
+
+    def test_parse_rates_per_form(self):
+        reqs, _ = self.batch()
+        answers = ['{"verdict": "supported"}', 'Because.\n{"verdict": "supported"}', "no json"]
+        by_id = {}
+        for n, r in enumerate(reqs):
+            c = answers[n % 3]
+            by_id[r["id"]] = {"verdict": judge.parse(c)[0], "parsed": judge.parse(c)[1],
+                              "strict": judge.parse_strict(c)[1]}
+        rates = ex.parse_rates(reqs, {"by_id": by_id})
+        self.assertEqual(set(rates), {"window-512", "window-2048", "chunk-400", "full"})
+        for form, r in rates.items():
+            ids = [x["id"] for x in reqs if x["form"] == form]
+            self.assertEqual(r["requests"], len(ids))
+            self.assertGreaterEqual(r["lenient"], r["strict"])
+            self.assertEqual(r["lenient"], round(sum(by_id[i]["parsed"] for i in ids) / len(ids), 4))
+
+    def test_report_carries_reader_parse_rates(self):
+        reqs, _ = self.batch()
+        by_id = {r["id"]: {"verdict": "S", "parsed": True, "strict": n % 2 == 0} for n, r in enumerate(reqs)}
+        runs = report.reader_runs(reqs, {"by_id": by_id, "model": "example/model-1", "missing": [], "bad_sha": []},
+                                  0.5)
+        self.assertEqual({r["checker"] for r in runs}, {"R512", "R512g", "R2048", "R2048g", "R400", "J"})
+        s = report.build(runs, [], {**scoring_set.config(), "resamples": 50}, None)
+        self.assertEqual(set(s["reader_parse_rates"]), {"window-512", "window-2048", "chunk-400", "full"})
+        md = report.render_md(s)
+        self.assertIn("| reader form | requests | parsed (lenient, scored) | parsed (strict) |", md)
+
+    def test_reestimate_leaves_requests_untouched(self):
+        reqs, _ = self.batch()
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            est = ex.estimate(reqs, {"assumed_reasoning_tokens": 400}, 800, 40)
+            ex.write_batch(root / "full", reqs, {"batch": "full", "estimate": est})
+            ex.sha256sums(root)
+            before = (root / "full" / "requests.jsonl").read_bytes()
+            seconds = {"window-512": 1.4, "window-2048": 2.5, "chunk-400": 1.3, "full": 10.0}
+            out = ex.reestimate(root, seconds, "2026-10-21")
+            self.assertEqual((root / "full" / "requests.jsonl").read_bytes(), before)
+            m = canon.read_json(root / "full" / "manifest.json")
+            readme = (root / "full" / "README.md").read_text()
+            sums = (root / "SHA256SUMS").read_text()
+        self.assertEqual(m["estimate"]["measured"]["on"], "2026-10-21")
+        want = sum(seconds[r["form"]] for r in reqs) / 3600
+        self.assertAlmostEqual(out["full"]["total"]["hours"], round(want, 2))
+        self.assertIn("measured on 2026-10-21", readme)
+        self.assertNotIn("prompt tokens/s", readme)
+        self.assertIn(f"{canon.sha256_bytes(before)}  full/requests.jsonl", sums)
 
     def test_estimate(self):
         reqs, _ = self.batch()
@@ -498,7 +579,12 @@ class Report(unittest.TestCase):
         self.assertEqual(len(cmp), 1)
         self.assertAlmostEqual(cmp[0]["mde"], cfg["mde_factor"] * cmp[0]["se"])
         self.assertTrue(s["lead"].startswith("This round is a pilot"))
+        self.assertEqual(s["notes"], report.NOTES)
+        self.assertIn("define the labels for every item alike", s["notes"][0])
+        self.assertIn("only approximately", s["notes"][1])
         md = report.render_md(s)
+        for note in report.NOTES:
+            self.assertIn(note, md)
         self.assertTrue(md.startswith(report.MD_START))
         spliced = report.splice_md("# Models\n\n" + md + "\nafter\n", md.replace("pilot", "PILOT"))
         self.assertEqual(spliced.count(report.MD_START), 1)

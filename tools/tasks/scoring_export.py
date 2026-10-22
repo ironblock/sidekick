@@ -34,6 +34,14 @@ Response file (one JSON object per line): `id`; `model` (the model's public
 registry id); and either `content` (the final answer's text) or `response`
 (an OpenAI chat.completion object, of which only
 `choices[0].message.content` is read); optionally `sha256`, of `content`.
+The verdict is parsed by scoring_judge's lenient (scored) and strict rules,
+and both parse rates are reported per form.
+
+    python3 tools/tasks/scoring_export.py --out <dir> --reestimate --measured-on <date> \\
+        --seconds window-512=<s> --seconds window-2048=<s> --seconds chunk-400=<s> --seconds full=<s>
+
+replaces the estimates in an exported batch with measured seconds per
+request, rewriting only manifest.json, README.md and SHA256SUMS.
 """
 
 from __future__ import annotations
@@ -119,6 +127,28 @@ def estimate(reqs: list[dict], judge_cfg: dict, prefill_tps: float, decode_tps: 
                             "answer_tokens_per_request": answer_tokens, "concurrency": 1}}
 
 
+def measured_estimate(reqs: list[dict], seconds: dict[str, float], measured_on: str) -> dict:
+    """Wall-clock time at one request at a time from measured seconds per
+    request, by form (replacing the token-rate assumptions)."""
+    out, tot = {}, {"requests": 0, "prompt_tokens": 0, "hours": 0.0}
+    for form in FORMS:
+        rs = [r for r in reqs if r["form"] == form]
+        if not rs:
+            continue
+        pt = sum(canon.approx_tokens("".join(m["content"] for m in r["messages"])) for r in rs)
+        largest = max(canon.approx_tokens("".join(m["content"] for m in r["messages"])) for r in rs)
+        hours = len(rs) * seconds[form] / 3600
+        out[form] = {"requests": len(rs), "prompt_tokens": pt, "seconds_per_request": seconds[form],
+                     "hours": round(hours, 2), "largest_prompt_tokens": largest}
+        tot["requests"] += len(rs)
+        tot["prompt_tokens"] += pt
+        tot["hours"] += hours
+    tot["hours"] = round(tot["hours"], 2)
+    return {"by_form": out, "total": tot,
+            "measured": {"on": measured_on, "seconds_per_request": dict(seconds), "concurrency": 1,
+                         "token_unit": canon.LENGTH_UNIT}}
+
+
 README = """# Verification scoring: judge and second-reader batch
 
 `requests.jsonl` holds one request per line. Run them one at a time, with
@@ -130,10 +160,12 @@ reasoning on at effort `reasoning_effort`, and an output budget of
   `window-2048` (one window of a per-window nli checker) or `chunk-400`
   (one MiniCheck chunk).
 - `prompt_sha256`: the judge prompt file's sha256.
-- `output_mode`: `final-json`: the final answer must be exactly one JSON
-  object, `{{"verdict": "supported" | "contradicted" | "not_mentioned"}}`.
-  Only the final answer is read, never the reasoning. A missing or invalid
-  final JSON counts as wrong.
+- `output_mode`: `final-json`: the final answer (`content`) must end with
+  one JSON object, `{{"verdict": "supported" | "contradicted" | "not_mentioned"}}`.
+  Only `content` is read, never the reasoning (`reasoning_content`). The
+  scored (lenient) rule allows prose before the object; prose only, two
+  objects, or anything after the object is a failure, and counts as wrong.
+  The strict rule (the content is exactly the object) is reported beside it.
 - `serves`: the items this request answers: a triple id and its variant
   (S, C or NM), or a control id, with the window or chunk index.
 - `shadows`: the checkers this request stands beside.
@@ -155,19 +187,51 @@ def write_batch(d: Path, reqs: list[dict], manifest: dict) -> None:
     (d / "requests.jsonl").write_text(body, encoding="utf-8")
     manifest = {**manifest, "requests_sha256": canon.sha256_text(body)}
     canon.write_json(d / "manifest.json", manifest)
+    write_readme(d, manifest)
+
+
+def write_readme(d: Path, manifest: dict) -> None:
     est = manifest["estimate"]
-    lines = ["| form | requests | prompt tokens (approx-v1) | est. hours |", "|---|---|---|---|"]
+    measured = est.get("measured")
+    head = "| form | requests | prompt tokens (approx-v1) |" + (" s/request |" if measured else "") + " est. hours |"
+    lines = [head, "|---|---|---|" + ("---|" if measured else "") + "---|"]
     for form, e in est["by_form"].items():
-        lines.append(f"| {form} | {e['requests']} | {e['prompt_tokens']:,} | {e['hours']} |")
+        rate = f" {e['seconds_per_request']} |" if measured else ""
+        lines.append(f"| {form} | {e['requests']} | {e['prompt_tokens']:,} |{rate} {e['hours']} |")
     t = est["total"]
-    lines.append(f"| total | {t['requests']} | {t['prompt_tokens']:,} | {t['hours']} |")
-    a = est["assumptions"]
+    lines.append(f"| total | {t['requests']} | {t['prompt_tokens']:,} |" + (" |" if measured else "")
+                 + f" {t['hours']} |")
     lines.append("")
-    lines.append(f"Hours assume one request at a time, {a['prefill_tokens_per_s']} prompt tokens/s, "
-                 f"{a['decode_tokens_per_s']} output tokens/s and {a['reasoning_tokens_per_request']} reasoning "
-                 f"tokens per request. The largest prompt is {max(e['largest_prompt_tokens'] for e in est['by_form'].values()):,} "
-                 "tokens (approx-v1), so the model needs that much context plus the output budget.")
+    largest = max(e["largest_prompt_tokens"] for e in est["by_form"].values())
+    if measured:
+        lines.append(f"Hours use the seconds per request measured on {measured['on']}, one request at a time. "
+                     f"The largest prompt is {largest:,} tokens (approx-v1), so the model needs that much context "
+                     "plus the output budget.")
+    else:
+        a = est["assumptions"]
+        lines.append(f"Hours assume one request at a time, {a['prefill_tokens_per_s']} prompt tokens/s, "
+                     f"{a['decode_tokens_per_s']} output tokens/s and {a['reasoning_tokens_per_request']} reasoning "
+                     f"tokens per request. The largest prompt is {largest:,} tokens (approx-v1), so the model needs "
+                     "that much context plus the output budget.")
     (d / "README.md").write_text(README.format(summary="\n".join(lines)), encoding="utf-8")
+
+
+def reestimate(root: Path, seconds: dict[str, float], measured_on: str) -> dict[str, dict]:
+    """Replace each batch's estimate with measured rates. Only manifest.json
+    and README.md change: requests.jsonl is read, checked against the
+    manifest's sha256, and never written."""
+    out = {}
+    for d in sorted(p for p in root.iterdir() if (p / "requests.jsonl").exists()):
+        manifest = canon.read_json(d / "manifest.json")
+        if canon.sha256_file(d / "requests.jsonl") != manifest["requests_sha256"]:
+            raise SystemExit(f"{d.name}/requests.jsonl does not match its manifest")
+        reqs = canon.read_jsonl(d / "requests.jsonl")
+        manifest["estimate"] = measured_estimate(reqs, seconds, measured_on)
+        canon.write_json(d / "manifest.json", manifest)
+        write_readme(d, manifest)
+        out[d.name] = manifest["estimate"]
+    sha256sums(root)
+    return out
 
 
 def sha256sums(root: Path) -> None:
@@ -182,7 +246,8 @@ def sha256sums(root: Path) -> None:
 
 
 def read_responses(path: Path, requests: list[dict]) -> dict:
-    """{"model", "by_id": {id: {"verdict", "parsed"}}, "missing", "bad_sha"}.
+    """{"model", "by_id": {id: {"verdict", "parsed", "strict"}}, "missing",
+    "bad_sha"}. `parsed` is the lenient (scored) rule, `strict` the strict one.
     A request with no response, or one whose `sha256` doesn't match its
     content, gets no verdict (wrong, and counted)."""
     want = {r["id"] for r in requests}
@@ -196,15 +261,30 @@ def read_responses(path: Path, requests: list[dict]) -> dict:
             bad.append(r["id"])
             content = None
         verdict, ok = scoring_judge.parse(content)
-        by_id[r["id"]] = {"verdict": verdict, "parsed": ok}
+        by_id[r["id"]] = {"verdict": verdict, "parsed": ok, "strict": scoring_judge.parse_strict(content)[1]}
         if r.get("model"):
             models.add(r["model"])
     if len(models) > 1:
         raise SystemExit(f"{path.name}: responses name {len(models)} models: {sorted(models)}")
     missing = sorted(want - set(by_id))
     for rid in missing:
-        by_id[rid] = {"verdict": None, "parsed": False}
+        by_id[rid] = {"verdict": None, "parsed": False, "strict": False}
     return {"model": next(iter(models), None), "by_id": by_id, "missing": missing, "bad_sha": bad}
+
+
+def parse_rates(requests: list[dict], responses: dict) -> dict[str, dict]:
+    """Per reader form: the share of requests whose final answer parses by
+    the lenient (scored) rule and by the strict one."""
+    out = {}
+    for form in FORMS:
+        ids = [r["id"] for r in requests if r["form"] == form]
+        if not ids:
+            continue
+        lenient = sum(1 for i in ids if responses["by_id"][i]["parsed"])
+        strict = sum(1 for i in ids if responses["by_id"][i]["strict"])
+        out[form] = {"requests": len(ids), "lenient": round(lenient / len(ids), 4),
+                     "strict": round(strict / len(ids), 4)}
+    return out
 
 
 def reader_windows(requests: list[dict], responses: dict, form: str) -> dict[str, list[dict]]:
@@ -249,7 +329,23 @@ def main(argv=None) -> int:
     ap.add_argument("--prefill-tps", type=float, default=800.0, help="assumed prompt tokens per second")
     ap.add_argument("--decode-tps", type=float, default=40.0, help="assumed output tokens per second")
     ap.add_argument("--fallback-hours", type=float, default=3.0)
+    ap.add_argument("--reestimate", action="store_true",
+                    help="replace the estimates in an exported --out with measured --seconds; requests.jsonl is "
+                         "never rewritten")
+    ap.add_argument("--seconds", action="append", default=[], metavar="FORM=SECONDS",
+                    help="measured seconds per request, per form (with --reestimate)")
+    ap.add_argument("--measured-on", help="the date the --seconds were measured (with --reestimate)")
     a = ap.parse_args(argv)
+    if a.reestimate:
+        seconds = {f: float(s) for f, s in (x.split("=", 1) for x in a.seconds)}
+        missing = set(FORMS) - set(seconds)
+        if missing or not a.measured_on:
+            raise SystemExit(f"--reestimate needs --seconds for {sorted(missing)} and --measured-on")
+        for name, est in reestimate(a.out, seconds, a.measured_on).items():
+            print(f"{name}: {est['total']['requests']} requests, ~{est['total']['hours']} h (measured {a.measured_on})")
+            for form, e in est["by_form"].items():
+                print(f"  {form}: {e['requests']} × {e['seconds_per_request']} s = {e['hours']} h")
+        return 0
     cfg = scoring_set.config()
     toks = dict(t.split("=", 1) for t in a.tokenizer)
     pins = {m["id"]: m["sha256_tokenizer"] for m in cfg["nli"]}

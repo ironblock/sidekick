@@ -17,7 +17,12 @@ the confusion matrix, AUROC, descriptive cells by obstacle, decision rule,
 claim type and length, and a §2.5 verdict. Comparisons: each gated checker
 against its ungated form, and each checker against the second reader that
 shadows it, as paired differences with the MDE. The report leads with the
-MDE: this round is a pilot, and no ranking is claimed.
+MDE: this round is a pilot, and no ranking is claimed. Its notes (also in
+the MODELS.md section) say what each kind of checker is asked: the LLM
+readers' prompt defines the corpus's rules for current evidence, while the
+nli checkers get the claim and evidence only; the 512-token reader's windows
+match nli-deberta-v3-base's. J's and the second reader's parse rates,
+lenient (scored) and strict, are reported per reader form.
 """
 
 from __future__ import annotations
@@ -43,6 +48,20 @@ LEAD = ("This round is a pilot: {triples} triples from {shapes} claim shapes. It
         "(MDE, 2.8 × the bootstrap SE of a paired difference) is about {mde} points of triple accuracy, so "
         "differences between checkers smaller than that cannot be seen. Results are per checker, each with its "
         "verdict; no ranking is claimed until the corpus reaches about 150 claims.")
+NOTES = [
+    "The task, as the LLM judge (J), Foundation Models and the second reader are asked it, includes the corpus's "
+    "rules for which evidence is current: a later record of the same thing supersedes an earlier one (by timestamp "
+    "where records carry one); a `was: X …, wrong because Y` note refutes X; an override applies over what it "
+    "overrides; a tool's help and output speak for the version that produced them. These rules define the labels "
+    "for every item alike. The nli checkers, MiniCheck and HHEM receive only the claim and the evidence, as their "
+    "interfaces take nothing else.",
+    "The 512-token second reader sees windows cut with nli-deberta-v3-base's tokenizer, so it shadows that model "
+    "(and deberta-v3-large-zeroshot-v2.0-c, whose cuts differ slightly) closely, and nli-minilm2-l6-h768 and "
+    "roberta-large-mnli only approximately: their own tokenizers cut the evidence at other places.",
+    "J's and the second reader's verdicts are read from the final answer only. The scored (lenient) rule accepts "
+    "one JSON object at the end of the answer, with prose before it; the strict rule needs the answer to be exactly "
+    "that object. Both parse rates are reported per reader form; a failure counts as wrong.",
+]
 
 
 # ---------------------------------------------------------------- readers
@@ -51,6 +70,7 @@ LEAD = ("This round is a pilot: {triples} triples from {shapes} claim shapes. It
 def reader_runs(requests: list[dict], responses: dict, tau: float) -> list[dict]:
     """J and the second reader as run records, aggregated by the max rule."""
     runs = []
+    rates = scoring_export.parse_rates(requests, responses)
     for form, short in READER_FORMS.items():
         wins = scoring_export.reader_windows(requests, responses, form)
         if not wins:
@@ -66,7 +86,8 @@ def reader_runs(requests: list[dict], responses: dict, tau: float) -> list[dict]
             name = short + ("g" if gated else "")
             runs.append({"checker": name, "family": name, "mode": "three-way", "items": out, "reader_form": form,
                          "provenance": {"model": responses["model"], "missing": len(responses["missing"]),
-                                        "bad_sha256": len(responses["bad_sha"])}})
+                                        "bad_sha256": len(responses["bad_sha"])},
+                         "parse_rates": rates.get(form)})
     return runs
 
 
@@ -210,9 +231,11 @@ def build(runs: list[dict], triples: list[dict], cfg: dict, ceilings: dict | Non
     mde = round(100 * sum(mdes) / len(mdes)) if mdes else None
     for s in scored.values():
         s.pop("_correct", None)
+    parse_rates = {r["reader_form"]: r["parse_rates"] for r in runs if r.get("reader_form") and r.get("parse_rates")}
     return {"schema": SCHEMA, "status": "pilot",
             "lead": LEAD.format(triples=len(triples), shapes=len(set(shape_of.values())),
                                 mde=mde if mde is not None else "20–25 (a priori)"),
+            "notes": list(NOTES), "reader_parse_rates": parse_rates,
             "set": cfg["set"], "tau": cfg["tau"], "mde_points_mean": mde,
             "ceilings_sha256": canon.sha256_file(CEILINGS) if CEILINGS.exists() else None,
             "checkers": scored, "comparisons": comparisons}
@@ -220,9 +243,15 @@ def build(runs: list[dict], triples: list[dict], cfg: dict, ceilings: dict | Non
 
 def render_md(scores: dict) -> str:
     """The MODELS.md section."""
-    lines = [MD_START, "", "### Verification checkers (pilot)", "", scores["lead"], "",
-             "| checker | mode | controls | triple accuracy | 95% CI | chance | share of ceiling | verdict |",
-             "|---|---|---|---|---|---|---|---|"]
+    lines = [MD_START, "", "### Verification checkers (pilot)", "", scores["lead"], ""]
+    lines += [f"- {n}" for n in scores.get("notes", [])] + [""]
+    rates = scores.get("reader_parse_rates") or {}
+    if rates:
+        lines += ["| reader form | requests | parsed (lenient, scored) | parsed (strict) |", "|---|---|---|---|"]
+        lines += [f"| {f} | {r['requests']} | {r['lenient']:.3f} | {r['strict']:.3f} |" for f, r in rates.items()]
+        lines.append("")
+    lines += ["| checker | mode | controls | triple accuracy | 95% CI | chance | share of ceiling | verdict |",
+              "|---|---|---|---|---|---|---|---|"]
     for name, s in sorted(scores["checkers"].items()):
         acc = s.get("triple_accuracy") or s.get("binary_triple_accuracy")
         if not acc:
