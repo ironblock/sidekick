@@ -1,0 +1,264 @@
+# Pinned tools and the fixed environment for the verification corpus's
+# capture stage (tools/tasks/capture.py).
+#
+# Each pinned tool is a GitHub release asset. Unless `digest_source` says
+# otherwise, its sha256 is the release's own
+# per-asset `digest` (GitHub computes it at upload; read it with
+# `gh api repos/OWNER/REPO/releases/tags/TAG`), and the capture stage refuses
+# a download that doesn't match. Assets are for Apple-silicon macOS; a
+# capture made with other assets must be checked against captures.lock.json.
+
+schema = "sidekick-verification-tools/1"
+platform = "darwin-arm64"
+
+[[tool]]
+name = "jj"
+version = "0.46.0"
+repo = "jj-vcs/jj"
+tag = "v0.46.0"
+licence = "Apache-2.0"
+asset = "jj-v0.46.0-aarch64-apple-darwin.tar.gz"
+url = "https://github.com/jj-vcs/jj/releases/download/v0.46.0/jj-v0.46.0-aarch64-apple-darwin.tar.gz"
+sha256 = "43daa37ce0f9716cdf6fb65a29cbcae74a3160aef048cf3cb3d166d41cb4ab58"
+size = 10074305
+extract = { tar = "./jj" }
+install = "bin/jj"
+version_cmd = "jj --version"
+
+[[tool]]
+name = "dasel"
+version = "3.11.2"
+repo = "TomWright/dasel"
+tag = "v3.11.2"
+licence = "MIT"
+asset = "dasel_darwin_arm64"
+url = "https://github.com/TomWright/dasel/releases/download/v3.11.2/dasel_darwin_arm64"
+sha256 = "63407a21f1354dda62c7f015e5262a91b05ce20a858406e2aeac3e5fc614f355"
+size = 9856210
+extract = { raw = true }
+install = "bin/dasel"
+version_cmd = "dasel version"
+
+[[tool]]
+name = "gh"
+version = "2.95.0"
+repo = "cli/cli"
+tag = "v2.95.0"
+licence = "MIT"
+asset = "gh_2.95.0_macOS_arm64.zip"
+url = "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_macOS_arm64.zip"
+sha256 = "3677f9c27965825f9c7d50395473c134edaea4b484373ef6b25de653570a0489"
+size = 13944744
+extract = { zip = "gh_2.95.0_macOS_arm64/bin/gh" }
+install = "bin/gh"
+version_cmd = "gh --version"
+
+[[tool]]
+name = "gh-stack"
+version = "0.2.1"
+repo = "github/gh-stack"
+tag = "v0.2.1"
+licence = "MIT"
+asset = "darwin-arm64"
+url = "https://github.com/github/gh-stack/releases/download/v0.2.1/darwin-arm64"
+sha256 = "c4d62dc667343d6dd8ff1cb60dcff9d0e097c2460dea326892f36d5d2e835d76"
+size = 25721042
+extract = { raw = true }
+# A gh extension: gh finds it by this layout under XDG_DATA_HOME, and the
+# manifest pins it, so gh never checks for an update.
+install = "xdg/gh/extensions/gh-stack/gh-stack"
+manifest = { path = "xdg/gh/extensions/gh-stack/manifest.yml", content = "owner: github\nname: gh-stack\nhost: github.com\ntag: v0.2.1\nispinned: true\npath: \"\"\n" }
+version_cmd = "gh stack --help"
+
+[[tool]]
+name = "jq"
+version = "1.7.1"
+repo = "jqlang/jq"
+tag = "jq-1.7.1"
+licence = "MIT"
+asset = "jq-macos-arm64"
+url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-macos-arm64"
+# This release predates GitHub's per-asset digests; the sha256 is the one
+# the release publishes in its sha256sum.txt.
+sha256 = "0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a"
+digest_source = "the release's sha256sum.txt"
+size = 807984
+extract = { raw = true }
+install = "bin/jq"
+version_cmd = "jq --version"
+
+# Toolchains for the generic recipes (gen/cargo, gen/npm).
+
+[[tool]]
+name = "node"
+version = "26.5.0"
+repo = "nodejs/node"
+tag = "v26.5.0"
+licence = "MIT (node); Artistic-2.0 (the bundled npm 11.17.0)"
+asset = "node-v26.5.0-darwin-arm64.tar.gz"
+url = "https://nodejs.org/dist/v26.5.0/node-v26.5.0-darwin-arm64.tar.gz"
+# nodejs.org publishes a signed SHASUMS256.txt per release; this is its line.
+sha256 = "ee920559aaa2391569cff4d737e3b83963430e3a14dedd91bfe0ff53171b5af9"
+digest_source = "https://nodejs.org/dist/v26.5.0/SHASUMS256.txt"
+size = 57181366
+extract = { tar_tree = "node-v26.5.0-darwin-arm64/" }
+install = "toolchain/node"
+version_cmd = "toolchain/node/bin/node --version"
+
+[[tool]]
+name = "pnpm"
+version = "11.21.0"
+repo = "pnpm/pnpm"
+tag = "v11.21.0"
+licence = "MIT"
+asset = "pnpm-darwin-arm64.tar.gz"
+url = "https://github.com/pnpm/pnpm/releases/download/v11.21.0/pnpm-darwin-arm64.tar.gz"
+sha256 = "860a96978a79ca5132bdc247375f94150a3c98edbecbee36e9f8e0c9e2f7f056"
+digest_source = "GitHub release asset digest"
+size = 48000084
+extract = { tar_tree = "" }
+install = "toolchain/pnpm"
+version_cmd = "toolchain/pnpm/pnpm --version"
+
+# Rust is not downloaded here: a rustup toolchain of exactly this version is
+# linked in with `capture.py run --toolchain rust=<toolchain dir>`, and the
+# capture refuses any other rustc. Its full `rustc -vV` is recorded in
+# captures.lock.json like a host tool's, so `--check` fails on drift.
+[[linked_toolchain]]
+name = "rust"
+version = "1.94.1"
+link = "toolchain/rust"
+version_cmd = "{W}/toolchain/rust/bin/rustc -vV"
+expect = "rustc 1.94.1 "
+
+# Older releases, run only in the `old/…` worlds, whose captures back the
+# version-scoped notes ("under jj 0.30.0 …") with what that version really
+# does. They are installed off PATH and never used as filler.
+
+[[tool]]
+name = "jj-0.30"
+version = "0.30.0"
+repo = "jj-vcs/jj"
+tag = "v0.30.0"
+licence = "Apache-2.0"
+asset = "jj-v0.30.0-aarch64-apple-darwin.tar.gz"
+url = "https://github.com/jj-vcs/jj/releases/download/v0.30.0/jj-v0.30.0-aarch64-apple-darwin.tar.gz"
+sha256 = "160b9c575f279343b8cd9d2fcef74b03d16210d1457da328ceedc3a7a184c4c7"
+digest_source = "GitHub release asset digest"
+size = 8379306
+extract = { tar = "./jj" }
+install = "old/jj-0.30.0/jj"
+version_cmd = "old/jj-0.30.0/jj --version"
+
+[[tool]]
+name = "dasel-2"
+version = "2.8.1"
+repo = "TomWright/dasel"
+tag = "v2.8.1"
+licence = "MIT"
+asset = "dasel_darwin_arm64"
+url = "https://github.com/TomWright/dasel/releases/download/v2.8.1/dasel_darwin_arm64"
+# The last 2.x release predates GitHub's per-asset digests and publishes no
+# checksum file. This sha256 was pinned at first fetch, after checking that
+# the release's separately uploaded dasel_darwin_arm64.gz decompresses to the
+# same bytes.
+sha256 = "cf976164cf5f929abe25b6924285c27db439dbcc58bac923ee0cbc921a463307"
+digest_source = "pinned at first fetch; matches the release's .gz of the same binary"
+size = 12608946
+extract = { raw = true }
+install = "old/dasel-2.8.1/dasel"
+version_cmd = "old/dasel-2.8.1/dasel --version"
+
+# The release before each of these, for real CONTRADICTED version lines.
+
+[[tool]]
+name = "gh-2.94"
+version = "2.94.0"
+repo = "cli/cli"
+tag = "v2.94.0"
+licence = "MIT"
+asset = "gh_2.94.0_macOS_arm64.zip"
+url = "https://github.com/cli/cli/releases/download/v2.94.0/gh_2.94.0_macOS_arm64.zip"
+sha256 = "4f9bc1a5e77500737290a307b40b4c396a4d23729f55340f2a83f414410165a1"
+digest_source = "GitHub release asset digest"
+size = 13778337
+extract = { zip = "gh_2.94.0_macOS_arm64/bin/gh" }
+install = "old/gh-2.94.0/gh"
+version_cmd = "old/gh-2.94.0/gh --version"
+
+[[tool]]
+name = "dasel-3.10"
+version = "3.10.1"
+repo = "TomWright/dasel"
+tag = "v3.10.1"
+licence = "MIT"
+asset = "dasel_darwin_arm64"
+url = "https://github.com/TomWright/dasel/releases/download/v3.10.1/dasel_darwin_arm64"
+sha256 = "9708e2223cc8d8264cc74a51552650330230d7e6d19950799a26455201d2d256"
+digest_source = "GitHub release asset digest"
+size = 9820690
+extract = { raw = true }
+install = "old/dasel-3.10.1/dasel"
+version_cmd = "old/dasel-3.10.1/dasel version"
+
+# Host tools are not downloaded. Their versions are recorded in
+# captures.lock.json with the captures whose output depends on them, and
+# `capture.py run --check` fails if a version differs (pass
+# --allow-host-drift to compare captures anyway).
+
+[[host_tool]]
+name = "git"
+version_cmd = "git --version"
+
+[[host_tool]]
+name = "python3"
+version_cmd = "python3 --version"
+
+[[host_tool]]
+name = "sh"
+version_cmd = "/bin/sh --version"
+
+# The fixed environment. `{W}` is the working root (recipes.toml `root`),
+# which the scrubber maps to /work. Every command runs with exactly these
+# variables (no inherited environment), under /bin/sh, with stdin closed.
+[frame.env]
+HOME = "{W}/hm"
+TMPDIR = "{W}/tmp"
+XDG_DATA_HOME = "{W}/xdg"
+XDG_CONFIG_HOME = "{W}/xcfg"
+XDG_CACHE_HOME = "{W}/xcache"
+PATH = "{W}/bin:/usr/bin:/bin"
+LC_ALL = "C"
+TZ = "UTC"
+TERM = "dumb"
+NO_COLOR = "1"
+COLUMNS = "100"
+GIT_CONFIG_GLOBAL = "{W}/hm/gitconfig"
+GIT_CONFIG_NOSYSTEM = "1"
+GIT_AUTHOR_DATE = "2026-10-01T12:00:00+00:00"
+GIT_COMMITTER_DATE = "2026-10-01T12:00:00+00:00"
+JJ_CONFIG = "{W}/hm/jj.toml"
+JJ_EDITOR = "true"
+JJ_TIMESTAMP = "2026-10-01T12:00:00+00:00"
+JJ_OP_TIMESTAMP = "2026-10-01T12:00:00+00:00"
+GH_PROMPT_DISABLED = "1"
+GH_NO_UPDATE_NOTIFIER = "1"
+GH_NO_EXTENSION_UPDATE_NOTIFIER = "1"
+GH_SPINNER_DISABLED = "1"
+DO_NOT_TRACK = "1"
+PYTHONDONTWRITEBYTECODE = "1"
+PYTHONHASHSEED = "0"
+
+[[frame.file]]
+path = "hm/gitconfig"
+content = "[user]\n\tname = Test User\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n"
+
+[[frame.file]]
+# jj's operation log records the user and host, and its log prints relative
+# times; pin both.
+path = "hm/jj.toml"
+content = "[user]\nname = \"Test User\"\nemail = \"test@example.com\"\n[ui]\npaginate = \"never\"\neditor = \"true\"\n[operation]\nhostname = \"fixture-host\"\nusername = \"fixture\"\n[template-aliases]\n\"format_time_range(time_range)\" = \"time_range.start()\"\n"
+
+[[host_tool]]
+name = "cc"
+version_cmd = "cc --version"

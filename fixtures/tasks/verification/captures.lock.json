@@ -1,0 +1,1075 @@
+{
+  "captures": [
+    {
+      "id": "dasel.app-json",
+      "sha256": "09a62340b158c3b7d7c27f766c6e13ccea089efbc433e77a1c1a1d82d101a230"
+    },
+    {
+      "id": "dasel.cat.app-toml",
+      "sha256": "a6cc2f80f8dc466d0969450bbca5fb939144f29904353fe1982752c6342152c5"
+    },
+    {
+      "id": "dasel.cat.defaults-yaml",
+      "sha256": "872035abf7fc6cf19de8bca1c57bfe1cafb5805e1310299fb06d6bc9e70a50d6"
+    },
+    {
+      "id": "dasel.cat.override-yaml",
+      "sha256": "9a2ab019775c97923dc91286bd6d21417892ead62b2df822371f6d6e0858f67a"
+    },
+    {
+      "id": "dasel.cat.users-csv",
+      "sha256": "b535aa5390b0f9193dfb164dcd362de0b7756e583b85c68587737d912a61d81d"
+    },
+    {
+      "id": "dasel.defaults-toml",
+      "sha256": "2833b793b291244b68c0a0dd0db17795d88c214536f1781390556930ae9725f9"
+    },
+    {
+      "id": "dasel.err.hash-filter",
+      "sha256": "437740a4d1d63b6889fa4e50cb1607bbcf3e35103a8a5e4f2f717686e8f7c166"
+    },
+    {
+      "id": "dasel.err.hash-filter-names",
+      "sha256": "21ce891e917da19cdf2e1f62a02701cf868a0e86aac8f28744fd81ae1f60dba2"
+    },
+    {
+      "id": "dasel.err.method-sum",
+      "sha256": "95116e8ace0c9ffc6a2ff7dd4c72021d96e7f16d34967f877551a7a8ff2fa9e0"
+    },
+    {
+      "id": "dasel.err.version-flag",
+      "sha256": "3c6bd3cda44f6fac7a968aae33186d05f1f26a19b83efade5ea0b668e2891ddb"
+    },
+    {
+      "id": "dasel.filter-replicas",
+      "sha256": "822ef78e9f63d6acc8e45af7cc2d73fbfc14db99075c7f7998f885046b01f369"
+    },
+    {
+      "id": "dasel.filter-swap.filter-replicas",
+      "sha256": "b389df44e94ff022b6e42f450c0a20dd6c1f3e229aa87b2072e35728cb802dd5"
+    },
+    {
+      "id": "dasel.help",
+      "sha256": "89aed77185569f42200b2f395f36033cb4994c9032972d2379b798cd709cd49e"
+    },
+    {
+      "id": "dasel.merge",
+      "sha256": "c3d4be8aef589018b7a8636377bf38c6d1ef33e6a4543a42ccc663f0b3d0c123"
+    },
+    {
+      "id": "dasel.merge-nopool.cat.defaults-yaml",
+      "sha256": "96aae5e605c6540f988b41837c261736c723611e1c7123c828a9b22beff350c1"
+    },
+    {
+      "id": "dasel.merge-nopool.cat.override-yaml",
+      "sha256": "8d9b056e346bd9c659009b530cad687957df9f69edeb77604ae953b66ca6c9df"
+    },
+    {
+      "id": "dasel.merge-nopool.merge",
+      "sha256": "ebe8006f6e3b494c96992b3f817fe465f5d1d5b8fb19cfcba94c3138e69ac2d6"
+    },
+    {
+      "id": "dasel.merge-noport.cat.defaults-yaml",
+      "sha256": "ce9edb6110afe70edd98c0390267dc1326dd599683872a0bf9f0eeb0cd14e355"
+    },
+    {
+      "id": "dasel.merge-noport.cat.override-yaml",
+      "sha256": "d2b6a19ba3db4c58a684bc9ecc4cce408b747a1a41228a152f250b270304345a"
+    },
+    {
+      "id": "dasel.merge-noport.merge",
+      "sha256": "f65ec94d8382a24e490acf051ee5afd5dda0afceeb06c7f6d9ff4c545c1afa5e"
+    },
+    {
+      "id": "dasel.merge-swap-pool.cat.defaults-yaml",
+      "sha256": "0462fffda83907ce1a8d299eb9c04467fe9c98d220e993d319630aa16788e559"
+    },
+    {
+      "id": "dasel.merge-swap-pool.cat.override-yaml",
+      "sha256": "3235f6adb3d2e91c45a77a70b819ee254f1b92e3a61b9536a32e59a7bd580e77"
+    },
+    {
+      "id": "dasel.merge-swap-pool.merge",
+      "sha256": "13142c98f19ed39bd1b6236c109a3b8c22e7ef0f812b853ea6c3dfa3cf676ecf"
+    },
+    {
+      "id": "dasel.merge-swap.cat.defaults-yaml",
+      "sha256": "44eaec58b1fee8737e59e1a1381a2051d94be426ee6949bae55d375517cf21f9"
+    },
+    {
+      "id": "dasel.merge-swap.cat.override-yaml",
+      "sha256": "1d9da21be361af19ba0bb84ce8a9813a0a49c9118ea85733197ac6c89b42f56a"
+    },
+    {
+      "id": "dasel.merge-swap.merge",
+      "sha256": "abe485fb8e6fff712bd04a12097b796b9f2196618dc4159740c58bd6983cec6b"
+    },
+    {
+      "id": "dasel.noservices.cat.app-toml",
+      "sha256": "dd683c5efeb3bc0f880e6b4647f5e099366552ddf428e5f9f510a2f5da741aa9"
+    },
+    {
+      "id": "dasel.noservices.err.method-sum",
+      "sha256": "46283ef3e0c3c3f27953c0359dcb838ee513333fb0fe55384a66c70b6cc4e75b"
+    },
+    {
+      "id": "dasel.oslo-users",
+      "sha256": "cdee74e9286f2d4193ed52febd1baddd8966fcbe07dbf4d3563f6d5a4b14cb32"
+    },
+    {
+      "id": "dasel.pool-max",
+      "sha256": "d46f2b41a1e8158dec021a52dac89f8b7cc0390c98c079bd78641eebbb5b677a"
+    },
+    {
+      "id": "dasel.pool25.cat.app-toml",
+      "sha256": "7df198d47de58e5eeb9996b8e2e62598001f6f8af1f6e664bb2f3c2d5a73a3ae"
+    },
+    {
+      "id": "dasel.pool25.pool-max",
+      "sha256": "b996e17ba282590f5097747fe2f784269dda6bb447be280cf93be6dc30f57d6e"
+    },
+    {
+      "id": "dasel.put-pool-max",
+      "sha256": "0a4e9c9769c07aa778596d34ff0f17b8e0d49c03defdd53af6fd2eb540c3f4b0"
+    },
+    {
+      "id": "dasel.services-json",
+      "sha256": "c1565193d6fd18839c6b5ba72c4286b3723950a5e3fd76912897493fbb40140f"
+    },
+    {
+      "id": "dasel.sum-replicas",
+      "sha256": "d9f90b96f5d5a65dc366642fbc02e6054219248bd89428c0d2b3c3ba0e7e8af9"
+    },
+    {
+      "id": "dasel.users-json",
+      "sha256": "299412cdaded065ec3ea00a9d388df22e5d1ab0fafcde7b86564304d3c880e72"
+    },
+    {
+      "id": "dasel.users-yaml",
+      "sha256": "8b3e57adac175c0c444ee9103efb849337b8c5ff91acdeb8bc165ec258c305e9"
+    },
+    {
+      "id": "dasel.version",
+      "sha256": "d442ce8bd66088300569a9744531e0518f82725e51b3a32d4d94910ca6ae197e"
+    },
+    {
+      "id": "dasel.worker6.cat.app-toml",
+      "sha256": "94e1d4e065b6f8792b379201b7670a24ca9cec85c37dd55815e2698a65a910ab"
+    },
+    {
+      "id": "dasel.worker6.services-json",
+      "sha256": "1bcb9bdae9e6c6ded37e094e3621e6b6ffafea334d4ea2fa5a96c4dcfe114bc8"
+    },
+    {
+      "id": "dasel.worker6.sum-replicas",
+      "sha256": "6b42428420479d98ef152847470d7293f566ade5642f73e194f8d53342507636"
+    },
+    {
+      "id": "gen.applog.errors",
+      "sha256": "3d9cac6c9c5c9d4cb2903bdd297b8f0f0f565bec9061b8bc4619b708e510639f"
+    },
+    {
+      "id": "gen.applog.head",
+      "sha256": "2c184e12bd1156d330a40de0c0d647d7896023334834482a1560db3b06443f0d"
+    },
+    {
+      "id": "gen.applog.tail",
+      "sha256": "16fca39977a351e9df59d0a9fb4b96b4a2e0ab8b616f258efa123d1cb9051174"
+    },
+    {
+      "id": "gen.cargo-7.test",
+      "sha256": "3b6e15a89ee3bc19e043ed3d587b7d7e5227cbd9111fabf78acbcd956233fdf6"
+    },
+    {
+      "id": "gen.cargo.lib-rs",
+      "sha256": "487a24c627a4e660ee43f40fed9c143338bd67a30d1b9924a04ad2e651277882"
+    },
+    {
+      "id": "gen.cargo.test",
+      "sha256": "9e788f2d09936b1eda676da3138a2c11dcff3fb3bc044e9fe3f2bbb62dca7f11"
+    },
+    {
+      "id": "gen.cargo.versions",
+      "sha256": "1cc4c4a6a94bb07fe7839db66c880b58727b42613337adb8bf9680bb75fd4b6d"
+    },
+    {
+      "id": "gen.env-installed.command-v",
+      "sha256": "f7ac57da314df6db3a6c61b862ba8ffaef343edf10ea5e61d4fdbb2c00335fa2"
+    },
+    {
+      "id": "gen.env-installed.run-tool",
+      "sha256": "44c933af3dc8217a350b5989ce5dd23d000ee1f7da0db1cc8913aa776029b6ed"
+    },
+    {
+      "id": "gen.env-rw.mkdir-ro",
+      "sha256": "da8c679cf0303ee0973afcd64ec929e8e66a5c30b5bcfafbc652d5181435c8b3"
+    },
+    {
+      "id": "gen.env.command-v",
+      "sha256": "c6896dddd5feddf6999e5a60c119e4f0ccedfbb54ae18550a5ec38b32a1264b0"
+    },
+    {
+      "id": "gen.env.command-v-jq",
+      "sha256": "41579f9b7ec42f85abc649fd1316db752243002c046a65fdbc3e48b6b975f570"
+    },
+    {
+      "id": "gen.env.missing-tool",
+      "sha256": "96f6c83a7b1c7622a2f12daacf9e31c4eca7aa4f0061567889f8ec02afd6275d"
+    },
+    {
+      "id": "gen.env.mkdir-local",
+      "sha256": "ac36519c28638e9f049a51b66180414a4f24104ac301dcf17c06cb24cfa3bd47"
+    },
+    {
+      "id": "gen.env.mkdir-ro",
+      "sha256": "44a089165b86befe084269e6fb460c5ecc3087afaa2fa7fd59f2c9dce6cdf20d"
+    },
+    {
+      "id": "gen.events.by-turn",
+      "sha256": "f1fe27a3fcfacc1093a834220049c951f07a195cf54f36c06ceac6cbb483538d"
+    },
+    {
+      "id": "gen.events.cat",
+      "sha256": "b80a05ead34ffb18f9161088c10462fdbb532a1c66eb9ad176546e23d4bb772c"
+    },
+    {
+      "id": "gen.events.tool-calls",
+      "sha256": "2d110c9f436138fb62e2716481a5d211dc9f92f70996d00ea16c68e577d1d1c4"
+    },
+    {
+      "id": "gen.jobs.cat",
+      "sha256": "684f32666453ac5068069ae9910265b00e0efe6a33b960ef08889124c9c39169"
+    },
+    {
+      "id": "gen.npm.install-offline",
+      "sha256": "e1ab705cc386a88678c83f469adb7ad35b0fae8b22a9aadfca09571e71259549"
+    },
+    {
+      "id": "gen.npm.pnpm-install-offline",
+      "sha256": "36b27fbd0a07d8f389446c64b2f793626ecfdb68b2d2460db82016fa47fc2280"
+    },
+    {
+      "id": "gen.npm.run-build",
+      "sha256": "f592570f0bfdd0557194abf2882eabc36310a90ea8d6d506e7939832b3f80f75"
+    },
+    {
+      "id": "gen.npm.run-missing",
+      "sha256": "52c3d27ea3a676ac5fcb29460fa4df425137733b953f05ffecbb6a1d7a476534"
+    },
+    {
+      "id": "gen.npm.versions",
+      "sha256": "ac57953dc37c5c9ea39c77527dfc190a05668b8a8ad7c32c7cacbb0be7d9b4e6"
+    },
+    {
+      "id": "gen.package.cat",
+      "sha256": "01edf8eed0d899008977bf262d31d5a3aee748fbf54708493d5d855ecf544913"
+    },
+    {
+      "id": "gen.package.script-names",
+      "sha256": "cf33ca96ca218d016fcb358648ab00965ae99b81673497b17c4678d22695fc8e"
+    },
+    {
+      "id": "gen.service-5180.cat",
+      "sha256": "5d29cf7aa005d510068d83a99d33382baa39f61bc9e140c3e9f1354453a7723b"
+    },
+    {
+      "id": "gen.service.cat",
+      "sha256": "e32100a5a32653926d61561a14fdf040d454a600220167c8d17903cd7b542b26"
+    },
+    {
+      "id": "gen.trace-shift.run",
+      "sha256": "7d1a319ed7840d0c7e7bdfe25a98d32b90187fd463282cfe70dcbb23f2f2b164"
+    },
+    {
+      "id": "gen.trace.cat",
+      "sha256": "4fc22c2045744258d36b1805bcc8ec31e6e2bb2bfab19e78d8a83732a26e7549"
+    },
+    {
+      "id": "gen.trace.run",
+      "sha256": "05ee79a37a725870ff6c816c5eeb7d849778003a6fb5c01eba76914571146642"
+    },
+    {
+      "id": "gh.g3r.stack.view-short",
+      "sha256": "292957b487b9a716395fde3dea14fead00b4e07e3e0bc0b0511421fd4b61b2c9"
+    },
+    {
+      "id": "gh.g5.git-diff",
+      "sha256": "9ec7eb616a8e0fe95181c885fa2c269e7955c586e56497c40d673784d76dd32a"
+    },
+    {
+      "id": "gh.g5.git-log",
+      "sha256": "5a27155e64d14c5a296e889cb0ef016469718f54a2ce85d76696943f1eb02412"
+    },
+    {
+      "id": "gh.g5.git-status",
+      "sha256": "4d68c470315b86f1b822dda008eec193e455843de05bc546a745e2961612cec6"
+    },
+    {
+      "id": "gh.g5.stack.rebase",
+      "sha256": "25196997cd285897bfdba64fb6c5e9d7cbd47a0063ecd7ba71a7cf7a709a21c0"
+    },
+    {
+      "id": "gh.g5r.stack.rebase",
+      "sha256": "a7f7522929e355a57b686a3669bee8becf46f6365ed60427a3d14f7f294eb122"
+    },
+    {
+      "id": "gh.git-branch",
+      "sha256": "231de83f9d03dfbdddfd80e6a55305beaae77b749b50c2dc89ec3cf2487e2c8f"
+    },
+    {
+      "id": "gh.git-log",
+      "sha256": "88aa48e8c8d43fc3c8da98989bbd27352cd6a1ad40676ccad9b2cc9d753d44b6"
+    },
+    {
+      "id": "gh.git-log-stat",
+      "sha256": "dc02d131d5a8c39c54e9a51e4977857bfd66240f3cd060d9eee1381997917121"
+    },
+    {
+      "id": "gh.git-show-stat",
+      "sha256": "7f3b62fc9154d9a45140f47d0b2b4c026163345f73b53126ffaa8eee7917d291"
+    },
+    {
+      "id": "gh.help",
+      "sha256": "4903444dcddb6b2476d253dc2f6f3fcaa5860a2cf10104585adf36f7a3dc3328"
+    },
+    {
+      "id": "gh.help.alias",
+      "sha256": "bb02e28d42daef4d20a37e8eeb262e5c8a02ede4fccce0ad4200830ac46ae9c8"
+    },
+    {
+      "id": "gh.help.api",
+      "sha256": "3d0c6d97c15b306cd1461eb7feb4cc7bb6a59e2b11b1275dbc93609087655376"
+    },
+    {
+      "id": "gh.help.auth",
+      "sha256": "117c59dbbb785cb97854df6da3078dca9ba6d38542e93448b503ae9ecc2f2799"
+    },
+    {
+      "id": "gh.help.browse",
+      "sha256": "e7420201cff4dac5a22b7a75567287bb6b9d443f55acb8adb04088875a5bbb61"
+    },
+    {
+      "id": "gh.help.cache",
+      "sha256": "d49758684112add0ab5cbe0aaed8b0f390bd648c6094274cb02d1b8297a99119"
+    },
+    {
+      "id": "gh.help.config",
+      "sha256": "eee8dab49d65731f1833d570349001a057f578ccc239767fac8662dc63587f97"
+    },
+    {
+      "id": "gh.help.extension",
+      "sha256": "65ba1114ff00f2e9ead355f8be30c64c57e8bde52e5aea9f25522fd43c396a05"
+    },
+    {
+      "id": "gh.help.gist",
+      "sha256": "a44385a4e36e9f99abddcb347bed8f3eac4123e16bfc1f51a6c174acb5607242"
+    },
+    {
+      "id": "gh.help.issue",
+      "sha256": "927d3509043c9d0a94a9586f935ce196abe0c87e0212040702ac2375141f87eb"
+    },
+    {
+      "id": "gh.help.issue-create",
+      "sha256": "b9e59819ea7f58052e5af9421c63f77820639345ef7259689097fb8d71a8a3f5"
+    },
+    {
+      "id": "gh.help.issue-list",
+      "sha256": "84b29a3f4846acd86180224f8b1688840d6d6f8f7669a5ec11acc0bdb4818c1b"
+    },
+    {
+      "id": "gh.help.label",
+      "sha256": "6d0afe48e8047d51e3c52906fae515b9c6ee09d049288e35134d33355c4ced95"
+    },
+    {
+      "id": "gh.help.pr",
+      "sha256": "eb0ff436e59ce7ce91f77e5554cd481085ae1fd3780781b90e35e6d185719f95"
+    },
+    {
+      "id": "gh.help.pr-checkout",
+      "sha256": "c851a47b207f5df6d780368251677686add9109384c7a8d10d1d07a190a5d70b"
+    },
+    {
+      "id": "gh.help.pr-create",
+      "sha256": "798f214cf03bddd1b967915360c84f03c3859737bb135f575d2515f80d9b22c6"
+    },
+    {
+      "id": "gh.help.pr-list",
+      "sha256": "934dc1af428050ff31cc9c8fe1d49d6aef8160f5f75d3ce7594360bc66984831"
+    },
+    {
+      "id": "gh.help.pr-merge",
+      "sha256": "4790b727a217f63b267be9c18404c2e4b3f7facbcc96d1bcb7d08ac0a83367fa"
+    },
+    {
+      "id": "gh.help.pr-view",
+      "sha256": "62588c2d647377f68fab53cd3d39b34bf33dc5f22859bb82366ad3e229658a3b"
+    },
+    {
+      "id": "gh.help.release",
+      "sha256": "462c7eff8a46042783171fc1cc761c4317c5132cc4a20beb89edf9109ec03634"
+    },
+    {
+      "id": "gh.help.release-create",
+      "sha256": "4e93482a8fc2b6a73496413728d3f2ff408ed8c51076d0b35a35c00a417903bd"
+    },
+    {
+      "id": "gh.help.repo",
+      "sha256": "44e01a4022885b68ced4af5d0ed2720daa61e43436dd36e7fff3c3e45f600ec4"
+    },
+    {
+      "id": "gh.help.repo-clone",
+      "sha256": "8b34db15734fa02ccd1926fc1c0770792977110d4689bf7ba139cdf058181917"
+    },
+    {
+      "id": "gh.help.run",
+      "sha256": "eedcaa3d2a0cae8d92e5d9120cb1bc01e37c221e16ae7982d49ac5e35fa2c26d"
+    },
+    {
+      "id": "gh.help.run-view",
+      "sha256": "1343a5f7b8e8a3e51d81c676a939e7f763338fdb6180080b00293aca665163ec"
+    },
+    {
+      "id": "gh.help.search",
+      "sha256": "5083942315af38755759b1e0e011aa430ab8c49c76d863de044ac702489eb76f"
+    },
+    {
+      "id": "gh.help.secret",
+      "sha256": "514eaf386a6fb30e7a753762d49203f869221bd53fb637d24d1f18c1b8dac3dc"
+    },
+    {
+      "id": "gh.help.status",
+      "sha256": "2e198b7f26f44157b4b8bd59f251cb8453606ad25d92bbfed1bb01c0c8ddf2b8"
+    },
+    {
+      "id": "gh.help.topic.environment",
+      "sha256": "fdda35567dd8ab2b18c9eef7724df5d2425319d483f55dc1fe3c62e42aa6bf03"
+    },
+    {
+      "id": "gh.help.topic.exit-codes",
+      "sha256": "b5818afba8eed2bc00c8968f7de6998b06b6776b1c7ddfd9ccc918add6f2488e"
+    },
+    {
+      "id": "gh.help.topic.formatting",
+      "sha256": "e4bd86863bd08b2f237312cd806345bf44388e3fc28e3aaab87298baa78e7cb1"
+    },
+    {
+      "id": "gh.help.workflow",
+      "sha256": "26b9d23b03676ccd6fb34e201d1aacd017a72d3b5e9f2ac3878212e1eb0d471c"
+    },
+    {
+      "id": "gh.stack.err.submit",
+      "sha256": "54110481b69d4d3d4ba2f4df4e89beaf8e1f50da4c50b722d70f24bacc4d216f"
+    },
+    {
+      "id": "gh.stack.err.submit-draft",
+      "sha256": "658b663fa85a6a711be6f3c48b5dc11d2ca072048eb5cf690e3aae4f775b164e"
+    },
+    {
+      "id": "gh.stack.err.switch",
+      "sha256": "c97029558c7d767d5e971aeb459dd9a843422e79cfbe1f51d560c84cf633bb75"
+    },
+    {
+      "id": "gh.stack.err.version-subcommand",
+      "sha256": "88b85ca4b62a1995984eae39935a4b670b35140c61e78e4a57e797308a9eb2c9"
+    },
+    {
+      "id": "gh.stack.help",
+      "sha256": "b9d6238416a798d4e07e4240628ac82f184293001f4ee792576d1231fd28fc7d"
+    },
+    {
+      "id": "gh.stack.help.add",
+      "sha256": "2c95df9467afe9a8353879117606e3403fed7d89fa4e310ea9456320ef3741be"
+    },
+    {
+      "id": "gh.stack.help.checkout",
+      "sha256": "d6889d3cec9632d0139de849b9feff6fc2dd79dc7dcc6febf55a5337ca14d0c6"
+    },
+    {
+      "id": "gh.stack.help.down",
+      "sha256": "ffa44918ee7cdf07d7a227fcb676f84022cafb545cc440b296d3058525ab6522"
+    },
+    {
+      "id": "gh.stack.help.init",
+      "sha256": "0406676bab39ea1f62c2a7ef9e1426cca8d4e6516f7062df05a8b5ada89a0c06"
+    },
+    {
+      "id": "gh.stack.help.link",
+      "sha256": "840c57f9abd1fc390e48cfe94314900d559dd42f16f627062856b1246f14504f"
+    },
+    {
+      "id": "gh.stack.help.merge",
+      "sha256": "9cc1205b904226dbc15cf4eb950820cb4e39a0369659d66c796418c2a51d393c"
+    },
+    {
+      "id": "gh.stack.help.modify",
+      "sha256": "545d0b6133116e988ca14270449d575059f1d563da321f4db11e3fa67403b20a"
+    },
+    {
+      "id": "gh.stack.help.push",
+      "sha256": "0228216823083d46b849a3d402e20ade9d5cad0369aebb2a52e8f03a95dbbc69"
+    },
+    {
+      "id": "gh.stack.help.rebase",
+      "sha256": "8c4017a7fe2ed522cdac9252cc28d0f74672b642caecd05f42aeb934df17cd3e"
+    },
+    {
+      "id": "gh.stack.help.submit",
+      "sha256": "1da9b4e15263daa9f6fd36c211da4fd042ec88500d02c68efbe4fe663b16ec6e"
+    },
+    {
+      "id": "gh.stack.help.sync",
+      "sha256": "67897be0d03128ba6d2e8e28d5dc2cb655b8a72398fad74bc439993dc9df4e61"
+    },
+    {
+      "id": "gh.stack.help.unstack",
+      "sha256": "168b86ad29688edc8ea0a8a92ab3ad7d8e226140900816e6054951a806d6c7ee"
+    },
+    {
+      "id": "gh.stack.help.up",
+      "sha256": "97adae27fb40d50d6afbc65f6c807126483f3070184da3cea7d296b9d5d947a4"
+    },
+    {
+      "id": "gh.stack.help.view",
+      "sha256": "62ea2f377a73e9ed13263e8e77c5b9b87219eb9090f4815edfdfe9634b65f9e9"
+    },
+    {
+      "id": "gh.stack.sync",
+      "sha256": "3ffedd3eaf183fc40841aab3eb141b3d4b108ffff05ac105e814037f7693f2ec"
+    },
+    {
+      "id": "gh.stack.version",
+      "sha256": "a8be0385c0a25cf4ae958149976e85837e9afc2932de81442f28c3953916897e"
+    },
+    {
+      "id": "gh.stack.view-json",
+      "sha256": "8894e6f08aab63a3b7021493c43e9187b56a696f70ca4c890b5943a47aaf25fd"
+    },
+    {
+      "id": "gh.stack.view-short",
+      "sha256": "3cbb31925bcd21ceda119548830be1b3b6cda936c0848676512b036b055e5f5f"
+    },
+    {
+      "id": "gh.version",
+      "sha256": "50fb9e699d3909cc73bf752bbf017ebcf60218d80f050d56fcbf65c413e03028"
+    },
+    {
+      "id": "jj.abandon-retain.bookmark-list",
+      "sha256": "21bfb2a22901180ba8aa856ac25f53d8c8e2776eb80d7fe6ecfac2e229af06dc"
+    },
+    {
+      "id": "jj.abandon-retain.tweak",
+      "sha256": "5b8dd9087abe2fedba117bddef763378206027ed2c51a167db0bbcc49a1513b8"
+    },
+    {
+      "id": "jj.abandon-two.tweak",
+      "sha256": "84e9737e415c12a6b06d23b13616143923cd21309a1eabfc8dc34ae43f418da2"
+    },
+    {
+      "id": "jj.abandon.bookmark-list",
+      "sha256": "43d5df36376e41de62a193a89e1d91d1049aff1f70ab54e81164838396c103cb"
+    },
+    {
+      "id": "jj.abandon.log",
+      "sha256": "9d354e42175ad1d29d3bd3c021e61dc4fafc1119eefbe6d80bd40fbaea2fd155"
+    },
+    {
+      "id": "jj.abandon.tweak",
+      "sha256": "71bd855c4c9af102ed6aa65034015e29d21736fbc2e394e70d65d5baf49cb56b"
+    },
+    {
+      "id": "jj.bookmark-list",
+      "sha256": "048202a345c1d9d0f23c61646b55246d384d2305d8332e256a17fe53a131160d"
+    },
+    {
+      "id": "jj.cfg-env-swap.cat-config",
+      "sha256": "de0b534d82ac44212d971b4e4b3d031a52d9f60d7be7d0dac592315ab293568e"
+    },
+    {
+      "id": "jj.cfg-env-swap.get-email",
+      "sha256": "f2f16f92f8210617c881b24891c985b6b2f0cd7eab77e65578caaccb84ed4c8e"
+    },
+    {
+      "id": "jj.cfg-env-swap.printenv",
+      "sha256": "264d47ddf043228254c422ab035cdfc3e75c7e7af2ef9e1101222fcab52e9d3d"
+    },
+    {
+      "id": "jj.cfg-env.cat-config",
+      "sha256": "bd86eb2fa808d56e6eeedffd5ed195eb357bd4214a4a97b4c84dcafc0a224bc0"
+    },
+    {
+      "id": "jj.cfg-env.get-email",
+      "sha256": "35c3800d853e0ff62eb737a607855dfd8ea14e26f0c4cb85c2a5245968296fa3"
+    },
+    {
+      "id": "jj.cfg-env.printenv",
+      "sha256": "e54898a6f030640a725eb8b856b23664044322f2b08d1473f4de9c9b42b76264"
+    },
+    {
+      "id": "jj.cfg-flag-swap.cat-flags",
+      "sha256": "5d7e4c8ade4e4509d655a3b2527cecfb99d5b8b94c58e470140462145d0c75e1"
+    },
+    {
+      "id": "jj.cfg-flag-swap.get-email",
+      "sha256": "0f97ea39daeea2d5216c61dbf4c9ea83c86b4646cdd62cc6dd43ff4bb1dfc28d"
+    },
+    {
+      "id": "jj.cfg-flag-swap.printenv",
+      "sha256": "85a5b2152701fc9864de6ce2df39d4ee4da523901c2b647070fbbf518c6470ac"
+    },
+    {
+      "id": "jj.cfg-flag.cat-config",
+      "sha256": "15b82d89f9c0ef5fa518573840d263a7635b6ef72fc01bf2b2c4466437c0ea27"
+    },
+    {
+      "id": "jj.cfg-flag.cat-flags",
+      "sha256": "2c7f02d0308ae2f9cc5fe03751cedab012117ad6de41d06e1419a22c6cf6e520"
+    },
+    {
+      "id": "jj.cfg-flag.get-email",
+      "sha256": "c84e72fe4a1c4479c1e0f04c1393231092dc39984a26ff28365709c5e88198a8"
+    },
+    {
+      "id": "jj.cfg-flag.printenv",
+      "sha256": "f7dea9e4980b2582e74d716cb69fbbba4ed7e65d86f8c812ed18367a4575df1c"
+    },
+    {
+      "id": "jj.diff.add-soup",
+      "sha256": "33d845d7e4e9d1fb0e2b8da3788b82b0f321a7b38e6029fa7b7e5aeb2c51d94f"
+    },
+    {
+      "id": "jj.diff.stat-sweets",
+      "sha256": "a833b103580e463754eec1932cd66a0fb9356c4e5ea45feaa28d3a6f2b0aeb31"
+    },
+    {
+      "id": "jj.diff.wc",
+      "sha256": "37a38aeeed3b82b86d7d88c48ec649164864a5fa8bb84d2ba42b595de15cda52"
+    },
+    {
+      "id": "jj.err.ancestors-method",
+      "sha256": "94d12cbcc1488e26be6445f347a9af9369ba31953774d7d4e7f8958e40968c8a"
+    },
+    {
+      "id": "jj.err.bookmark-move-backwards",
+      "sha256": "3991f246fa36df078ed9f616837736d81648e9721d2590184405cbabbb52b8fc"
+    },
+    {
+      "id": "jj.err.file-show-colon",
+      "sha256": "6675c3311de916eb75495b8ef6eee25e7ddf8ff6cde366b6bad22ec27831624e"
+    },
+    {
+      "id": "jj.err.id-keyword",
+      "sha256": "6e2720f2fdb6dcc248e7177c364e5f91dc8c276e853400578bc98acb4b264abe"
+    },
+    {
+      "id": "jj.evolog.wc",
+      "sha256": "8d2e0e1ab13c8e0fe68ea158a07a71dcb17f6a60cb813451d84e2bbadaa9743c"
+    },
+    {
+      "id": "jj.file-list.sweets",
+      "sha256": "25d6c61ccb667650eb4cec1dc6c47cdee88e7144aee48b87cfc771568b70cf8f"
+    },
+    {
+      "id": "jj.help.abandon",
+      "sha256": "f48f3c7679d62ac530bc37e6c7e1f02af13f9df609602b1901644f73717839dc"
+    },
+    {
+      "id": "jj.help.absorb",
+      "sha256": "c760877412ef27e655c03ae1f7cd2f952f4659ca035a03c357f558841917ef51"
+    },
+    {
+      "id": "jj.help.bisect-run",
+      "sha256": "66f73572fcd7442ad897ef62ac87a82802289b3c59286221ca7439a747c1a199"
+    },
+    {
+      "id": "jj.help.bookmark",
+      "sha256": "8a12431bfccebfb9680ad60d2cc2f9c62134492aff21990584e904256a20ea33"
+    },
+    {
+      "id": "jj.help.bookmark-create",
+      "sha256": "b013dbd3b999344d97249f901a6a87918125c877603eb726a250138fc913fad8"
+    },
+    {
+      "id": "jj.help.bookmark-delete",
+      "sha256": "e9592754c3962ac4ce2d926252b8eadf22a49ca5622783d618e8d0f8f34b1799"
+    },
+    {
+      "id": "jj.help.bookmark-forget",
+      "sha256": "27578ff12a47d6adeb164adc8fa93f25b7a6c5b50082e8f2227d86ba53b4f6b9"
+    },
+    {
+      "id": "jj.help.bookmark-list",
+      "sha256": "833edc7970958f4b788da33c92a2afb4d1970af2edd19a52d402102858c688bd"
+    },
+    {
+      "id": "jj.help.bookmark-move",
+      "sha256": "a95a5ed2d8639294136f1d320f15b4a99a4eb00188f722dc8a15f6e17a36ac5f"
+    },
+    {
+      "id": "jj.help.bookmark-rename",
+      "sha256": "ecdf2b39baf41b8cbf03e8ee299d5de13dbb8e3ea174a43775ce4368843a81a1"
+    },
+    {
+      "id": "jj.help.bookmark-set",
+      "sha256": "84c9bccc02271f21161b64c156ffb69cc373f9df1e42f21178da228f517b87cd"
+    },
+    {
+      "id": "jj.help.bookmark-track",
+      "sha256": "2c56bffc7b3d9b358acec8f747741ea9660d4989351d27e58b05802a08f56ddf"
+    },
+    {
+      "id": "jj.help.commit",
+      "sha256": "459760e434ceb3213df2628d8b2ae7d3304d25327ec610d615610897d97cfc90"
+    },
+    {
+      "id": "jj.help.config-get",
+      "sha256": "c3df6b16f3e390d4ce3ea17edcda3711c819d0792120b960fd1eaace669fa52e"
+    },
+    {
+      "id": "jj.help.config-list",
+      "sha256": "9d0cc2862a308ee7421f1a5038cc8f7eccc3aaeefd0bf2b7b30a86c77f0e9a4d"
+    },
+    {
+      "id": "jj.help.config-set",
+      "sha256": "a885f2531453ff5dfd94de57f254ea0f6beb7799a7d195098b740a4833961eb5"
+    },
+    {
+      "id": "jj.help.describe",
+      "sha256": "5991c375edb1f4a22fb6a1263fd6aa3f8cb5f6f61b383f4e7b92694c923158ef"
+    },
+    {
+      "id": "jj.help.diff",
+      "sha256": "2f570b71871df3fcbeca27dc94fe51cea6d3d36640cf396a3d53885c51ccecdc"
+    },
+    {
+      "id": "jj.help.duplicate",
+      "sha256": "b9f25ab8c1ed1082b27f7aefeb61a73910a31878e2c96624a97fc3646ae92b07"
+    },
+    {
+      "id": "jj.help.edit",
+      "sha256": "9eb749457a4fae5fad5d4eda180c236d9b7217fc14fae3bc9ae362c1e0652a58"
+    },
+    {
+      "id": "jj.help.evolog",
+      "sha256": "4e42a410b327d05d168a0496649d4ae4e10de6266557f24e42fa4ae8f6c9f5d2"
+    },
+    {
+      "id": "jj.help.file-annotate",
+      "sha256": "41b3b0da0fcef92f2b6cfb620e52bf116661d4c541ac78f9bb55b90ed7d5dfb2"
+    },
+    {
+      "id": "jj.help.file-chmod",
+      "sha256": "af218e23eb60d00fb82eaf1792da8a2bb32cc3a4aa4dc5a0f99f59400ba41391"
+    },
+    {
+      "id": "jj.help.file-list",
+      "sha256": "33a9816ed2cde73a162ed51fb988bc6f70531309611cb837e7dfd7f85f525b56"
+    },
+    {
+      "id": "jj.help.file-show",
+      "sha256": "88991a50c441b43a3f1aa59463b331dd07013b906ff1d663b1efe417a0de977d"
+    },
+    {
+      "id": "jj.help.file-track",
+      "sha256": "dca7da1bbe9bbdd00d4d5d99fa0182ff7cd59e570a6cb22377f36eff6af0ea50"
+    },
+    {
+      "id": "jj.help.file-untrack",
+      "sha256": "4a911875e8b06e2432419d707c0b5d878469301e59c92f11e8a85289fa20eab5"
+    },
+    {
+      "id": "jj.help.fix",
+      "sha256": "a10f6211233c655bcc8da75e83c54bf86dbda775c651e2e7357a9a57707fd095"
+    },
+    {
+      "id": "jj.help.git-clone",
+      "sha256": "cd919b28c5d4504b97dc82c48abbba6113ed992f59e7dc06f944cfc104023da8"
+    },
+    {
+      "id": "jj.help.git-fetch",
+      "sha256": "b13c76eac8ee3b666f2855a4637ca59aeca012d181ac0c67e9c007c07217287b"
+    },
+    {
+      "id": "jj.help.git-init",
+      "sha256": "7f3b3ed7ac233296de2c9ee7ed927ebd7f877c1e3cbe5545233590bff349fce8"
+    },
+    {
+      "id": "jj.help.git-push",
+      "sha256": "173c8c4eb5e64229b4aae0805d6ef75f1098bb7797018817e299b219211c68d2"
+    },
+    {
+      "id": "jj.help.git-remote-add",
+      "sha256": "dd81d67794e148a0add53232773587496a3b8e8defbacabed7c6c186266cbe6b"
+    },
+    {
+      "id": "jj.help.interdiff",
+      "sha256": "c20ce067ae42c39f46ea86f63dfc998793d6d7cabbf487d32e56acb62b90a1b7"
+    },
+    {
+      "id": "jj.help.kw.bookmarks",
+      "sha256": "61a415a4eb6e430cfa97f297dee1b6289c9eedf57273ad7c5edb72f55f91bae0"
+    },
+    {
+      "id": "jj.help.kw.config",
+      "sha256": "83d262d4b5559eb09f078a97c3be92b9f9326444d5e82988c01d12ddde23b530"
+    },
+    {
+      "id": "jj.help.kw.filesets",
+      "sha256": "54ce9db1ea495db8e69848e79dc60fe1b165c1dabc1b51fa0da8f314912fb952"
+    },
+    {
+      "id": "jj.help.kw.glossary",
+      "sha256": "69e9f388296348f561bdf7637bb626c529c8c799708b615ddeb820dd185712c7"
+    },
+    {
+      "id": "jj.help.kw.revsets",
+      "sha256": "f8e0538f2bd7896b6ee1a1c653c0fe8f8ff1e95351d83459b838e90dc20220e8"
+    },
+    {
+      "id": "jj.help.kw.templates",
+      "sha256": "d21dfbe413042ae288a8f5b32a47f0ccec66abde135c9982f01ae5d296c95a5f"
+    },
+    {
+      "id": "jj.help.log",
+      "sha256": "36e854c82d6c822ee533217ea95d4a642b48ec20d1353e04b8972cda5afd945b"
+    },
+    {
+      "id": "jj.help.metaedit",
+      "sha256": "655456f546f56e0afa7724b721fe56a0b2698f83294dfb22b116392e51e7c797"
+    },
+    {
+      "id": "jj.help.new",
+      "sha256": "c5b0ffcb9be984b512abc3f900dc5c4841b06e3cd0121fbb996f86de474af424"
+    },
+    {
+      "id": "jj.help.next",
+      "sha256": "59ebeefe5bdf2d6bc391343a5d209eabb85ecaf703586792055f87d5ac2872a3"
+    },
+    {
+      "id": "jj.help.op-log",
+      "sha256": "e9194515c59051eabe007dcdc60634471eab8e2a7c6a36ab003de71bdd257c76"
+    },
+    {
+      "id": "jj.help.op-restore",
+      "sha256": "4f21c694d93060c4989257faa4bd395958674883e36e728a2439a1e28c692f23"
+    },
+    {
+      "id": "jj.help.parallelize",
+      "sha256": "298e13269379294a9a2a71ad8a421d0fcb25afd3551722127b6740d1bdcf2412"
+    },
+    {
+      "id": "jj.help.prev",
+      "sha256": "1d0408d95463aab30372f6ea65994b20f97cc01ced5241ee92a748a7ba631fbc"
+    },
+    {
+      "id": "jj.help.rebase",
+      "sha256": "4fc06d7cb38e93f6f5757f3016437dedd8f56f37b03c19643597f90282c4847c"
+    },
+    {
+      "id": "jj.help.resolve",
+      "sha256": "86205cd539dc428c05b51f3aad4079b17d9e0b095ae88d62f25d62ca782b85c6"
+    },
+    {
+      "id": "jj.help.restore",
+      "sha256": "c3e12f0df843cb321c9d11e822b123303f14aa09444cc9fb97e4766d6b802ea8"
+    },
+    {
+      "id": "jj.help.revert",
+      "sha256": "358001f0fbf21a8008ee7af65eb5e17d4135f71c6b1e837cec76fb807b765ee6"
+    },
+    {
+      "id": "jj.help.show",
+      "sha256": "5df6c835cc120160e699ca8421076861283af4a23dc2f9bf657205d56ed0d88b"
+    },
+    {
+      "id": "jj.help.simplify-parents",
+      "sha256": "3b45effc430773b9fd2ae830bc9f4b8a97e7462b4f5b96d7ddf5493f12101b64"
+    },
+    {
+      "id": "jj.help.sparse-set",
+      "sha256": "ac7e26f1486729902e1daa8707e4a52aaa4c1519ba02ee1916ac064112d01b2a"
+    },
+    {
+      "id": "jj.help.split",
+      "sha256": "eb4bb49cc2f312e00fe99a9beb71403e877f8cee7fac4f78dcde4b7bbe0d1209"
+    },
+    {
+      "id": "jj.help.squash",
+      "sha256": "a353894254ed62c84d188243a7166f3d41553230369b9134e4eaa42dd38f15f5"
+    },
+    {
+      "id": "jj.help.status",
+      "sha256": "e6a8ac5c157bbc3bf3ae6e4a59fb6e6bae8bb30ceff1ce0e31fbe74d76558abc"
+    },
+    {
+      "id": "jj.help.tag",
+      "sha256": "200f9281e00c3a16db62bd0bdc138ec615cfcdd5f0b8478c4d3247d7fc12eeba"
+    },
+    {
+      "id": "jj.help.undo",
+      "sha256": "cb9498436f0d78deb855e4a6b0f2df298641f2021b3f5b808bf732fe493f1b3a"
+    },
+    {
+      "id": "jj.help.workspace-add",
+      "sha256": "46fa4e69f20c5ab76a13ce41e2c4456074e5140e6ed9acd09af0bc5980b89776"
+    },
+    {
+      "id": "jj.log",
+      "sha256": "a51819b74b2dd2c2a12c93143c86c7fb3555be91f9f40d8a2b0b7f933a702882"
+    },
+    {
+      "id": "jj.log.all-flat",
+      "sha256": "d99e8053d930f093263073b1698c74b8d2f058959dd8274b11a161327e23d8c3"
+    },
+    {
+      "id": "jj.log.json",
+      "sha256": "699a356419a7d7d4fcfc4a2b7b57738458def837c64a99ae26dec8b7c8574d57"
+    },
+    {
+      "id": "jj.log.json.all",
+      "sha256": "b0710b9826da1abd16bdfba3952cc32445098f8435ac15aac636c474b748cdea"
+    },
+    {
+      "id": "jj.log.menu-oneline",
+      "sha256": "676d199fbe6921ef43c34b39d98627d7b18c4b8ac041f868259e9806ba6d70bf"
+    },
+    {
+      "id": "jj.ls",
+      "sha256": "b1ed3cdf90090d91de3beed560424a945ce1c2c0601380f87f5d6f521f9e71d6"
+    },
+    {
+      "id": "jj.move-back.allowed",
+      "sha256": "0e818fbf9e2e2873e3ddde88974d2fe574f3b74caaeaa815df5d2dda3e904019"
+    },
+    {
+      "id": "jj.ok.commit-id-keyword",
+      "sha256": "4f8efd24cc15270f5c1ebc81960d4b5731777adf823e75df3f51f0dd7eae99f6"
+    },
+    {
+      "id": "jj.ok.file-list-stable",
+      "sha256": "e3a9694c494b1237fab8dbfa0f5fe4873a89d237a34c45322153f3d67e4409fc"
+    },
+    {
+      "id": "jj.ok.file-show-r",
+      "sha256": "b079ddbd39e1d4ca061ec6cd325eaf3d5bb1e71e0813fe2efeae065cc90b4ef4"
+    },
+    {
+      "id": "jj.ok.file-show-wc",
+      "sha256": "a1e80caac90fb0cea644002089cfd0b913ab076c6afa35439db99a7e9b011251"
+    },
+    {
+      "id": "jj.op-log",
+      "sha256": "195f10e5fb5d41908ac204bb753065333dda23dea69a3af7584cdb93a157b95f"
+    },
+    {
+      "id": "jj.op-log.all",
+      "sha256": "26da5e3477c91116efadc095b9a1ff2c094727691939d356c31fe507c42c22ec"
+    },
+    {
+      "id": "jj.show.stable",
+      "sha256": "268ad94848c7bae46bf209e88965c0aff0f774f7ec66bc098caf5b3400092a0a"
+    },
+    {
+      "id": "jj.show.sweets",
+      "sha256": "5de0136cf45a28728e4f7aa60e98548b730758d2690bab7b0cceaa4a5b4a8c03"
+    },
+    {
+      "id": "jj.status",
+      "sha256": "91021a88f647ca1369bdb2bd86807e1b3e9ba392653af49a763092386d3d7293"
+    },
+    {
+      "id": "jj.version",
+      "sha256": "accf13d4407538291d9468e63f5e52f0ea80cc242f72881514045827b3d7f74e"
+    },
+    {
+      "id": "old.dasel.version-flag",
+      "sha256": "82adb89a0ee16bad3eccbb6791029420d39bf84632ff1e193aee92dd506d79a7"
+    },
+    {
+      "id": "old.dasel.version-subcommand",
+      "sha256": "1e1193b4eb9bcc51b570920edd5b5d00e0cab33125abdd3176e1b4fe00be286e"
+    },
+    {
+      "id": "old.dasel3.version",
+      "sha256": "cd206a0d5b1bf6bea383fd5d6f97751ba688b66bfc9b574368bc43df61871445"
+    },
+    {
+      "id": "old.gh.version",
+      "sha256": "f4c4f1bbf787ecb38fa11c851a5fe2ccf02c6fc61405f7b21d7f7b83b505441d"
+    },
+    {
+      "id": "old.jj.help.kw.filesets",
+      "sha256": "fb3792c2d90c46f7369f399e1c57f1ec0f406e956f48d3030575c938d41659b6"
+    },
+    {
+      "id": "old.jj.version",
+      "sha256": "b8c35df9721ccc2920294919675be02bb339e18f2e5ea44d970e99f128f7a693"
+    }
+  ],
+  "host_dependents": {
+    "cc": [
+      "gen.cargo-7.test",
+      "gen.cargo.lib-rs",
+      "gen.cargo.test",
+      "gen.cargo.versions"
+    ],
+    "git": [
+      "gh.g3r.stack.view-short",
+      "gh.g5.git-diff",
+      "gh.g5.git-log",
+      "gh.g5.git-status",
+      "gh.g5.stack.rebase",
+      "gh.g5r.stack.rebase",
+      "gh.git-branch",
+      "gh.git-log",
+      "gh.git-log-stat",
+      "gh.git-show-stat",
+      "gh.stack.err.submit",
+      "gh.stack.err.submit-draft",
+      "gh.stack.err.switch",
+      "gh.stack.err.version-subcommand",
+      "gh.stack.sync",
+      "gh.stack.version",
+      "gh.stack.view-json",
+      "gh.stack.view-short",
+      "gh.version"
+    ],
+    "python3": [
+      "gen.applog.errors",
+      "gen.applog.head",
+      "gen.applog.tail",
+      "gen.events.by-turn",
+      "gen.events.cat",
+      "gen.events.tool-calls",
+      "gen.trace-shift.run",
+      "gen.trace.cat",
+      "gen.trace.run"
+    ],
+    "rust": [
+      "gen.cargo-7.test",
+      "gen.cargo.lib-rs",
+      "gen.cargo.test",
+      "gen.cargo.versions"
+    ],
+    "sh": [
+      "gen.env-installed.command-v",
+      "gen.env-installed.run-tool",
+      "gen.env-rw.mkdir-ro",
+      "gen.env.command-v",
+      "gen.env.command-v-jq",
+      "gen.env.missing-tool",
+      "gen.env.mkdir-local",
+      "gen.env.mkdir-ro"
+    ]
+  },
+  "host_tools": {
+    "cc": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+    "git": "git version 2.54.0 (Apple Git-157)",
+    "python3": "Python 3.9.6",
+    "rust": "rustc 1.94.1 (e408947bf 2026-03-25); binary: rustc; commit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1; commit-date: 2026-03-25; host: aarch64-apple-darwin; release: 1.94.1; LLVM version: 21.1.8",
+    "sh": "GNU bash, version 3.2.57(1)-release (arm64-apple-darwin26)"
+  },
+  "recipes_sha256": "4a5c9d151c31c127f27f15d33f92725b8609044b00cf905627c64098f2de5f2a",
+  "schema": "sidekick-verification-captures-lock/1",
+  "set_sha256": "7ff1c8ca9647115c0169e765debcc3134fac0c5bcc881033d0768c949fe6518e",
+  "tools_lock_sha256": "aaa78e476803229e8d2beccf10c83cfeef7d5f09c277632875890b3687da8ed9"
+}

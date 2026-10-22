@@ -1,0 +1,54 @@
+# The verification corpus's assembly recipe (stage 2; tools/tasks/gen_verification.py).
+#
+# One top-level seed. Every random choice for a triple draws from
+# sha256(seed ‖ claim id ‖ length ‖ position ‖ obstacle), so adding a claim
+# never reshuffles the others. Length buckets are approximate: they are set
+# with the `approx-v1` estimate (tools/tasks/canon.py), not any model's
+# tokenizer, and scoring records each checker's real token counts.
+
+schema = "sidekick-verification-corpus/1"
+seed = 133
+# Sets are reviewed by hand in numbered rounds ("batches"): `batch` is the
+# round whose claims this corpus includes (a claim added for a later round
+# carries `since` and stays out), and `set` names the set it builds. Review
+# round 3's set was revised once after review, so it is review-3b.
+batch = 3
+set = "review-3b"
+# Call ids increase through each haystack; the claim's pointers follow.
+monotonic_calls = true
+max_per_shape = 3      # instances of one claim shape
+max_per_fact = 2       # claims about one underlying fact (claims.toml `fact`)
+dev_share = 0.2        # share of shapes, by seeded hash, in the dev split
+
+[filler]
+# Sibling worlds exist to give a variant its edited output, and old/ worlds to
+# back version-scoped notes. Their captures would disagree with the base
+# worlds', so they never pad a haystack.
+exclude_worlds = ["jj/abandon", "jj/abandon-retain", "jj/abandon-two", "jj/move-back",
+                  "dasel/worker6", "dasel/noservices", "dasel/pool25", "dasel/filter-swap", "dasel/merge-swap",
+                  "dasel/merge-noport", "dasel/merge-swap-pool", "dasel/merge-nopool",
+                  "gh/G3-routes", "gh/G5-readme", "gen/service-5180", "gen/trace-shift", "gen/env-installed",
+                  "gen/env-rw", "gen/cargo-7", "old/jj-0.30", "old/dasel-2"]
+# Filler is command output first, up to this share of the filler's tokens,
+# then documentation (help pages and topics), then more output if short.
+output_share = 0.6
+
+[lengths]
+1k = 1000
+4k = 4000
+12k = 12000
+32k = 32000
+
+[positions]            # where the needle sits, as a share of the haystack
+start = 0.05
+middle = 0.5
+end = 0.95
+
+# The review plan for each round: the worked triples, then `per_type` triples
+# per claim type, spread over lengths, positions and obstacles. A config whose
+# needle is too long for its length moves up to the next length.
+[review]
+per_type = 10
+lengths = ["1k", "4k", "12k", "32k"]
+positions = ["start", "middle", "end"]
+worked = { length = "4k", position = "middle", obstacle = "none" }
