@@ -348,6 +348,21 @@ WINDOW_FAMILIES = ("A3", "A3g", "A2", "A2g", "M")
 READER_OF_WINDOWS = ("R512", "R512g", "R2048", "R2048g")
 
 
+def attribution_text(a: dict, header: bool = False) -> str:
+    """One `[[attribution]]` entry as the report words it, by its status:
+    "attributed" (cause attributed by the audit), "candidates" (cause not
+    yet attributed; candidates from the audit) or "unattributed" (the text
+    says so itself). `header` is the line under the family's label;
+    otherwise the checker's own line, after "instrument-limited; "."""
+    status = a.get("status", "attributed")
+    if status == "candidates":
+        lead = "candidate: " if header else "cause not yet attributed; candidates from the audit: "
+        return (("cause not yet attributed; " if header else "") + lead + a["candidate"] + ". " + a["support"])
+    if status == "unattributed":
+        return a["text"]
+    return a["text"] if header else f"cause attributed by the audit: {a['label']}: {a['text']}"
+
+
 def diagnosis(scored: dict, runs: list[dict], comparisons: list[dict], cfg: dict) -> list[str]:
     """The diagnosis beside the instrument-limited verdicts (design §7). The
     verdicts themselves are never changed; this says why, from the runs and
@@ -400,14 +415,14 @@ def diagnosis(scored: dict, runs: list[dict], comparisons: list[dict], cfg: dict
     open_ = audit.get("open", "interface, label mapping, tokenizer cuts, τ, domain")
     for a in attributions:
         if failed_fams & set(a["families"]):
-            out.append(a["text"])
+            out.append(f"{a['label']}: {attribution_text(a, header=True)}")
     if failed_fams - {f for a in attributions for f in a["families"]}:
         out.append(f"Otherwise: instrument-limited; cause not yet attributed (open: {open_}).")
     for s in scored.values():
         if s["gate"]["passed"]:
             continue
-        att = next((a["text"] for a in attributions if s.get("family") in a["families"]), None)
-        lines = ["instrument-limited; " + ("cause attributed by the audit: " + att if att
+        att = next((a for a in attributions if s.get("family") in a["families"]), None)
+        lines = ["instrument-limited; " + (attribution_text(att) if att
                                            else f"cause not yet attributed (open: {open_})")]
         if s.get("family") in WINDOW_FAMILIES:
             lines += [x for x in (harness, scope) if x]

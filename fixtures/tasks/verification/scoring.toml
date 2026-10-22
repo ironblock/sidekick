@@ -127,8 +127,8 @@ text = "Written down post-data, after the judge's responses were seen: the lenie
 
 # What the failed checkers' control failures are attributed to, from the
 # audit after the first scored round, written down post-data. The verdicts don't change:
-# every failed checker stays instrument-limited. A family without an entry
-# here reads "cause not yet attributed". The audit verified the
+# every failed checker stays instrument-limited. A family without an entry,
+# or whose entry isn't "attributed", reads "cause not yet attributed". The audit verified the
 # construction (the checkpoints' id2label against the classes the harness
 # used; premise first and hypothesis second on the wire for the nli
 # format, MiniCheck and HHEM; the textbook MNLI triple right for every nli
@@ -139,29 +139,49 @@ second_reader = "The second reader passing its controls through the same windows
 construction = "The audit after the first scored round found no construction bug: each three-way checkpoint's id2label matches the classes the harness read; the evidence is the premise and the claim the hypothesis on the wire for the nli format, MiniCheck and HHEM; every nli model, MiniCheck and HHEM gets the textbook MNLI triple right through the harness's own client path, which gives exactly what D47's stock request gives; every short control is a single window."
 open = "interface, label mapping, tokenizer cuts, τ, domain"
 
+# Each entry's `status`:
+# - "attributed": the report says "cause attributed by the audit: <label>: <text>";
+# - "candidates": "cause not yet attributed; candidates from the audit:", then
+#   `candidate`, then `support`, the numbers behind it;
+# - "unattributed": `text` says so itself, and why.
 [[attribution]]
 families = ["A3", "A3g"]
-text = "Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified."
+label = "Three-way nli models"
+status = "unattributed"
+text = "cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998."
 
 [[attribution]]
 families = ["A2g"]
-text = "Two-way nli models, gated: attributed to τ. Post hoc, at τ ≤ 0.1 both pass every control group (deberta-v3-large-zeroshot-v2.0-c at 0.05 and 0.1, bge-m3-zeroshot-v2.0-c at 0.05); their entailment on CLI evidence runs low. This is exploratory and not applied: τ was fixed at 0.5 in advance, and tuning waits for a dev split."
+label = "Two-way nli models, gated"
+status = "candidates"
+candidate = "τ (post-hoc sweep on the gate's own controls; not held out)"
+support = "At τ ≤ 0.1 both pass every control group (deberta-v3-large-zeroshot-v2.0-c at 0.05 and 0.1, bge-m3-zeroshot-v2.0-c at 0.05); their entailment on CLI evidence runs low. Not applied: τ was fixed at 0.5 in advance, and tuning waits for a dev split."
 
 [[attribution]]
 families = ["A2"]
-text = "Two-way nli models, ungated: τ and max-aggregation together. No τ passes. deberta-v3-large-zeroshot-v2.0-c passes its short forms at τ = 0.05 but not its long ones (at best 21 of 24 controls, at τ = 0.35); bge-m3-zeroshot-v2.0-c's long nulls are 0 of 6 at the τ that passes its positives, as some window of a long form crosses a threshold that low."
+label = "Two-way nli models, ungated"
+status = "candidates"
+candidate = "max-aggregation over long forms (the short forms pass at τ = 0.05, or nearly: deberta-v3-large-zeroshot-v2.0-c 12 of 12, bge-m3-zeroshot-v2.0-c 11 of 12); τ from a post-hoc sweep on the gate's own controls, not held out"
+support = "No τ passes the full gate: deberta-v3-large-zeroshot-v2.0-c fails its long forms (at best 21 of 24 controls, at τ = 0.35), and bge-m3-zeroshot-v2.0-c's long nulls are 0 of 6 at the τ that passes its positives, as some window of a long form crosses a threshold that low."
 
 [[attribution]]
 families = ["M"]
-text = "MiniCheck: attributed to the domain. No threshold passes: the refutation-format positive (`was: … wrong because …`) scores 0.018 short and 0.089 long; its interface is verified (evidence first, the MNLI triple right)."
+label = "MiniCheck"
+status = "unattributed"
+text = "cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No threshold passes: the refutation-format positive (`was: … wrong because …`) scores 0.018 short and 0.089 long; its interface is verified (evidence first, the MNLI triple right)."
 
 [[attribution]]
 families = ["H"]
-text = "HHEM: attributed to τ. Post hoc, at a threshold of 0.15 or below it passes every control it ran (its long forms are over the premise cap); its interface is verified. Exploratory and not applied."
+label = "HHEM"
+status = "candidates"
+candidate = "τ (post-hoc sweep on the gate's own controls; not held out)"
+support = "At a threshold of 0.15 or below it passes every control it ran (its long forms are over the premise cap); its interface is verified. Not applied."
 
 [[attribution]]
 families = ["F"]
-text = "Foundation Models: the model's own behaviour. On the 16 NOT MENTIONED variants that fit its context, rerun without the prompt's rules block it still answers C on 13 (exploratory); the rules block accounts for 3."
+label = "Foundation Models"
+status = "attributed"
+text = "the model's own behaviour. On the 16 NOT MENTIONED variants that fit its context, rerun without the prompt's rules block it still answers C on 13 (exploratory); the rules block accounts for 3."
 
 # Findings for the next corpus round, from the reviewer's reading of this
 # round's results. This round's labels and scores don't change.
@@ -173,6 +193,10 @@ nm_kind = "empty-output-nonzero-exit"
 [[finding]]
 id = "c-rests-on-notes"
 text = "In 027 and 028 (a refuted belief's reason), CONTRADICTED rests on a `[notes]` entry alone, with no tool output behind it."
+
+[[finding]]
+id = "controls-two-sets"
+text = "Split the controls into two sets. The gate set is easy by construction: a plain-prose positive with no source prefix; a contradiction with no sibling line carrying the claimed value; a null from an unrelated capture that isn't a complete artifact of the claim's kind. The domain set is descriptive and never gates: refutation-format claims, source-prefixed claims, and matching-kind complete artifacts. A checker that passes the gate and fails the domain set then has an attribution held out from the gate. The rustc contradiction control is a defect, to be revised: its sibling line `cargo 1.94.1` carries the claim's exact value."
 
 [judge]
 max_tokens = 2048            # output budget per request, reasoning included

@@ -1,5 +1,5 @@
 {
-  "ceilings_sha256": "1d5ec9d9ab55b41c2340713f985c243f75a91209e75e20a5a14624c3c32de84e",
+  "ceilings_sha256": "6781ec70dba4a4e5edfb4f7f6cf6b54d702873eb58480dbafa2d33f107f18f37",
   "checkers": {
     "A2:bge-m3-zeroshot-v2.0-c": {
       "auroc": {
@@ -104,7 +104,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Two-way nli models, ungated: τ and max-aggregation together. No τ passes. deberta-v3-large-zeroshot-v2.0-c passes its short forms at τ = 0.05 but not its long ones (at best 21 of 24 controls, at τ = 0.35); bge-m3-zeroshot-v2.0-c's long nulls are 0 of 6 at the τ that passes its positives, as some window of a long form crosses a threshold that low.",
+        "instrument-limited; cause not yet attributed; candidates from the audit: max-aggregation over long forms (the short forms pass at τ = 0.05, or nearly: deberta-v3-large-zeroshot-v2.0-c 12 of 12, bge-m3-zeroshot-v2.0-c 11 of 12); τ from a post-hoc sweep on the gate's own controls, not held out. No τ passes the full gate: deberta-v3-large-zeroshot-v2.0-c fails its long forms (at best 21 of 24 controls, at τ = 0.35), and bge-m3-zeroshot-v2.0-c's long nulls are 0 of 6 at the τ that passes its positives, as some window of a long form crosses a threshold that low.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -354,7 +354,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Two-way nli models, ungated: τ and max-aggregation together. No τ passes. deberta-v3-large-zeroshot-v2.0-c passes its short forms at τ = 0.05 but not its long ones (at best 21 of 24 controls, at τ = 0.35); bge-m3-zeroshot-v2.0-c's long nulls are 0 of 6 at the τ that passes its positives, as some window of a long form crosses a threshold that low.",
+        "instrument-limited; cause not yet attributed; candidates from the audit: max-aggregation over long forms (the short forms pass at τ = 0.05, or nearly: deberta-v3-large-zeroshot-v2.0-c 12 of 12, bge-m3-zeroshot-v2.0-c 11 of 12); τ from a post-hoc sweep on the gate's own controls, not held out. No τ passes the full gate: deberta-v3-large-zeroshot-v2.0-c fails its long forms (at best 21 of 24 controls, at τ = 0.35), and bge-m3-zeroshot-v2.0-c's long nulls are 0 of 6 at the τ that passes its positives, as some window of a long form crosses a threshold that low.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -600,7 +600,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Two-way nli models, gated: attributed to τ. Post hoc, at τ ≤ 0.1 both pass every control group (deberta-v3-large-zeroshot-v2.0-c at 0.05 and 0.1, bge-m3-zeroshot-v2.0-c at 0.05); their entailment on CLI evidence runs low. This is exploratory and not applied: τ was fixed at 0.5 in advance, and tuning waits for a dev split.",
+        "instrument-limited; cause not yet attributed; candidates from the audit: τ (post-hoc sweep on the gate's own controls; not held out). At τ ≤ 0.1 both pass every control group (deberta-v3-large-zeroshot-v2.0-c at 0.05 and 0.1, bge-m3-zeroshot-v2.0-c at 0.05); their entailment on CLI evidence runs low. Not applied: τ was fixed at 0.5 in advance, and tuning waits for a dev split.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -850,7 +850,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Two-way nli models, gated: attributed to τ. Post hoc, at τ ≤ 0.1 both pass every control group (deberta-v3-large-zeroshot-v2.0-c at 0.05 and 0.1, bge-m3-zeroshot-v2.0-c at 0.05); their entailment on CLI evidence runs low. This is exploratory and not applied: τ was fixed at 0.5 in advance, and tuning waits for a dev split.",
+        "instrument-limited; cause not yet attributed; candidates from the audit: τ (post-hoc sweep on the gate's own controls; not held out). At τ ≤ 0.1 both pass every control group (deberta-v3-large-zeroshot-v2.0-c at 0.05 and 0.1, bge-m3-zeroshot-v2.0-c at 0.05); their entailment on CLI evidence runs low. Not applied: τ was fixed at 0.5 in advance, and tuning waits for a dev split.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -1106,7 +1106,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified.",
+        "instrument-limited; cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -1391,7 +1391,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified.",
+        "instrument-limited; cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -1676,7 +1676,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified.",
+        "instrument-limited; cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -1961,7 +1961,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified.",
+        "instrument-limited; cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -2246,7 +2246,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified.",
+        "instrument-limited; cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -2531,7 +2531,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified.",
+        "instrument-limited; cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -2816,7 +2816,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified.",
+        "instrument-limited; cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -3101,7 +3101,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified.",
+        "instrument-limited; cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998.",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -3641,7 +3641,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: HHEM: attributed to τ. Post hoc, at a threshold of 0.15 or below it passes every control it ran (its long forms are over the premise cap); its interface is verified. Exploratory and not applied."
+        "instrument-limited; cause not yet attributed; candidates from the audit: τ (post-hoc sweep on the gate's own controls; not held out). At a threshold of 0.15 or below it passes every control it ran (its long forms are over the premise cap); its interface is verified. Not applied."
       ],
       "family": "H",
       "gate": {
@@ -4046,7 +4046,7 @@
         }
       },
       "diagnosis": [
-        "instrument-limited; cause attributed by the audit: MiniCheck: attributed to the domain. No threshold passes: the refutation-format positive (`was: … wrong because …`) scores 0.018 short and 0.089 long; its interface is verified (evidence first, the MNLI triple right).",
+        "instrument-limited; cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No threshold passes: the refutation-format positive (`was: … wrong because …`) scores 0.018 short and 0.089 long; its interface is verified (evidence first, the MNLI triple right).",
         "The second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g). The second reader passing its controls through the same windows and max rule rules out two things: the information missing from the windows, and the max rule losing it. It does not by itself rule out each checker's own interface, label mapping, tokenizer cuts or τ, or the domain.",
         "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev."
       ],
@@ -5599,11 +5599,11 @@
     "The audit after the first scored round found no construction bug: each three-way checkpoint's id2label matches the classes the harness read; the evidence is the premise and the claim the hypothesis on the wire for the nli format, MiniCheck and HHEM; every nli model, MiniCheck and HHEM gets the textbook MNLI triple right through the harness's own client path, which gives exactly what D47's stock request gives; every short control is a single window.",
     "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. A calibrated threshold, or a contradiction rule that needs corroboration, was not applied; tuning waits until the corpus can be tuned on dev. Gating changes the result (deberta-v3-large-zeroshot-v2.0-c: 0.22 ungated, 0.07 gated; nli-deberta-v3-base: 0.02 ungated, 0.11 gated; R512: 0.81 ungated, 0.48 gated; R2048: 0.81 ungated, 0.50 gated).",
     "Foundation Models answers C on 16 of the 16 NOT MENTIONED variants that fit its context: it reads an absence as a contradiction (a behaviour, not only a score).",
-    "Three-way nli models: attributed to the domain, by elimination. No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident (a near-verbatim claim read as neutral at 0.98, an unrelated complete file read as a contradiction at 0.998); interface, label mapping, premise order and tokenizer cuts are verified.",
-    "Two-way nli models, gated: attributed to τ. Post hoc, at τ ≤ 0.1 both pass every control group (deberta-v3-large-zeroshot-v2.0-c at 0.05 and 0.1, bge-m3-zeroshot-v2.0-c at 0.05); their entailment on CLI evidence runs low. This is exploratory and not applied: τ was fixed at 0.5 in advance, and tuning waits for a dev split.",
-    "Two-way nli models, ungated: τ and max-aggregation together. No τ passes. deberta-v3-large-zeroshot-v2.0-c passes its short forms at τ = 0.05 but not its long ones (at best 21 of 24 controls, at τ = 0.35); bge-m3-zeroshot-v2.0-c's long nulls are 0 of 6 at the τ that passes its positives, as some window of a long form crosses a threshold that low.",
-    "MiniCheck: attributed to the domain. No threshold passes: the refutation-format positive (`was: … wrong because …`) scores 0.018 short and 0.089 long; its interface is verified (evidence first, the MNLI triple right).",
-    "HHEM: attributed to τ. Post hoc, at a threshold of 0.15 or below it passes every control it ran (its long forms are over the premise cap); its interface is verified. Exploratory and not applied.",
+    "Three-way nli models: cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No τ from 0.05 to 0.95 passes their controls, gated or not, even on single-window short forms, where the errors are confident: a near-verbatim claim read as neutral at 0.98, and a matching-kind complete artifact (`cat app.toml` against a `service.toml` claim) read as a contradiction at 0.998.",
+    "Two-way nli models, gated: cause not yet attributed; candidate: τ (post-hoc sweep on the gate's own controls; not held out). At τ ≤ 0.1 both pass every control group (deberta-v3-large-zeroshot-v2.0-c at 0.05 and 0.1, bge-m3-zeroshot-v2.0-c at 0.05); their entailment on CLI evidence runs low. Not applied: τ was fixed at 0.5 in advance, and tuning waits for a dev split.",
+    "Two-way nli models, ungated: cause not yet attributed; candidate: max-aggregation over long forms (the short forms pass at τ = 0.05, or nearly: deberta-v3-large-zeroshot-v2.0-c 12 of 12, bge-m3-zeroshot-v2.0-c 11 of 12); τ from a post-hoc sweep on the gate's own controls, not held out. No τ passes the full gate: deberta-v3-large-zeroshot-v2.0-c fails its long forms (at best 21 of 24 controls, at τ = 0.35), and bge-m3-zeroshot-v2.0-c's long nulls are 0 of 6 at the τ that passes its positives, as some window of a long form crosses a threshold that low.",
+    "MiniCheck: cause not yet attributed; interface verified (construction eliminated). Leading candidate: the domain, including the corpus's claim formats (refutation notes, source-prefixed claims). Not attributed because at least one short control is not easy by construction (the rustc contradiction control, whose sibling line `cargo 1.94.1` carries the claim's exact value). No threshold passes: the refutation-format positive (`was: … wrong because …`) scores 0.018 short and 0.089 long; its interface is verified (evidence first, the MNLI triple right).",
+    "HHEM: cause not yet attributed; candidate: τ (post-hoc sweep on the gate's own controls; not held out). At a threshold of 0.15 or below it passes every control it ran (its long forms are over the premise cap); its interface is verified. Not applied.",
     "Foundation Models: the model's own behaviour. On the 16 NOT MENTIONED variants that fit its context, rerun without the prompt's rules block it still answers C on 13 (exploratory); the rules block accounts for 3."
   ],
   "findings": [
@@ -5616,6 +5616,10 @@
     {
       "id": "c-rests-on-notes",
       "text": "In 027 and 028 (a refuted belief's reason), CONTRADICTED rests on a `[notes]` entry alone, with no tool output behind it."
+    },
+    {
+      "id": "controls-two-sets",
+      "text": "Split the controls into two sets. The gate set is easy by construction: a plain-prose positive with no source prefix; a contradiction with no sibling line carrying the claimed value; a null from an unrelated capture that isn't a complete artifact of the claim's kind. The domain set is descriptive and never gates: refutation-format claims, source-prefixed claims, and matching-kind complete artifacts. A checker that passes the gate and fails the domain set then has an attribution held out from the gate. The rustc contradiction control is a defect, to be revised: its sibling line `cargo 1.94.1` carries the claim's exact value."
     }
   ],
   "label_items": [

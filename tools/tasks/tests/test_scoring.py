@@ -777,10 +777,14 @@ class Report(unittest.TestCase):
         self.assertTrue(any("Foundation Models answers C on 16 of the 16 NOT MENTIONED variants" in x for x in d))
         # The audit's attributions, per family; the verdicts stay instrument-limited.
         a3 = s["checkers"]["A3:m"]["diagnosis"]
-        self.assertTrue(a3[0].startswith("instrument-limited; cause attributed by the audit: Three-way nli models"))
+        self.assertTrue(a3[0].startswith("instrument-limited; cause not yet attributed; interface verified "
+                                         "(construction eliminated). Leading candidate: the domain"))
+        self.assertIn("a matching-kind complete artifact", a3[0])
         self.assertTrue(s["checkers"]["M:x"]["diagnosis"][0].startswith(
-            "instrument-limited; cause attributed by the audit: MiniCheck"))
-        self.assertIn("Foundation Models: the model's own behaviour", s["checkers"]["F:fm"]["diagnosis"][0])
+            "instrument-limited; cause not yet attributed; interface verified"))
+        self.assertTrue(s["checkers"]["F:fm"]["diagnosis"][0].startswith(
+            "instrument-limited; cause attributed by the audit: Foundation Models: the model's own behaviour"))
+        self.assertTrue(any(x.startswith("Three-way nli models: cause not yet attributed;") for x in d))
         self.assertNotIn("diagnosis", s["checkers"]["R512"])
         self.assertIn("Diagnosis beside the instrument-limited verdicts", md)
         # Without an attribution, the cause is not yet attributed, with the open candidates.
@@ -791,6 +795,26 @@ class Report(unittest.TestCase):
                          "cuts, τ, domain)")
         self.assertIn("Otherwise: instrument-limited; cause not yet attributed", s2["diagnosis"][-1])
         self.assertEqual(s2["checkers"]["A3:m"]["triple_accuracy"]["verdict"], rules.LIMITED)
+
+    def test_attribution_wording_by_status(self):
+        att = {a["families"][0]: a for a in scoring_set.config()["attribution"]}
+        a2g = report.attribution_text(att["A2g"])
+        self.assertTrue(a2g.startswith("cause not yet attributed; candidates from the audit: τ (post-hoc sweep on "
+                                       "the gate's own controls; not held out). At τ ≤ 0.1"))
+        self.assertTrue(report.attribution_text(att["A2g"], header=True).startswith(
+            "cause not yet attributed; candidate: τ (post-hoc sweep on the gate's own controls; not held out)"))
+        self.assertTrue(report.attribution_text(att["H"]).startswith(
+            "cause not yet attributed; candidates from the audit: τ (post-hoc sweep"))
+        self.assertTrue(report.attribution_text(att["A2"]).startswith(
+            "cause not yet attributed; candidates from the audit: max-aggregation over long forms (the short forms "
+            "pass at τ = 0.05"))
+        self.assertIn("21 of 24", report.attribution_text(att["A2"]))
+        self.assertEqual(report.attribution_text(att["M"]), att["M"]["text"])
+        self.assertTrue(report.attribution_text(att["F"]).startswith("cause attributed by the audit: Foundation"))
+        for fam in ("A2g", "H", "A2", "A3", "M"):
+            self.assertNotIn("cause attributed by the audit", report.attribution_text(att[fam]), fam)
+        f = {x["id"]: x for x in scoring_set.config()["finding"]}
+        self.assertIn("The rustc contradiction control is a defect", f["controls-two-sets"]["text"])
 
     def test_nm_kind_scored_apart_and_findings(self):
         cfg = {**scoring_set.config(), "resamples": 50}
@@ -806,7 +830,7 @@ class Report(unittest.TestCase):
         self.assertEqual(d["nm_kind:empty-output-nonzero-exit"]["triples"], 3)
         self.assertEqual(d["nm_kind:removed"]["triples"], 13)
         f = {x["id"]: x for x in s["findings"]}
-        self.assertEqual(set(f), {"nm-empty-output-nonzero-exit", "c-rests-on-notes"})
+        self.assertEqual(set(f), {"nm-empty-output-nonzero-exit", "c-rests-on-notes", "controls-two-sets"})
         self.assertIn("2 of 3 fall in this group", f["nm-empty-output-nonzero-exit"]["judge"])
         md = report.render_md({**s, "reader_provenance": {"registry_id": "example-id", "served_name": "example"}})
         self.assertIn("By NOT MENTIONED kind", md)
