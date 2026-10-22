@@ -12,7 +12,9 @@ by two rules, both reported:
 - **strict:** `content`, trimmed, is exactly one JSON object.
 
 Either way the object's `verdict` must be "supported", "contradicted" or
-"not_mentioned". A failure counts as wrong and is counted.
+"not_mentioned". A failure counts as wrong and is counted. A verdict object
+inside a Markdown code fence fails both rules; `fenced` recognises such an
+answer so the report can count it separately.
 """
 
 from __future__ import annotations
@@ -78,6 +80,25 @@ def parse(content: str | None) -> tuple[str | None, bool]:
     if len(objs) != 1 or objs[0][1] != len(text):
         return None, False  # prose only, several objects, or text after the object
     return _verdict(objs[0][2])
+
+
+def fenced(content: str | None) -> bool:
+    """Whether the answer's final non-whitespace text is a closing ```
+    fence wrapping a valid verdict object (with or without a language tag,
+    prose allowed before the opening fence). Such an answer fails both
+    rules; this only lets the report count how often it happens."""
+    if content is None:
+        return False
+    text = content.strip()
+    if not text.endswith("```"):
+        return False
+    body = text[:-3]
+    opening = body.rfind("```")
+    if opening < 0:
+        return False
+    inner = body[opening + 3:]
+    tag = len(inner) - len(inner.lstrip("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"))
+    return parse_strict(inner[tag:])[1]
 
 
 def parse_strict(content: str | None) -> tuple[str | None, bool]:

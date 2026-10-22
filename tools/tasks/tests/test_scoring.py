@@ -402,6 +402,16 @@ class JudgeAndExport(unittest.TestCase):
         self.assertEqual(self.both('{"verdict": "supported"}\nThat is my answer.'), ((None, False), (None, False)))
         self.assertEqual(self.both('```json\n{"verdict": "supported"}\n```'), ((None, False), (None, False)))
 
+    def test_fenced_answers_fail_but_are_recognised(self):
+        for content in ('```json\n{"verdict": "supported"}\n```', '\n```\n{"verdict": "contradicted"}\n```\n',
+                        'Here it is:\n```json\n{"verdict": "not_mentioned"}\n```'):
+            self.assertEqual(self.both(content), ((None, False), (None, False)), content)
+            self.assertTrue(judge.fenced(content), content)
+        for content in ('{"verdict": "supported"}', 'Prose.\n{"verdict": "supported"}',
+                        '```json\n{"verdict": "maybe"}\n```', '```json\n{"verdict": "supported"}\n```\nDone.',
+                        '```\nsupported\n```', "```", None):
+            self.assertFalse(judge.fenced(content), content)
+
     def test_invalid_json_or_verdict(self):
         for content in ('{"verdict": "supported"', "{'verdict': 'supported'}", '{"verdict": "maybe"}',
                         '{"answer": "supported"}', '["supported"]', "", None):
@@ -477,20 +487,23 @@ class JudgeAndExport(unittest.TestCase):
         self.assertEqual(resp["model"], "example/model-1")
         self.assertEqual(resp["missing"], [reqs[-1]["id"]])
         self.assertEqual(resp["bad_sha"], [reqs[1]["id"]])
-        self.assertEqual(resp["by_id"][reqs[0]["id"]], {"verdict": "S", "parsed": True, "strict": True})
-        self.assertEqual(resp["by_id"][reqs[-1]["id"]], {"verdict": None, "parsed": False, "strict": False})
+        self.assertEqual(resp["by_id"][reqs[0]["id"]],
+                         {"verdict": "S", "parsed": True, "strict": True, "fenced": False})
+        self.assertEqual(resp["by_id"][reqs[-1]["id"]],
+                         {"verdict": None, "parsed": False, "strict": False, "fenced": False})
         wins = ex.reader_windows(reqs, resp, "window-512")
         self.assertEqual([w["index"] for w in wins["t1:s"]], [0, 1])
         self.assertIn("ctl:k:null:short", wins)
 
     def test_parse_rates_per_form(self):
         reqs, _ = self.batch()
-        answers = ['{"verdict": "supported"}', 'Because.\n{"verdict": "supported"}', "no json"]
+        answers = ['{"verdict": "supported"}', 'Because.\n{"verdict": "supported"}', "no json",
+                   '```json\n{"verdict": "supported"}\n```']
         by_id = {}
         for n, r in enumerate(reqs):
-            c = answers[n % 3]
+            c = answers[n % 4]
             by_id[r["id"]] = {"verdict": judge.parse(c)[0], "parsed": judge.parse(c)[1],
-                              "strict": judge.parse_strict(c)[1]}
+                              "strict": judge.parse_strict(c)[1], "fenced": judge.fenced(c)}
         rates = ex.parse_rates(reqs, {"by_id": by_id})
         self.assertEqual(set(rates), {"window-512", "window-2048", "chunk-400", "full"})
         for form, r in rates.items():
@@ -498,6 +511,10 @@ class JudgeAndExport(unittest.TestCase):
             self.assertEqual(r["requests"], len(ids))
             self.assertGreaterEqual(r["lenient"], r["strict"])
             self.assertEqual(r["lenient"], round(sum(by_id[i]["parsed"] for i in ids) / len(ids), 4))
+            self.assertEqual(r["fenced"], round(sum(by_id[i]["fenced"] for i in ids) / len(ids), 4))
+        fenced_ids = [i for i, v in by_id.items() if v["fenced"]]
+        self.assertTrue(fenced_ids)
+        self.assertTrue(all(not by_id[i]["parsed"] and not by_id[i]["strict"] for i in fenced_ids))
 
     def test_report_carries_reader_parse_rates(self):
         reqs, _ = self.batch()
@@ -508,7 +525,8 @@ class JudgeAndExport(unittest.TestCase):
         s = report.build(runs, [], {**scoring_set.config(), "resamples": 50}, None)
         self.assertEqual(set(s["reader_parse_rates"]), {"window-512", "window-2048", "chunk-400", "full"})
         md = report.render_md(s)
-        self.assertIn("| reader form | requests | parsed (lenient, scored) | parsed (strict) |", md)
+        self.assertIn("| reader form | requests | parsed (lenient, scored) | parsed (strict) "
+                      "| fenced (scored as failures) |", md)
 
     def test_reestimate_leaves_requests_untouched(self):
         reqs, _ = self.batch()

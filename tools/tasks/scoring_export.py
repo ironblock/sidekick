@@ -261,20 +261,22 @@ def read_responses(path: Path, requests: list[dict]) -> dict:
             bad.append(r["id"])
             content = None
         verdict, ok = scoring_judge.parse(content)
-        by_id[r["id"]] = {"verdict": verdict, "parsed": ok, "strict": scoring_judge.parse_strict(content)[1]}
+        by_id[r["id"]] = {"verdict": verdict, "parsed": ok, "strict": scoring_judge.parse_strict(content)[1],
+                          "fenced": scoring_judge.fenced(content)}
         if r.get("model"):
             models.add(r["model"])
     if len(models) > 1:
         raise SystemExit(f"{path.name}: responses name {len(models)} models: {sorted(models)}")
     missing = sorted(want - set(by_id))
     for rid in missing:
-        by_id[rid] = {"verdict": None, "parsed": False, "strict": False}
+        by_id[rid] = {"verdict": None, "parsed": False, "strict": False, "fenced": False}
     return {"model": next(iter(models), None), "by_id": by_id, "missing": missing, "bad_sha": bad}
 
 
 def parse_rates(requests: list[dict], responses: dict) -> dict[str, dict]:
     """Per reader form: the share of requests whose final answer parses by
-    the lenient (scored) rule and by the strict one."""
+    the lenient (scored) rule and by the strict one, and the share that
+    wrap a valid verdict object in a code fence (scored as failures)."""
     out = {}
     for form in FORMS:
         ids = [r["id"] for r in requests if r["form"] == form]
@@ -282,8 +284,9 @@ def parse_rates(requests: list[dict], responses: dict) -> dict[str, dict]:
             continue
         lenient = sum(1 for i in ids if responses["by_id"][i]["parsed"])
         strict = sum(1 for i in ids if responses["by_id"][i]["strict"])
+        fence = sum(1 for i in ids if responses["by_id"][i].get("fenced"))
         out[form] = {"requests": len(ids), "lenient": round(lenient / len(ids), 4),
-                     "strict": round(strict / len(ids), 4)}
+                     "strict": round(strict / len(ids), 4), "fenced": round(fence / len(ids), 4)}
     return out
 
 

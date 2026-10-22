@@ -60,7 +60,8 @@ NOTES = [
     "roberta-large-mnli only approximately: their own tokenizers cut the evidence at other places.",
     "J's and the second reader's verdicts are read from the final answer only. The scored (lenient) rule accepts "
     "one JSON object at the end of the answer, with prose before it; the strict rule needs the answer to be exactly "
-    "that object. Both parse rates are reported per reader form; a failure counts as wrong.",
+    "that object. Both parse rates are reported per reader form; a failure counts as wrong. A verdict object inside "
+    "a Markdown code fence fails both rules and is counted on its own line, so its frequency can be reviewed.",
 ]
 
 
@@ -247,8 +248,10 @@ def render_md(scores: dict) -> str:
     lines += [f"- {n}" for n in scores.get("notes", [])] + [""]
     rates = scores.get("reader_parse_rates") or {}
     if rates:
-        lines += ["| reader form | requests | parsed (lenient, scored) | parsed (strict) |", "|---|---|---|---|"]
-        lines += [f"| {f} | {r['requests']} | {r['lenient']:.3f} | {r['strict']:.3f} |" for f, r in rates.items()]
+        lines += ["| reader form | requests | parsed (lenient, scored) | parsed (strict) "
+                  "| fenced (scored as failures) |", "|---|---|---|---|---|"]
+        lines += [f"| {f} | {r['requests']} | {r['lenient']:.3f} | {r['strict']:.3f} | {r.get('fenced', 0):.3f} |"
+                  for f, r in rates.items()]
         lines.append("")
     lines += ["| checker | mode | controls | triple accuracy | 95% CI | chance | share of ceiling | verdict |",
               "|---|---|---|---|---|---|---|---|"]

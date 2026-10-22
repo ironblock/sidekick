@@ -299,7 +299,8 @@ def run_fm(a) -> int:
         verdict, ok = scoring_judge.parse(content)
         parse_fail += not ok
         out_items.append({"item": it["item"], "verdict": verdict, "parse_ok": ok,
-                          "parse_strict_ok": scoring_judge.parse_strict(content)[1], "not_run": False,
+                          "parse_strict_ok": scoring_judge.parse_strict(content)[1],
+                          "fenced": scoring_judge.fenced(content), "not_run": False,
                           "prompt_tokens": resp.get("usage", {}).get("prompt_tokens")})
     prov = provenance(lock, cfg, {
         "route": fm["route"], "model": chat.get("model"), "availability": chat.get("availability"),
