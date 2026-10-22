@@ -2077,9 +2077,10 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   semantics explicitly. Attention masks silence pad *keys*, but anything
   convolutional reads pad *states* — zero them per layer if the reference
   is the unpadded forward (LFM2.5 constraint D).
-- **Per-bucket artifact size is the whole model** — weights duplicate per
-  bucket until multifunction mlprograms land. 350M params ≈ 700 MB × 3
-  buckets. Fine on disk, but mind the install footprint.
+- **Each loaded bucket maps the whole model.** On disk, every bucket of a
+  chunk shares one weights file (D49), so 350M params ≈ 700 MB installed
+  for any number of buckets; in memory, and in Core ML's cache, each loaded
+  bucket still holds its own ≈ 700 MB.
 
 Gates to pass, in order: fp32 rewrite parity ≥ 0.9999 (only if rewriting),
 `CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.999, `ane_check` per bucket (compute

@@ -14,9 +14,15 @@ A converter builds a `Job` and hands it to `run()`. For every bucket, `run()`:
    (plan.MAX_ANE_PROGRAM_WEIGHT_BYTES; `ignore_ane_weight_cap` makes that a
    warning, recorded in the report and the installed manifest); and runs the
    Core ML gates on the compiled artifact, the bytes that get installed;
-6. installs `model_{seq}.mlmodelc`, and records in the installed manifest
-   the compute plan each bucket was read with ([placement]), so the daemon
-   can report placement without compiling the model a second time.
+6. with more than one bucket, re-exports every bucket against one union
+   weights file (shared_weights.py, D49; `shared_weights=False` opts out),
+   gated: the compiled weight files byte-identical, and every program's
+   outputs bit-identical to the separate build on CPU, GPU and ANE;
+7. installs `model_{seq}.mlmodelc`, hard-linking identical weight files,
+   and records in the installed manifest the compute plan each bucket was
+   read with ([placement]), so the daemon can report placement without
+   compiling the model a second time. Nothing is installed until every
+   bucket has passed.
 
 A job with `chunks` (chunking.py, D37) converts each bucket as a chain of
 programs split at layer boundaries: the fp32 gate also checks the composed
@@ -28,7 +34,9 @@ chain's GPU output must be bit-identical to it: the chain's plumbing is the
 same in every bucket, and the fp32 gate already checks each bucket's
 composition, so one bucket proves it without doubling every conversion. It installs
 `model_{seq}.{chunk}.mlmodelc` and a manifest whose `artifact` and
-[chunking] table say so.
+[chunking] table say so. Weights are shared per chunk: chunk k of every
+bucket shares one file, and no file spans chunks (D32 judges the whole
+file).
 
 Two inputs are kept apart by type, so no recipe can mix them up:
 - `Calibration` decides rewrites (residual K, input rescales). It must never
@@ -47,6 +55,8 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
+
+from . import shared_weights
 
 REPO = Path(__file__).resolve().parents[2]
 PARITY_CORPUS = REPO / "fixtures" / "parity" / "corpus.toml"
@@ -216,6 +226,7 @@ class Job:
     int8_embedding: bool = False  # store the token-embedding table in int8 (see int8_embedding())
     ignore_ane_weight_cap: bool = False  # convert past MAX_ANE_PROGRAM_WEIGHT_BYTES, with a warning
     chunk_identity_all: bool = False  # run the chunked GPU bit-identity gate on every bucket, not the smallest
+    shared_weights: bool = True   # one weights file per chunk across buckets (shared_weights.py, D49)
     chunks: object = None         # None, "auto", "default", a chunk count or layer cuts (chunking.plan_cuts); needs
     backbone: object = None       # the backbone and head the wrapper was composed from
     head: object = None
@@ -379,6 +390,8 @@ def run(job, install_dir):
               "never install the result where the daemon looks.", flush=True)
     reports, bypassed, plans, alternatives = {}, [], {}, {}
     cuts = _plan_chunks(job)
+    share = job.shared_weights and len(job.buckets) > 1
+    programs, gate_cases = {}, {}
     with tempfile.TemporaryDirectory() as work:
         for seq in job.buckets:
             cases = (job.evaluation.landing(seq, job.buckets) if job.gate_cases == "landing"
@@ -387,12 +400,13 @@ def run(job, install_dir):
                 raise GateFailure(f"{job.name}: no evaluation case fits bucket {seq}")
             if job.landing_required and not job.evaluation.landing(seq, job.buckets):
                 raise GateFailure(f"{job.name}: no evaluation case lands in bucket {seq}")
+            gate_cases[seq] = cases
             wrapper = job.make_wrapper(seq).eval()
             report = {"torch": _gate(job, job.gates.torch, wrapper, seq, cases, job.ports)}
             print(f"bucket {seq}: {job.gates.describe_torch(report['torch'])}; converting...", flush=True)
             if cuts:
-                reports[seq] = _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypassed,
-                                            plans, alternatives)
+                reports[seq], programs[seq] = _run_chunked(job, seq, cases, wrapper, cuts, report, work, bypassed,
+                                                           plans, alternatives, keep_packages=share)
                 continue
             mlmodel = trace_convert(wrapper, job.ports, seq, job.example(seq), job.output)
             found = mil_op_types(mlmodel) & set(job.forbid_ops)
@@ -405,7 +419,10 @@ def run(job, install_dir):
                 print(f"bucket {seq}: embedding table {table} {shape} stored in int8", flush=True)
             pkg = Path(work) / f"model_{seq}.mlpackage"
             mlmodel.save(str(pkg))
+            del mlmodel
             compiled = compile_mlmodelc(pkg, Path(work) / f"compiled_{seq}")
+            if not share:
+                shutil.rmtree(pkg)
             bypass = _gate(job, check_ane_weights, job, seq, compiled)
             if bypass:
                 report["ane_weight_cap"] = f"bypassed: {bypass}"
@@ -417,12 +434,12 @@ def run(job, install_dir):
                     alternatives.setdefault(units, {})[seq] = s
             for line in job.gates.describe_coreml(report["coreml"]):
                 print(f"bucket {seq}: {line}", flush=True)
-            dest = install_dir / f"model_{seq}.mlmodelc"
-            shutil.rmtree(dest, ignore_errors=True)
-            _remove_other_layout(install_dir, seq, chunked=False)
-            shutil.move(str(compiled), dest)
-            print(f"bucket {seq} -> {dest}", flush=True)
+            programs[seq] = [shared_weights.Program(seq, None, compiled, pkg, tuple(p.name for p in job.ports),
+                                                    job.output)]
             reports[seq] = report
+        if share:
+            _share_weights(job, programs, gate_cases, work, reports)
+        _install(job, programs, install_dir, chunked=bool(cuts))
     for source, name in job.install_files:
         shutil.copy(source, install_dir / name)
         if name.endswith(".toml") and cuts:
@@ -440,6 +457,46 @@ def run(job, install_dir):
         print(f"WARNING: installed past the Neural Engine's weight limit (--ignore-ane-weight-cap): "
               f"{'; '.join(bypassed)}", flush=True)
     return reports
+
+
+def _share_weights(job, programs, gate_cases, work, reports):
+    """Re-export every chunk's buckets against one weights file, gated
+    (shared_weights.py, D49)."""
+    ane_limited = getattr(job.gates, "plan_required", True)
+    try:
+        r = shared_weights.share(job, programs, gate_cases, Path(work) / "shared", compile_mlmodelc, ane_limited,
+                                 log=lambda m: print(m, flush=True))
+    except shared_weights.ShareFailure as e:
+        _gate(job, _raise, GateFailure(f"shared weights: {e}"))
+        return
+    for report in reports.values():
+        report["shared_weights"] = r
+    if not any(c["shared"] for c in r["chunks"].values()):
+        return
+    separate = sum(c["separate_bytes"] for c in r["chunks"].values())
+    shared = sum(c["union_bytes"] if c["shared"] else c["separate_bytes"] for c in r["chunks"].values())
+    print(f"shared weights: {separate / 1e6:.1f} MB of weight files as separate buckets, {shared / 1e6:.1f} MB "
+          f"installed ({shared / separate:.0%})", flush=True)
+
+
+def _install(job, programs, install_dir, chunked):
+    """Move every bucket's programs into the install directory, then
+    hard-link identical weight files (D49). A move within one filesystem
+    keeps the links the shared-weights step made; one across filesystems
+    copies, and the links are made again where the files land."""
+    dests = []
+    for seq in job.buckets:
+        _remove_other_layout(install_dir, seq, chunked=chunked)
+        for p in programs[seq]:
+            dest = install_dir / p.name
+            shutil.rmtree(dest, ignore_errors=True)
+            shutil.move(str(p.compiled), dest)
+            dests.append(dest)
+            what = f"bucket {seq}" if p.chunk is None else f"bucket {seq} chunk {p.chunk}"
+            print(f"{what} -> {dest}", flush=True)
+    linked, saved = shared_weights.link_identical(dests, log=lambda m: print(m, flush=True))
+    if linked:
+        print(f"hard-linked {linked} identical weight file(s), {saved / 1e6:.1f} MB saved", flush=True)
 
 
 def _raise(e):
@@ -497,8 +554,11 @@ def _plan_chunks(job):
     return cuts
 
 
-def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypassed, plans, alternatives):
-    """One bucket as a chain of chunks (D37): see the module docstring."""
+def _run_chunked(job, seq, cases, wrapper, cuts, report, work, bypassed, plans, alternatives, keep_packages=False):
+    """One bucket as a chain of chunks (D37): see the module docstring.
+    Returns the report and the bucket's programs, one per chunk, for run()
+    to install; `keep_packages` keeps each chunk's .mlpackage for the
+    shared-weights step."""
     import torch
     from . import chunking, plan
     from .metrics import largest, max_abs_diff
@@ -516,7 +576,7 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypa
                                        f"in fp32 by {d:.2e} (gate {CHUNK_FP32_TOL})"))
     print(f"bucket {seq}: fp32 chunks vs the unchunked wrapper, max |diff| {d:.1e}", flush=True)
 
-    paths, inputs = [], []
+    paths, inputs, programs = [], [], []
     example = job.example(seq)
     for c in chunk_list:
         mlmodel = chunking.trace_convert(c, seq, example, job.backbone.hidden_size)
@@ -532,7 +592,8 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypa
         mlmodel.save(str(pkg))
         del mlmodel
         compiled = compile_mlmodelc(pkg, Path(work) / f"compiled_{seq}_{c.index}")
-        shutil.rmtree(pkg)
+        if not keep_packages:
+            shutil.rmtree(pkg)
         bypass = _gate(job, check_ane_weights, job, seq, compiled, c.index)
         if bypass:
             report.setdefault("ane_weight_cap", []).append(f"bypassed: {bypass}")
@@ -541,6 +602,7 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypa
               f"GiB, inputs {list(c.inputs)} -> {c.output}", flush=True)
         paths.append(compiled)
         inputs.append(c.inputs)
+        programs.append(shared_weights.Program(seq, c.index, compiled, pkg, tuple(c.inputs), c.output))
     chain = chunking.Chain(paths, inputs, job.output)
 
     report["coreml"] = _gate(job, job.gates.coreml, chain, seq, cases, job, job.timing)
@@ -552,13 +614,7 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, install_dir, bypa
         print(f"bucket {seq}: {line}", flush=True)
     if job.chunk_identity_all or seq == min(job.buckets):
         _chain_identity(job, seq, cases, wrapper, example, chain, work, report)
-    _remove_other_layout(install_dir, seq, chunked=True)
-    for c, compiled in zip(chunk_list, paths):
-        dest = install_dir / chunking.artifact_name(seq, c.index)
-        shutil.rmtree(dest, ignore_errors=True)
-        shutil.move(str(compiled), dest)
-        print(f"bucket {seq} chunk {c.index} -> {dest}", flush=True)
-    return report
+    return report, programs
 
 
 def _chain_identity(job, seq, cases, wrapper, example, chain, work, report):

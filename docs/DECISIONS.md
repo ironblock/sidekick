@@ -208,7 +208,8 @@ needing exact parity can use bge-small (0.99998 on ANE) or load with
 CpuOnly. Conversion gates are per-path: CPU_ONLY >= 0.999 (conversion is
 faithful), CPU_AND_NE >= 0.985 (what the ANE delivers). Artifact cost:
 ~600MB per bucket; multifunction weight sharing is a possible future
-optimization.
+optimization. *(Measured and declined in favour of one weights file shared
+by every bucket, D49.)*
 
 **Amendment (September 2026, macOS 27.0, M1 Max): the ~1% was not
 intrinsic.** It came from two ANE arithmetic limits inside the MLP, and a
@@ -3672,6 +3673,124 @@ Core ML model served on the ANE:
 
 With the cap in place, Qwen3-Embedding's Core ML build can add a
 4,096-token bucket for the GPU (D46).
+
+## D49 — One weights file per chunk, shared by every bucket
+D15 makes each bucket its own static-shape program, and D37 splits a
+large bucket into chunks, each its own program. Every program carried its
+own `weights/weight.bin`, so a model stored its weights once per bucket:
+three times for most models, which also triples what publishing them
+(#137) would ask users to download. The tensors are the same in every
+bucket, but the files weren't. coremltools writes constants in program
+order, and the few that depend on the bucket shift every tensor after
+them: the folded position and token-type tables, the RoPE tables and the
+causal mask, under 1 MB per bucket at 512 tokens.
+
+A spike (#142, M1 Max, macOS 27.0, coremltools 9.0) measured two ways to
+store the weights once. One was Core ML multifunction programs, one
+package with a function per bucket. The other was separate programs that
+share one byte-identical weights file. Both stored the weights once (bge-small-en-v1.5
+199.5 → 67.4 MB, F2LLM-v2-160M 956 → 320 MB, chunked
+Qwen3-Embedding-0.6B 3.60 → 1.22 GB), and both gave outputs bit-identical
+to the separate packages on CPU, GPU and ANE. Neither changed first-load
+compile time, Core ML's cache or memory. Multifunction saves no more disk,
+needs loader changes (and the weight check and build fingerprints would
+have to understand a function path), and bge-small, which keeps the fused
+attention fallback (D25), refuses `functionName` on the ANE.
+
+**Decision.** A Core ML conversion with more than one bucket stores each
+chunk's weights once, in one file every bucket's program shares
+(`tools/sidekick_convert/shared_weights.py`):
+- **The converter re-exports, after the gates.** Once every bucket has
+  passed its gates as a separate build, each bucket's saved `.mlpackage`
+  is loaded back into MIL and written again, with no graph passes, against
+  one union weights file per chunk: each distinct tensor (by dtype, shape
+  and bytes) once, the shared tensors first and each bucket's own after.
+  It is the default; `--no-shared-weights` gives each bucket its own file.
+- **It is gated against the separate build,** and a failure stops the
+  conversion. Every compiled weights file in the chunk must be the union
+  file, byte for byte; every compiled `model.mil` must equal the separate
+  build's with weight offsets set aside; and on CPU_ONLY, CPU_AND_GPU and
+  CPU_AND_NE every program must give the separate build's outputs on the
+  gate cases, bit for bit. Each of those comparisons runs in a child
+  process with its own Core ML cache, deleted when it exits.
+- **Per chunk, never across chunks.** The spike found the ANE's weight
+  limit (D32) judged on the whole file a program references: a file
+  spanning both of Qwen3's chunks (about 1.2 GB) put every chunk on the
+  CPU. So chunk k of every bucket shares one file. The union is the shared
+  weights plus every bucket's own tables, slightly larger than one
+  bucket's file. For a model served on the ANE, a union over
+  `MAX_ANE_PROGRAM_WEIGHT_BYTES` keeps that chunk's files separate, with a
+  note, rather than failing.
+- **Installed as hard links.** The converter installs each union file once,
+  with a hard link per bucket. Where the filesystem refuses a link (another
+  volume, or no hard links), it keeps a copy. `python -m
+  sidekick_convert.shared_weights link <model-dir>` does the same for a
+  model directory copied or downloaded without its links. Hard links rather
+  than APFS clones: they work on any POSIX filesystem, and the sharing is
+  visible (one inode) to the tools that hash or size a model.
+- **Nothing else changes.** Each bucket is still its own program at its own
+  path, so the daemon, the manifest and the weight-limit check (which sums
+  each program's own files) are unchanged, and any one bucket directory is
+  still a complete program.
+- **What isn't shared.** Core ML's compile cache keeps a specialized copy
+  of the weights per bucket, per compute path, per executable and per path
+  (Qwen3: about 3.6 GB on the GPU or CPU for three buckets). Each loaded
+  bucket maps its own copy from it, so memory doesn't shrink, and every
+  bucket still compiles on its first load. Pre-warming that cache is
+  separate work (#145).
+- **Build fingerprints move.** A shared-weights build's `weight.bin` is a
+  different file from a separate build's, so its sha256 differs, and so do
+  the fingerprints computed from it (the parity report's weights hash,
+  `tools/mteb_transfer.py --build`). The outputs are bit-identical, so the
+  grades and scores carry over, but a ledger entry or a fingerprint
+  recorded for a separate build doesn't match a shared one.
+
+**Publishing (#137): one copy of each distinct file, verified by hash, and
+hard-linked by fetch.** Not a tar with hard links. The published tree is
+the install tree, with every path present: the Hub stores files by content
+(Git LFS objects by sha256, Xet by chunk), so a file at three paths is
+stored once there. Beside it, the build's file list gives each distinct
+sha256 once, with its size and every path that holds it. Fetch downloads
+each distinct hash once, to a temporary file on the destination's
+filesystem; verifies it before anything is placed; moves it to the
+first path; and hard-links the others, copying where a link is refused.
+That the Hub stores a repeated file once is to be confirmed at the first
+upload. If it doesn't, the build uploads each distinct file once, at its
+first path, and fetch, which already follows the list, is unchanged. Why
+not a tar:
+- **Verification per file, before placing it,** against the same hashes
+  the ledger (#136) and the model card publish. A tar is verified as a
+  whole, after all of it has downloaded, and what it holds only once
+  extracted.
+- **Partial fetches.** A user who needs fewer buckets (D48 caps the ANE at
+  2,048 tokens) or one compute path's build fetches only those files; a
+  tar is all or nothing.
+- **Resumable, parallel downloads** of gigabyte files, which the Hub's
+  per-file transfer already gives; a tar is one object.
+- **No transient double:** a downloaded tar and its extracted tree take
+  twice the disk until the tar is deleted.
+- **Plain tools still work.** `hf download` into the Hugging Face cache
+  stores each content hash once; into a directory it writes copies, which
+  `shared_weights link` turns back into links. Hard links inside a tar
+  survive only extractors that support them.
+
+No fetch command exists yet, so its code is #137's.
+
+**The checksum ledger (#136)** records each distinct file once: its sha256,
+its size, and the list of installed paths that hold it, for example
+`model_1024.0.mlmodelc/weights/weight.bin` and
+`model_2048.0.mlmodelc/weights/weight.bin` under one hash. A file only one
+path holds has a one-path list. Fetch reads the same list, and a verify run
+reports a path whose hash moved, or a shared file that split, as a change
+to the weights layer. The ledger isn't implemented yet; this is the shape
+its entries take.
+
+**Measured** (M1 Max, macOS 27.0, coremltools 9.0, reconverted from the
+same checkpoints): weight files on disk, and the parity suite's grades,
+for separate and shared builds. Every program was bit-identical to its
+separate build on CPU, GPU and ANE.
+
+MEASURED_TABLE
 
 ## Hardware verification status
 
