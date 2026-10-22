@@ -44,18 +44,18 @@ value_c = "--force"
 probes.support = ['Use --allow-backwards to allow it', '^  -B, --allow-backwards$']
 probes.contradict = ['Use --force to allow it', '^  -F, --force$']
 probes.mention = ['backwards or sideways', 'allow-backwards']
-edit_note = "c: the refusal's Hint and the help's option line name --force (-F) instead; nm: the Error and Hint lines and the whole option entry are removed, the command and its exit status stay."
+edit_note = "c: the refusal's Hint and the help's option line name --force (-F) instead; nm: both captures are removed: the refused move and the help page."
 [[shape.claim.block]]
+nm_drop = true
 capture = "jj.err.bookmark-move-backwards"
 edit = [
   { find = "Hint: Use --allow-backwards to allow it.\n", c = "Hint: Use --force to allow it.\n" },
-  { find = "Error: Refusing to move bookmark backwards or sideways: menu\nHint: Use --allow-backwards to allow it.\n", nm = "" },
 ]
 [[shape.claim.block]]
+nm_drop = true
 capture = "jj.help.bookmark-move"
 edit = [
   { find = "  -B, --allow-backwards\n", c = "  -F, --force\n", count = 1 },
-  { find = "  -B, --allow-backwards\n          Allow moving bookmarks backwards or sideways\n\n", nm = "" },
 ]
 
 [[shape]]
@@ -121,12 +121,12 @@ probes.mention = ['The revision to get the file contents from']
 probes.near = ['Usage: jj file list']
 distractor = [{ capture = "jj.help.file-list" }]
 repeat = 0
-edit_note = "c: the option is listed as -s, --source; nm: the option entry is removed."
+edit_note = "c: the option is listed as -s, --source; nm: the help page is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "jj.help.file-show"
 edit = [
   { find = "  -r, --revision <REVSET>\n", c = "  -s, --source <REVSET>\n", count = 1 },
-  { find = "  -r, --revision <REVSET>\n          The revision to get the file contents from\n          \n          [default: @]\n\n", nm = "" },
 ]
 
 [[shape]]
@@ -142,11 +142,11 @@ touch = ['\bmenu\b', 'retain-bookmarks', 'Do not delete bookmarks']
 probes.support = ['^Deleted bookmarks: menu$']
 probes.contradict = ['^menu: zsuskuln 211033a3 add salad$', 'Parent commit \(@-\)      : zsuskuln 211033a3 menu \| add salad']
 probes.mention = ['bookmarks: menu', '^menu: ']
-edit_note = "c: the abandon leaves menu on the parent and the bookmark list shows it there (jj's own output for the same abandon run with --retain-bookmarks on a copy, under the plain command line); nm: the deletion line and the bookmark list are removed."
+edit_note = "c: the abandon leaves menu on the parent and the bookmark list shows it there (jj's own output for the same abandon run with --retain-bookmarks on a copy, under the plain command line); nm: the abandon and the bookmark list are removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "jj.abandon.tweak"
 c_from = "jj.abandon-retain.tweak"
-edit = [{ find = "Deleted bookmarks: menu\n", nm = "" }]
 [[shape.claim.block]]
 capture = "jj.abandon.bookmark-list"
 c_from = "jj.abandon-retain.bookmark-list"
@@ -168,7 +168,7 @@ scope_re = 'jj 0\.\d+\.\d+'
 probes.support = ['parsed as a `prefix-glob:` pattern']
 probes.contradict = ['parsed as a `cwd:` pattern']
 probes.mention = ['By default, `"path"` is parsed']
-edit_note = "c: the 0.46 documentation says a bare path is a cwd: pattern; nm: that sentence is removed. The older-version note is fixed in all three."
+edit_note = "c: the 0.46 documentation says a bare path is a cwd: pattern; nm: the filesets documentation is removed (jj --version and the older-version note stay)."
 [[shape.claim.scoped]]
 notes = ["- fact (from notes kept under jj 0.30.0): a bare `\"path\"` in a fileset means the same as `cwd:\"path\"`, a cwd-relative path prefix"]
 verified_by = [
@@ -178,8 +178,9 @@ verified_by = [
 [[shape.claim.block]]
 capture = "jj.version"
 [[shape.claim.block]]
+nm_drop = true
 capture = "jj.help.kw.filesets"
-edit = [{ find = "By default, `\"path\"` is parsed as a `prefix-glob:` pattern, which matches\ncwd-relative path prefix.\n\n", c = "By default, `\"path\"` is parsed as a `cwd:` pattern, which matches\ncwd-relative path prefix.\n\n", nm = "" }]
+edit = [{ find = "By default, `\"path\"` is parsed as a `prefix-glob:` pattern, which matches\ncwd-relative path prefix.\n\n", c = "By default, `\"path\"` is parsed as a `cwd:` pattern, which matches\ncwd-relative path prefix.\n\n" }]
 
 [[shape.claim]]
 id = "dasel-3-version-flag-unknown"
@@ -576,7 +577,7 @@ type = "file"
 id = "package-lint-script"
 fact = "package-lint"
 text = "fact: package.json's lint script runs eslint, then tsc --noEmit three times."
-touch = ['package\.json', 'eslint']
+touch = ['package\.json', 'eslint', '\bnpm\b', '\bpnpm\b', 'vc-demo@']
 value = "eslint"
 value_c = "oxlint"
 probes.support = ['"lint": "eslint \. && tsc --noEmit -p a && tsc --noEmit -p b && tsc --noEmit -p c"']
@@ -600,7 +601,7 @@ type = "file"
 id = "package-manager-pnpm"
 fact = "package-manager"
 text = "fact: package.json pins packageManager to pnpm@9.15.4."
-touch = ['package\.json', 'packageManager']
+touch = ['package\.json', 'packageManager', '\bnpm\b', '\bpnpm\b', 'vc-demo@']
 repeat = 0
 value = "pnpm@9.15.4"
 value_c = "pnpm@9.12.4"
@@ -617,7 +618,7 @@ edit = [{ find = "  \"packageManager\": \"pnpm@9.15.4\",\n", c = "  \"packageMan
 id = "package-node-engine"
 fact = "package-engines"
 text = "fact: package.json's engines field requires node >=22."
-touch = ['package\.json', 'engines']
+touch = ['package\.json', 'engines', '\bnpm\b', '\bpnpm\b', 'vc-demo@']
 repeat = 0
 probes.support = ['"engines": \{ "node": ">=22" \}']
 probes.contradict = ['"engines": \{ "node": ">=20" \}']
@@ -895,11 +896,11 @@ probes.support = ['^Rebased 1 descendant commits onto parents']
 probes.contradict = ['^Rebased 2 descendant commits onto parents']
 probes.mention = ['descendant commits onto parents', 'Working copy  \(@\) now at', 'Parent commit \(@-\)']
 exclude = ["jj.log", "jj.status", "jj.log.json", "jj.log.menu-oneline", "jj.op-log", "jj.abandon.log", "jj.bookmark-list"]
-edit_note = "c: two descendants rebased (jj's output for the same abandon on a copy with one more commit on top); nm: the rebase line is removed with the working-copy, parent and file-count lines that would show a rebase happened."
+edit_note = "c: two descendants rebased (jj's output for the same abandon on a copy with one more commit on top); nm: the abandon is removed."
 [[shape.claim.block]]
+nm_drop = true
 capture = "jj.abandon.tweak"
 c_from = "jj.abandon-two.tweak"
-edit = [{ find = "Rebased 1 descendant commits onto parents of abandoned commits.\nWorking copy  (@) now at: wqnwkozp 4db99e75 (no description set)\nParent commit (@-)      : zsuskuln 211033a3 add salad\nAdded 0 files, modified 1 files, removed 0 files\n", nm = "" }]
 
 [[shape]]
 id = "result.failure-site"

@@ -70,9 +70,8 @@ def flag_claim():
             {"capture": "demo.err.move", "edit": [
                 {"find": "Hint: pass --allow-back\n", "c": "Hint: pass --force\n"},
                 {"find": "Error: refusing to move m back\nHint: pass --allow-back\n", "nm": ""}]},
-            {"capture": "demo.help.move", "edit": [
-                {"find": "  -B, --allow-back\n", "c": "  -F, --force\n"},
-                {"find": "  -B, --allow-back\n          Allow moving the marker back\n\n", "nm": ""}]},
+            {"capture": "demo.help.move", "nm_drop": True, "edit": [
+                {"find": "  -B, --allow-back\n", "c": "  -F, --force\n"}]},
         ],
     }
 
@@ -155,9 +154,8 @@ class Assembly(unittest.TestCase):
             '[[shape.claim.block]]', 'capture = "demo.err.move"',
             'edit = [{ find = "Hint: pass --allow-back\\n", c = "Hint: pass --force\\n" },'
             ' { find = "Error: refusing to move m back\\nHint: pass --allow-back\\n", nm = "" }]',
-            '[[shape.claim.block]]', 'capture = "demo.help.move"',
-            'edit = [{ find = "  -B, --allow-back\\n", c = "  -F, --force\\n" },'
-            ' { find = "  -B, --allow-back\\n          Allow moving the marker back\\n\\n", nm = "" }]',
+            '[[shape.claim.block]]', 'capture = "demo.help.move"', 'nm_drop = true',
+            'edit = [{ find = "  -B, --allow-back\\n", c = "  -F, --force\\n" }]',
         ])
         corpus_toml = "\n".join([
             "seed = 7", "max_per_shape = 3", "dev_share = 0.2",
@@ -355,6 +353,7 @@ class Hazards(unittest.TestCase):
     def test_uniqueness_support_outside_the_needle(self):
         c = flag_claim()
         c["block"][1].pop("edit")  # the help page is now fixed text that still states the claim
+        c["block"][1].pop("nm_drop")
         msg = self.refused(c, why="uniqueness")
         self.assertIn("outside the needle", msg)
 
@@ -384,8 +383,7 @@ class Hazards(unittest.TestCase):
         c["guard"] = ["--allow-back"]
         c["probes"]["contradict"] = ["pass -B$"]
         c["block"][0]["edit"][0] = {"find": "Hint: pass --allow-back\n", "c": "Hint: pass -B\n"}
-        c["block"][1]["edit"] = [{"find": "  -B, --allow-back\n          Allow moving the marker back\n\n", "nm": ""},
-                                 {"find": "  -B, --allow-back\n", "c": "  -B, --allow-back\n"}]
+        c["block"][1]["edit"] = [{"find": "  -B, --allow-back\n", "c": "  -B, --allow-back\n"}]
         self.refused(c, why="synonym")
 
     def test_sequence_needs_the_current_record_last(self):
@@ -431,10 +429,28 @@ class Hazards(unittest.TestCase):
              "probes": {"support": ["^    max: 4$"], "contradict": ["^    max: 5$"], "mention": ["max:"]},
              "block": [{"capture": "demo.cat.yaml", "edit": [{"find": "    max: 4\n", "c": "    max: 5\n"},
                                                               {"find": "  pool:\n    max: 4\n", "nm": ""}]}]}
-        self.refused(c, why="whole with the claimed key removed")
+        self.refused(c, why="complete minus the needle")
         del c["block"][0]["edit"][1]
         c["block"][0]["nm_drop"] = True
         self.assertEqual(gen.build(c, dict(CFG), self.caps, CORPUS)["nm_kind"], "removed")
+
+    def test_nm_may_not_keep_a_help_page_or_output_minus_the_needle(self):
+        # a help page whose option entry is gone reads as "no such option"
+        c = flag_claim()
+        c["block"][1] = {"capture": "demo.help.move", "edit": [
+            {"find": "  -B, --allow-back\n", "c": "  -F, --force\n"},
+            {"find": "  -B, --allow-back\n          Allow moving the marker back\n\n", "nm": ""}]}
+        self.refused(c, why="demo.help.move complete minus the needle")
+        # a command's output with one line taken out, likewise
+        d = flag_claim()
+        d["block"][0]["edit"][1] = {"find": "Hint: pass --allow-back\n", "nm": ""}
+        self.refused(d, why="demo.err.move complete minus the needle")
+        # the declared exception labels the triple
+        c["block"][1]["nm_closed_world"] = "a test of the declared shape"
+        self.assertEqual(gen.build(c, dict(CFG), self.caps, CORPUS)["nm_kind"], "closed-world-absence")
+        # a call kept with no output and its nonzero exit is a different, allowed shape
+        self.assertEqual(gen.build(flag_claim(), dict(CFG), self.caps, CORPUS)["nm_kind"],
+                         "empty-output-nonzero-exit")
 
     def test_a_note_must_follow_the_call_it_cites(self):
         c = belief_claim()

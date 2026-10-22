@@ -573,17 +573,23 @@ def build(claim: dict, cfg: dict, caps: dict, corpus: dict) -> dict:
     # Render into tagged pieces: (item index, str | slot).
     pieces, layout, slot_roles, bodies_spec = [], [], [], []
     emptied = False  # a call NOT MENTIONED keeps with no output and a nonzero exit
-    closed_world = False  # a whole file view kept with the key removed (only by declaration)
+    closed_world = False  # a complete capture kept minus the needle (only by declaration)
     for n, ((kind, p), call) in enumerate(zip(order, calls)):
         if kind in ("needle", "repeat"):
             spec = specs[p]
             texts = {v: block_text(spec, v, caps, call) for v in VARIANTS}
             if "capture" in spec and texts["nm"] and texts["s"]:
                 emptied |= nm_emptied_call(texts["s"], texts["nm"])
-                if caps[spec["capture"]]["kind"] in FILE_VIEW_KINDS and texts["nm"] != texts["s"]:
+                # A complete artifact minus the needle (a file, a help page, a
+                # command's output with a line taken out) reads as "there is no
+                # such key, option or line": closed-world absence, which
+                # contradicts rather than leaves the claim unmentioned. Only a
+                # call kept with no output at all (empty-output-nonzero-exit) or
+                # a declared exception may stay.
+                if texts["nm"] != texts["s"] and not nm_emptied_call(texts["s"], texts["nm"]):
                     if not spec.get("nm_closed_world"):
-                        raise Refusal(f"{claim['id']}: NOT MENTIONED shows {spec['capture']} whole with the claimed "
-                                      "key removed, so its absence reads as a contradiction; drop the file view")
+                        raise Refusal(f"{claim['id']}: NOT MENTIONED shows {spec['capture']} complete minus the "
+                                      "needle, so its absence reads as a contradiction; drop the whole capture")
                     closed_world = True
             texts = {v: (t + "\n" if t else "") for v, t in texts.items()}
             for piece in split3(texts["s"], texts["c"], texts["nm"]):

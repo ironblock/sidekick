@@ -199,7 +199,7 @@ class SetLock(unittest.TestCase):
         self.assertEqual(lock["source_commit"], "3c59ef7561eeadacac3a2d479bdae08450c537cf")
 
     def test_a_historical_set_says_how_to_regenerate_it(self):
-        for name, commit in (("review", "3c59ef7"), ("review-3", "81576f9")):
+        for name, commit in (("review", "3c59ef7"), ("review-3", "81576f9"), ("review-3b", "d581719")):
             with self.subTest(set=name), tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit) as ctx:
                 gen.main(["--set", name, "--out", d, "--check"])
             self.assertEqual(str(ctx.exception),
