@@ -1,0 +1,78 @@
+# Control items for the verification scoring harness (design §2.1). Built by
+# tools/tasks/scoring_controls.py from the committed captures; they are not
+# part of the corpus and are never scored as triples.
+#
+# Each control is one claim, stated almost verbatim by `capture`. Its three
+# groups:
+# - positive (gold S): `capture` as captured;
+# - contradiction (gold C): `capture` with `c_edit` applied, one value
+#   changed (a number, a flag, a version);
+# - null (gold NM; not-S on a two-way checker): `null`, an unrelated capture
+#   of the same kind and about the same length (help pages and help topics
+#   count as one kind, documentation).
+# Each runs short (the block alone) and long (spliced at the middle of about
+# `long_tokens` approx-v1 tokens of filler). `probes` and `guard` keep the
+# filler, and the null capture, from saying anything about the claim.
+#
+# Pass rule (design §6.1): every group a checker answers, 6 of 6 short and
+# 5 of 6 long. The contradiction group is for three-way checkers only.
+
+schema = "sidekick-verification-controls/1"
+seed = 133
+long_tokens = 32000
+
+[[control]]
+id = "tool-gh-auth-exit-code"
+type = "tool"
+claim = "`gh help exit-codes`: if a command requires authentication, the exit code will be 4."
+capture = "gh.help.topic.exit-codes"
+c_edit = { find = "requires authentication, the exit code will be 4", replace = "requires authentication, the exit code will be 3" }
+null = "gh.stack.help.view"
+probes = ['exit code', 'authentication']
+
+[[control]]
+id = "environment-rustc-version"
+type = "environment"
+claim = "rustc --version reports rustc 1.94.1."
+capture = "gen.cargo.versions"
+c_edit = { find = "rustc 1.94.1", replace = "rustc 1.93.0" }
+null = "jj.status"
+probes = ['rustc', 'cargo \d']
+guard = ["1.94.1", "1.93.0"]
+
+[[control]]
+id = "file-defaults-port"
+type = "file"
+claim = "defaults.yaml sets the database port to 5432."
+capture = "dasel.cat.defaults-yaml"
+c_edit = { find = "port: 5432", replace = "port: 6543" }
+null = "dasel.users-yaml"
+probes = ['defaults\.yaml', 'port']
+guard = ["5432", "6543"]
+
+[[control]]
+id = "file-health-timeout"
+type = "file"
+claim = "service.toml gives the /health route timeout_ms = 500."
+capture = "gen.service.cat"
+c_edit = { find = "path = \"/health\"\ntimeout_ms = 500", replace = "path = \"/health\"\ntimeout_ms = 800" }
+null = "dasel.cat.app-toml"
+probes = ['/health', 'timeout_ms', 'service\.toml']
+
+[[control]]
+id = "result-stack-sync-pushed"
+type = "result"
+claim = "`gh stack sync` pushed 4 branches to origin."
+capture = "gh.stack.sync"
+c_edit = { find = "Pushing 4 branches to origin...\n✓ Pushed 4 branches", replace = "Pushing 3 branches to origin...\n✓ Pushed 3 branches" }
+null = "jj.err.id-keyword"
+probes = ['[Pp]ush(?:ed|ing) \d+ branch', 'stack sync']
+
+[[control]]
+id = "refutation-npm-missing-script"
+type = "refutation"
+claim = "was: `npm run nope` runs a script named nope (held at 6/10), wrong because npm answered \"Missing script: \"nope\"\" and exited 1 [call c500]"
+capture = "gen.npm.run-missing"
+c_edit = { find = "[exit 1]", replace = "[exit 0]" }
+null = "dasel.err.hash-filter-names"
+probes = ['Missing script', 'npm run']

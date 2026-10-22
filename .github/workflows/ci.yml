@@ -25,8 +25,12 @@ jobs:
     # captures and locks; the refusal scan over every committed fixture;
     # the hazard checks and determinism on a synthetic capture set; and a
     # full regeneration of the current review set from the committed
-    # captures, checked against its lock. Standard library only: no tools
-    # run and nothing is downloaded.
+    # captures, checked against its lock. The scoring harness
+    # (tools/tasks/scoring_*.py): windowing, dedupe, the verdict rules, the
+    # control gate, the bootstrap and MDE, the control set, the committed
+    # ceilings against the set's lock, and the judge export's format. No
+    # checker runs here. Standard library only: no tools run and nothing is
+    # downloaded.
     name: Task corpus tools
     runs-on: ubuntu-24.04
     steps:
