@@ -1,0 +1,142 @@
+# Scoring settings for the verification corpus (tools/tasks/scoring_*.py),
+# fixed before the first scored run. Any later change is a deviation and is
+# listed in the report.
+
+schema = "sidekick-verification-scoring/1"
+set = "review-4"
+tau = 0.5               # primary run; tuning τ on dev waits for about 150 claims
+overlap = 128           # tokens shared by consecutive windows (the generator caps needles at 96)
+margin = 8              # tokens left free in every window
+seed = 133              # the bootstrap's seed
+resamples = 10000       # cluster bootstrap over claim shapes
+mde_factor = 2.8        # MDE = 2.8 × SE of the paired difference (α = 0.05 two-sided, power 0.8)
+probs_tolerance = 1e-5  # nli_probs must sum to 1 within this
+
+[gate]
+short = 6               # of 6, in every group a checker answers
+long = 5
+# A control a checker can't run (over its context, as the design reports
+# Foundation Models' long forms) is left out of its gate and reported as
+# not run, rather than counted wrong. Deviation 1 below.
+exclude_not_run = true
+
+# sidekick's nli checkers (design §1). `ways` 3 reads `nli_probs` (D47) and
+# runs A3 and A3g; `ways` 2 reads e − c and runs A2 and A2g. The tokenizer is
+# the installed model's tokenizer.json, checked by sha256 at run time.
+[[nli]]
+id = "nli-deberta-v3-base"
+ways = 3
+max_seq_len = 512
+revision = "6c749ce3425cd33b46d187e45b92bbf96ee12ec7"
+sha256_tokenizer = "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964"
+reader = "window-512"   # the second reader's window form that shadows it exactly
+
+[[nli]]
+id = "nli-minilm2-l6-h768"
+ways = 3
+max_seq_len = 512
+revision = "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d"
+sha256_tokenizer = "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473"
+
+[[nli]]
+id = "nli-minilm2-l6-h768-ane"
+ways = 3
+max_seq_len = 512
+revision = "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d"
+sha256_tokenizer = "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473"
+
+[[nli]]
+id = "roberta-large-mnli"
+ways = 3
+max_seq_len = 512
+revision = "2a8f12d27941090092df78e4ba6f0928eb5eac98"
+sha256_tokenizer = "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e"
+
+[[nli]]
+id = "deberta-v3-large-zeroshot-v2.0-c"
+ways = 2
+max_seq_len = 512
+revision = "b2730f16019076bb0009481121efbe4705e0e378"
+sha256_tokenizer = "05402ffae6dd382a8491b1d29bfc139bec5d332662e86a026f433ce54c25c202"
+
+[[nli]]
+id = "bge-m3-zeroshot-v2.0-c"
+ways = 2
+max_seq_len = 2048
+revision = "705510dfe0f35d223a4bf6f5d2695ec5fd162341"
+sha256_tokenizer = "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790"
+reader = "window-2048"
+
+# External baselines, in their own code at their defaults (design §7.5 B).
+# Heavy CPU or MPS jobs: run by the maintainer, one at a time, never in CI.
+[minicheck]
+id = "minicheck-deberta-v3-large"
+model = "lytang/minicheck-deberta-v3-large"   # the repository id, lowercased; its own loader names it
+revision = "2f2d01a54fa022a7ffadb76260e1ea8bc88c82bb"
+code = "Liyan06/MiniCheck"
+code_revision = "b58b9fa69acbd1015ec970fa65dd752413a053d2"
+chunk_size = 400        # MiniCheck's default for deberta-v3-large
+max_model_len = 2048    # its default
+threshold = 0.5         # its own: supported if p > 0.5
+sha256_tokenizer = "8bfb874b90f3b3ea9481289bf351eef77462f0935f526ea107f53789708cc5d4"
+reader = "chunk-400"
+
+[hhem]
+id = "HHEM-2.1-Open"
+model = "vectara/hallucination_evaluation_model"
+revision = "de9a5e6ba9ba49531a022dba17e35ffeb2a6fad8"
+sha256_foundation_tokenizer = "fe2ebbbbde2985be723e0ce18217853e4020c5e9d35bd07be2c27ab9d3ead57a"
+threshold = 0.5         # consistent if p ≥ 0.5, as its model card reads scores
+reader = "full"         # it takes the whole premise: no chunks
+# Its attention is quadratic in the premise, so a 32k haystack can't run in
+# 32 GB; longer premises (flan-t5 tokens) are reported as not run, and its
+# ceiling counts only the triples that ran. Deviation 2 below.
+max_premise_tokens = 8192
+
+[foundation_models]
+id = "foundation-models"
+route = "/v1/chat/completions"
+temperature = 0
+max_tokens = 64
+reader = "full"
+
+# J and the second reader: an LLM over an OpenAI-compatible endpoint, run
+# outside this repository from an exported JSONL batch (design §6.5). The
+# endpoint, its key and its model never appear here; the model's public id
+# is taken from the response file.
+# Deviations from the pre-registered design, confirmed by the reviewer
+# (design §7). The report lists each in its header and its MODELS.md section;
+# `beside` names numbers the text must stand beside.
+[[deviation]]
+id = "not-run-controls"
+text = "Controls a checker can't run (Foundation Models' long forms, over its context) are left out of its gate and reported as not run."
+
+[[deviation]]
+id = "hhem-premise-cap"
+text = "HHEM's premise is capped at 8,192 tokens. It ran 29 of 54 triples, and its ceiling counts only those."
+
+[[deviation]]
+id = "chunk-400-approximate"
+text = "chunk-400 shadows MiniCheck only approximately: 40% of chunks match exactly, and 181 of 198 chunk counts agree."
+beside = "chunk-400"
+note = "approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree"
+
+[[deviation]]
+id = "lenient-parse-quoted-json"
+text = "Written down post-data, after the judge's responses were seen: the lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose, so only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form."
+
+# Findings for the next corpus round, from the reviewer's reading of this
+# round's results. This round's labels and scores don't change.
+[[finding]]
+id = "nm-empty-output-nonzero-exit"
+text = "Five NOT MENTIONED variants keep the needle's call with its output emptied and its nonzero exit visible (`empty-output-nonzero-exit`: 002, 025, 026, 031, 032); the other 49 remove it. A visible nonzero exit supports a claim that the call failed, so these items are a gray zone for NOT MENTIONED. They are scored apart below."
+nm_kind = "empty-output-nonzero-exit"
+
+[[finding]]
+id = "c-rests-on-notes"
+text = "In 027 and 028 (a refuted belief's reason), CONTRADICTED rests on a `[notes]` entry alone, with no tool output behind it."
+
+[judge]
+max_tokens = 2048            # output budget per request, reasoning included
+reasoning_effort = "medium"
+assumed_reasoning_tokens = 400

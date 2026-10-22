@@ -1895,6 +1895,229 @@ Rerankers, NLI models and the bespoke classifiers have no MTEB results.
 | ModernBERT-large-zeroshot-v2.0 | GPU **B** | 2,048 | MultiNLI (mismatched validation set, the card's training results) | NLI | accuracy, two-way (entailment vs not) | 94.4 † | [model card](https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md), read 2026-10-20 | A two-way model (entailment or not; chance 50%), so not comparable with the three-way NLI models' accuracy (chance 33%) |
 <!-- /generated -->
 
+<!-- verification-scores:start -->
+
+### Verification checkers (pilot)
+
+This round is a pilot: 54 triples from 32 claim shapes. Its minimum detectable effect (MDE, 2.8 × the bootstrap SE of a paired difference) is about 18 points (7–24 across the paired comparisons) of triple accuracy, so differences between checkers smaller than that cannot be seen. Results are per checker, each with its verdict; no ranking is claimed until the corpus reaches about 150 claims.
+
+Deviations from the pre-registered design:
+
+1. Controls a checker can't run (Foundation Models' long forms, over its context) are left out of its gate and reported as not run.
+2. HHEM's premise is capped at 8,192 tokens. It ran 29 of 54 triples, and its ceiling counts only those.
+3. chunk-400 shadows MiniCheck only approximately: 40% of chunks match exactly, and 181 of 198 chunk counts agree.
+4. Written down post-data, after the judge's responses were seen: the lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose, so only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form.
+
+Diagnosis beside the instrument-limited verdicts (the verdicts are unchanged):
+
+- The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.
+- Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev. Gating changes the result (deberta-v3-large-zeroshot-v2.0-c: 0.22 ungated, 0.07 gated; nli-deberta-v3-base: 0.02 ungated, 0.11 gated; R512: 0.81 ungated, 0.48 gated; R2048: 0.81 ungated, 0.50 gated).
+- Foundation Models answers C on 16 of the 16 NOT MENTIONED variants that fit its context: it reads an absence as a contradiction (a behaviour, not only a score).
+
+- The task, as the LLM judge (J), Foundation Models and the second reader are asked it, includes the corpus's rules for which evidence is current: a later record of the same thing supersedes an earlier one (by timestamp where records carry one); a `was: X …, wrong because Y` note refutes X; an override applies over what it overrides; a tool's help and output speak for the version that produced them. These rules define the labels for every item alike. The nli checkers, MiniCheck and HHEM receive only the claim and the evidence, as their interfaces take nothing else.
+- The 512-token second reader sees windows cut with nli-deberta-v3-base's tokenizer, so it shadows that model (and deberta-v3-large-zeroshot-v2.0-c, whose cuts differ slightly) closely, and nli-minilm2-l6-h768 and roberta-large-mnli only approximately: their own tokenizers cut the evidence at other places.
+- J's and the second reader's verdicts are read from the final answer only. The scored (lenient) rule accepts one verdict object at the end of the answer, with prose before it (a JSON record quoted from the evidence is prose); the strict rule needs the answer to be exactly that object. Both are reported per reader form, with the lenient rule's literal reading beside them; a failure counts as wrong. A verdict object inside a Markdown code fence fails both rules and is counted on its own line, so its frequency can be reviewed. An answer cut off by the output budget (finish_reason `length`) is wrong, and is listed by id.
+
+J and the second reader: `ada48-tabbyapi-exl3-qwen38flashnext-2p05`; served as `Qwen3.8-Flash-Next-exl3-2.05bpw-yarn2`; quantization: EXL3, 2.05 bpw; context: 524,288 tokens (yarn); reasoning effort: medium; sampler: the server's thinking sampler preset.
+
+Reader answers, by form (lenient is the scored rule; a failure counts as wrong):
+
+| reader form | requests | strict | lenient only | failed | fenced | lenient, literal reading | output budget ran out |
+|---|---|---|---|---|---|---|---|
+| window-512 | 2882 | 2247 | 635 | 0 | 0 | 2878 | 0 |
+| window-2048 | 729 | 372 | 357 | 0 | 0 | 727 | 0 |
+| chunk-400 (approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree) | 2480 | 2023 | 456 | 1 | 0 | 2476 | 1 (`chunk-400-9f45942928e966f535d4`) |
+| full | 198 | 65 | 133 | 0 | 0 | 193 | 0 |
+
+| checker | mode | controls | triple accuracy | 95% CI | chance | ceiling | share of ceiling | S / C / NM accuracy | verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| A2:bge-m3-zeroshot-v2.0-c | binary | fail | 0.037 (2/54) | 0.000–0.098 | 0.125 | 0.982 | 0.038 | 0.22 / 0.80 / 0.91 | instrument-limited |
+| A2:deberta-v3-large-zeroshot-v2.0-c | binary | fail | 0.222 (12/54) | 0.125–0.333 | 0.125 | 0.944 | 0.235 | 0.22 / 0.98 / 1.00 | instrument-limited |
+| A2g:bge-m3-zeroshot-v2.0-c | binary | fail | 0.037 (2/54) | 0.000–0.094 | 0.125 | 0.648 | 0.057 | 0.09 / 0.93 / 0.98 | instrument-limited |
+| A2g:deberta-v3-large-zeroshot-v2.0-c | binary | fail | 0.074 (4/54) | 0.017–0.148 | 0.125 | 0.630 | 0.118 | 0.07 / 0.98 / 1.00 | instrument-limited |
+| A3:nli-deberta-v3-base | three-way | fail | 0.019 (1/54) | 0.000–0.061 | 0.037 | 0.944 | 0.020 | 0.13 / 0.85 / 0.09 | instrument-limited |
+| A3:nli-minilm2-l6-h768 | three-way | fail | 0.000 (0/54) | 0.000–0.000 | 0.037 | 0.944 | 0.000 | 0.00 / 0.96 / 0.00 | instrument-limited |
+| A3:nli-minilm2-l6-h768-ane | three-way | fail | 0.000 (0/54) | 0.000–0.000 | 0.037 | 0.944 | 0.000 | 0.00 / 0.96 / 0.00 | instrument-limited |
+| A3:roberta-large-mnli | three-way | fail | 0.000 (0/54) | 0.000–0.000 | 0.037 | 0.944 | 0.000 | 0.00 / 0.98 / 0.02 | instrument-limited |
+| A3g:nli-deberta-v3-base | three-way | fail | 0.111 (6/54) | 0.018–0.231 | 0.037 | 0.537 | 0.207 | 0.22 / 0.35 / 0.85 | instrument-limited |
+| A3g:nli-minilm2-l6-h768 | three-way | fail | 0.000 (0/54) | 0.000–0.000 | 0.037 | 0.500 | 0.000 | 0.02 / 0.48 / 0.78 | instrument-limited |
+| A3g:nli-minilm2-l6-h768-ane | three-way | fail | 0.000 (0/54) | 0.000–0.000 | 0.037 | 0.500 | 0.000 | 0.02 / 0.48 / 0.78 | instrument-limited |
+| A3g:roberta-large-mnli | three-way | fail | 0.000 (0/54) | 0.000–0.000 | 0.037 | 0.500 | 0.000 | 0.00 / 0.46 / 0.78 | instrument-limited |
+| F:foundation-models | three-way | fail | 0.000 (0/54) | 0.000–0.000 | 0.037 | 0.241 | 0.000 | 0.11 / 0.20 / 0.00 | instrument-limited |
+| H:HHEM-2.1-Open | binary | fail | 0.019 (1/54) | 0.000–0.065 | 0.125 | 0.537 | 0.035 | 0.04 / 0.48 / 0.54 | instrument-limited |
+| J | three-way | pass | 0.833 (45/54) | 0.721–0.950 | 0.037 | 1.000 | 0.833 | 0.98 / 0.96 / 0.89 | measured |
+| M:minicheck-deberta-v3-large | binary | fail | 0.130 (7/54) | 0.052–0.224 | 0.125 | 0.852 | 0.152 | 0.24 / 0.87 / 1.00 | instrument-limited |
+| R2048 | three-way | pass | 0.815 (44/54) | 0.700–0.933 | 0.037 | 0.982 | 0.830 | 1.00 / 0.94 / 0.87 | measured |
+| R2048g | three-way | pass | 0.500 (27/54) | 0.341–0.655 | 0.037 | 0.556 | 0.900 | 0.67 / 0.56 / 0.94 | measured |
+| R400 (approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree) | three-way | pass | 0.778 (42/54) | 0.679–0.878 | 0.037 | 0.852 | 0.913 | 1.00 / 0.89 / 0.87 | measured |
+| R512 | three-way | pass | 0.815 (44/54) | 0.683–0.936 | 0.037 | 0.944 | 0.863 | 1.00 / 0.96 / 0.85 | measured |
+| R512g | three-way | pass | 0.481 (26/54) | 0.321–0.636 | 0.037 | 0.537 | 0.897 | 0.67 / 0.54 / 0.94 | measured |
+
+| X | Y | what | difference | 95% CI | MDE | verdict |
+|---|---|---|---|---|---|---|
+| A2:bge-m3-zeroshot-v2.0-c | R2048 | checker against the second reader given the same inputs (binary terms) | -0.870 | -0.966–-0.754 | 0.157 | instrument-limited |
+| A2:deberta-v3-large-zeroshot-v2.0-c | R512 | checker against the second reader given the same inputs (binary terms) | -0.648 | -0.771–-0.526 | 0.175 | instrument-limited |
+| A2g:bge-m3-zeroshot-v2.0-c | A2:bge-m3-zeroshot-v2.0-c | gated against ungated (binary terms) | +0.000 | -0.056–+0.054 | 0.075 | instrument-limited |
+| A2g:bge-m3-zeroshot-v2.0-c | R2048g | checker against the second reader given the same inputs (binary terms) | -0.556 | -0.702–-0.404 | 0.213 | instrument-limited |
+| A2g:deberta-v3-large-zeroshot-v2.0-c | A2:deberta-v3-large-zeroshot-v2.0-c | gated against ungated (binary terms) | -0.148 | -0.250–-0.066 | 0.133 | instrument-limited |
+| A2g:deberta-v3-large-zeroshot-v2.0-c | R512g | checker against the second reader given the same inputs (binary terms) | -0.500 | -0.640–-0.353 | 0.204 | instrument-limited |
+| A3:nli-deberta-v3-base | R512 | checker against the second reader given the same inputs | -0.796 | -0.918–-0.667 | 0.182 | instrument-limited |
+| A3:nli-minilm2-l6-h768-ane | R512 | checker against the second reader given the same inputs | -0.815 | -0.936–-0.683 | 0.181 | instrument-limited |
+| A3:nli-minilm2-l6-h768 | R512 | checker against the second reader given the same inputs | -0.815 | -0.936–-0.683 | 0.181 | instrument-limited |
+| A3:roberta-large-mnli | R512 | checker against the second reader given the same inputs | -0.815 | -0.936–-0.683 | 0.181 | instrument-limited |
+| A3g:nli-deberta-v3-base | A3:nli-deberta-v3-base | gated against ungated | +0.093 | +0.018–+0.194 | 0.130 | instrument-limited |
+| A3g:nli-deberta-v3-base | R512g | checker against the second reader given the same inputs | -0.370 | -0.510–-0.226 | 0.202 | instrument-limited |
+| A3g:nli-minilm2-l6-h768-ane | A3:nli-minilm2-l6-h768-ane | gated against ungated | +0.000 | +0.000–+0.000 | 0.000 | instrument-limited |
+| A3g:nli-minilm2-l6-h768-ane | R512g | checker against the second reader given the same inputs | -0.481 | -0.636–-0.321 | 0.222 | instrument-limited |
+| A3g:nli-minilm2-l6-h768 | A3:nli-minilm2-l6-h768 | gated against ungated | +0.000 | +0.000–+0.000 | 0.000 | instrument-limited |
+| A3g:nli-minilm2-l6-h768 | R512g | checker against the second reader given the same inputs | -0.481 | -0.636–-0.321 | 0.222 | instrument-limited |
+| A3g:roberta-large-mnli | A3:roberta-large-mnli | gated against ungated | +0.000 | +0.000–+0.000 | 0.000 | instrument-limited |
+| A3g:roberta-large-mnli | R512g | checker against the second reader given the same inputs | -0.481 | -0.636–-0.321 | 0.222 | instrument-limited |
+| F:foundation-models | J | checker against the second reader given the same inputs | -0.833 | -0.950–-0.721 | 0.165 | instrument-limited |
+| H:HHEM-2.1-Open | J | checker against the second reader given the same inputs (binary terms) | -0.889 | -0.981–-0.774 | 0.154 | instrument-limited |
+| M:minicheck-deberta-v3-large | R400 | checker against the second reader given the same inputs (binary terms) (approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree) | -0.741 | -0.843–-0.630 | 0.153 | instrument-limited |
+| R512g | R512 | gated against ungated | -0.333 | -0.510–-0.179 | 0.236 | instrument-limited |
+| R2048g | R2048 | gated against ungated | -0.315 | -0.491–-0.161 | 0.241 | instrument-limited |
+
+By obstacle and decision rule (triples right; descriptive only, no comparisons):
+
+| checker | distractor | repeated | plain | sequence | supersede | precedence | version | timestamp |
+|---|---|---|---|---|---|---|---|---|
+| A2:bge-m3-zeroshot-v2.0-c | 0/8 | 1/11 | 1/39 | 0/2 | 0/6 | 0/4 | 1/2 | 0/1 |
+| A2:deberta-v3-large-zeroshot-v2.0-c | 1/8 | 3/11 | 8/39 | 0/2 | 2/6 | 1/4 | 1/2 | 0/1 |
+| A2g:bge-m3-zeroshot-v2.0-c | 0/8 | 0/11 | 1/39 | 0/2 | 0/6 | 0/4 | 1/2 | 0/1 |
+| A2g:deberta-v3-large-zeroshot-v2.0-c | 1/8 | 0/11 | 3/39 | 0/2 | 0/6 | 1/4 | 0/2 | 0/1 |
+| A3:nli-deberta-v3-base | 0/8 | 0/11 | 0/39 | 0/2 | 0/6 | 1/4 | 0/2 | 0/1 |
+| A3:nli-minilm2-l6-h768 | 0/8 | 0/11 | 0/39 | 0/2 | 0/6 | 0/4 | 0/2 | 0/1 |
+| A3:nli-minilm2-l6-h768-ane | 0/8 | 0/11 | 0/39 | 0/2 | 0/6 | 0/4 | 0/2 | 0/1 |
+| A3:roberta-large-mnli | 0/8 | 0/11 | 0/39 | 0/2 | 0/6 | 0/4 | 0/2 | 0/1 |
+| A3g:nli-deberta-v3-base | 1/8 | 1/11 | 3/39 | 0/2 | 0/6 | 3/4 | 0/2 | 0/1 |
+| A3g:nli-minilm2-l6-h768 | 0/8 | 0/11 | 0/39 | 0/2 | 0/6 | 0/4 | 0/2 | 0/1 |
+| A3g:nli-minilm2-l6-h768-ane | 0/8 | 0/11 | 0/39 | 0/2 | 0/6 | 0/4 | 0/2 | 0/1 |
+| A3g:roberta-large-mnli | 0/8 | 0/11 | 0/39 | 0/2 | 0/6 | 0/4 | 0/2 | 0/1 |
+| F:foundation-models | 0/8 | 0/11 | 0/39 | 0/2 | 0/6 | 0/4 | 0/2 | 0/1 |
+| H:HHEM-2.1-Open | 0/8 | 1/11 | 1/39 | 0/2 | 0/6 | 0/4 | 0/2 | 0/1 |
+| J | 5/8 | 11/11 | 33/39 | 2/2 | 4/6 | 3/4 | 2/2 | 1/1 |
+| M:minicheck-deberta-v3-large | 0/8 | 3/11 | 6/39 | 0/2 | 1/6 | 0/4 | 0/2 | 0/1 |
+| R2048 | 5/8 | 11/11 | 33/39 | 1/2 | 4/6 | 3/4 | 2/2 | 1/1 |
+| R2048g | 4/8 | 5/11 | 17/39 | 1/2 | 3/6 | 4/4 | 2/2 | 0/1 |
+| R400 | 5/8 | 11/11 | 32/39 | 0/2 | 5/6 | 3/4 | 2/2 | 0/1 |
+| R512 | 5/8 | 11/11 | 32/39 | 0/2 | 6/6 | 3/4 | 2/2 | 1/1 |
+| R512g | 4/8 | 5/11 | 17/39 | 0/2 | 3/6 | 4/4 | 2/2 | 0/1 |
+
+Findings for the next corpus round (this round's labels and scores don't change):
+
+- Five NOT MENTIONED variants keep the needle's call with its output emptied and its nonzero exit visible (`empty-output-nonzero-exit`: 002, 025, 026, 031, 032); the other 49 remove it. A visible nonzero exit supports a claim that the call failed, so these items are a gray zone for NOT MENTIONED. They are scored apart below. J's NOT MENTIONED → S misses are on 002, 025, 031, 032; 4 of 4 fall in this group, where a visible nonzero exit supports “the call failed”.
+- In 027 and 028 (a refuted belief's reason), CONTRADICTED rests on a `[notes]` entry alone, with no tool output behind it.
+
+By NOT MENTIONED kind (triples right; the two groups scored apart, descriptive only):
+
+| checker | removed (NOT MENTIONED removes the call) | empty-output-nonzero-exit (keeps it, output emptied, nonzero exit) |
+|---|---|---|
+| A2:bge-m3-zeroshot-v2.0-c | 2/49 | 0/5 |
+| A2:deberta-v3-large-zeroshot-v2.0-c | 12/49 | 0/5 |
+| A2g:bge-m3-zeroshot-v2.0-c | 2/49 | 0/5 |
+| A2g:deberta-v3-large-zeroshot-v2.0-c | 4/49 | 0/5 |
+| A3:nli-deberta-v3-base | 1/49 | 0/5 |
+| A3:nli-minilm2-l6-h768 | 0/49 | 0/5 |
+| A3:nli-minilm2-l6-h768-ane | 0/49 | 0/5 |
+| A3:roberta-large-mnli | 0/49 | 0/5 |
+| A3g:nli-deberta-v3-base | 6/49 | 0/5 |
+| A3g:nli-minilm2-l6-h768 | 0/49 | 0/5 |
+| A3g:nli-minilm2-l6-h768-ane | 0/49 | 0/5 |
+| A3g:roberta-large-mnli | 0/49 | 0/5 |
+| F:foundation-models | 0/49 | 0/5 |
+| H:HHEM-2.1-Open | 1/49 | 0/5 |
+| J | 44/49 | 1/5 |
+| M:minicheck-deberta-v3-large | 7/49 | 0/5 |
+| R2048 | 43/49 | 1/5 |
+| R2048g | 27/49 | 0/5 |
+| R400 | 40/49 | 2/5 |
+| R512 | 44/49 | 0/5 |
+| R512g | 26/49 | 0/5 |
+
+Item 050 (`jj-bare-fileset-path-prefix-glob.4k.start.none`): version scope: NOT MENTIONED keeps the jj 0.30.0 note and `jj --version` printing 0.46.0; the note names its own version, so a reader that respects that scope answers NOT MENTIONED from the note alone (the primary ceiling). `nm_strict` is the stricter reading: the note and the version line in one window.
+
+| checker | S | C | NM | triple right |
+|---|---|---|---|---|
+| A2:bge-m3-zeroshot-v2.0-c | S | not-S | not-S | yes |
+| A2:deberta-v3-large-zeroshot-v2.0-c | S | not-S | not-S | yes |
+| A2g:bge-m3-zeroshot-v2.0-c | S | not-S | not-S | yes |
+| A2g:deberta-v3-large-zeroshot-v2.0-c | not-S | not-S | not-S | no |
+| A3:nli-deberta-v3-base | C | C | C | no |
+| A3:nli-minilm2-l6-h768 | C | C | C | no |
+| A3:nli-minilm2-l6-h768-ane | C | C | C | no |
+| A3:roberta-large-mnli | C | C | C | no |
+| A3g:nli-deberta-v3-base | C | C | S | no |
+| A3g:nli-minilm2-l6-h768 | NM | NM | C | no |
+| A3g:nli-minilm2-l6-h768-ane | NM | NM | C | no |
+| A3g:roberta-large-mnli | NM | NM | C | no |
+| F:foundation-models | not run | not run | C | no |
+| H:HHEM-2.1-Open | not-S | not-S | not-S | no |
+| J | S | C | NM | yes |
+| M:minicheck-deberta-v3-large | not-S | not-S | not-S | no |
+| R2048 | S | C | NM | yes |
+| R2048g | S | C | NM | yes |
+| R400 | S | C | NM | yes |
+| R512 | S | C | NM | yes |
+| R512g | S | C | NM | yes |
+
+Item 045 (`dasel-3-version-flag-unknown.12k.end.none`): version scope: the same construction with a dasel 2.8.1 note beside `dasel version` printing 3.11.2.
+
+| checker | S | C | NM | triple right |
+|---|---|---|---|---|
+| A2:bge-m3-zeroshot-v2.0-c | not-S | not-S | not-S | no |
+| A2:deberta-v3-large-zeroshot-v2.0-c | not-S | not-S | not-S | no |
+| A2g:bge-m3-zeroshot-v2.0-c | not-S | not-S | not-S | no |
+| A2g:deberta-v3-large-zeroshot-v2.0-c | not-S | not-S | not-S | no |
+| A3:nli-deberta-v3-base | C | C | C | no |
+| A3:nli-minilm2-l6-h768 | C | C | C | no |
+| A3:nli-minilm2-l6-h768-ane | C | C | C | no |
+| A3:roberta-large-mnli | C | C | C | no |
+| A3g:nli-deberta-v3-base | C | C | C | no |
+| A3g:nli-minilm2-l6-h768 | C | C | C | no |
+| A3g:nli-minilm2-l6-h768-ane | C | C | C | no |
+| A3g:roberta-large-mnli | C | C | C | no |
+| F:foundation-models | not run | not run | not run | no |
+| H:HHEM-2.1-Open | not run | not run | not run | no |
+| J | S | C | NM | yes |
+| M:minicheck-deberta-v3-large | not-S | not-S | not-S | no |
+| R2048 | S | C | NM | yes |
+| R2048g | S | C | NM | yes |
+| R400 | S | C | NM | yes |
+| R512 | S | C | NM | yes |
+| R512g | S | C | NM | yes |
+
+Item 020 (`package-manager-pnpm.32k.start.none`): labelled `start` under approx-v1 (position_at 0.318, 0.012 inside the boundary); flagged, not excluded. `position_by_tokenizer` gives the needle's position by each tokenizer's real token count.
+
+| checker | S | C | NM | triple right |
+|---|---|---|---|---|
+| A2:bge-m3-zeroshot-v2.0-c | not-S | not-S | not-S | no |
+| A2:deberta-v3-large-zeroshot-v2.0-c | not-S | not-S | not-S | no |
+| A2g:bge-m3-zeroshot-v2.0-c | not-S | not-S | not-S | no |
+| A2g:deberta-v3-large-zeroshot-v2.0-c | not-S | not-S | not-S | no |
+| A3:nli-deberta-v3-base | C | C | C | no |
+| A3:nli-minilm2-l6-h768 | C | C | C | no |
+| A3:nli-minilm2-l6-h768-ane | C | C | C | no |
+| A3:roberta-large-mnli | C | C | C | no |
+| A3g:nli-deberta-v3-base | C | C | NM | no |
+| A3g:nli-minilm2-l6-h768 | C | C | NM | no |
+| A3g:nli-minilm2-l6-h768-ane | C | C | NM | no |
+| A3g:roberta-large-mnli | C | C | NM | no |
+| F:foundation-models | not run | not run | not run | no |
+| H:HHEM-2.1-Open | not run | not run | not run | no |
+| J | S | C | NM | yes |
+| M:minicheck-deberta-v3-large | not-S | not-S | not-S | no |
+| R2048 | S | C | NM | yes |
+| R2048g | S | C | NM | yes |
+| R400 | S | C | NM | yes |
+| R512 | S | C | NM | yes |
+| R512g | S | C | NM | yes |
+
+Two-way checkers report binary triple accuracy (S against not-S), never three-way. Generated by tools/tasks/scoring_report.py from docs/data/verification-scores.json.
+
+<!-- verification-scores:end -->
+
 ## Incompatible / not integrated
 
 | model | class | why |
