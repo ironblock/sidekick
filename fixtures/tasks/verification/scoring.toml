@@ -121,6 +121,10 @@ text = "chunk-400 shadows MiniCheck only approximately: 40% of chunks match exac
 beside = "chunk-400"
 note = "approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree"
 
+[[deviation]]
+id = "lenient-parse-quoted-json"
+text = "The lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose: only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form."
+
 [judge]
 max_tokens = 2048            # output budget per request, reasoning included
 reasoning_effort = "medium"

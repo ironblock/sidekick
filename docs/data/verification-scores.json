@@ -1,0 +1,5896 @@
+{
+  "ceilings_sha256": "cd4be5a3aa416fdc55ae0d4cf036e9093db708117f6f0be9d5e24550a6548276",
+  "checkers": {
+    "A2:bge-m3-zeroshot-v2.0-c": {
+      "auroc": {
+        "C_C_vs_NM": null,
+        "E_S_vs_rest": 0.5609567901234568
+      },
+      "binary_triple_accuracy": {
+        "ceiling": 0.9815,
+        "chance": 0.125,
+        "ci95": [
+          0.0,
+          0.09803921568627451
+        ],
+        "half_width": 0.049019607843137254,
+        "se": 0.026056788798276113,
+        "share_of_ceiling": 0.0377,
+        "value": 0.037037037037037035,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "checker": "A2:bge-m3-zeroshot-v2.0-c",
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0769,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0625,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0256,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.5,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0286,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.1,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0909,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A2",
+      "gate": {
+        "groups": {
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 2
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 5
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          }
+        },
+        "passed": false
+      },
+      "mode": "binary",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.7963,
+          "of": 54,
+          "right": 43
+        },
+        "NM": {
+          "accuracy": 0.9074,
+          "of": 54,
+          "right": 49
+        },
+        "S": {
+          "accuracy": 0.2222,
+          "of": 54,
+          "right": 12
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512",
+          "1024",
+          "2048"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512",
+              "1024",
+              "2048"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:21:32Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 0,
+              "pairs": 151,
+              "requests": 21,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 2048,
+            "model": "bge-m3-zeroshot-v2.0-c",
+            "model_revision": "705510dfe0f35d223a4bf6f5d2695ec5fd162341",
+            "model_sha256": "d7d216d2e9012238a3bee2445e3513b20a5a3de9ab3064ef4327b122d6f52379",
+            "nli_classes": [
+              "entailment",
+              "not_entailment"
+            ],
+            "request_shape_sha256": "e3ee2240848890977dcdef39ad2439a04589ded0d1aaecea3ccfa9af5230a45c",
+            "requests_s": 57.0,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "6dedaa868624ca353ea261c46b6211f34892f6f3a7703de1cb4ee653c3b49787",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790",
+            "wall_clock_s": 65.9
+          }
+        ],
+        "finished": "2026-10-22T05:37:16Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 0,
+          "pairs": 578,
+          "requests": 93,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 2048,
+        "model": "bge-m3-zeroshot-v2.0-c",
+        "model_revision": "705510dfe0f35d223a4bf6f5d2695ec5fd162341",
+        "model_sha256": "d7d216d2e9012238a3bee2445e3513b20a5a3de9ab3064ef4327b122d6f52379",
+        "nli_classes": [
+          "entailment",
+          "not_entailment"
+        ],
+        "request_shape_sha256": "e3ee2240848890977dcdef39ad2439a04589ded0d1aaecea3ccfa9af5230a45c",
+        "requests_s": 135.6,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "6dedaa868624ca353ea261c46b6211f34892f6f3a7703de1cb4ee653c3b49787",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790",
+        "wall_clock_s": 147.9
+      },
+      "three_way": "not applicable",
+      "triples": 54
+    },
+    "A2:deberta-v3-large-zeroshot-v2.0-c": {
+      "auroc": {
+        "C_C_vs_NM": null,
+        "E_S_vs_rest": 0.7209362139917695
+      },
+      "binary_triple_accuracy": {
+        "ceiling": 0.9444,
+        "chance": 0.125,
+        "ci95": [
+          0.125,
+          0.3333333333333333
+        ],
+        "half_width": 0.10416666666666666,
+        "se": 0.052398793402519815,
+        "share_of_ceiling": 0.2353,
+        "value": 0.2222222222222222,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "checker": "A2:deberta-v3-large-zeroshot-v2.0-c",
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.1538,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.1538,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.3333,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.25,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.2051,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.25,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.3333,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.5,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.125,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.2286,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.2727,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.2,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.2727,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.3636,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.1818,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A2",
+      "gate": {
+        "groups": {
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 5
+          }
+        },
+        "passed": false
+      },
+      "mode": "binary",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.9815,
+          "of": 54,
+          "right": 53
+        },
+        "NM": {
+          "accuracy": 1.0,
+          "of": 54,
+          "right": 54
+        },
+        "S": {
+          "accuracy": 0.2222,
+          "of": 54,
+          "right": 12
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:20:25Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 0,
+              "pairs": 551,
+              "requests": 70,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "deberta-v3-large-zeroshot-v2.0-c",
+            "model_revision": "b2730f16019076bb0009481121efbe4705e0e378",
+            "model_sha256": "eebe0d73a0f0bc79c9483dc2be3a69e8c9fc5e6da1d039ad39fb83791270c5f9",
+            "nli_classes": [
+              "entailment",
+              "not_entailment"
+            ],
+            "request_shape_sha256": "d7fd327dcd0dbd63b26bc4f24aad51b3f153059a4fa7bbe4cbc8366f9d74f2de",
+            "requests_s": 43.9,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "0ec250ed968796b4d59d2574013ba94f9ec8fda6a0a3409b5a359ef3d8a9d1aa",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "05402ffae6dd382a8491b1d29bfc139bec5d332662e86a026f433ce54c25c202",
+            "wall_clock_s": 51.4
+          }
+        ],
+        "finished": "2026-10-22T05:34:47Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 0,
+          "pairs": 2331,
+          "requests": 313,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "deberta-v3-large-zeroshot-v2.0-c",
+        "model_revision": "b2730f16019076bb0009481121efbe4705e0e378",
+        "model_sha256": "eebe0d73a0f0bc79c9483dc2be3a69e8c9fc5e6da1d039ad39fb83791270c5f9",
+        "nli_classes": [
+          "entailment",
+          "not_entailment"
+        ],
+        "request_shape_sha256": "d7fd327dcd0dbd63b26bc4f24aad51b3f153059a4fa7bbe4cbc8366f9d74f2de",
+        "requests_s": 144.5,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "0ec250ed968796b4d59d2574013ba94f9ec8fda6a0a3409b5a359ef3d8a9d1aa",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "05402ffae6dd382a8491b1d29bfc139bec5d332662e86a026f433ce54c25c202",
+        "wall_clock_s": 156.5
+      },
+      "three_way": "not applicable",
+      "triples": 54
+    },
+    "A2g:bge-m3-zeroshot-v2.0-c": {
+      "auroc": {
+        "C_C_vs_NM": null,
+        "E_S_vs_rest": 0.6364026063100137
+      },
+      "binary_triple_accuracy": {
+        "ceiling": 0.6481,
+        "chance": 0.125,
+        "ci95": [
+          0.0,
+          0.09376474056603752
+        ],
+        "half_width": 0.04688237028301876,
+        "se": 0.025257512943247244,
+        "share_of_ceiling": 0.0571,
+        "value": 0.037037037037037035,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "checker": "A2g:bge-m3-zeroshot-v2.0-c",
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0833,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0625,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0256,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.5,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0571,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0909,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A2g",
+      "gate": {
+        "groups": {
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 2
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          }
+        },
+        "passed": false
+      },
+      "mode": "binary",
+      "no_anchor": 93,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.9259,
+          "of": 54,
+          "right": 50
+        },
+        "NM": {
+          "accuracy": 0.9815,
+          "of": 54,
+          "right": 53
+        },
+        "S": {
+          "accuracy": 0.0926,
+          "of": 54,
+          "right": 5
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512",
+          "1024",
+          "2048"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512",
+              "1024",
+              "2048"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:21:32Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 0,
+              "pairs": 151,
+              "requests": 21,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 2048,
+            "model": "bge-m3-zeroshot-v2.0-c",
+            "model_revision": "705510dfe0f35d223a4bf6f5d2695ec5fd162341",
+            "model_sha256": "d7d216d2e9012238a3bee2445e3513b20a5a3de9ab3064ef4327b122d6f52379",
+            "nli_classes": [
+              "entailment",
+              "not_entailment"
+            ],
+            "request_shape_sha256": "e3ee2240848890977dcdef39ad2439a04589ded0d1aaecea3ccfa9af5230a45c",
+            "requests_s": 57.0,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "6dedaa868624ca353ea261c46b6211f34892f6f3a7703de1cb4ee653c3b49787",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790",
+            "wall_clock_s": 65.9
+          }
+        ],
+        "finished": "2026-10-22T05:37:16Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 0,
+          "pairs": 578,
+          "requests": 93,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 2048,
+        "model": "bge-m3-zeroshot-v2.0-c",
+        "model_revision": "705510dfe0f35d223a4bf6f5d2695ec5fd162341",
+        "model_sha256": "d7d216d2e9012238a3bee2445e3513b20a5a3de9ab3064ef4327b122d6f52379",
+        "nli_classes": [
+          "entailment",
+          "not_entailment"
+        ],
+        "request_shape_sha256": "e3ee2240848890977dcdef39ad2439a04589ded0d1aaecea3ccfa9af5230a45c",
+        "requests_s": 135.6,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "6dedaa868624ca353ea261c46b6211f34892f6f3a7703de1cb4ee653c3b49787",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790",
+        "wall_clock_s": 147.9
+      },
+      "three_way": "not applicable",
+      "triples": 54
+    },
+    "A2g:deberta-v3-large-zeroshot-v2.0-c": {
+      "auroc": {
+        "C_C_vs_NM": null,
+        "E_S_vs_rest": 0.7109910836762688
+      },
+      "binary_triple_accuracy": {
+        "ceiling": 0.6296,
+        "chance": 0.125,
+        "ci95": [
+          0.017241379310344827,
+          0.14814814814814814
+        ],
+        "half_width": 0.06545338441890165,
+        "se": 0.0344885633435578,
+        "share_of_ceiling": 0.1177,
+        "value": 0.07407407407407407,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "checker": "A2g:deberta-v3-large-zeroshot-v2.0-c",
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.25,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0625,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0769,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.25,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.125,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0857,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.1818,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0909,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A2g",
+      "gate": {
+        "groups": {
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 5
+          }
+        },
+        "passed": false
+      },
+      "mode": "binary",
+      "no_anchor": 93,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.9815,
+          "of": 54,
+          "right": 53
+        },
+        "NM": {
+          "accuracy": 1.0,
+          "of": 54,
+          "right": 54
+        },
+        "S": {
+          "accuracy": 0.0741,
+          "of": 54,
+          "right": 4
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:20:25Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 0,
+              "pairs": 551,
+              "requests": 70,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "deberta-v3-large-zeroshot-v2.0-c",
+            "model_revision": "b2730f16019076bb0009481121efbe4705e0e378",
+            "model_sha256": "eebe0d73a0f0bc79c9483dc2be3a69e8c9fc5e6da1d039ad39fb83791270c5f9",
+            "nli_classes": [
+              "entailment",
+              "not_entailment"
+            ],
+            "request_shape_sha256": "d7fd327dcd0dbd63b26bc4f24aad51b3f153059a4fa7bbe4cbc8366f9d74f2de",
+            "requests_s": 43.9,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "0ec250ed968796b4d59d2574013ba94f9ec8fda6a0a3409b5a359ef3d8a9d1aa",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "05402ffae6dd382a8491b1d29bfc139bec5d332662e86a026f433ce54c25c202",
+            "wall_clock_s": 51.4
+          }
+        ],
+        "finished": "2026-10-22T05:34:47Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 0,
+          "pairs": 2331,
+          "requests": 313,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "deberta-v3-large-zeroshot-v2.0-c",
+        "model_revision": "b2730f16019076bb0009481121efbe4705e0e378",
+        "model_sha256": "eebe0d73a0f0bc79c9483dc2be3a69e8c9fc5e6da1d039ad39fb83791270c5f9",
+        "nli_classes": [
+          "entailment",
+          "not_entailment"
+        ],
+        "request_shape_sha256": "d7fd327dcd0dbd63b26bc4f24aad51b3f153059a4fa7bbe4cbc8366f9d74f2de",
+        "requests_s": 144.5,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "0ec250ed968796b4d59d2574013ba94f9ec8fda6a0a3409b5a359ef3d8a9d1aa",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "05402ffae6dd382a8491b1d29bfc139bec5d332662e86a026f433ce54c25c202",
+        "wall_clock_s": 156.5
+      },
+      "three_way": "not applicable",
+      "triples": 54
+    },
+    "A3:nli-deberta-v3-base": {
+      "auroc": {
+        "C_C_vs_NM": 0.5260631001371742,
+        "E_S_vs_rest": 0.6051097393689986
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 2
+      },
+      "checker": "A3:nli-deberta-v3-base",
+      "confusion": {
+        "C": {
+          "C": 46,
+          "NM": 2,
+          "S": 6,
+          "none": 0
+        },
+        "NM": {
+          "C": 42,
+          "NM": 5,
+          "S": 7,
+          "none": 0
+        },
+        "S": {
+          "C": 43,
+          "NM": 4,
+          "S": 7,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0769,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.25,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0286,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A3",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          }
+        },
+        "passed": false
+      },
+      "mode": "three-way",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.8519,
+          "of": 54,
+          "right": 46
+        },
+        "NM": {
+          "accuracy": 0.0926,
+          "of": 54,
+          "right": 5
+        },
+        "S": {
+          "accuracy": 0.1296,
+          "of": 54,
+          "right": 7
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:17:27Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 551,
+              "pairs": 551,
+              "requests": 70,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "nli-deberta-v3-base",
+            "model_revision": "6c749ce3425cd33b46d187e45b92bbf96ee12ec7",
+            "model_sha256": "382ccf567aa5cfa82d1c6164a6bb2e281f9595fd2e6c43c3cabd0234e5619491",
+            "nli_classes": [
+              "contradiction",
+              "entailment",
+              "neutral"
+            ],
+            "request_shape_sha256": "60cdcbb66789f66f0d17dc418c66d63ba3d10c912b7322a3702cfbc3cb325117",
+            "requests_s": 16.7,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "9d558ac09dcfb422673160cd856a7321594934c09272d5357e4a95d2a43d39e0",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+            "wall_clock_s": 23.4
+          }
+        ],
+        "finished": "2026-10-22T05:27:56Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 2331,
+          "pairs": 2331,
+          "requests": 313,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "nli-deberta-v3-base",
+        "model_revision": "6c749ce3425cd33b46d187e45b92bbf96ee12ec7",
+        "model_sha256": "382ccf567aa5cfa82d1c6164a6bb2e281f9595fd2e6c43c3cabd0234e5619491",
+        "nli_classes": [
+          "contradiction",
+          "entailment",
+          "neutral"
+        ],
+        "request_shape_sha256": "60cdcbb66789f66f0d17dc418c66d63ba3d10c912b7322a3702cfbc3cb325117",
+        "requests_s": 51.8,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "9d558ac09dcfb422673160cd856a7321594934c09272d5357e4a95d2a43d39e0",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+        "wall_clock_s": 62.8
+      },
+      "triple_accuracy": {
+        "ceiling": 0.9444,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.0,
+          0.061224489795918366
+        ],
+        "half_width": 0.030612244897959183,
+        "se": 0.018162485798256738,
+        "share_of_ceiling": 0.0196,
+        "value": 0.018518518518518517,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "triples": 54
+    },
+    "A3:nli-minilm2-l6-h768": {
+      "auroc": {
+        "C_C_vs_NM": 0.516803840877915,
+        "E_S_vs_rest": 0.510116598079561
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 0
+      },
+      "checker": "A3:nli-minilm2-l6-h768",
+      "confusion": {
+        "C": {
+          "C": 52,
+          "NM": 0,
+          "S": 2,
+          "none": 0
+        },
+        "NM": {
+          "C": 54,
+          "NM": 0,
+          "S": 0,
+          "none": 0
+        },
+        "S": {
+          "C": 54,
+          "NM": 0,
+          "S": 0,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A3",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 3
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 1
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          }
+        },
+        "passed": false
+      },
+      "mode": "three-way",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.963,
+          "of": 54,
+          "right": 52
+        },
+        "NM": {
+          "accuracy": 0.0,
+          "of": 54,
+          "right": 0
+        },
+        "S": {
+          "accuracy": 0.0,
+          "of": 54,
+          "right": 0
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:18:12Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 744,
+              "pairs": 744,
+              "requests": 95,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "nli-minilm2-l6-h768",
+            "model_revision": "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+            "model_sha256": "d77e5dc86e3b6152351ca0695cad3b5f40e5ee4e3ee00a7eda7c381491939eac",
+            "nli_classes": [
+              "contradiction",
+              "entailment",
+              "neutral"
+            ],
+            "request_shape_sha256": "d75ae63cbd05eefce01581949d8e6bdd6a8ab830415f8bdbb3b1252913e51b49",
+            "requests_s": 8.1,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "7cfa646bba9acbb0b58528446a36b4e105c6900af597ffbda3d2f04aabc0b6ef",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+            "wall_clock_s": 15.1
+          }
+        ],
+        "finished": "2026-10-22T05:28:36Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 2760,
+          "pairs": 2760,
+          "requests": 368,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "nli-minilm2-l6-h768",
+        "model_revision": "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+        "model_sha256": "d77e5dc86e3b6152351ca0695cad3b5f40e5ee4e3ee00a7eda7c381491939eac",
+        "nli_classes": [
+          "contradiction",
+          "entailment",
+          "neutral"
+        ],
+        "request_shape_sha256": "d75ae63cbd05eefce01581949d8e6bdd6a8ab830415f8bdbb3b1252913e51b49",
+        "requests_s": 25.3,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "7cfa646bba9acbb0b58528446a36b4e105c6900af597ffbda3d2f04aabc0b6ef",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+        "wall_clock_s": 38.8
+      },
+      "triple_accuracy": {
+        "ceiling": 0.9444,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "half_width": 0.0,
+        "se": 0.0,
+        "share_of_ceiling": 0.0,
+        "value": 0.0,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "triples": 54
+    },
+    "A3:nli-minilm2-l6-h768-ane": {
+      "auroc": {
+        "C_C_vs_NM": 0.5178326474622771,
+        "E_S_vs_rest": 0.5097736625514403
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 0
+      },
+      "checker": "A3:nli-minilm2-l6-h768-ane",
+      "confusion": {
+        "C": {
+          "C": 52,
+          "NM": 0,
+          "S": 2,
+          "none": 0
+        },
+        "NM": {
+          "C": 54,
+          "NM": 0,
+          "S": 0,
+          "none": 0
+        },
+        "S": {
+          "C": 53,
+          "NM": 1,
+          "S": 0,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A3",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 3
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 1
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          }
+        },
+        "passed": false
+      },
+      "mode": "three-way",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.963,
+          "of": 54,
+          "right": 52
+        },
+        "NM": {
+          "accuracy": 0.0,
+          "of": 54,
+          "right": 0
+        },
+        "S": {
+          "accuracy": 0.0,
+          "of": 54,
+          "right": 0
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:18:41Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 744,
+              "pairs": 744,
+              "requests": 95,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "nli-minilm2-l6-h768-ane",
+            "model_revision": "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+            "model_sha256": "f5de11d8f0c4784a4193f92c24c1247230191efb345080033d2217b05fe3edfc",
+            "nli_classes": [
+              "contradiction",
+              "entailment",
+              "neutral"
+            ],
+            "request_shape_sha256": "447e2b3e9cce4925cebba4b508e3cc900ad21f2ef6d2ff6d8c5c2921ed13ea16",
+            "requests_s": 21.4,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "ecbb67da69891e56c19e284b3cba0a1f3022008843eecb3f4ad06cf38618f314",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+            "wall_clock_s": 28.3
+          }
+        ],
+        "finished": "2026-10-22T05:29:41Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 2760,
+          "pairs": 2760,
+          "requests": 368,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "nli-minilm2-l6-h768-ane",
+        "model_revision": "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+        "model_sha256": "f5de11d8f0c4784a4193f92c24c1247230191efb345080033d2217b05fe3edfc",
+        "nli_classes": [
+          "contradiction",
+          "entailment",
+          "neutral"
+        ],
+        "request_shape_sha256": "447e2b3e9cce4925cebba4b508e3cc900ad21f2ef6d2ff6d8c5c2921ed13ea16",
+        "requests_s": 51.4,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "ecbb67da69891e56c19e284b3cba0a1f3022008843eecb3f4ad06cf38618f314",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+        "wall_clock_s": 65.0
+      },
+      "triple_accuracy": {
+        "ceiling": 0.9444,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "half_width": 0.0,
+        "se": 0.0,
+        "share_of_ceiling": 0.0,
+        "value": 0.0,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "triples": 54
+    },
+    "A3:roberta-large-mnli": {
+      "auroc": {
+        "C_C_vs_NM": 0.5401234567901234,
+        "E_S_vs_rest": 0.48036694101508914
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 0
+      },
+      "checker": "A3:roberta-large-mnli",
+      "confusion": {
+        "C": {
+          "C": 53,
+          "NM": 1,
+          "S": 0,
+          "none": 0
+        },
+        "NM": {
+          "C": 53,
+          "NM": 1,
+          "S": 0,
+          "none": 0
+        },
+        "S": {
+          "C": 52,
+          "NM": 2,
+          "S": 0,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A3",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 1
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 3
+          }
+        },
+        "passed": false
+      },
+      "mode": "three-way",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.9815,
+          "of": 54,
+          "right": 53
+        },
+        "NM": {
+          "accuracy": 0.0185,
+          "of": 54,
+          "right": 1
+        },
+        "S": {
+          "accuracy": 0.0,
+          "of": 54,
+          "right": 0
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:19:33Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 744,
+              "pairs": 744,
+              "requests": 95,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "roberta-large-mnli",
+            "model_revision": "2a8f12d27941090092df78e4ba6f0928eb5eac98",
+            "model_sha256": "15fd2f18eb546eff02e22cab5a5d7dee4026347e0e24f4a2e0aac5b020f020e8",
+            "nli_classes": [
+              "contradiction",
+              "neutral",
+              "entailment"
+            ],
+            "request_shape_sha256": "f7f8e4ce094c93ccf1804f178b317ef187e42a30ee4cc49921e1861490af57b7",
+            "requests_s": 42.9,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "6dab9ea4b37361a7da7877cae1715bac2f8881b8a89dc6224af2ca5c04d4df85",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+            "wall_clock_s": 50.6
+          }
+        ],
+        "finished": "2026-10-22T05:32:10Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 2760,
+          "pairs": 2760,
+          "requests": 368,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "roberta-large-mnli",
+        "model_revision": "2a8f12d27941090092df78e4ba6f0928eb5eac98",
+        "model_sha256": "15fd2f18eb546eff02e22cab5a5d7dee4026347e0e24f4a2e0aac5b020f020e8",
+        "nli_classes": [
+          "contradiction",
+          "neutral",
+          "entailment"
+        ],
+        "request_shape_sha256": "f7f8e4ce094c93ccf1804f178b317ef187e42a30ee4cc49921e1861490af57b7",
+        "requests_s": 133.7,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "6dab9ea4b37361a7da7877cae1715bac2f8881b8a89dc6224af2ca5c04d4df85",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+        "wall_clock_s": 147.9
+      },
+      "triple_accuracy": {
+        "ceiling": 0.9444,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "half_width": 0.0,
+        "se": 0.0,
+        "share_of_ceiling": 0.0,
+        "value": 0.0,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "triples": 54
+    },
+    "A3g:nli-deberta-v3-base": {
+      "auroc": {
+        "C_C_vs_NM": 0.6719821673525377,
+        "E_S_vs_rest": 0.6438614540466392
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 7
+      },
+      "checker": "A3g:nli-deberta-v3-base",
+      "confusion": {
+        "C": {
+          "C": 19,
+          "NM": 29,
+          "S": 6,
+          "none": 0
+        },
+        "NM": {
+          "C": 5,
+          "NM": 46,
+          "S": 3,
+          "none": 0
+        },
+        "S": {
+          "C": 15,
+          "NM": 27,
+          "S": 12,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0769,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.25,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.125,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0769,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.75,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.125,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.1143,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.1,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.4545,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A3g",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 2
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 1
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          }
+        },
+        "passed": false
+      },
+      "mode": "three-way",
+      "no_anchor": 93,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.3519,
+          "of": 54,
+          "right": 19
+        },
+        "NM": {
+          "accuracy": 0.8519,
+          "of": 54,
+          "right": 46
+        },
+        "S": {
+          "accuracy": 0.2222,
+          "of": 54,
+          "right": 12
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:17:27Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 551,
+              "pairs": 551,
+              "requests": 70,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "nli-deberta-v3-base",
+            "model_revision": "6c749ce3425cd33b46d187e45b92bbf96ee12ec7",
+            "model_sha256": "382ccf567aa5cfa82d1c6164a6bb2e281f9595fd2e6c43c3cabd0234e5619491",
+            "nli_classes": [
+              "contradiction",
+              "entailment",
+              "neutral"
+            ],
+            "request_shape_sha256": "60cdcbb66789f66f0d17dc418c66d63ba3d10c912b7322a3702cfbc3cb325117",
+            "requests_s": 16.7,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "9d558ac09dcfb422673160cd856a7321594934c09272d5357e4a95d2a43d39e0",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+            "wall_clock_s": 23.4
+          }
+        ],
+        "finished": "2026-10-22T05:27:56Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 2331,
+          "pairs": 2331,
+          "requests": 313,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "nli-deberta-v3-base",
+        "model_revision": "6c749ce3425cd33b46d187e45b92bbf96ee12ec7",
+        "model_sha256": "382ccf567aa5cfa82d1c6164a6bb2e281f9595fd2e6c43c3cabd0234e5619491",
+        "nli_classes": [
+          "contradiction",
+          "entailment",
+          "neutral"
+        ],
+        "request_shape_sha256": "60cdcbb66789f66f0d17dc418c66d63ba3d10c912b7322a3702cfbc3cb325117",
+        "requests_s": 51.8,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "9d558ac09dcfb422673160cd856a7321594934c09272d5357e4a95d2a43d39e0",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+        "wall_clock_s": 62.8
+      },
+      "triple_accuracy": {
+        "ceiling": 0.537,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.01818181818181818,
+          0.23076923076923078
+        ],
+        "half_width": 0.1062937062937063,
+        "se": 0.05534086183397143,
+        "share_of_ceiling": 0.2069,
+        "value": 0.1111111111111111,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "triples": 54
+    },
+    "A3g:nli-minilm2-l6-h768": {
+      "auroc": {
+        "C_C_vs_NM": 0.6491769547325102,
+        "E_S_vs_rest": 0.6424039780521262
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 1
+      },
+      "checker": "A3g:nli-minilm2-l6-h768",
+      "confusion": {
+        "C": {
+          "C": 26,
+          "NM": 27,
+          "S": 1,
+          "none": 0
+        },
+        "NM": {
+          "C": 12,
+          "NM": 42,
+          "S": 0,
+          "none": 0
+        },
+        "S": {
+          "C": 28,
+          "NM": 25,
+          "S": 1,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A3g",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 3
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 3
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          }
+        },
+        "passed": false
+      },
+      "mode": "three-way",
+      "no_anchor": 93,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.4815,
+          "of": 54,
+          "right": 26
+        },
+        "NM": {
+          "accuracy": 0.7778,
+          "of": 54,
+          "right": 42
+        },
+        "S": {
+          "accuracy": 0.0185,
+          "of": 54,
+          "right": 1
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:18:12Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 744,
+              "pairs": 744,
+              "requests": 95,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "nli-minilm2-l6-h768",
+            "model_revision": "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+            "model_sha256": "d77e5dc86e3b6152351ca0695cad3b5f40e5ee4e3ee00a7eda7c381491939eac",
+            "nli_classes": [
+              "contradiction",
+              "entailment",
+              "neutral"
+            ],
+            "request_shape_sha256": "d75ae63cbd05eefce01581949d8e6bdd6a8ab830415f8bdbb3b1252913e51b49",
+            "requests_s": 8.1,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "7cfa646bba9acbb0b58528446a36b4e105c6900af597ffbda3d2f04aabc0b6ef",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+            "wall_clock_s": 15.1
+          }
+        ],
+        "finished": "2026-10-22T05:28:36Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 2760,
+          "pairs": 2760,
+          "requests": 368,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "nli-minilm2-l6-h768",
+        "model_revision": "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+        "model_sha256": "d77e5dc86e3b6152351ca0695cad3b5f40e5ee4e3ee00a7eda7c381491939eac",
+        "nli_classes": [
+          "contradiction",
+          "entailment",
+          "neutral"
+        ],
+        "request_shape_sha256": "d75ae63cbd05eefce01581949d8e6bdd6a8ab830415f8bdbb3b1252913e51b49",
+        "requests_s": 25.3,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "7cfa646bba9acbb0b58528446a36b4e105c6900af597ffbda3d2f04aabc0b6ef",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+        "wall_clock_s": 38.8
+      },
+      "triple_accuracy": {
+        "ceiling": 0.5,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "half_width": 0.0,
+        "se": 0.0,
+        "share_of_ceiling": 0.0,
+        "value": 0.0,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "triples": 54
+    },
+    "A3g:nli-minilm2-l6-h768-ane": {
+      "auroc": {
+        "C_C_vs_NM": 0.6491769547325102,
+        "E_S_vs_rest": 0.6429183813443072
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 1
+      },
+      "checker": "A3g:nli-minilm2-l6-h768-ane",
+      "confusion": {
+        "C": {
+          "C": 26,
+          "NM": 27,
+          "S": 1,
+          "none": 0
+        },
+        "NM": {
+          "C": 12,
+          "NM": 42,
+          "S": 0,
+          "none": 0
+        },
+        "S": {
+          "C": 28,
+          "NM": 25,
+          "S": 1,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A3g",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 3
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 3
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          }
+        },
+        "passed": false
+      },
+      "mode": "three-way",
+      "no_anchor": 93,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.4815,
+          "of": 54,
+          "right": 26
+        },
+        "NM": {
+          "accuracy": 0.7778,
+          "of": 54,
+          "right": 42
+        },
+        "S": {
+          "accuracy": 0.0185,
+          "of": 54,
+          "right": 1
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:18:41Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 744,
+              "pairs": 744,
+              "requests": 95,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "nli-minilm2-l6-h768-ane",
+            "model_revision": "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+            "model_sha256": "f5de11d8f0c4784a4193f92c24c1247230191efb345080033d2217b05fe3edfc",
+            "nli_classes": [
+              "contradiction",
+              "entailment",
+              "neutral"
+            ],
+            "request_shape_sha256": "447e2b3e9cce4925cebba4b508e3cc900ad21f2ef6d2ff6d8c5c2921ed13ea16",
+            "requests_s": 21.4,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "ecbb67da69891e56c19e284b3cba0a1f3022008843eecb3f4ad06cf38618f314",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+            "wall_clock_s": 28.3
+          }
+        ],
+        "finished": "2026-10-22T05:29:41Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 2760,
+          "pairs": 2760,
+          "requests": 368,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "nli-minilm2-l6-h768-ane",
+        "model_revision": "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+        "model_sha256": "f5de11d8f0c4784a4193f92c24c1247230191efb345080033d2217b05fe3edfc",
+        "nli_classes": [
+          "contradiction",
+          "entailment",
+          "neutral"
+        ],
+        "request_shape_sha256": "447e2b3e9cce4925cebba4b508e3cc900ad21f2ef6d2ff6d8c5c2921ed13ea16",
+        "requests_s": 51.4,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "ecbb67da69891e56c19e284b3cba0a1f3022008843eecb3f4ad06cf38618f314",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+        "wall_clock_s": 65.0
+      },
+      "triple_accuracy": {
+        "ceiling": 0.5,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "half_width": 0.0,
+        "se": 0.0,
+        "share_of_ceiling": 0.0,
+        "value": 0.0,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "triples": 54
+    },
+    "A3g:roberta-large-mnli": {
+      "auroc": {
+        "C_C_vs_NM": 0.65860768175583,
+        "E_S_vs_rest": 0.6438614540466392
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 0
+      },
+      "checker": "A3g:roberta-large-mnli",
+      "confusion": {
+        "C": {
+          "C": 25,
+          "NM": 29,
+          "S": 0,
+          "none": 0
+        },
+        "NM": {
+          "C": 12,
+          "NM": 42,
+          "S": 0,
+          "none": 0
+        },
+        "S": {
+          "C": 26,
+          "NM": 28,
+          "S": 0,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "A3g",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 2
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 0
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 3
+          }
+        },
+        "passed": false
+      },
+      "mode": "three-way",
+      "no_anchor": 93,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.463,
+          "of": 54,
+          "right": 25
+        },
+        "NM": {
+          "accuracy": 0.7778,
+          "of": 54,
+          "right": 42
+        },
+        "S": {
+          "accuracy": 0.0,
+          "of": 54,
+          "right": 0
+        }
+      },
+      "provenance": {
+        "buckets_seen": [
+          "256",
+          "512"
+        ],
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "buckets_seen": [
+              "128",
+              "256",
+              "512"
+            ],
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:19:33Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "failures": [],
+              "nli_probs_checked": 744,
+              "pairs": 744,
+              "requests": 95,
+              "truncation_asserted": true
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_seq_len": 512,
+            "model": "roberta-large-mnli",
+            "model_revision": "2a8f12d27941090092df78e4ba6f0928eb5eac98",
+            "model_sha256": "15fd2f18eb546eff02e22cab5a5d7dee4026347e0e24f4a2e0aac5b020f020e8",
+            "nli_classes": [
+              "contradiction",
+              "neutral",
+              "entailment"
+            ],
+            "request_shape_sha256": "f7f8e4ce094c93ccf1804f178b317ef187e42a30ee4cc49921e1861490af57b7",
+            "requests_s": 42.9,
+            "route": "/v1/classify",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "served_manifest_sha256": "6dab9ea4b37361a7da7877cae1715bac2f8881b8a89dc6224af2ca5c04d4df85",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "tokenizer_sha256": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+            "wall_clock_s": 50.6
+          }
+        ],
+        "finished": "2026-10-22T05:32:10Z",
+        "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+        "harness_dirty": true,
+        "interface": {
+          "failures": [],
+          "nli_probs_checked": 2760,
+          "pairs": 2760,
+          "requests": 368,
+          "truncation_asserted": true
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_seq_len": 512,
+        "model": "roberta-large-mnli",
+        "model_revision": "2a8f12d27941090092df78e4ba6f0928eb5eac98",
+        "model_sha256": "15fd2f18eb546eff02e22cab5a5d7dee4026347e0e24f4a2e0aac5b020f020e8",
+        "nli_classes": [
+          "contradiction",
+          "neutral",
+          "entailment"
+        ],
+        "request_shape_sha256": "f7f8e4ce094c93ccf1804f178b317ef187e42a30ee4cc49921e1861490af57b7",
+        "requests_s": 133.7,
+        "route": "/v1/classify",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "served_manifest_sha256": "6dab9ea4b37361a7da7877cae1715bac2f8881b8a89dc6224af2ca5c04d4df85",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "tokenizer_sha256": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+        "wall_clock_s": 147.9
+      },
+      "triple_accuracy": {
+        "ceiling": 0.5,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "half_width": 0.0,
+        "se": 0.0,
+        "share_of_ceiling": 0.0,
+        "value": 0.0,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "triples": 54
+    },
+    "F:foundation-models": {
+      "auroc": {
+        "C_C_vs_NM": null,
+        "E_S_vs_rest": null
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 5
+      },
+      "checker": "F:foundation-models",
+      "confusion": {
+        "C": {
+          "C": 11,
+          "NM": 0,
+          "S": 2,
+          "none": 41
+        },
+        "NM": {
+          "C": 16,
+          "NM": 0,
+          "S": 0,
+          "none": 38
+        },
+        "S": {
+          "C": 7,
+          "NM": 0,
+          "S": 6,
+          "none": 41
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "Foundation Models answers C on 16 of the 16 NOT MENTIONED variants that fit its context: it reads an absence as a contradiction (a behaviour, not only a score)."
+      ],
+      "family": "F",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 6,
+            "of": 0,
+            "passed": null,
+            "right": 0
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 6,
+            "of": 0,
+            "passed": null,
+            "right": 0
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 6,
+            "of": 0,
+            "passed": null,
+            "right": 0
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 5
+          }
+        },
+        "passed": false
+      },
+      "mode": "three-way",
+      "no_anchor": 0,
+      "not_run": 138,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.2037,
+          "of": 54,
+          "right": 11
+        },
+        "NM": {
+          "accuracy": 0.0,
+          "of": 54,
+          "right": 0
+        },
+        "S": {
+          "accuracy": 0.1111,
+          "of": 54,
+          "right": 6
+        }
+      },
+      "provenance": {
+        "availability": {
+          "state": "available"
+        },
+        "context_limit": 4096,
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "earlier_runs": [
+          {
+            "availability": {
+              "state": "available"
+            },
+            "context_limit": 4096,
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "finished": "2026-10-22T05:25:52Z",
+            "harness_commit": "2de40fc8a8061801ad0b6961eaf55ace2c2e9454",
+            "harness_dirty": true,
+            "interface": {
+              "parse_failures": 0,
+              "requests": 36
+            },
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "model": "apple-fm",
+            "output_mode": "json_schema",
+            "prompt_sha256": "90bdc5744756091dbf5976afc3eba94881a5f78e5a7c7a3814b55dec1147f4e1",
+            "request_shape_sha256": "b14003fb3a85e8280d34fc85237b51816dc781a4cfc8bc842789e1d4ddad308f",
+            "route": "/v1/chat/completions",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "sidekick_model_header": "core3",
+            "sidekick_version": "0.14.0",
+            "tau": 0.5,
+            "variant": "AFM 3 Core",
+            "variant_id": "core3",
+            "wall_clock_s": 258.8
+          }
+        ],
+        "finished": "2026-10-22T05:53:08Z",
+        "harness_commit": "f2ba71f8d5d3805ac0982bd06e5bd06ca0ec47c3",
+        "harness_dirty": false,
+        "interface": {
+          "parse_failures": 0,
+          "requests": 162
+        },
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "model": "apple-fm",
+        "output_mode": "json_schema",
+        "prompt_sha256": "90bdc5744756091dbf5976afc3eba94881a5f78e5a7c7a3814b55dec1147f4e1",
+        "request_shape_sha256": "b14003fb3a85e8280d34fc85237b51816dc781a4cfc8bc842789e1d4ddad308f",
+        "route": "/v1/chat/completions",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "sidekick_model_header": "core3",
+        "sidekick_version": "0.14.0",
+        "tau": 0.5,
+        "variant": "AFM 3 Core",
+        "variant_id": "core3",
+        "wall_clock_s": 914.8
+      },
+      "triple_accuracy": {
+        "ceiling": 0.24074074074074073,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "half_width": 0.0,
+        "se": 0.0,
+        "share_of_ceiling": 0.0,
+        "value": 0.0,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "triples": 54
+    },
+    "H:HHEM-2.1-Open": {
+      "auroc": {
+        "C_C_vs_NM": null,
+        "E_S_vs_rest": 0.7925089179548157
+      },
+      "binary_triple_accuracy": {
+        "ceiling": 0.5370370370370371,
+        "chance": 0.125,
+        "ci95": [
+          0.0,
+          0.06451612903225806
+        ],
+        "half_width": 0.03225806451612903,
+        "se": 0.019106427996801355,
+        "share_of_ceiling": 0.0345,
+        "value": 0.018518518518518517,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "checker": "H:HHEM-2.1-Open",
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.0,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.0625,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.0256,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.0,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.0,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "family": "H",
+      "gate": {
+        "groups": {
+          "null/long": {
+            "need": 5,
+            "not_run": 6,
+            "of": 0,
+            "passed": null,
+            "right": 0
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 6,
+            "of": 0,
+            "passed": null,
+            "right": 0
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 5
+          }
+        },
+        "passed": false
+      },
+      "mode": "binary",
+      "no_anchor": 0,
+      "not_run": 93,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.4815,
+          "of": 54,
+          "right": 26
+        },
+        "NM": {
+          "accuracy": 0.537,
+          "of": 54,
+          "right": 29
+        },
+        "S": {
+          "accuracy": 0.037,
+          "of": 54,
+          "right": 2
+        }
+      },
+      "provenance": {
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "defaults": true,
+        "earlier_runs": [
+          {
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "defaults": true,
+            "finished": "2026-10-22T06:33:49Z",
+            "harness_commit": "f2ba71f8d5d3805ac0982bd06e5bd06ca0ec47c3",
+            "harness_dirty": true,
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_premise_tokens": 8192,
+            "model": "vectara/hallucination_evaluation_model",
+            "model_revision": "de9a5e6ba9ba49531a022dba17e35ffeb2a6fad8",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "tau": 0.5,
+            "wall_clock_s": 11.9
+          }
+        ],
+        "finished": "2026-10-22T06:36:48Z",
+        "harness_commit": "f2ba71f8d5d3805ac0982bd06e5bd06ca0ec47c3",
+        "harness_dirty": true,
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_premise_tokens": 8192,
+        "model": "vectara/hallucination_evaluation_model",
+        "model_revision": "de9a5e6ba9ba49531a022dba17e35ffeb2a6fad8",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "tau": 0.5,
+        "wall_clock_s": 167.9
+      },
+      "three_way": "not applicable",
+      "triples": 54
+    },
+    "J": {
+      "auroc": {
+        "C_C_vs_NM": 0.9629629629629629,
+        "E_S_vs_rest": 0.9722222222222222
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 49
+      },
+      "checker": "J",
+      "confusion": {
+        "C": {
+          "C": 52,
+          "NM": 2,
+          "S": 0,
+          "none": 0
+        },
+        "NM": {
+          "C": 2,
+          "NM": 48,
+          "S": 4,
+          "none": 0
+        },
+        "S": {
+          "C": 1,
+          "NM": 0,
+          "S": 53,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.7692,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 1.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.75,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.8125,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.8462,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.75,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 1.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.6667,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 1.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 1.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.625,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.8286,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 1.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.9,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 1.0,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.4545,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.8182,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 1.0,
+          "triples": 11
+        }
+      },
+      "family": "J",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          }
+        },
+        "passed": true
+      },
+      "mode": "three-way",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.963,
+          "of": 54,
+          "right": 52
+        },
+        "NM": {
+          "accuracy": 0.8889,
+          "of": 54,
+          "right": 48
+        },
+        "S": {
+          "accuracy": 0.9815,
+          "of": 54,
+          "right": 53
+        }
+      },
+      "provenance": {
+        "bad_prompt": 0,
+        "bad_sha256": 0,
+        "errors": 0,
+        "missing": 0,
+        "model": "Qwen3.8-Flash-Next-exl3-2.05bpw-yarn2"
+      },
+      "triple_accuracy": {
+        "ceiling": 1.0,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.7213114754098361,
+          0.95
+        ],
+        "half_width": 0.11434426229508193,
+        "se": 0.058781031793952,
+        "share_of_ceiling": 0.8333,
+        "value": 0.8333333333333334,
+        "verdict": "measured",
+        "why": "passed its controls; read against its ceiling and the MDE"
+      },
+      "triples": 54
+    },
+    "M:minicheck-deberta-v3-large": {
+      "auroc": {
+        "C_C_vs_NM": null,
+        "E_S_vs_rest": 0.7969821673525377
+      },
+      "binary_triple_accuracy": {
+        "ceiling": 0.8519,
+        "chance": 0.125,
+        "ci95": [
+          0.05172413793103448,
+          0.22448979591836735
+        ],
+        "half_width": 0.08638282899366644,
+        "se": 0.044740942382114735,
+        "share_of_ceiling": 0.1522,
+        "value": 0.12962962962962962,
+        "verdict": "instrument-limited",
+        "why": "failed a control group"
+      },
+      "checker": "M:minicheck-deberta-v3-large",
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.1538,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.0769,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.1667,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.125,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.1538,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.1667,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.0,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.1143,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.2727,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.1,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.1818,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.2727,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.0,
+          "triples": 11
+        }
+      },
+      "diagnosis": [
+        "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+        "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev."
+      ],
+      "family": "M",
+      "gate": {
+        "groups": {
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": false,
+            "right": 4
+          }
+        },
+        "passed": false
+      },
+      "mode": "binary",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.8704,
+          "of": 54,
+          "right": 47
+        },
+        "NM": {
+          "accuracy": 1.0,
+          "of": 54,
+          "right": 54
+        },
+        "S": {
+          "accuracy": 0.2407,
+          "of": 54,
+          "right": 13
+        }
+      },
+      "provenance": {
+        "chunk_size": 400,
+        "code": "Liyan06/MiniCheck",
+        "code_revision": "b58b9fa69acbd1015ec970fa65dd752413a053d2",
+        "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+        "defaults": true,
+        "device": "mps:0",
+        "earlier_runs": [
+          {
+            "chunk_size": 400,
+            "code": "Liyan06/MiniCheck",
+            "code_revision": "b58b9fa69acbd1015ec970fa65dd752413a053d2",
+            "controls_sha256": "9390254e0019988379ab15a9e315c6f4731f5ed9749f6ed666404c310c88301c",
+            "defaults": true,
+            "device": "mps:0",
+            "finished": "2026-10-22T06:03:39Z",
+            "harness_chunker_mismatches": [],
+            "harness_commit": "f2ba71f8d5d3805ac0982bd06e5bd06ca0ec47c3",
+            "harness_dirty": false,
+            "machine": "arm64",
+            "macos_build": "26A428",
+            "macos_version": "27.0",
+            "max_model_len": 2048,
+            "model": "lytang/minicheck-deberta-v3-large",
+            "model_revision": "2f2d01a54fa022a7ffadb76260e1ea8bc88c82bb",
+            "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+            "set": "review-4",
+            "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+            "tau": 0.5,
+            "wall_clock_s": 543.8
+          }
+        ],
+        "finished": "2026-10-22T06:32:03Z",
+        "harness_chunker_mismatches": [],
+        "harness_commit": "f2ba71f8d5d3805ac0982bd06e5bd06ca0ec47c3",
+        "harness_dirty": false,
+        "machine": "arm64",
+        "macos_build": "26A428",
+        "macos_version": "27.0",
+        "max_model_len": 2048,
+        "model": "lytang/minicheck-deberta-v3-large",
+        "model_revision": "2f2d01a54fa022a7ffadb76260e1ea8bc88c82bb",
+        "scoring_sha256": "1c599f29d66cfed5b35f8a70a8c0fec2fe969130b92e15ef42f6532e5014b05b",
+        "set": "review-4",
+        "set_sha256": "f19751a05c03cb320fa617b0ab28fa3fd327cada18a4e2338aa7a4cc1c929ac4",
+        "tau": 0.5,
+        "wall_clock_s": 1683.8
+      },
+      "three_way": "not applicable",
+      "triples": 54
+    },
+    "R2048": {
+      "auroc": {
+        "C_C_vs_NM": 0.9537037037037037,
+        "E_S_vs_rest": 0.9768518518518519
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 49
+      },
+      "checker": "R2048",
+      "confusion": {
+        "C": {
+          "C": 51,
+          "NM": 2,
+          "S": 1,
+          "none": 0
+        },
+        "NM": {
+          "C": 3,
+          "NM": 47,
+          "S": 4,
+          "none": 0
+        },
+        "S": {
+          "C": 0,
+          "NM": 0,
+          "S": 54,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.6923,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 1.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.75,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.8125,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.8462,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.75,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.5,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.6667,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 1.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 1.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.625,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.8,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 1.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.9,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.9091,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.4545,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.8182,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 1.0,
+          "triples": 11
+        }
+      },
+      "family": "R2048",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          }
+        },
+        "passed": true
+      },
+      "mode": "three-way",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.9444,
+          "of": 54,
+          "right": 51
+        },
+        "NM": {
+          "accuracy": 0.8704,
+          "of": 54,
+          "right": 47
+        },
+        "S": {
+          "accuracy": 1.0,
+          "of": 54,
+          "right": 54
+        }
+      },
+      "provenance": {
+        "bad_prompt": 0,
+        "bad_sha256": 0,
+        "errors": 0,
+        "missing": 0,
+        "model": "Qwen3.8-Flash-Next-exl3-2.05bpw-yarn2"
+      },
+      "triple_accuracy": {
+        "ceiling": 0.9815,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.7,
+          0.9333333333333333
+        ],
+        "half_width": 0.1166666666666667,
+        "se": 0.059668680761421275,
+        "share_of_ceiling": 0.8302,
+        "value": 0.8148148148148148,
+        "verdict": "measured",
+        "why": "passed its controls; read against its ceiling and the MDE"
+      },
+      "triples": 54
+    },
+    "R2048g": {
+      "auroc": {
+        "C_C_vs_NM": 0.7870370370370371,
+        "E_S_vs_rest": 0.8148148148148148
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 32
+      },
+      "checker": "R2048g",
+      "confusion": {
+        "C": {
+          "C": 30,
+          "NM": 23,
+          "S": 1,
+          "none": 0
+        },
+        "NM": {
+          "C": 0,
+          "NM": 51,
+          "S": 3,
+          "none": 0
+        },
+        "S": {
+          "C": 0,
+          "NM": 18,
+          "S": 36,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.5385,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.5385,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.5,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.4375,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.4359,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 1.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.5,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.5,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 1.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.5,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.5143,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.4545,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.3,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.9091,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.3636,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.1818,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.7273,
+          "triples": 11
+        }
+      },
+      "family": "R2048g",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          }
+        },
+        "passed": true
+      },
+      "mode": "three-way",
+      "no_anchor": 93,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.5556,
+          "of": 54,
+          "right": 30
+        },
+        "NM": {
+          "accuracy": 0.9444,
+          "of": 54,
+          "right": 51
+        },
+        "S": {
+          "accuracy": 0.6667,
+          "of": 54,
+          "right": 36
+        }
+      },
+      "provenance": {
+        "bad_prompt": 0,
+        "bad_sha256": 0,
+        "errors": 0,
+        "missing": 0,
+        "model": "Qwen3.8-Flash-Next-exl3-2.05bpw-yarn2"
+      },
+      "triple_accuracy": {
+        "ceiling": 0.5556,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.3409090909090909,
+          0.6545611285266455
+        ],
+        "half_width": 0.1568260188087773,
+        "se": 0.07914541523291024,
+        "share_of_ceiling": 0.8999,
+        "value": 0.5,
+        "verdict": "measured",
+        "why": "passed its controls; read against its ceiling and the MDE"
+      },
+      "triples": 54
+    },
+    "R400": {
+      "auroc": {
+        "C_C_vs_NM": 0.9444444444444444,
+        "E_S_vs_rest": 0.9675925925925926
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 47
+      },
+      "checker": "R400",
+      "confusion": {
+        "C": {
+          "C": 48,
+          "NM": 2,
+          "S": 4,
+          "none": 0
+        },
+        "NM": {
+          "C": 4,
+          "NM": 47,
+          "S": 3,
+          "none": 0
+        },
+        "S": {
+          "C": 0,
+          "NM": 0,
+          "S": 54,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.6923,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 1.0,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.5833,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.8125,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.8205,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.75,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.8333,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 1.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.625,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.7429,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 1.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.9,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.9091,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.6364,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.5455,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.9091,
+          "triples": 11
+        }
+      },
+      "family": "R400",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          }
+        },
+        "passed": true
+      },
+      "mode": "three-way",
+      "no_anchor": 0,
+      "not_run": 0,
+      "notes": [
+        "approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree"
+      ],
+      "parse_failures": 1,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.8889,
+          "of": 54,
+          "right": 48
+        },
+        "NM": {
+          "accuracy": 0.8704,
+          "of": 54,
+          "right": 47
+        },
+        "S": {
+          "accuracy": 1.0,
+          "of": 54,
+          "right": 54
+        }
+      },
+      "provenance": {
+        "bad_prompt": 0,
+        "bad_sha256": 0,
+        "errors": 0,
+        "missing": 0,
+        "model": "Qwen3.8-Flash-Next-exl3-2.05bpw-yarn2"
+      },
+      "triple_accuracy": {
+        "ceiling": 0.8519,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.6792452830188679,
+          0.8775510204081632
+        ],
+        "half_width": 0.09915286869464768,
+        "se": 0.05052800762273884,
+        "share_of_ceiling": 0.913,
+        "value": 0.7777777777777778,
+        "verdict": "measured",
+        "why": "passed its controls; read against its ceiling and the MDE"
+      },
+      "triples": 54
+    },
+    "R512": {
+      "auroc": {
+        "C_C_vs_NM": 0.9722222222222222,
+        "E_S_vs_rest": 0.9675925925925926
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 47
+      },
+      "checker": "R512",
+      "confusion": {
+        "C": {
+          "C": 52,
+          "NM": 0,
+          "S": 2,
+          "none": 0
+        },
+        "NM": {
+          "C": 3,
+          "NM": 46,
+          "S": 5,
+          "none": 0
+        },
+        "S": {
+          "C": 0,
+          "NM": 0,
+          "S": 54,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.6923,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.9231,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.8333,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.8125,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.8205,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 0.75,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 1.0,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 1.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 1.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.625,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.8,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 1.0,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.9,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.9091,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.5455,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.7273,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 1.0,
+          "triples": 11
+        }
+      },
+      "family": "R512",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          }
+        },
+        "passed": true
+      },
+      "mode": "three-way",
+      "no_anchor": 0,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.963,
+          "of": 54,
+          "right": 52
+        },
+        "NM": {
+          "accuracy": 0.8519,
+          "of": 54,
+          "right": 46
+        },
+        "S": {
+          "accuracy": 1.0,
+          "of": 54,
+          "right": 54
+        }
+      },
+      "provenance": {
+        "bad_prompt": 0,
+        "bad_sha256": 0,
+        "errors": 0,
+        "missing": 0,
+        "model": "Qwen3.8-Flash-Next-exl3-2.05bpw-yarn2"
+      },
+      "triple_accuracy": {
+        "ceiling": 0.9444,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.6833333333333333,
+          0.9361702127659575
+        ],
+        "half_width": 0.12641843971631206,
+        "se": 0.0646725724873433,
+        "share_of_ceiling": 0.8628,
+        "value": 0.8148148148148148,
+        "verdict": "measured",
+        "why": "passed its controls; read against its ceiling and the MDE"
+      },
+      "triples": 54
+    },
+    "R512g": {
+      "auroc": {
+        "C_C_vs_NM": 0.7870370370370371,
+        "E_S_vs_rest": 0.8101851851851852
+      },
+      "binary_view": {
+        "of": 54,
+        "triples_right": 31
+      },
+      "checker": "R512g",
+      "confusion": {
+        "C": {
+          "C": 29,
+          "NM": 23,
+          "S": 2,
+          "none": 0
+        },
+        "NM": {
+          "C": 0,
+          "NM": 51,
+          "S": 3,
+          "none": 0
+        },
+        "S": {
+          "C": 0,
+          "NM": 18,
+          "S": 36,
+          "none": 0
+        }
+      },
+      "descriptive": {
+        "length:12k": {
+          "accuracy": 0.5385,
+          "triples": 13
+        },
+        "length:1k": {
+          "accuracy": 0.5385,
+          "triples": 13
+        },
+        "length:32k": {
+          "accuracy": 0.5,
+          "triples": 12
+        },
+        "length:4k": {
+          "accuracy": 0.375,
+          "triples": 16
+        },
+        "mechanism:plain": {
+          "accuracy": 0.4359,
+          "triples": 39
+        },
+        "mechanism:precedence": {
+          "accuracy": 1.0,
+          "triples": 4
+        },
+        "mechanism:sequence": {
+          "accuracy": 0.0,
+          "triples": 2
+        },
+        "mechanism:supersede": {
+          "accuracy": 0.5,
+          "triples": 6
+        },
+        "mechanism:timestamp": {
+          "accuracy": 0.0,
+          "triples": 1
+        },
+        "mechanism:version": {
+          "accuracy": 1.0,
+          "triples": 2
+        },
+        "obstacle:distractor": {
+          "accuracy": 0.5,
+          "triples": 8
+        },
+        "obstacle:none": {
+          "accuracy": 0.4857,
+          "triples": 35
+        },
+        "obstacle:repeated": {
+          "accuracy": 0.4545,
+          "triples": 11
+        },
+        "type:environment": {
+          "accuracy": 0.3,
+          "triples": 10
+        },
+        "type:file": {
+          "accuracy": 0.9091,
+          "triples": 11
+        },
+        "type:refutation": {
+          "accuracy": 0.3636,
+          "triples": 11
+        },
+        "type:result": {
+          "accuracy": 0.0909,
+          "triples": 11
+        },
+        "type:tool": {
+          "accuracy": 0.7273,
+          "triples": 11
+        }
+      },
+      "family": "R512g",
+      "gate": {
+        "groups": {
+          "contradiction/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "contradiction/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "null/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/long": {
+            "need": 5,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          },
+          "positive/short": {
+            "need": 6,
+            "not_run": 0,
+            "of": 6,
+            "passed": true,
+            "right": 6
+          }
+        },
+        "passed": true
+      },
+      "mode": "three-way",
+      "no_anchor": 93,
+      "not_run": 0,
+      "parse_failures": 0,
+      "per_variant": {
+        "C": {
+          "accuracy": 0.537,
+          "of": 54,
+          "right": 29
+        },
+        "NM": {
+          "accuracy": 0.9444,
+          "of": 54,
+          "right": 51
+        },
+        "S": {
+          "accuracy": 0.6667,
+          "of": 54,
+          "right": 36
+        }
+      },
+      "provenance": {
+        "bad_prompt": 0,
+        "bad_sha256": 0,
+        "errors": 0,
+        "missing": 0,
+        "model": "Qwen3.8-Flash-Next-exl3-2.05bpw-yarn2"
+      },
+      "triple_accuracy": {
+        "ceiling": 0.537,
+        "chance": 0.037037037037037035,
+        "ci95": [
+          0.32075471698113206,
+          0.6363636363636364
+        ],
+        "half_width": 0.15780445969125215,
+        "se": 0.07929432213282904,
+        "share_of_ceiling": 0.8966,
+        "value": 0.48148148148148145,
+        "verdict": "measured",
+        "why": "passed its controls; read against its ceiling and the MDE"
+      },
+      "triples": 54
+    }
+  },
+  "comparisons": [
+    {
+      "ci95": [
+        -0.9655172413793104,
+        -0.7543859649122807
+      ],
+      "half_width": 0.10556563823351484,
+      "mde": 0.15656059602075373,
+      "mode": "binary",
+      "se": 0.05591449857884062,
+      "triples": 54,
+      "value": -0.8703703703703703,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A2:bge-m3-zeroshot-v2.0-c",
+      "y": "R2048"
+    },
+    {
+      "ci95": [
+        -0.7708333333333334,
+        -0.5263157894736843
+      ],
+      "half_width": 0.12225877192982454,
+      "mde": 0.17487567910108143,
+      "mode": "binary",
+      "se": 0.062455599678957655,
+      "triples": 54,
+      "value": -0.6481481481481481,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A2:deberta-v3-large-zeroshot-v2.0-c",
+      "y": "R512"
+    },
+    {
+      "ci95": [
+        -0.05555555555555555,
+        0.05357142857142857
+      ],
+      "half_width": 0.054563492063492064,
+      "mde": 0.07454383783501037,
+      "mode": "binary",
+      "se": 0.02662279922678942,
+      "triples": 54,
+      "value": 0.0,
+      "verdict": "instrument-limited",
+      "what": "gated against ungated",
+      "why": "a checker failed a control group",
+      "x": "A2g:bge-m3-zeroshot-v2.0-c",
+      "y": "A2:bge-m3-zeroshot-v2.0-c"
+    },
+    {
+      "ci95": [
+        -0.7017543859649122,
+        -0.40384615384615385
+      ],
+      "half_width": 0.1489541160593792,
+      "mde": 0.2133840888567048,
+      "mode": "binary",
+      "se": 0.07620860316310886,
+      "triples": 54,
+      "value": -0.5555555555555556,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A2g:bge-m3-zeroshot-v2.0-c",
+      "y": "R2048g"
+    },
+    {
+      "ci95": [
+        -0.25,
+        -0.06556486101211702
+      ],
+      "half_width": 0.0922175694939415,
+      "mde": 0.13287328408806184,
+      "mode": "binary",
+      "se": 0.04745474431716495,
+      "triples": 54,
+      "value": -0.14814814814814814,
+      "verdict": "instrument-limited",
+      "what": "gated against ungated",
+      "why": "a checker failed a control group; the second reader, given the same inputs, also fails most of the triples in question",
+      "x": "A2g:deberta-v3-large-zeroshot-v2.0-c",
+      "y": "A2:deberta-v3-large-zeroshot-v2.0-c"
+    },
+    {
+      "ci95": [
+        -0.6399999999999999,
+        -0.3529411764705882
+      ],
+      "half_width": 0.14352941176470585,
+      "mde": 0.2044726091690576,
+      "mode": "binary",
+      "se": 0.073025931846092,
+      "triples": 54,
+      "value": -0.5,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A2g:deberta-v3-large-zeroshot-v2.0-c",
+      "y": "R512g"
+    },
+    {
+      "ci95": [
+        -0.9183673469387755,
+        -0.6666666666666666
+      ],
+      "half_width": 0.12585034013605445,
+      "mde": 0.18162029820970102,
+      "mode": "three-way",
+      "se": 0.06486439221775037,
+      "triples": 54,
+      "value": -0.7962962962962963,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A3:nli-deberta-v3-base",
+      "y": "R512"
+    },
+    {
+      "ci95": [
+        -0.9361702127659575,
+        -0.6833333333333333
+      ],
+      "half_width": 0.12641843971631206,
+      "mde": 0.18108320296456124,
+      "mode": "three-way",
+      "se": 0.0646725724873433,
+      "triples": 54,
+      "value": -0.8148148148148148,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A3:nli-minilm2-l6-h768-ane",
+      "y": "R512"
+    },
+    {
+      "ci95": [
+        -0.9361702127659575,
+        -0.6833333333333333
+      ],
+      "half_width": 0.12641843971631206,
+      "mde": 0.18108320296456124,
+      "mode": "three-way",
+      "se": 0.0646725724873433,
+      "triples": 54,
+      "value": -0.8148148148148148,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A3:nli-minilm2-l6-h768",
+      "y": "R512"
+    },
+    {
+      "ci95": [
+        -0.9361702127659575,
+        -0.6833333333333333
+      ],
+      "half_width": 0.12641843971631206,
+      "mde": 0.18108320296456124,
+      "mode": "three-way",
+      "se": 0.0646725724873433,
+      "triples": 54,
+      "value": -0.8148148148148148,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A3:roberta-large-mnli",
+      "y": "R512"
+    },
+    {
+      "ci95": [
+        0.017543859649122806,
+        0.1935483870967742
+      ],
+      "half_width": 0.08800226372382569,
+      "mde": 0.1301316154374363,
+      "mode": "three-way",
+      "se": 0.04647557694194153,
+      "triples": 54,
+      "value": 0.09259259259259259,
+      "verdict": "instrument-limited",
+      "what": "gated against ungated",
+      "why": "a checker failed a control group",
+      "x": "A3g:nli-deberta-v3-base",
+      "y": "A3:nli-deberta-v3-base"
+    },
+    {
+      "ci95": [
+        -0.5098139255702282,
+        -0.22641509433962265
+      ],
+      "half_width": 0.14169941561530278,
+      "mde": 0.20232871289582413,
+      "mode": "three-way",
+      "se": 0.07226025460565148,
+      "triples": 54,
+      "value": -0.37037037037037035,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A3g:nli-deberta-v3-base",
+      "y": "R512g"
+    },
+    {
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "half_width": 0.0,
+      "mde": 0.0,
+      "mode": "three-way",
+      "se": 0.0,
+      "triples": 54,
+      "value": 0.0,
+      "verdict": "instrument-limited",
+      "what": "gated against ungated",
+      "why": "a checker failed a control group",
+      "x": "A3g:nli-minilm2-l6-h768-ane",
+      "y": "A3:nli-minilm2-l6-h768-ane"
+    },
+    {
+      "ci95": [
+        -0.6363636363636364,
+        -0.32075471698113206
+      ],
+      "half_width": 0.15780445969125215,
+      "mde": 0.2220241019719213,
+      "mode": "three-way",
+      "se": 0.07929432213282904,
+      "triples": 54,
+      "value": -0.48148148148148145,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A3g:nli-minilm2-l6-h768-ane",
+      "y": "R512g"
+    },
+    {
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "half_width": 0.0,
+      "mde": 0.0,
+      "mode": "three-way",
+      "se": 0.0,
+      "triples": 54,
+      "value": 0.0,
+      "verdict": "instrument-limited",
+      "what": "gated against ungated",
+      "why": "a checker failed a control group",
+      "x": "A3g:nli-minilm2-l6-h768",
+      "y": "A3:nli-minilm2-l6-h768"
+    },
+    {
+      "ci95": [
+        -0.6363636363636364,
+        -0.32075471698113206
+      ],
+      "half_width": 0.15780445969125215,
+      "mde": 0.2220241019719213,
+      "mode": "three-way",
+      "se": 0.07929432213282904,
+      "triples": 54,
+      "value": -0.48148148148148145,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A3g:nli-minilm2-l6-h768",
+      "y": "R512g"
+    },
+    {
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "half_width": 0.0,
+      "mde": 0.0,
+      "mode": "three-way",
+      "se": 0.0,
+      "triples": 54,
+      "value": 0.0,
+      "verdict": "instrument-limited",
+      "what": "gated against ungated",
+      "why": "a checker failed a control group",
+      "x": "A3g:roberta-large-mnli",
+      "y": "A3:roberta-large-mnli"
+    },
+    {
+      "ci95": [
+        -0.6363636363636364,
+        -0.32075471698113206
+      ],
+      "half_width": 0.15780445969125215,
+      "mde": 0.2220241019719213,
+      "mode": "three-way",
+      "se": 0.07929432213282904,
+      "triples": 54,
+      "value": -0.48148148148148145,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group",
+      "x": "A3g:roberta-large-mnli",
+      "y": "R512g"
+    },
+    {
+      "ci95": [
+        -0.95,
+        -0.7213114754098361
+      ],
+      "half_width": 0.11434426229508193,
+      "mde": 0.1645868890230656,
+      "mode": "three-way",
+      "se": 0.058781031793952,
+      "triples": 54,
+      "value": -0.8333333333333334,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group; X's ceiling is below Y's score",
+      "x": "F:foundation-models",
+      "y": "J"
+    },
+    {
+      "ci95": [
+        -0.9811320754716981,
+        -0.7741935483870968
+      ],
+      "half_width": 0.10346926354230068,
+      "mde": 0.1536369951768336,
+      "mode": "binary",
+      "se": 0.054870355420297716,
+      "triples": 54,
+      "value": -0.8888888888888888,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group; X's ceiling is below Y's score",
+      "x": "H:HHEM-2.1-Open",
+      "y": "J"
+    },
+    {
+      "ci95": [
+        -0.8431372549019607,
+        -0.6296296296296295
+      ],
+      "half_width": 0.10675381263616557,
+      "mde": 0.152823212197912,
+      "mode": "binary",
+      "notes": [
+        "approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree"
+      ],
+      "se": 0.05457971864211143,
+      "triples": 54,
+      "value": -0.7407407407407407,
+      "verdict": "instrument-limited",
+      "what": "checker against the second reader given the same inputs",
+      "why": "a checker failed a control group; X's ceiling is below Y's score",
+      "x": "M:minicheck-deberta-v3-large",
+      "y": "R400"
+    },
+    {
+      "ci95": [
+        -0.5098039215686274,
+        -0.1785714285714285
+      ],
+      "half_width": 0.16561624649859946,
+      "mde": 0.23600280109550162,
+      "mode": "three-way",
+      "se": 0.08428671467696487,
+      "triples": 54,
+      "value": -0.3333333333333333,
+      "verdict": "instrument-limited",
+      "what": "gated against ungated",
+      "why": "X's ceiling is below Y's score",
+      "x": "R512g",
+      "y": "R512"
+    },
+    {
+      "ci95": [
+        -0.4909090909090909,
+        -0.16129032258064524
+      ],
+      "half_width": 0.16480938416422283,
+      "mde": 0.24058674928191714,
+      "mode": "three-way",
+      "se": 0.08592383902925613,
+      "triples": 54,
+      "value": -0.3148148148148148,
+      "verdict": "instrument-limited",
+      "what": "gated against ungated",
+      "why": "X's ceiling is below Y's score",
+      "x": "R2048g",
+      "y": "R2048"
+    }
+  ],
+  "deviations": [
+    {
+      "id": "not-run-controls",
+      "text": "Controls a checker can't run (Foundation Models' long forms, over its context) are left out of its gate and reported as not run."
+    },
+    {
+      "id": "hhem-premise-cap",
+      "text": "HHEM's premise is capped at 8,192 tokens. It ran 29 of 54 triples, and its ceiling counts only those."
+    },
+    {
+      "id": "chunk-400-approximate",
+      "text": "chunk-400 shadows MiniCheck only approximately: 40% of chunks match exactly, and 181 of 198 chunk counts agree."
+    },
+    {
+      "id": "lenient-parse-quoted-json",
+      "text": "The lenient parse rule reads a JSON record that an answer quotes from the evidence inside its prose as prose: only a second verdict object fails it. Read literally (any second JSON object fails), 14 more of the 6,289 reader answers would have failed; both counts are reported per form."
+    }
+  ],
+  "diagnosis": [
+    "The harness is validated: the second reader passes 36/36 controls through identical windows and the same max rule (R512, R512g, R2048, R2048g), so the per-window checkers' control failures lie in their per-window calibration.",
+    "Scope: these results hold under max-aggregation at τ = 0.5, not for NLI on tool output in general. Calibrated thresholds, or a contradiction rule that needs corroboration, were not tried; they are the next question once the corpus can be tuned on dev. Gating changes the result (deberta-v3-large-zeroshot-v2.0-c: 0.22 ungated, 0.07 gated; nli-deberta-v3-base: 0.02 ungated, 0.11 gated; R512: 0.81 ungated, 0.48 gated; R2048: 0.81 ungated, 0.50 gated).",
+    "Foundation Models answers C on 16 of the 16 NOT MENTIONED variants that fit its context: it reads an absence as a contradiction (a behaviour, not only a score)."
+  ],
+  "label_items": [
+    {
+      "answers": {
+        "A2:bge-m3-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "S",
+          "triple_right": true
+        },
+        "A2:deberta-v3-large-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "S",
+          "triple_right": true
+        },
+        "A2g:bge-m3-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "S",
+          "triple_right": true
+        },
+        "A2g:deberta-v3-large-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "A3:nli-deberta-v3-base": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3:nli-minilm2-l6-h768": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3:nli-minilm2-l6-h768-ane": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3:roberta-large-mnli": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:nli-deberta-v3-base": {
+          "C": "C",
+          "NM": "S",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:nli-minilm2-l6-h768": {
+          "C": "NM",
+          "NM": "C",
+          "S": "NM",
+          "triple_right": false
+        },
+        "A3g:nli-minilm2-l6-h768-ane": {
+          "C": "NM",
+          "NM": "C",
+          "S": "NM",
+          "triple_right": false
+        },
+        "A3g:roberta-large-mnli": {
+          "C": "NM",
+          "NM": "C",
+          "S": "NM",
+          "triple_right": false
+        },
+        "F:foundation-models": {
+          "C": null,
+          "NM": "C",
+          "S": null,
+          "triple_right": false
+        },
+        "H:HHEM-2.1-Open": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "J": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "M:minicheck-deberta-v3-large": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "R2048": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R2048g": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R400": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R512": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R512g": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        }
+      },
+      "id": "jj-bare-fileset-path-prefix-glob.4k.start.none",
+      "n": 50,
+      "note": "version scope: NOT MENTIONED keeps the jj 0.30.0 note and `jj --version` printing 0.46.0; the note names its own version, so a reader that respects that scope answers NOT MENTIONED from the note alone (the primary ceiling). `nm_strict` is the stricter reading: the note and the version line in one window."
+    },
+    {
+      "answers": {
+        "A2:bge-m3-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "A2:deberta-v3-large-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "A2g:bge-m3-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "A2g:deberta-v3-large-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "A3:nli-deberta-v3-base": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3:nli-minilm2-l6-h768": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3:nli-minilm2-l6-h768-ane": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3:roberta-large-mnli": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:nli-deberta-v3-base": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:nli-minilm2-l6-h768": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:nli-minilm2-l6-h768-ane": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:roberta-large-mnli": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "F:foundation-models": {
+          "C": null,
+          "NM": null,
+          "S": null,
+          "triple_right": false
+        },
+        "H:HHEM-2.1-Open": {
+          "C": null,
+          "NM": null,
+          "S": null,
+          "triple_right": false
+        },
+        "J": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "M:minicheck-deberta-v3-large": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "R2048": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R2048g": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R400": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R512": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R512g": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        }
+      },
+      "id": "dasel-3-version-flag-unknown.12k.end.none",
+      "n": 45,
+      "note": "version scope: the same construction with a dasel 2.8.1 note beside `dasel version` printing 3.11.2."
+    },
+    {
+      "answers": {
+        "A2:bge-m3-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "A2:deberta-v3-large-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "A2g:bge-m3-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "A2g:deberta-v3-large-zeroshot-v2.0-c": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "A3:nli-deberta-v3-base": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3:nli-minilm2-l6-h768": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3:nli-minilm2-l6-h768-ane": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3:roberta-large-mnli": {
+          "C": "C",
+          "NM": "C",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:nli-deberta-v3-base": {
+          "C": "C",
+          "NM": "NM",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:nli-minilm2-l6-h768": {
+          "C": "C",
+          "NM": "NM",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:nli-minilm2-l6-h768-ane": {
+          "C": "C",
+          "NM": "NM",
+          "S": "C",
+          "triple_right": false
+        },
+        "A3g:roberta-large-mnli": {
+          "C": "C",
+          "NM": "NM",
+          "S": "C",
+          "triple_right": false
+        },
+        "F:foundation-models": {
+          "C": null,
+          "NM": null,
+          "S": null,
+          "triple_right": false
+        },
+        "H:HHEM-2.1-Open": {
+          "C": null,
+          "NM": null,
+          "S": null,
+          "triple_right": false
+        },
+        "J": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "M:minicheck-deberta-v3-large": {
+          "C": "not-S",
+          "NM": "not-S",
+          "S": "not-S",
+          "triple_right": false
+        },
+        "R2048": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R2048g": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R400": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R512": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        },
+        "R512g": {
+          "C": "C",
+          "NM": "NM",
+          "S": "S",
+          "triple_right": true
+        }
+      },
+      "id": "package-manager-pnpm.32k.start.none",
+      "n": 20,
+      "note": "labelled `start` under approx-v1 (position_at 0.318, 0.012 inside the boundary); flagged, not excluded. `position_by_tokenizer` gives the needle's position by each tokenizer's real token count."
+    }
+  ],
+  "lead": "This round is a pilot: 54 triples from 32 claim shapes. Its minimum detectable effect (MDE, 2.8 × the bootstrap SE of a paired difference) is about 18 (median; 7–24 over the 20 paired comparisons) points of triple accuracy, so differences between checkers smaller than that cannot be seen. Results are per checker, each with its verdict; no ranking is claimed until the corpus reaches about 150 claims.",
+  "mde_points_median": 18,
+  "mde_points_range": [
+    7,
+    24
+  ],
+  "notes": [
+    "The task, as the LLM judge (J), Foundation Models and the second reader are asked it, includes the corpus's rules for which evidence is current: a later record of the same thing supersedes an earlier one (by timestamp where records carry one); a `was: X …, wrong because Y` note refutes X; an override applies over what it overrides; a tool's help and output speak for the version that produced them. These rules define the labels for every item alike. The nli checkers, MiniCheck and HHEM receive only the claim and the evidence, as their interfaces take nothing else.",
+    "The 512-token second reader sees windows cut with nli-deberta-v3-base's tokenizer, so it shadows that model (and deberta-v3-large-zeroshot-v2.0-c, whose cuts differ slightly) closely, and nli-minilm2-l6-h768 and roberta-large-mnli only approximately: their own tokenizers cut the evidence at other places.",
+    "J's and the second reader's verdicts are read from the final answer only. The scored (lenient) rule accepts one verdict object at the end of the answer, with prose before it (a JSON record quoted from the evidence is prose); the strict rule needs the answer to be exactly that object. Both are reported per reader form, with the lenient rule's literal reading beside them; a failure counts as wrong. A verdict object inside a Markdown code fence fails both rules and is counted on its own line, so its frequency can be reviewed. An answer cut off by the output budget (finish_reason `length`) is wrong, and is listed by id."
+  ],
+  "reader_parse_rates": {
+    "chunk-400": {
+      "budget_truncations": [
+        "chunk-400-9f45942928e966f535d4"
+      ],
+      "counts": {
+        "failed": 1,
+        "fenced": 0,
+        "lenient_literal": 2476,
+        "lenient_only": 456,
+        "strict": 2023
+      },
+      "fenced": 0.0,
+      "lenient": 0.9996,
+      "notes": [
+        "approximate MiniCheck shadow: 40% of chunks exact, 181/198 chunk counts agree"
+      ],
+      "requests": 2480,
+      "strict": 0.8157
+    },
+    "full": {
+      "budget_truncations": [],
+      "counts": {
+        "failed": 0,
+        "fenced": 0,
+        "lenient_literal": 193,
+        "lenient_only": 133,
+        "strict": 65
+      },
+      "fenced": 0.0,
+      "lenient": 1.0,
+      "requests": 198,
+      "strict": 0.3283
+    },
+    "window-2048": {
+      "budget_truncations": [],
+      "counts": {
+        "failed": 0,
+        "fenced": 0,
+        "lenient_literal": 727,
+        "lenient_only": 357,
+        "strict": 372
+      },
+      "fenced": 0.0,
+      "lenient": 1.0,
+      "requests": 729,
+      "strict": 0.5103
+    },
+    "window-512": {
+      "budget_truncations": [],
+      "counts": {
+        "failed": 0,
+        "fenced": 0,
+        "lenient_literal": 2878,
+        "lenient_only": 635,
+        "strict": 2247
+      },
+      "fenced": 0.0,
+      "lenient": 1.0,
+      "requests": 2882,
+      "strict": 0.7797
+    }
+  },
+  "schema": "sidekick-verification-scores/1",
+  "set": "review-4",
+  "status": "pilot",
+  "tau": 0.5
+}

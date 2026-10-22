@@ -68,9 +68,11 @@ NOTES = [
     "(and deberta-v3-large-zeroshot-v2.0-c, whose cuts differ slightly) closely, and nli-minilm2-l6-h768 and "
     "roberta-large-mnli only approximately: their own tokenizers cut the evidence at other places.",
     "J's and the second reader's verdicts are read from the final answer only. The scored (lenient) rule accepts "
-    "one JSON object at the end of the answer, with prose before it; the strict rule needs the answer to be exactly "
-    "that object. Both parse rates are reported per reader form; a failure counts as wrong. A verdict object inside "
-    "a Markdown code fence fails both rules and is counted on its own line, so its frequency can be reviewed.",
+    "one verdict object at the end of the answer, with prose before it (a JSON record quoted from the evidence is "
+    "prose); the strict rule needs the answer to be exactly that object. Both are reported per reader form, with "
+    "the lenient rule's literal reading beside them; a failure counts as wrong. A verdict object inside a Markdown "
+    "code fence fails both rules and is counted on its own line, so its frequency can be reviewed. An answer cut "
+    "off by the output budget (finish_reason `length`) is wrong, and is listed by id.",
 ]
 
 
@@ -103,7 +105,20 @@ def reader_runs(requests: list[dict], responses: dict, tau: float) -> list[dict]
     return runs
 
 
-SHADOW = {"A3": "R512", "A3g": "R512g", "A2": "R2048", "A2g": "R2048g", "M": "R400", "F": "J", "H": "J"}
+SHADOW = {"M": "R400", "F": "J", "H": "J"}
+
+
+def shadow_of(checker: str, family: str, cfg: dict) -> str | None:
+    """The second-reader form a checker stands beside: an nli checker by its
+    window size (512 → R512, 2048 → R2048; gated → the gated form),
+    MiniCheck by its chunks, the whole-haystack checkers by J."""
+    if family in ("A3", "A3g", "A2", "A2g"):
+        model = checker.split(":", 1)[-1]
+        seq = next((m["max_seq_len"] for m in cfg.get("nli", []) if m["id"] == model), None)
+        if seq is None:
+            return None
+        return f"R{seq}" + ("g" if family.endswith("g") else "")
+    return SHADOW.get(family)
 
 
 # ---------------------------------------------------------------- scoring one checker
@@ -147,7 +162,7 @@ def score_run(run: dict, triples: list[dict], cfg: dict, ceilings: dict | None) 
                         "not_run": bool(r.get("not_run"))})
     gate = rules.control_gate(ctl, answers, cfg["gate"]["short"], cfg["gate"]["long"],
                               cfg["gate"].get("exclude_not_run", False))
-    correct, shape_of, pairs, cells = {}, {}, [], defaultdict(list)
+    correct, verdicts, shape_of, pairs, cells = {}, {}, {}, [], defaultdict(list)
     e_pos, e_neg, c_pos, c_neg = [], [], [], []
     per_variant = {"S": [0, 0], "C": [0, 0], "NM": [0, 0]}
     for t in triples:
@@ -156,6 +171,7 @@ def score_run(run: dict, triples: list[dict], cfg: dict, ceilings: dict | None) 
             continue
         ok = rules.triple_correct(vs, mode)
         correct[t["id"]] = ok
+        verdicts[t["id"]] = {scoring_set.VARIANT_NAME[v]: vs[v] for v in scoring_set.VARIANTS}
         shape_of[t["id"]] = t["claim"]["shape"]
         for dim, val in (("obstacle", t["config"]["obstacle"]), ("mechanism", t["claim"]["mechanism"]),
                          ("type", t["claim"]["type"]), ("length", t["config"]["length"])):
@@ -195,7 +211,7 @@ def score_run(run: dict, triples: list[dict], cfg: dict, ceilings: dict | None) 
            "not_run": sum(1 for i in run["items"] if i.get("not_run")),
            "parse_failures": sum(1 for i in run["items"] if i.get("parse_ok") is False)
                              + sum(i.get("parse_failures", 0) for i in run["items"]),
-           "provenance": run.get("provenance", {}), "_correct": correct}
+           "provenance": run.get("provenance", {}), "_correct": correct, "_verdicts": verdicts}
     if mode == "three-way":
         out["confusion"] = rules.confusion(pairs)
         out["_correct_binary"] = {t: rules.triple_correct(
@@ -229,7 +245,7 @@ def build(runs: list[dict], triples: list[dict], cfg: dict, ceilings: dict | Non
         cmp = rules.compare(cx, cy, shape_of, cfg["resamples"], cfg["seed"], cfg["mde_factor"])
         k = "triple_accuracy" if mode == "three-way" else "binary_triple_accuracy"
         loser = x if cmp["value"] < 0 else y
-        shadow = SHADOW.get(scored[loser]["family"])
+        shadow = shadow_of(loser, scored[loser]["family"], cfg)
         share = None
         if shadow and shadow in scored and scored[shadow]["gate"]["passed"]:
             cw, cl = (cy, cx) if loser == x else (cx, cy)
@@ -249,14 +265,29 @@ def build(runs: list[dict], triples: list[dict], cfg: dict, ceilings: dict | Non
         fam = s.get("family", "")
         if fam in ("A3g", "A2g", "R512g", "R2048g"):
             pair(name, name.replace(fam, fam[:-1], 1), "gated against ungated")
-        shadow = SHADOW.get(fam)
+        shadow = shadow_of(name, fam, cfg)
         if shadow in scored and scored[shadow]["gate"]["passed"]:
             pair(name, shadow, "checker against the second reader given the same inputs")
-    mdes = [c["mde"] for c in comparisons]
-    mde = round(100 * sum(mdes) / len(mdes)) if mdes else None
+    # The MDE the report leads with: the median over the paired comparisons
+    # whose difference varies at all (two checkers answering identically on
+    # every triple give an SE, and so an MDE, of 0).
+    mdes = sorted(c["mde"] for c in comparisons if c["se"] > 0)
+    mde = round(100 * mdes[len(mdes) // 2]) if mdes else None
+    mde_range = [round(100 * mdes[0]), round(100 * mdes[-1])] if mdes else None
+    # Each checker's answers on the items the ceilings carry label notes for
+    # (the version-scoped 045 and 050, and 020 near a position boundary).
+    label_items = []
+    for note in (ceilings or {}).get("label_notes", []):
+        row = {"n": note["n"], "id": note["id"], "note": note["note"], "answers": {}}
+        for name, s in sorted(scored.items()):
+            v = s.get("_verdicts", {}).get(note["id"])
+            if v is not None:
+                row["answers"][name] = {**v, "triple_right": s["_correct"][note["id"]]}
+        label_items.append(row)
     for s in scored.values():
         s.pop("_correct", None)
         s.pop("_correct_binary", None)
+        s.pop("_verdicts", None)
     parse_rates = {r["reader_form"]: dict(r["parse_rates"]) for r in runs
                    if r.get("reader_form") and r.get("parse_rates")}
     deviations = [dict(d) for d in cfg.get("deviation", [])]
@@ -276,13 +307,15 @@ def build(runs: list[dict], triples: list[dict], cfg: dict, ceilings: dict | Non
     diag = diagnosis(scored, runs, comparisons, cfg)
     return {"schema": SCHEMA, "status": "pilot",
             "lead": LEAD.format(triples=len(triples), shapes=len(set(shape_of.values())),
-                                mde=mde if mde is not None else "20–25 (a priori)"),
+                                mde=(f"{mde} (median; {mde_range[0]}–{mde_range[1]} over the {len(mdes)} paired "
+                                     "comparisons)") if mde is not None else "20–25 (a priori)"),
+            "mde_points_range": mde_range,
             "deviations": [{"id": d["id"], "text": d["text"]} for d in deviations],
             "diagnosis": diag,
             "notes": list(NOTES), "reader_parse_rates": parse_rates,
-            "set": cfg["set"], "tau": cfg["tau"], "mde_points_mean": mde,
+            "set": cfg["set"], "tau": cfg["tau"], "mde_points_median": mde,
             "ceilings_sha256": canon.sha256_file(CEILINGS) if CEILINGS.exists() else None,
-            "checkers": scored, "comparisons": comparisons}
+            "checkers": scored, "comparisons": comparisons, "label_items": label_items}
 
 
 WINDOW_FAMILIES = ("A3", "A3g", "A2", "A2g", "M")
@@ -356,25 +389,54 @@ def render_md(scores: dict) -> str:
 
     rates = scores.get("reader_parse_rates") or {}
     if rates:
-        lines += ["| reader form | requests | parsed (lenient, scored) | parsed (strict) "
-                  "| fenced (scored as failures) |", "|---|---|---|---|---|"]
-        lines += [f"| {f}{note(r)} | {r['requests']} | {r['lenient']:.3f} | {r['strict']:.3f} | "
-                  f"{r.get('fenced', 0):.3f} |" for f, r in rates.items()]
+        lines += ["Reader answers, by form (lenient is the scored rule; a failure counts as wrong):", "",
+                  "| reader form | requests | strict | lenient only | failed | fenced | lenient, literal reading "
+                  "| output budget ran out |", "|---|---|---|---|---|---|---|---|"]
+        for f, r in rates.items():
+            c = r.get("counts", {})
+            cut = r.get("budget_truncations", [])
+            lines.append(f"| {f}{note(r)} | {r['requests']} | {c.get('strict', '–')} | {c.get('lenient_only', '–')} | "
+                         f"{c.get('failed', '–')} | {c.get('fenced', '–')} | {c.get('lenient_literal', '–')} | "
+                         f"{len(cut)}{' (' + ', '.join(f'`{i}`' for i in cut) + ')' if cut else ''} |")
         lines.append("")
-    lines += ["| checker | mode | controls | triple accuracy | 95% CI | chance | share of ceiling | verdict |",
-              "|---|---|---|---|---|---|---|---|"]
+    lines += ["| checker | mode | controls | triple accuracy | 95% CI | chance | ceiling | share of ceiling | "
+              "S / C / NM accuracy | verdict |", "|---|---|---|---|---|---|---|---|---|---|"]
     for name, s in sorted(scores["checkers"].items()):
         acc = s.get("triple_accuracy") or s.get("binary_triple_accuracy")
         if not acc:
             continue
+        pv = s["per_variant"]
+        share = f"{acc['share_of_ceiling']:.3f}" if acc.get("share_of_ceiling") is not None else "–"
+        ceil = f"{acc['ceiling']:.3f}" if acc.get("ceiling") is not None else "–"
         lines.append(f"| {name}{note(s)} | {s['mode']} | {'pass' if s['gate']['passed'] else 'fail'} | "
-                     f"{acc['value']:.3f} | {acc['ci95'][0]:.3f}–{acc['ci95'][1]:.3f} | {acc['chance']:.3f} | "
-                     f"{acc['share_of_ceiling'] if acc['share_of_ceiling'] is not None else '–'} | {acc['verdict']} |")
+                     f"{acc['value']:.3f} ({round(acc['value'] * s['triples'])}/{s['triples']}) | "
+                     f"{acc['ci95'][0]:.3f}–{acc['ci95'][1]:.3f} | {acc['chance']:.3f} | {ceil} | {share} | "
+                     f"{pv['S']['accuracy']:.2f} / {pv['C']['accuracy']:.2f} / {pv['NM']['accuracy']:.2f} | "
+                     f"{acc['verdict']} |")
     if scores["comparisons"]:
         lines += ["", "| X | Y | what | difference | 95% CI | MDE | verdict |", "|---|---|---|---|---|---|---|"]
         for c in scores["comparisons"]:
-            lines.append(f"| {c['x']} | {c['y']} | {c['what']}{note(c)} | {c['value']:+.3f} | {c['ci95'][0]:+.3f}–"
+            lines.append(f"| {c['x']} | {c['y']} | {c['what']}{' (binary terms)' if c.get('mode') == 'binary' else ''}"
+                         f"{note(c)} | {c['value']:+.3f} | {c['ci95'][0]:+.3f}–"
                          f"{c['ci95'][1]:+.3f} | {c['mde']:.3f} | {c['verdict']} |")
+    cols = [("obstacle", "distractor"), ("obstacle", "repeated"), ("mechanism", "plain"), ("mechanism", "sequence"),
+            ("mechanism", "supersede"), ("mechanism", "precedence"), ("mechanism", "version"),
+            ("mechanism", "timestamp")]
+    lines += ["", "By obstacle and decision rule (triples right; descriptive only, no comparisons):", "",
+              "| checker | " + " | ".join(v for _, v in cols) + " |", "|---|" + "---|" * len(cols)]
+    for name, s in sorted(scores["checkers"].items()):
+        d = s.get("descriptive", {})
+        cells = []
+        for dim, v in cols:
+            x = d.get(f"{dim}:{v}")
+            cells.append(f"{round(x['accuracy'] * x['triples'])}/{x['triples']}" if x else "–")
+        lines.append(f"| {name} | " + " | ".join(cells) + " |")
+    for item in scores.get("label_items", []):
+        lines += ["", f"Item {item['n']:03d} (`{item['id']}`): {item['note']}", "",
+                  "| checker | S | C | NM | triple right |", "|---|---|---|---|---|"]
+        for name, a in item["answers"].items():
+            cells = " | ".join(a[v] if a[v] is not None else "not run" for v in ("S", "C", "NM"))
+            lines.append(f"| {name} | {cells} | {'yes' if a['triple_right'] else 'no'} |")
     lines += ["", "Two-way checkers report binary triple accuracy (S against not-S), never three-way. Generated by "
               "tools/tasks/scoring_report.py from docs/data/verification-scores.json.", "", MD_END]
     return "\n".join(lines) + "\n"

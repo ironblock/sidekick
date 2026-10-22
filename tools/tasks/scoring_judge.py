@@ -7,8 +7,11 @@ final answer (`content`) only, never from reasoning (`reasoning_content`),
 by two rules, both reported:
 
 - **lenient** (the scored one): after trimming whitespace, `content` ends
-  with one JSON object; prose before it is allowed. Prose only, more than
-  one JSON object, or anything after the final object is a failure.
+  with one JSON verdict object; prose before it is allowed. Prose only,
+  more than one verdict object, or anything after the final object is a
+  failure. A JSON object without a `verdict` key inside the prose (a
+  record the answer quotes from the evidence) is prose; the literal reading,
+  in which any second object fails, is reported beside as a count.
 - **strict:** `content`, trimmed, is exactly one JSON object.
 
 Either way the object's `verdict` must be "supported", "contradicted" or
@@ -71,15 +74,23 @@ def json_objects(text: str) -> list[tuple[int, int, object]]:
             i += 1
 
 
-def parse(content: str | None) -> tuple[str | None, bool]:
-    """The scored (lenient) rule: (verdict as S/C/NM, parsed)."""
+def parse(content: str | None, quoted_json_is_prose: bool = True) -> tuple[str | None, bool]:
+    """The scored (lenient) rule: (verdict as S/C/NM, parsed). The answer
+    must end with a verdict object, and hold no other one. A JSON object in
+    the prose without a `verdict` key (a record quoted from the evidence)
+    is prose. With `quoted_json_is_prose` False, the literal first reading
+    applies: any second JSON object is a failure (reported beside, for
+    comparison)."""
     if content is None:
         return None, False
     text = content.strip()
     objs = json_objects(text)
-    if len(objs) != 1 or objs[0][1] != len(text):
-        return None, False  # prose only, several objects, or text after the object
-    return _verdict(objs[0][2])
+    if not objs or objs[-1][1] != len(text):
+        return None, False  # prose only, or text after the last object
+    counted = [o for o in objs if "verdict" in o[2]] if quoted_json_is_prose else objs
+    if len(counted) != 1 or counted[0] is not objs[-1]:
+        return None, False  # several verdicts (or, read literally, several objects)
+    return _verdict(objs[-1][2])
 
 
 def fenced(content: str | None) -> bool:

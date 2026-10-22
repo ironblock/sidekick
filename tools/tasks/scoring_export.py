@@ -274,14 +274,17 @@ def read_responses(path: Path, requests: list[dict]) -> dict:
             content = None
         verdict, ok = scoring_judge.parse(content)
         by_id[r["id"]] = {"verdict": verdict, "parsed": ok, "strict": scoring_judge.parse_strict(content)[1],
-                          "fenced": scoring_judge.fenced(content)}
+                          "fenced": scoring_judge.fenced(content),
+                          "literal": scoring_judge.parse(content, quoted_json_is_prose=False)[1],
+                          "truncated": r.get("finish_reason") == "length"}
         if r.get("model"):
             models.add(r["model"])
     if len(models) > 1:
         raise SystemExit(f"{path.name}: responses name {len(models)} models: {sorted(models)}")
     missing = sorted(want - set(by_id))
     for rid in missing:
-        by_id[rid] = {"verdict": None, "parsed": False, "strict": False, "fenced": False}
+        by_id[rid] = {"verdict": None, "parsed": False, "strict": False, "fenced": False, "literal": False,
+                      "truncated": False}
     return {"model": next(iter(models), None), "by_id": by_id, "missing": missing, "bad_sha": bad,
             "errors": errors, "bad_prompt": bad_prompt}
 
@@ -289,17 +292,26 @@ def read_responses(path: Path, requests: list[dict]) -> dict:
 def parse_rates(requests: list[dict], responses: dict) -> dict[str, dict]:
     """Per reader form: the share of requests whose final answer parses by
     the lenient (scored) rule and by the strict one, and the share that
-    wrap a valid verdict object in a code fence (scored as failures)."""
+    wrap a valid verdict object in a code fence (scored as failures); the
+    counts, with the lenient rule's literal reading beside; and, by id, the
+    answers cut off by the output budget (finish_reason "length")."""
     out = {}
     for form in FORMS:
         ids = [r["id"] for r in requests if r["form"] == form]
         if not ids:
             continue
-        lenient = sum(1 for i in ids if responses["by_id"][i]["parsed"])
-        strict = sum(1 for i in ids if responses["by_id"][i]["strict"])
-        fence = sum(1 for i in ids if responses["by_id"][i].get("fenced"))
+        b = responses["by_id"]
+        lenient = sum(1 for i in ids if b[i]["parsed"])
+        strict = sum(1 for i in ids if b[i]["strict"])
+        fence = sum(1 for i in ids if b[i].get("fenced"))
+        literal = sum(1 for i in ids if b[i].get("literal"))
+        truncated = sorted(i for i in ids if b[i].get("truncated"))
         out[form] = {"requests": len(ids), "lenient": round(lenient / len(ids), 4),
-                     "strict": round(strict / len(ids), 4), "fenced": round(fence / len(ids), 4)}
+                     "strict": round(strict / len(ids), 4), "fenced": round(fence / len(ids), 4),
+                     "counts": {"strict": strict, "lenient_only": lenient - strict, "failed": len(ids) - lenient,
+                                "fenced": fence, "lenient_literal": literal},
+                     # finish_reason "length": the output budget ran out (scored wrong, listed by id)
+                     "budget_truncations": truncated}
     return out
 
 

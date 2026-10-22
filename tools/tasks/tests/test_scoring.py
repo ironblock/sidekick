@@ -541,9 +541,11 @@ class JudgeAndExport(unittest.TestCase):
         self.assertEqual(resp["missing"], [reqs[-1]["id"]])
         self.assertEqual(resp["bad_sha"], [reqs[1]["id"]])
         self.assertEqual(resp["by_id"][reqs[0]["id"]],
-                         {"verdict": "S", "parsed": True, "strict": True, "fenced": False})
+                         {"verdict": "S", "parsed": True, "strict": True, "fenced": False, "literal": True,
+                          "truncated": False})
         self.assertEqual(resp["by_id"][reqs[-1]["id"]],
-                         {"verdict": None, "parsed": False, "strict": False, "fenced": False})
+                         {"verdict": None, "parsed": False, "strict": False, "fenced": False, "literal": False,
+                          "truncated": False})
         wins = ex.reader_windows(reqs, resp, "window-512")
         self.assertEqual([w["index"] for w in wins["t1:s"]], [0, 1])
         self.assertIn("ctl:k:null:short", wins)
@@ -568,14 +570,44 @@ class JudgeAndExport(unittest.TestCase):
             resp = ex.read_responses(p, reqs[:4])
         self.assertEqual(resp["model"], "example/model-1")
         self.assertEqual(resp["by_id"][reqs[0]["id"]],
-                         {"verdict": "NM", "parsed": True, "strict": True, "fenced": False})
-        # A fence inside the prose, ending with bare JSON: a lenient parse, and not a fenced answer.
+                         {"verdict": "NM", "parsed": True, "strict": True, "fenced": False, "literal": True,
+                          "truncated": False})
+        # A fence inside the prose quoting a non-verdict object, ending with bare JSON: a lenient parse
+        # (the quoted object is prose), a failure by the literal reading, and not a fenced answer.
         self.assertEqual(resp["by_id"][reqs[1]["id"]],
-                         {"verdict": None, "parsed": False, "strict": False, "fenced": False})
+                         {"verdict": "S", "parsed": True, "strict": False, "fenced": False, "literal": False,
+                          "truncated": False})
         self.assertEqual(resp["errors"], [reqs[2]["id"]])
         self.assertEqual(resp["by_id"][reqs[2]["id"]]["verdict"], None)
         self.assertEqual(resp["bad_prompt"], [reqs[3]["id"]])
         self.assertEqual(resp["missing"], [])
+
+    def test_evidence_json_quoted_in_the_prose_is_prose(self):
+        content = ('\n\nLooking at the job log, the entries are {"ts": "2026-10-01T12:00:01Z", "job": "build-7", '
+                   '"status": "failed"} and {"ts": "2026-10-01T12:00:09Z", "job": "build-7", "status": "passed"}.'
+                   '\n\n{"verdict": "supported"}')
+        self.assertEqual(judge.parse(content), ("S", True))
+        self.assertEqual(judge.parse(content, quoted_json_is_prose=False), (None, False))
+        self.assertEqual(judge.parse_strict(content), (None, False))
+        # A second verdict object still fails, quoted or not.
+        self.assertEqual(judge.parse('{"verdict": "contradicted"} then\n{"verdict": "supported"}'), (None, False))
+        self.assertEqual(judge.parse('{"verdict": "supported"}\n{"min": 2}'), (None, False))
+
+    def test_budget_truncation_is_counted_by_id(self):
+        reqs, prompt = self.batch()
+        rows = [{"id": r["id"], "model": "m", "content": '{"verdict": "supported"}', "finish_reason": "stop"}
+                for r in reqs]
+        rows[0] = {"id": reqs[0]["id"], "model": "m", "content": "", "finish_reason": "length"}
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "r.jsonl"
+            p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+            resp = ex.read_responses(p, reqs)
+        self.assertEqual(resp["by_id"][reqs[0]["id"]]["verdict"], None)
+        rates = ex.parse_rates(reqs, resp)
+        form = reqs[0]["form"]
+        self.assertEqual(rates[form]["budget_truncations"], [reqs[0]["id"]])
+        self.assertEqual(rates[form]["counts"]["failed"], 1)
+        self.assertEqual(sum(len(r["budget_truncations"]) for r in rates.values()), 1)
 
     def test_a_fence_in_the_prose_then_bare_json(self):
         content = 'The evidence shows:\n```\n$ gh stack sync\n```\n\n{"verdict": "supported"}'
@@ -612,8 +644,8 @@ class JudgeAndExport(unittest.TestCase):
         s = report.build(runs, [], {**scoring_set.config(), "resamples": 50}, None)
         self.assertEqual(set(s["reader_parse_rates"]), {"window-512", "window-2048", "chunk-400", "full"})
         md = report.render_md(s)
-        self.assertIn("| reader form | requests | parsed (lenient, scored) | parsed (strict) "
-                      "| fenced (scored as failures) |", md)
+        self.assertIn("| reader form | requests | strict | lenient only | failed | fenced | lenient, literal reading "
+                      "| output budget ran out |", md)
 
     def test_reestimate_leaves_requests_untouched(self):
         reqs, _ = self.batch()
@@ -693,7 +725,7 @@ class Report(unittest.TestCase):
         s = report.build(runs, self.triples(), cfg, None)
         # Deviations, from scoring.toml, in the header and the section.
         self.assertEqual([d["id"] for d in s["deviations"]],
-                         ["not-run-controls", "hhem-premise-cap", "chunk-400-approximate"])
+                         ["not-run-controls", "hhem-premise-cap", "chunk-400-approximate", "lenient-parse-quoted-json"])
         md = report.render_md(s)
         for d in s["deviations"]:
             self.assertIn(d["text"], md)
