@@ -126,10 +126,13 @@ library reads TOML but can't write it, and the repository's tools are
 standard-library only; JSON round-trips exactly, diffs line by line with one
 key per line, and is what fetch (Rust, serde) reads most simply.
 
-**Grades by hash.** `ledger.py add --reports DIR` reads parity reports,
-which record a 12-hex-digit sha256 prefix of each bucket's weights, and
-attaches the grades of every report whose buckets are exactly this build's
-with the same weights. By default only reports
+**Grades by hash.** `ledger.py add --reports DIR` reads parity reports
+and attaches the grades of every report that graded this build's files. A
+Core ML report records a 12-hex-digit sha256 prefix of each bucket's
+weights, and matches when its buckets are exactly this build's with the
+same weights; an ONNX report records the full sha256 of the graph, its
+external weights files and the tokenizer, and matches when every one is
+this build's file at the same path. By default only reports
 [data/runs.toml](data/runs.toml) describes count, the ones whose grades are
 published; `--any-report` also takes a release candidate's own. So a card
 can say which grades belong to the very files it lists, rather than to an
@@ -139,7 +142,8 @@ earlier build of the same model.
 
 ```sh
 python3 tools/ledger.py add <model dir> --reports <reports dir> [--variant fp16-max2048] \
-    [--converter-commit SHA --os "macOS 27.0 (26A428)" --chip "Apple M1 Max"]
+    [--converter-commit SHA --python 3.12.13 --os "macOS 27.0 (26A428)" --xcode "27.1 (27A9275)" \
+     --chip "Apple M1 Max" --torch 2.13.0]
 python3 tools/ledger.py add --sums <archive>/item.SHA256SUMS --sums-prefix <dir>/ --model ID [--sizes LIST]
 python3 tools/ledger.py verify <model dir> [--id BUILD] [--partial]
 python3 tools/ledger.py check
@@ -161,12 +165,15 @@ python3 tools/ledger.py published BUILD --repo OWNER/NAME --revision SHA --sidek
 **What isn't recorded yet.** Builds converted before the ledger existed
 have no converter commit, Python version, OS or machine (their notes say
 so); coremltools, PyTorch and the conversion date come from the compiled
-programs' metadata. The converters should call `ledger.py add` themselves,
-with the commit they ran at, and the `.mlpackage` hashes #136 asks for
-(the weights and spec before compilation) need the converters to keep the
-packages they compile; both are follow-ups.
+programs' metadata, and an ONNX graph names the PyTorch that exported it
+(`--torch`). The converters should call `ledger.py add` themselves, with
+the commit they ran at; that is a follow-up. Every converter can now keep
+the `.mlpackage` sources it compiled (`--keep-packages DIR`, beside the
+release candidate, not published), so the package hashes #136 asks for
+(the weights and spec before compilation) can be taken from them; recording
+them in the ledger is a follow-up too.
 
-The ledger holds 35 builds today: 14 hashed from build directories, and 21
+The ledger holds 36 builds today: 16 hashed from build directories, and 20
 recorded from the SHA256SUMS and size listings of archived copies
 (`evidence = "sha256sums"`), whose local directories were deleted once the
 archive was verified. Four of the archived and hashed builds carry the same
@@ -245,9 +252,9 @@ on install.**
   141 s per Qwen3 bucket on the ANE), which happens either way.
 - **The risk, and its guard.** Should a future macOS refuse an older
   compiled program, the release gate's regrade on that macOS would show it,
-  and the model is reconverted and republished as a new build (keeping each
-  release candidate's packages, so they can be recompiled instead, is a
-  follow-up). Shipping both forms would double every download for that
+  and the model is reconverted and republished as a new build, or its
+  release candidate's packages, kept with `--keep-packages`, are
+  recompiled. Shipping both forms would double every download for that
   contingency.
 
 ## Consent for tier 2b: gated repositories
