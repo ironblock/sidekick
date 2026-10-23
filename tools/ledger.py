@@ -30,7 +30,8 @@ hashes match this build's files: the grades that build was graded with
 are published; `--any-report` also takes a release candidate's own).
 With `--sums`, it records an archived build from a `shasum -a 256` listing
 instead of hashing files; sizes are then unknown unless `--sizes` gives a
-`stat`-style "size path" listing.
+`stat`-style "size path" listing (it may be the same file, the sizes
+following the checksums), which must then cover every file.
 
 `verify` exits non-zero unless every file matches the entry. `--partial`
 accepts missing paths (a fetch of fewer buckets).
@@ -347,6 +348,8 @@ def cmd_add(args):
                  if rel.rsplit("/", 1)[-1] not in IGNORED and not any(fnmatch.fnmatch(rel, g) for g in excludes)}
         if not files:
             raise SystemExit(f"no files under {args.sums_prefix!r} in {args.sums}")
+        if args.sizes and (unsized := sorted(r for r, (_, size) in files.items() if size is None)):
+            raise SystemExit(f"--sizes gives no size for: {', '.join(unsized)}")
         manifest_text = ""
         meta = {}
         evidence = "sha256sums"

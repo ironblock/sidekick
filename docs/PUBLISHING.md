@@ -166,9 +166,12 @@ with the commit they ran at, and the `.mlpackage` hashes #136 asks for
 (the weights and spec before compilation) need the converters to keep the
 packages they compile; both are follow-ups.
 
-The ledger holds 14 builds today, hashed from the builds on the
-maintainer's Mac; archived builds are ingested from their SHA256SUMS
-listings with `--sums`.
+The ledger holds 35 builds today: 14 hashed from build directories, and 21
+recorded from the SHA256SUMS and size listings of archived copies
+(`evidence = "sha256sums"`), whose local directories were deleted once the
+archive was verified. Four of the archived and hashed builds carry the same
+fingerprints as the MTEB transfer runs in data/mteb_transfer.json, so those
+runs are tied to recorded files.
 
 ## Model cards
 
