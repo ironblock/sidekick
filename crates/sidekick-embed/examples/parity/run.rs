@@ -849,6 +849,46 @@ fn sh(cmd: &str, args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
+/// The full sha256 of a file, read in blocks (an external weights file can
+/// be gigabytes).
+fn file_sha256(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| format!("{}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The files an onnx model's grade depends on: its graph, the external
+/// weights files the graph names, and its tokenizer, each by the path its
+/// manifest gives it relative to the model directory (the ledger's paths),
+/// sorted by path.
+fn onnx_files(model: &ResolvedModel) -> Result<Vec<FileHash>, String> {
+    let m = &model.manifest;
+    let interface = sidekick_core::onnx_graph::read_interface(&model.artifact_path())?;
+    let graph_dir = m.artifact.rsplit_once('/').map(|(d, _)| format!("{d}/")).unwrap_or_default();
+    let mut paths = vec![m.artifact.clone(), m.tokenizer.clone()];
+    for location in interface.external_data {
+        let p = format!("{graph_dir}{location}");
+        if !paths.contains(&p) {
+            paths.push(p);
+        }
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|rel| Ok(FileHash { sha256: file_sha256(&model.dir.join(&rel))?, path: rel }))
+        .collect()
+}
+
 fn file_sha(path: &Path) -> Option<String> {
     std::fs::read(path)
         .ok()
@@ -872,11 +912,25 @@ struct BucketInfo {
     not_read: Option<String>,
 }
 
+/// One file of the build a report graded, by its full sha256.
+#[derive(Serialize, Debug, PartialEq)]
+struct FileHash {
+    /// Relative to the model directory, as the checksum ledger records it.
+    path: String,
+    sha256: String,
+}
+
 #[derive(Serialize)]
 struct ModelReport {
     id: String,
     source: String,
     buckets: Vec<BucketInfo>,
+    /// An onnx model's graph, its external weights files and its tokenizer,
+    /// by full sha256: what `buckets` records of a Core ML build's programs,
+    /// so the checksum ledger (`tools/ledger.py add --reports`, D50) can tie
+    /// the grades to these exact files. Absent for a Core ML model.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    files: Vec<FileHash>,
     paths: Vec<PathGrade>,
     /// Paths whose worker failed to produce results, with why.
     crashed: Vec<(String, String)>,
@@ -1298,6 +1352,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             id: id.clone(),
             source: reference.source_label(),
             buckets: Vec::new(),
+            files: Vec::new(),
             paths: Vec::new(),
             crashed: Vec::new(),
             determinism: None,
@@ -1356,6 +1411,17 @@ fn parent(args: &[String]) -> Result<bool, String> {
         #[cfg(not(all(target_os = "macos", feature = "coreml")))]
         let plans = no_plans();
         mr.buckets = plans.buckets;
+        if onnx {
+            match onnx_files(model) {
+                Ok(files) => {
+                    for f in &files {
+                        println!("  {}: sha256 {}", f.path, f.sha256);
+                    }
+                    mr.files = files;
+                }
+                Err(e) => mr.warnings.push(format!("couldn't hash the model's files: {e}")),
+            }
+        }
         let (plan_ok, unverified) = (plans.ok, plans.unverified);
         if !plan_ok {
             println!("  FAIL: not ANE-eligible; skipping predictions (such an artifact can abort at predict)");
@@ -1888,6 +1954,19 @@ fn print_model(reference: &Reference, grades: &[PathGrade], determinism: Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_onnx_models_files_are_hashed_by_their_manifest_paths() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-onnx");
+        let reg = ModelRegistry::scan_with(&dir, &MEASURE_ALL).unwrap();
+        let model = reg.get("tiny-onnx").unwrap();
+        let files = onnx_files(model).unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["../hidden.onnx", "tokenizer.json"]);
+        for f in &files {
+            assert_eq!(f.sha256, sha256_hex(&std::fs::read(model.dir.join(&f.path)).unwrap()), "{}", f.path);
+        }
+    }
 
     const ONNX: Runtime = Runtime::Onnx { native: true };
     const CORE_ML_ANE: Runtime = Runtime::CoreMl { ane: true };

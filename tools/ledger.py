@@ -24,10 +24,13 @@ Usage:
 
 `add` hashes a built model directory (hard-linked files once) and writes
 or replaces its entry. With `--reports`, it reads parity reports (`parity
---json`) and records the grades of every report whose per-bucket weight
-hashes match this build's files: the grades that build was graded with
-(by default only from reports docs/data/runs.toml describes, whose grades
-are published; `--any-report` also takes a release candidate's own).
+--json`) and records the grades of every report that graded this build's
+files: for a Core ML build, a report whose per-bucket weight hashes match
+it; for an ONNX build, one whose recorded files (graph, external weights,
+tokenizer, by full sha256) are all this build's, at the same paths. Those
+are the grades that build was graded with (by default only from reports
+docs/data/runs.toml describes, whose grades are published; `--any-report`
+also takes a release candidate's own).
 With `--sums`, it records an archived build from a `shasum -a 256` listing
 instead of hashing files; sizes are then unknown unless `--sizes` gives a
 `stat`-style "size path" listing (it may be the same file, the sizes
@@ -253,7 +256,8 @@ def load_models():
 
 def report_records(dirs):
     """(file name, report, model record) for every parity report under
-    `dirs` whose records carry per-bucket weight hashes."""
+    `dirs` whose records carry per-bucket weight hashes (Core ML) or file
+    hashes (ONNX)."""
     for d in dirs:
         for p in sorted(Path(d).rglob("*.json")):
             try:
@@ -263,7 +267,7 @@ def report_records(dirs):
             if not isinstance(rep, dict) or "chip" not in rep:
                 continue
             for rec in (rep.get("models") or []) + (rep.get("classifiers") or []):
-                if isinstance(rec, dict) and rec.get("buckets"):
+                if isinstance(rec, dict) and (rec.get("buckets") or rec.get("files")):
                     yield p.name, rep, rec
 
 
@@ -273,19 +277,34 @@ def registered_reports():
     return set(tomllib.loads((REPO / "docs" / "data" / "runs.toml").read_text()).get("runs", {}))
 
 
+def graded_files_match(files, recorded):
+    """Whether a report's recorded files (an ONNX build's graph, external
+    weights and tokenizer: [{path, sha256}]) are all this build's, at the
+    same paths, and include a graph."""
+    if not recorded or not any(f.get("path", "").endswith(".onnx") for f in recorded):
+        return False
+    return all(f.get("path") in files and files[f["path"]][0] == f.get("sha256") for f in recorded)
+
+
 def matching_grades(model, files, dirs, any_report=False):
-    """The grades of every report whose buckets are exactly this build's,
-    with the same weights: by default only reports runs.toml describes
-    (published grades), with `any_report` every report found."""
+    """The grades of every report that graded exactly this build's files: a
+    Core ML report whose buckets are this build's, with the same weights, or
+    an ONNX report whose recorded files are this build's. By default only
+    reports runs.toml describes (published grades), with `any_report` every
+    report found."""
     mine = bucket_weights(files)
     registered = registered_reports()
     out = []
     for name, rep, rec in report_records(dirs):
         if rec.get("id") != model or not (any_report or name in registered):
             continue
-        theirs = {b["bucket"]: b.get("weights") for b in rec["buckets"]}
-        if not mine or theirs != mine:
-            continue
+        if rec.get("files"):
+            if not graded_files_match(files, rec["files"]):
+                continue
+        else:
+            theirs = {b["bucket"]: b.get("weights") for b in rec["buckets"]}
+            if not mine or theirs != mine:
+                continue
         for p in rec.get("paths", []):
             path = REPORT_PATH.get(p.get("path"))
             if path and p.get("letter") in LETTERS:
@@ -398,7 +417,7 @@ def cmd_add(args):
             "converter": args.converter or converter_of(committed_manifest(model) or manifest_text),
             "converter_commit": args.converter_commit,
             "coremltools": meta.get("coremltools"),
-            "torch": meta.get("torch"),
+            "torch": args.torch or meta.get("torch"),
             "python": args.python,
             "os": args.os,
             "xcode": args.xcode,
@@ -604,6 +623,8 @@ def main():
     a.add_argument("--grade", action="append", help="path:chip:letter[:report], when no report matches by hash")
     a.add_argument("--converter")
     a.add_argument("--converter-commit")
+    a.add_argument("--torch", help="PyTorch version (default: the Core ML programs' metadata; an ONNX graph's "
+                                   "producer_version names it)")
     a.add_argument("--python")
     a.add_argument("--os")
     a.add_argument("--xcode")

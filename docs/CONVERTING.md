@@ -530,6 +530,13 @@ converter stores them once per chunk (`shared_weights.py`):
 
   A failure stops the conversion; `--no-shared-weights` converts with one
   file per bucket, as before D49.
+- **Keeping the packages.** The converter deletes each `.mlpackage` once
+  it is compiled. `--keep-packages DIR` (an empty or new directory) keeps
+  them: each bucket's package as converted in `DIR/separate/`, and the
+  re-exported packages the installed programs were compiled from in
+  `DIR/shared/`, their identical weight files hard-linked. Keep them for a
+  build you publish: the published files are the compiled programs, and
+  the packages let them be recompiled, or compared before compilation.
 - **Per chunk, never across chunks.** The ANE's weight limit (D32) is
   judged on the whole weights file a program references, not on the
   tensors it reads: a file spanning both of Qwen3-Embedding-0.6B's chunks

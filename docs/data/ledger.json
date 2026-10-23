@@ -903,6 +903,171 @@
    "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
   },
   {
+   "id": "bge-small-en-v1.5/coreml/fp16/f1b85f22e0b4",
+   "model": "bge-small-en-v1.5",
+   "source": "BAAI/bge-small-en-v1.5@5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "shared",
+   "digest": "f1b85f22e0b4a67788fa2bad3749d38e6e26d9da6c1cd1a6bfa93b36a0e68b68",
+   "fingerprint": "4e7d27822bfc",
+   "produced": {
+    "converter": "tools/convert_bge_small.py",
+    "converter_commit": "761deb3f2e23ac3396cc5c24de139a80d21d49b5",
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": "3.12.13",
+    "os": "macOS 27.0 (26A428)",
+    "xcode": "27.1 (27A9275)",
+    "chip": "Apple M1 Max",
+    "date": "2026-10-23"
+   },
+   "files": [
+    {
+     "sha256": "3b9e5783ff20962eb45d0784f565352bf9b77370c1032d2f8a00f7a05a2234c6",
+     "size": 2757,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "1cb304b8dfd1d71dafa83762bfd53755f2f4bb4df6277a0b58871e2ccd8a030c",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "16cb073a96ae4ab640b6b38a7c30429259748a983469920d13bca19dbbf55027",
+     "size": 409,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c23c956c5dace7c3d47d2e792ef7c65f23623c493ffe4e0f9ec3d579b37863f0",
+     "size": 2270,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "7ae733bc38b2f663ec263bcd7bc0ef0fb7209948961bf28c871f6733157e2fe8",
+     "size": 130183,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "67cca0adb2abb0b47925800e1f6914261fac21f3dcf92412a4a81cd8041cae44",
+     "size": 67418752,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin",
+      "model_256.mlmodelc/weights/weight.bin",
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "2e13be73b30a5d8c4e99a84a865a5c1c617eafccb883b7f03abe062f08ff3400",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d90ce7f35844742028c9614ab639ce1550c1e803381850016bafce71fd1f2708",
+     "size": 409,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "adc812afd02b558ee99954577a4dbb263788d77b7fb7973e8d2ffa79436be325",
+     "size": 2270,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "4839bc4064e31bb639e5bc2af9c25937621410df276a5b75cb0dd607a2eb6b58",
+     "size": 130183,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "b649e3e4e8c2d648490f73719c8648ad167e21d54f7c03ac6aeacf4600b18df3",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "66da60a707ee4fd1b9e861f61fb74a7af41ee2534e3ff037c930761bb833688a",
+     "size": 409,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "5bdf674443f109e1ce2515305fef0194832e224d74b943f00a91c2dc6893592b",
+     "size": 2270,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "8d6964cc402c30986ccc85a86d06d1e12b106ef9fcc7389527f80b59b3a6f4fe",
+     "size": 130183,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+     "size": 711396,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-bge-small-en-v1.5.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-bge-small-en-v1.5.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-bge-small-en-v1.5.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Shared weights (D49): one weights file, held by all three buckets. The converter's gates all passed, the shared-weights gates included: every compiled weights file byte-identical to the union file, every program equal to the separate build's but for weight offsets, and outputs bit-identical to the separate build on CPU, GPU and ANE."
+  },
+  {
    "id": "bge-small-en-v1.5/onnx/fp32/fef2c0953bad",
    "model": "bge-small-en-v1.5",
    "source": "BAAI/bge-small-en-v1.5@5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
@@ -911,7 +1076,7 @@
    "quantization": "fp32",
    "buckets": [],
    "chunks": 1,
-   "max_seq_len": null,
+   "max_seq_len": 512,
    "layout": "separate",
    "digest": "fef2c0953badc97a0bf92707fa1d75d1e8541a777bfe53d04ce57c0cc4784501",
    "fingerprint": "c8fd8219c99f",
@@ -919,12 +1084,12 @@
     "converter": "tools/convert_bge_small.py",
     "converter_commit": null,
     "coremltools": null,
-    "torch": null,
+    "torch": "2.13.0",
     "python": null,
     "os": null,
     "xcode": null,
     "chip": null,
-    "date": null
+    "date": "2026-10-09"
    },
    "files": [
     {
@@ -956,11 +1121,19 @@
      ]
     }
    ],
-   "grades": [],
+   "grades": [
+    {
+     "path": "onnx-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "native-arm64-bge-small-en-v1.5-hashed.json"
+    }
+   ],
    "published": [],
    "recorded": "2026-10-23",
-   "evidence": "sha256sums",
-   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+   "evidence": "hashed",
+   "note": "Exported with tools/convert_bge_small.py --format onnx before the ledger existed; restored from its verified archive and hashed. The graph's producer_version records PyTorch 2.13.0, and the files' modification time the export date. The exporting commit, Python version, OS and machine weren't recorded. Graded from these exact files (file hashes in the parity report)."
   },
   {
    "id": "deberta-v3-base-zeroshot-v2.0-c/coreml/fp16/b66aba0819db",

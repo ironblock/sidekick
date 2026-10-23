@@ -33,25 +33,6 @@ source = "docs/MODELS.md table (M1 Max, Sept 2026)"
 # given for the ANE only; ms is ANE (CPU).
 
 [[row]]
-model = "bge-small-en-v1.5"
-path = "coreml-ane"
-worst = 0.99997
-worst_case = "empty input"
-drift = 0.002
-bias = 0.001
-rank_flips = 0
-ms = 1.9
-[[row]]
-model = "bge-small-en-v1.5"
-path = "coreml-gpu"
-worst = 0.999999
-[[row]]
-model = "bge-small-en-v1.5"
-path = "coreml-cpu"
-worst = 0.99993
-ms = 7.0
-
-[[row]]
 model = "gte-modernbert-base"
 path = "coreml-ane"
 worst = 0.99992

@@ -6,6 +6,7 @@ audit's validator (tools/licences.py) and the model-card generator
 """
 
 import copy
+import hashlib
 import io
 import json
 import os
@@ -181,6 +182,27 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual([(g["path"], g["grade"], g["report"]) for g in grades],
                          [("coreml-ane", "A", "match.json"), ("coreml-gpu", "B", "match.json")])
         self.assertEqual(ledger.matching_grades("bge-small-en-v1.5", files, [reports]), [])
+
+    def test_onnx_grades_from_matching_file_hashes(self):
+        sha = {name: hashlib.sha256(name.encode()).hexdigest() for name in ("graph", "data", "tok", "manifest")}
+        files = {"model.onnx": (sha["graph"], 10), "model.onnx_data": (sha["data"], 20),
+                 "tokenizer.json": (sha["tok"], 5), "manifest.toml": (sha["manifest"], 1)}
+        reports = self.dir / "reports"
+        reports.mkdir()
+
+        def report(name, recorded):
+            rec = {"id": "bge-small-en-v1.5", "buckets": [], "paths": [{"path": "onnx-cpu", "letter": "A"}],
+                   "files": [{"path": p, "sha256": s} for p, s in recorded.items()]}
+            (reports / name).write_text(json.dumps({"chip": "Apple M1 Max", "macos": "macOS 27.0", "models": [rec]}))
+
+        report("match.json", {"model.onnx": sha["graph"], "model.onnx_data": sha["data"], "tokenizer.json": sha["tok"]})
+        report("other-weights.json", {"model.onnx": sha["graph"], "model.onnx_data": "0" * 64})
+        report("other-path.json", {"int8/model.onnx": sha["graph"]})
+        report("no-graph.json", {"tokenizer.json": sha["tok"]})
+        (reports / "no-hashes.json").write_text(json.dumps({"chip": "Apple M1 Max", "models": [
+            {"id": "bge-small-en-v1.5", "buckets": [], "paths": [{"path": "onnx-cpu", "letter": "A"}]}]}))
+        grades = ledger.matching_grades("bge-small-en-v1.5", files, [reports], any_report=True)
+        self.assertEqual([(g["path"], g["grade"], g["report"]) for g in grades], [("onnx-cpu", "A", "match.json")])
 
     def test_check_refuses_a_tampered_entry(self):
         self.add()

@@ -170,13 +170,14 @@ def files_bytes(paths):
     return total
 
 
-def build_union(group, work, compile_mlmodelc, log=print):
+def build_union(group, work, compile_mlmodelc, log=print, keep=None):
     """Re-export, package and compile one chunk's programs (`group`, one
     Program per bucket) against a union weights file in `work`. Returns
     ({seq: compiled union program}, union bytes). Raises ShareFailure if a
     compiled weights file isn't the union file byte for byte. The separate
     packages are deleted once re-exported; every compiled weights file ends
-    as a hard link to the union file."""
+    as a hard link to the union file. With `keep` (a directory), each
+    re-exported package is copied to `keep`/shared/ before it is deleted."""
     work = Path(work)
     models, blob = reexport({p.seq: p.package for p in group}, work / "blob")
     for p in group:
@@ -184,6 +185,7 @@ def build_union(group, work, compile_mlmodelc, log=print):
     out = {}
     for p in group:
         pkg = _package(models.pop(p.seq), blob, work / f"model_{p.seq}.mlpackage")
+        keep_package(pkg, keep, "shared", _package_name(p))
         compiled = compile_mlmodelc(pkg, work / f"compiled_{p.seq}")
         shutil.rmtree(pkg)
         files = _weight_files(compiled)
@@ -281,7 +283,8 @@ def share(job, programs, cases, work, compile_mlmodelc, ane_limited, log=print):
     for k in range(chunks):
         group = [programs[seq][k] for seq in seqs]
         separate_bytes = sum(files_bytes(_weight_files(p.compiled)) for p in group)
-        built, size = build_union(group, work / f"union_{k}", compile_mlmodelc, log)
+        keep = getattr(job, "keep_packages", None)
+        built, size = build_union(group, work / f"union_{k}", compile_mlmodelc, log, keep)
         what = "" if chunks == 1 else f"chunk {k}: "
         r = report["chunks"][k] = {"separate_bytes": separate_bytes, "union_bytes": size}
         if ane_limited and size > MAX_ANE_PROGRAM_WEIGHT_BYTES:
@@ -290,6 +293,9 @@ def share(job, programs, cases, work, compile_mlmodelc, ane_limited, log=print):
                 "Engine's per-program limit (D32), so this chunk keeps one weights file per bucket")
             for compiled in built.values():
                 shutil.rmtree(compiled.parent, ignore_errors=True)
+            if keep:
+                for p in group:
+                    shutil.rmtree(Path(keep) / "shared" / _package_name(p), ignore_errors=True)
             continue
         r["shared"] = True
         for seq in seqs:
@@ -317,6 +323,34 @@ def share(job, programs, cases, work, compile_mlmodelc, ane_limited, log=print):
                 shutil.rmtree(p.compiled, ignore_errors=True)
                 p.compiled = unions[seq][k]
     return report
+
+
+def _package_name(program):
+    return program.name.removesuffix(".mlmodelc") + ".mlpackage"
+
+
+def keep_package(pkg, keep, kind, name=None):
+    """Copy the .mlpackage `pkg` to `keep`/`kind`/ (as `name`, else its own
+    name), when a directory to keep packages in was given (`--keep-packages`):
+    the converter otherwise deletes every package once it is compiled."""
+    if not keep:
+        return
+    dest = Path(keep) / kind / (name or Path(pkg).name)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(dest, ignore_errors=True)
+    shutil.copytree(pkg, dest)
+
+
+def link_kept(keep, log=print):
+    """Hard-link identical weight files among the kept packages (a
+    shared-weights build's re-exported packages all hold the union file),
+    and say what was kept."""
+    pkgs = sorted(Path(keep).glob("*/*.mlpackage"))
+    data = [p / "Data" / "com.apple.CoreML" for p in pkgs]
+    linked, _ = link_identical(data, log)
+    files = [f for d in data for f in _weight_files(d)]
+    log(f"kept {len(pkgs)} .mlpackage source(s) in {keep}: weight files {files_bytes(files) / 1e6:.1f} MB on disk"
+        + (f", {linked} hard-linked" if linked else ""))
 
 
 def _sha256(path):
