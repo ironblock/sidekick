@@ -60,3 +60,16 @@ Light, trunk-based git-flow:
   and list item on one line.
 - Bump `[workspace.package] version` in the root `Cargo.toml` to match the tag
   so `sidekickd --version` stays honest.
+- **Run the release gate before tagging.** `tools/release_gate.py` builds
+  the release candidate's `sidekickd` and, on a Mac with the published
+  models' builds installed, runs each model's task sample through it over
+  HTTP: MultiNLI pairs for the nli models, an MTEB slice for the
+  embedders, the parity corpora's labelled cases for the other
+  classifiers, the reference set for rerankers (its Python environment is
+  pinned in `tools/release_gate.requirements.txt`). It compares every number
+  with the committed baseline, `docs/data/release-gate.json`, and fails on
+  drift beyond the tolerances recorded there. Don't tag unless its last
+  line reads PASS; put that line in the release PR. A deliberate change to
+  a model's numbers (a new conversion, a runtime fix that moves a score)
+  updates the baseline with `--update-baseline` in the same PR, and the
+  PR says why.
