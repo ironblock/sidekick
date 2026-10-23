@@ -12,13 +12,21 @@ jobs:
   models-md:
     # docs/MODELS.md's data tables are generated from docs/data/models.json
     # by tools/models_table.py, and its classifier and reranker tables are
-    # checked against it. Fail if the two have drifted apart.
+    # checked against it. Fail if the two have drifted apart. The same
+    # check validates the publishing data: the licence audit
+    # (docs/data/licences.toml) and the checksum ledger
+    # (docs/data/ledger.json). Then the publishing tools' tests, and every
+    # model card the ledger allows must render.
     name: MODELS.md matches the results file
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Check docs/MODELS.md against docs/data/models.json
         run: python3 tools/models_table.py --docs --check
+      - name: Publishing tools (ledger, licences, model cards)
+        run: |
+          python3 -m unittest discover -s tools/tests -t tools -v
+          python3 tools/model_card.py --check
 
   task-corpora:
     # The verification corpus (tools/tasks): its committed recipe, claims,

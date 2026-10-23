@@ -1,0 +1,5554 @@
+{
+ "schema": 1,
+ "builds": [
+  {
+   "id": "agent-jev/coreml/fp16/8746a6ab7b54",
+   "model": "agent-jev",
+   "source": "aimeigaoshou/agent-jev@0e2593e6e6c0eade0700712ac13c4389aa7654cc",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    512,
+    1024,
+    2048
+   ],
+   "chunks": 2,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "8746a6ab7b54e16e16e73826942af1f6b0a44a6b6c3f43f6cda7243aa2a93a46",
+   "fingerprint": "2fb080f27060",
+   "produced": {
+    "converter": null,
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "6d7a8d37dcc6e1a537b6fe467231458bc3c85af9a1f6736432c86055d5e1b1ee",
+     "size": 8678,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "0500205bf49fa645c224528f9ed60f636136df0ab223fe25b39b0eac01a5a524",
+     "size": 243,
+     "paths": [
+      "model_1024.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c81284ee1621123be4d41eeba47ec61811c81c47051dab50eaa18f49480c8183",
+     "size": 461,
+     "paths": [
+      "model_1024.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "1580ec7772553890a197f85d1786888b17bffc617c7edad4baa944ac46cdf031",
+     "size": 3190,
+     "paths": [
+      "model_1024.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "0e4cb713020278950eafb29649b29f95a972580f44501a3e18559e0bde45226a",
+     "size": 325062,
+     "paths": [
+      "model_1024.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "3c85ff719ce9240955bbf559548690f963a25a1f030265a7991fcb3edcd3adf9",
+     "size": 599064192,
+     "paths": [
+      "model_1024.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "05a8e4d1e3a01df704fb927610431ca89e4aee7e0e7ac7a6a75923612cfbeda7",
+     "size": 243,
+     "paths": [
+      "model_1024.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "e9808fc67b63bc304b77f87f0103228404719b6e7f8e463be7ee80494743737a",
+     "size": 480,
+     "paths": [
+      "model_1024.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "276bf3d36fde51bbbcfa62f225fbdaf139b7c786e0787282630be3cb4831c9b6",
+     "size": 3543,
+     "paths": [
+      "model_1024.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "021228c696d2d6a2f5b0b55896cbe114da98925ced9eefd76450ca1eec15199c",
+     "size": 703841,
+     "paths": [
+      "model_1024.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "dd88c4d2d989161e7ace1b3ad3a6b10b397a51a6d21ca52c887543d5490eb150",
+     "size": 607266816,
+     "paths": [
+      "model_1024.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "bfb24eda30c29d8b9700d9f6619a9e07b43b60255b4b2594c6e2a7c6d2f4596a",
+     "size": 243,
+     "paths": [
+      "model_2048.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ebe43de9cbbb90f5d0c484f57adaa253abe7fc489d01b287824ef9ece264dbf6",
+     "size": 461,
+     "paths": [
+      "model_2048.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "e09a78fa1c80384ff9b835f4bd54dd32f1fbf31c6a05154e6d9be8450ba958de",
+     "size": 3193,
+     "paths": [
+      "model_2048.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "02c4c1dacf1c60364b91fc97cad1bd21275c4a72f84e732e7fa41483d9e3ff89",
+     "size": 415929,
+     "paths": [
+      "model_2048.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "c495f8c4ae2e8dd4d6327aa3e34970568ea77bcb44916557d819acc1ffe417fc",
+     "size": 612175488,
+     "paths": [
+      "model_2048.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "1fa932e9cb4ddcbb8ce48784f30c5ab2445924b6e092ff435192ba1888f44614",
+     "size": 243,
+     "paths": [
+      "model_2048.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "1f2af37fffd2f870fd755b2ffe476e77797d7c91e8ec5f3b008a902bd2846b12",
+     "size": 480,
+     "paths": [
+      "model_2048.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c394436512096edd65505a00b4aa38664e2ed00a171d769596c2a2b94ef0b374",
+     "size": 3543,
+     "paths": [
+      "model_2048.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "65134c103a703d83d457c870c9d73abba6526fb4d69ea1f7af80a9375c196b25",
+     "size": 896539,
+     "paths": [
+      "model_2048.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "aab8c66fa4a9e317c9c7d77f02364592ec0c4abad3bc01dc999cf03f96d38c01",
+     "size": 620378112,
+     "paths": [
+      "model_2048.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "c240798d9675fa1ca5f585df44c14ab75626a4c3a0f50ef60847ccd1edf93e10",
+     "size": 243,
+     "paths": [
+      "model_512.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "33ec211b6d782b8d42860781b4110646a90790f5d9bcb15514c380afedb7c1c6",
+     "size": 461,
+     "paths": [
+      "model_512.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "dd165c4e1ea0c8420fcee1dfcc25b94bae6e2ac4e8c376bba9546ced34422772",
+     "size": 3179,
+     "paths": [
+      "model_512.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "1cae6c877aac725c87995143b6feb4efb8bd408ee217543488ee42240d76044a",
+     "size": 278790,
+     "paths": [
+      "model_512.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "d3bc18a26fb1548b473d26f158abc0e9c629f7ed97c2efda4d244f7b892e7ece",
+     "size": 595654272,
+     "paths": [
+      "model_512.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "19f5fac34b1ca6aef7565c9cc148e8691e6c9b1deb3f6135efa4802f222c9807",
+     "size": 243,
+     "paths": [
+      "model_512.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "840b6039b2a0e900b93202197a86e42951587a6f4c0743c7ea43fc57865ebd3e",
+     "size": 480,
+     "paths": [
+      "model_512.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ea96685eae2767a0b65fa18ca69484229976db0f77ccc516178483cecc9590ee",
+     "size": 3532,
+     "paths": [
+      "model_512.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "6673c5ead0d828c3bcffeea528afebfed01bb7c0c12663c885a3199b6ced866b",
+     "size": 605795,
+     "paths": [
+      "model_512.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "7ba62aa196a705c3e3962d316efcfd1490d78e099514daf67f1097610bf733a7",
+     "size": 603856896,
+     "paths": [
+      "model_512.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+     "size": 7031645,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "all-minilm-l6-v2/coreml/fp16/50718062cc05",
+   "model": "all-minilm-l6-v2",
+   "source": "sentence-transformers/all-MiniLM-L6-v2@1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    64,
+    128,
+    256
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "50718062cc05f82cef494db9838d99b72289c13cd7e4bb4efad76128bac2112c",
+   "fingerprint": "c7960ae4efd3",
+   "produced": {
+    "converter": null,
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "abe0e445702593fb01c904148b339c87421b72d9d4caefcfcd87e3c8563a32a1",
+     "size": 3215,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "d1ab4fd5ecf6d6059291704fb5293fd763e843811b9986e1211a30e7ff62466b",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "91d64915fe871454e99dab69269a3c004673e50a8e065f9eea1456507b57f1de",
+     "size": 409,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2fdf0e711a2c64bd9c03896008283a10697912069bc621aaf04acf2588d0cf28",
+     "size": 2331,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "33d14c6c4758a0a9d8febbcb43e193f0204ba25cf80c22718f203d11248a09e1",
+     "size": 78555,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "f6d040d94a3a476264c26cb3b6d260aa695784121667e6bff6690f56de558d41",
+     "size": 44939136,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "a63ccfd5c5816eb388057d188c525c7fff79f7df7d8c4464c956973a111556b7",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "6c63d21bd68801693ffc264ed0f15abef4902ac94c83be369b71b03237c73946",
+     "size": 409,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "929aba81c3515d7533cad2c639bb0a62035af4e3ee218af11321ef7b6beae3dc",
+     "size": 2331,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "2b30c28d70d0ad48efb57411efae9a74daf36d0212c613ad4106a02a83d6dcd4",
+     "size": 78555,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "531a31b977867a0a90a363222c8f5d70b5046ed680b07b53e4b9f094c929a9ce",
+     "size": 45135744,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "ae08094ddfae69af81cee20f1b89e35dc76f12b6f8d1eb04b045396736fa111f",
+     "size": 243,
+     "paths": [
+      "model_64.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c76b69d56361f8b6e4e10be14a8ad576c9a6b5407e4897becd3309e626c0dc97",
+     "size": 407,
+     "paths": [
+      "model_64.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "6bd2a8cd754484ebb5045bfe062db586bbd72ca1542046917e7598d4b473a283",
+     "size": 2326,
+     "paths": [
+      "model_64.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "419c314566e74e945ddfd8d44f24294e06cf9a8dff82290cbc2cc37e623baeb6",
+     "size": 78356,
+     "paths": [
+      "model_64.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "7c99e52283f3608571366bf4de06e81406245cb659fe0cdcea4f80d696530414",
+     "size": 44840832,
+     "paths": [
+      "model_64.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+     "size": 711396,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "all-minilm-l6-v2/onnx/fp32/485ad19c1cee",
+   "model": "all-minilm-l6-v2",
+   "source": "sentence-transformers/all-MiniLM-L6-v2@1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+   "backend": "onnx",
+   "variant": "fp32",
+   "quantization": "fp32",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "485ad19c1cee6fc0c9cfeb0cc9ca7fed60b8d90b19f9749616bb8628521af0ed",
+   "fingerprint": "66f46f85cf7e",
+   "produced": {
+    "converter": null,
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "43ea671f0ad8ed626ed62e99f17c14b6368e722623ae59f2b8891f2c9fb3c450",
+     "size": 1225,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "47d0c47a4c1dada685ea78198c690eb2e64cfd928bf4161318ac8028e2dace02",
+     "size": 90367671,
+     "paths": [
+      "model.onnx"
+     ]
+    },
+    {
+     "sha256": "dadfc780793d0a5deb805dbe75d6d1dfb6e734b67f501943098d151cdc423eb9",
+     "size": 178,
+     "paths": [
+      "onnx_gates.json"
+     ]
+    },
+    {
+     "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+     "size": 711396,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "bge-m3-zeroshot-v2.0-c/coreml/fp16/ed115f932671",
+   "model": "bge-m3-zeroshot-v2.0-c",
+   "source": "MoritzLaurer/bge-m3-zeroshot-v2.0-c@705510dfe0f35d223a4bf6f5d2695ec5fd162341",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512,
+    1024,
+    2048
+   ],
+   "chunks": 1,
+   "max_seq_len": 2048,
+   "layout": "separate",
+   "digest": "ed115f932671eae1d2f11f7a43a0df9c53c9833a914b7e2e8487b5c72ce1e0d4",
+   "fingerprint": "9fe86c85617d",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-12"
+   },
+   "files": [
+    {
+     "sha256": "463f93dcd7d650877b2b33e0f637d18bad16947b527857355a71d9c7092b4c57",
+     "size": 1910,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "32ff6d4dac5d8d8854875ff8fe9a3cca36303ff72d2b2083ae0351f020e8dbf1",
+     "size": 243,
+     "paths": [
+      "model_1024.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "dce2e36039a37d0f3c80c94c287ab9e513ad9c5d1abfd85b7d8258a92c85a693",
+     "size": 405,
+     "paths": [
+      "model_1024.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "675fe7d7436a130f5df364a459521cf4a29565c37fd40b9c9269e366e5000f90",
+     "size": 2301,
+     "paths": [
+      "model_1024.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "aa384cdedd0dc236edbeff669764a7bc46145a974d1f77ab3c560109e2fad710",
+     "size": 302011,
+     "paths": [
+      "model_1024.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "048a77cb0d71e7598f2a3d1967751c3bdd1baa92d7910c9f03238baa74407144",
+     "size": 1122949696,
+     "paths": [
+      "model_1024.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "7c3819fe218ddf58e069ca790bc28e1defe2b695ef849e7259c5f5efbf6c4903",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "b9b6c0382803e7c1355d85393b1f9661eb703777c280f015c5bfe2e566d4fc7e",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "becf9740b066851b397d8997efc47d69f3d997c04b12dd4c6b624ae63bbe98be",
+     "size": 2296,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "0ad3c938eaa391efc1df2102b94725671c2155d887ae760e8ab1a625583e3d37",
+     "size": 301291,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "cd5b68d81c1b55a9f723b5efba44eff5cbe17e24eed2ccb9f769834ea1f09b45",
+     "size": 1119279680,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "179a35a408228f646a05b64d3f4a6e59ff56adb3b30b5f8ff10af9e65b133ee7",
+     "size": 243,
+     "paths": [
+      "model_2048.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "bf747c3f306a04a051690fad2a2675746f74bf2dac5270bfee9687f8deeb04e3",
+     "size": 405,
+     "paths": [
+      "model_2048.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "81ce126d0ba4e74d39ee0dd4ff6cd7a2745534dda43c427aaccf1c4666a755bd",
+     "size": 2301,
+     "paths": [
+      "model_2048.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "98f7584fa309677e04e364440ef3cca2e3aea3c3a166e925674700c6cdf0c5e7",
+     "size": 302015,
+     "paths": [
+      "model_2048.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "85e940439abf1ea7505516cef01f06b14b85d59964d695eafbf1a2495a1843ec",
+     "size": 1127144000,
+     "paths": [
+      "model_2048.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "778a8cee90c9268e445fbe67ac5bfd5384905adf7c27fd4933c80b899ae16a5f",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "db6a0e17cea4e4134cb74f7a9c9ef98150b6e481eaca53c5c72474fff20ca779",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "0430eeb130ebb669e0141b32f0c09a9d864c783e1e15b53a47de5142a712de23",
+     "size": 2296,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "1a9d226663d7ebf249a6fadf900b92a637fe98fbbf4bff03dda93bd8edfb4e3f",
+     "size": 301295,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "039ef3b163cbec9cf4105913f9f4a3b2291f42ebb81159052ef5f509b371c613",
+     "size": 1119803968,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "cc0e0c54448b2aa6be5c94115f57ea20c8b83b28628ba55505c157be5f3a89c9",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "5f89fea58c8529d3a708f66e99efbab5e8d2a55bd4241dcbd2da46916c8890fe",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ed318abdc5f6151888cba0d5ebb9f899f714087662e969b58eb9285920adb315",
+     "size": 2296,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "91f9777c4662d9fc6851eeed7c2bb049a5f78b04a5ba9503dee36e518ca3fb4a",
+     "size": 301295,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "bcbee277786b35315f554d481f1a3074b745d12daa1718728f243c39ce3c151f",
+     "size": 1120852544,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790",
+     "size": 17082821,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-bge-m3-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-bge-m3-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-bge-m3-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "B",
+     "report": "coreml-x86_64-bge-m3-zeroshot-v2.0-c.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "bge-small-en-v1.5/coreml/fp16/31617b69cfec",
+   "model": "bge-small-en-v1.5",
+   "source": "BAAI/bge-small-en-v1.5@5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "31617b69cfecd19242a49b672832c4752da045c4d9cff13df17986287a059ec5",
+   "fingerprint": "ee77eb54ccf5",
+   "produced": {
+    "converter": "tools/convert_bge_small.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.7.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-07-16"
+   },
+   "files": [
+    {
+     "sha256": "7c753bb663df2c9c733c6e949ac1d1a493ac8ec9806feea2b946fbaa20c11e14",
+     "size": 973,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "1ab38bfc47c912e7733a8437f857d9c4a575795dcb7e529b329f82d2ddb0a794",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d057a8e7ad8b7099ac4743f176faacacd786dc6197280990c137e511041797ae",
+     "size": 408,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "47c28eb5958b79248121e5e16f662de44fff3a7f88ac397e3404970c0fd37166",
+     "size": 2269,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "dc633f3081e4601c33a8bdf56701e41c8de824268f5be77c36849f8fcb4e1939",
+     "size": 130180,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "9af1715d6440bc3b717a889f72be2f9dbdf8abbdf91b7dc347e15196ccc9c671",
+     "size": 66238848,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "f584bcd70f460047f0daf1c7f930ecaca375ac2d5a8b25c7492dc9413e7d800b",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c07bce49cf3d73726c9ac672e814ea08996678111929acff37a2c19e820ef4bf",
+     "size": 408,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d2edcd8e9fa0858d12ce14d952c463e09bfb0a872224729caf7c3b45ae8dcb2a",
+     "size": 2269,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "460cfe57c80ae0111c2b2152f61708bc5ea2d58310bbba9e39c75ecd6b747019",
+     "size": 130180,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "d10352b8d1bef344cb315a65815e9cdb41bcacfb56e5dbd61dbb556ce61e45e9",
+     "size": 66435456,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "78b5e5eb7ee5cfdc3424c905f27e8a911735d93cfbc5b5a6582f2c9754b60a41",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "93c10e90ad4928054b6f20350ad1caed17a4ca9cb5bef839f358a205e7489d54",
+     "size": 408,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c754ad0cf608d8e1dacb87e8c6c035deeed1a8bde96af65414d53d38bbc170be",
+     "size": 2269,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "efe823d9d7ef47743bb61aedf317666c07cbf53ea9c1664aecf07943dc007091",
+     "size": 130180,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "490e0c399953c30f77816f55289e905f081c46651ba353d90e7f6974804928a1",
+     "size": 66828672,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+     "size": 711396,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "A",
+     "report": "coreml-x86_64-bge-small.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "A",
+     "report": "coreml-x86_64-bge-small.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "bge-small-en-v1.5/onnx/fp32/fef2c0953bad",
+   "model": "bge-small-en-v1.5",
+   "source": "BAAI/bge-small-en-v1.5@5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+   "backend": "onnx",
+   "variant": "fp32",
+   "quantization": "fp32",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "fef2c0953badc97a0bf92707fa1d75d1e8541a777bfe53d04ce57c0cc4784501",
+   "fingerprint": "c8fd8219c99f",
+   "produced": {
+    "converter": "tools/convert_bge_small.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "7cddd9dc3b9c3f0035b7a5cf7028fe237abedccea0626c40fba0265cc130e11b",
+     "size": 545,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "b0e0dbfba1953982232c15db16223f50263e38dc819cf5450135772c6fb5466c",
+     "size": 133067771,
+     "paths": [
+      "model.onnx"
+     ]
+    },
+    {
+     "sha256": "347091cb447f3f48c2a6ad8fcab8a4a431b93cc2867dac2ddd9a16009081dcc6",
+     "size": 177,
+     "paths": [
+      "onnx_gates.json"
+     ]
+    },
+    {
+     "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+     "size": 711396,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "deberta-v3-base-zeroshot-v2.0-c/coreml/fp16/b66aba0819db",
+   "model": "deberta-v3-base-zeroshot-v2.0-c",
+   "source": "MoritzLaurer/deberta-v3-base-zeroshot-v2.0-c@bddf8c5411c34ac3565e16e04384fd68b2618dda",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "b66aba0819dbcb28ecaa008adf4f9b293325b250d4cf1871ea488e6ee41db181",
+   "fingerprint": "c09222f6c882",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "ac0002c91f1634a222deb52b3124a859258b4adb0f478127aea93477a0d6fd0c",
+     "size": 3401,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "755e5dc370306f2c8d5df35157397ce8b9034b7f96d4ef95aded5c879ba22c2f",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "bf9d8d90cf35959663923c7f709be2689dcc56d3be09575e98028910f9a10157",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2547de3aa0413e1d666621d2c3b682b514e69c27217b84d68f0062d055dcc856",
+     "size": 2272,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "e050d9c7bcc6ac8db66968430c1fbd77e8ee44df4e0b3983d686c99f69fd57ed",
+     "size": 339197,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "e130bf6b713b46a3f0ab7fee3f06db1c9d2d64ea7ea836e4fe2dee64b8eb22f9",
+     "size": 377472448,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "10c9c5d0cffb400c28d288bddcc235622ef09531585f3a4f80b4d3e02c8c3a3b",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d685da4761da1d0372e4e9881710f0a854f5674c9413b0b749372b9d8f45ad52",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f433cb9f5a10df88d718ac9322f74154687f3c2236da932133399c5edcf87c42",
+     "size": 2272,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "478ac8bf67689c8005377e7d564d62f7bb43fb4d32e86847b24e9f949fe12e08",
+     "size": 683485,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "b2eba3d2ecb880646cf155a0480c4429cfb4d640999bda2a300dbc42321f044c",
+     "size": 386909632,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "0459d16d0926fbd50d07e6ea8148cab1f2201f10614dbd13130fea8777e7ebfe",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "95459f89db018c7217bc10ed4a2668dc9eeabe002494197ea9118cfaba40696f",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ee13d5f4c9df7a9c0711d29bec8c9b1cf1eca58482965035378a44b90020059d",
+     "size": 2272,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "4a24a9b6bf7c28fd3fd3ae781c6ebf4550d3feaa9e0535474151e644f19ab282",
+     "size": 2060117,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "fed08ea566fc7e28aeffb109d42f0bf1556bc43e8599fe7009051ee9171e043b",
+     "size": 405784000,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "05402ffae6dd382a8491b1d29bfc139bec5d332662e86a026f433ce54c25c202",
+     "size": 8656646,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-deberta-v3-base-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-deberta-v3-base-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "D",
+     "report": "coreml-arm64-deberta-v3-base-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "F",
+     "report": "coreml-x86_64-deberta-v3-base-zeroshot-v2.0-c.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "deberta-v3-large-zeroshot-v2.0-c/coreml/fp16/168a23f0f23e",
+   "model": "deberta-v3-large-zeroshot-v2.0-c",
+   "source": "MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c@b2730f16019076bb0009481121efbe4705e0e378",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "168a23f0f23e79bccf2a06f5924bafb94d5ee965f71cdb6480f2f661edd06a96",
+   "fingerprint": "6bb85c51bc86",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-12"
+   },
+   "files": [
+    {
+     "sha256": "4a19492489729f1d2ac6fa5b4dda20a4ec64b08bebc297eb4b08758cefafc9ad",
+     "size": 3424,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "8b2e959915db817e2c2c2db832141264a61ed8a5f7eef0ad16cd28ec1813677a",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f6a19cd32dbaf7016a71dbc5481114ba4d27bf46e267fd7cccaf45941f6c72a0",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "b0b8efe649b2d0c6d3c454c9315a1d81ab6f17a6cbb5cbae19bae062e0cfbb7b",
+     "size": 2276,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "0f26ae0a07dc4e4e2862790fa87264670becc4b7c1d3744baadb2914efd8b2c9",
+     "size": 558432,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "d713a73a5406e41496e9da06b651b0470e9acf0c822fa2a6d20ad551b16ee775",
+     "size": 894170560,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "37c9576592ad04fbcc3aa7f1cb72342073d071564597fd38260496e7e6c65446",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "cd9aef4b9af453e64785c42bcf871801c70d8009dcda69fbddeddd21e42e050e",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "4a6ee37786ae8923cfe6a74abda317ae00ee8d5558ae121dc8dd9ea25c797850",
+     "size": 2276,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "1a6ad8b21b2ac5838be694355c4a62d028bf910b10f48548fc104b8b9122857e",
+     "size": 902816,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "9c5f444ab1eb0cb6091817876dd6641df85008685e3ef42305b4a62ec0c29079",
+     "size": 919336384,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "572ee4751325545fc5e7a798c32a947c2e0e8f8c730c6894e3d81c221968e6a9",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "4d210f42b31c966e1252d92fc52eb43a79af4dc6327c0188279cd357fb36cd56",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d4ccc356af095f63f5ed1cbe8293702fbae1cfed16ffb96974a00f4fc3d7b21c",
+     "size": 2276,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "0734e2aa0df32b6c716c907ebca56d471e1bfa29b70f398709b0cf00ead87aa7",
+     "size": 2279568,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "08fa0dc35a05f36a986268afe7bfc44139167f400328a5a4b0b9676d29607ea5",
+     "size": 969668032,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "05402ffae6dd382a8491b1d29bfc139bec5d332662e86a026f433ce54c25c202",
+     "size": 8656646,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-deberta-v3-large-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-deberta-v3-large-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "C",
+     "report": "coreml-arm64-deberta-v3-large-zeroshot-v2.0-c.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "embeddinggemma-2/coreml/fp16/2d739ba90677",
+   "model": "embeddinggemma-2",
+   "source": "google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512,
+    1024,
+    2048
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "2d739ba906778f571e6aecb97c889f33bec72aeaa2d3b3e6424a4a0ea31f6d23",
+   "fingerprint": "3510820266ad",
+   "produced": {
+    "converter": "tools/convert_embeddinggemma2.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "66bc3bb030db1013e8c8ff5a05e6a20cec24a3044928a7a81b70695dcb813088",
+     "size": 5030,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "e06706925f98d525581e5fc520974e036bb88985b0d964f83fa2e9ccff58fc36",
+     "size": 243,
+     "paths": [
+      "model_1024.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c28bdc15f2a3e3ae00181f9e9705e6b5bef63a5a120850929431a6f13e28f331",
+     "size": 409,
+     "paths": [
+      "model_1024.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ad6934ee263bcc50ab6128849c89d07787f9a01cf625e97220a0ea98f910c701",
+     "size": 2498,
+     "paths": [
+      "model_1024.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "794299bf4c3549592fd87dc2b8cc6e4014ba63167191d88210f445e3ee160491",
+     "size": 830253,
+     "paths": [
+      "model_1024.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "03f7382c38ed44b6eb2505362633dcf92ddb409482ef2cdf7e0e413241ff2411",
+     "size": 550442048,
+     "paths": [
+      "model_1024.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "dfc822d732696e9e9373de66b3d2f9b86f4c9acec64d2e46108579a6d077227c",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "a7414803eb1d64282a1e7833950cc01b8e622ff69b8431065aa69afa5bb50cc5",
+     "size": 409,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "eb7aa7cd35e88ff8593d28e48b9743dacca236f7b13c3567f0121fe63398dbfb",
+     "size": 2493,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "b2019d5dffcb2f317fc3959c0bec5a7e9788cf37e8d72e6870761a63e207d4f4",
+     "size": 827178,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "93fe43e318405a0bcf7b50897f6d0341d80ad1309dd7216ca69a3360015afdb8",
+     "size": 542872640,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "0932e17c939c4a6d57cf3b5da7c67a9cba4e59a36354e5034fa47c031b89803b",
+     "size": 243,
+     "paths": [
+      "model_2048.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c73345f1505a5735fbee8b0a8744caccea8a83d4f16473dbd2c6bfcbb891deaf",
+     "size": 409,
+     "paths": [
+      "model_2048.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "bba375c4913cfdf991de2dcb8bf9bce868a5db9377356bfcb8d74b3a1dcf425f",
+     "size": 2498,
+     "paths": [
+      "model_2048.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "a72dba086ad77c765395aa0ddabd203300e2c2cc79b567c775153958fc586f37",
+     "size": 830253,
+     "paths": [
+      "model_2048.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "65dbaf25f50143ce85a87c99a6e5e696fd573c31a3a92df5ef47b90e45e2fdf8",
+     "size": 563024960,
+     "paths": [
+      "model_2048.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "a363da5dde384d7ef8d75ceaa1478800be46d359fbb2198b27bf80df3015d14c",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "bf25998ca07f2da841154eedc3fb81a4ae1e170645e9d00a7cc3a0c1248dd259",
+     "size": 409,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "14668e514084021e87d322a56f94f91835a7b187065a32254d09bff232966ceb",
+     "size": 2493,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "b7f83d2fb47ac13457efe8337eefe730449a79b2d22c5b017efb4dc9e40292f4",
+     "size": 827179,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "8c6e4b86f5c163bc180c2ca4f08392b759ecde74af89e11fa176cb5479db932f",
+     "size": 543757376,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "90224827e2d494cf6b9b7bdf418e25cbaf6138f3ec3f1643ae83936e8649cbba",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "489dc23e5646dc784ea637e5abb665a4ac65a2df3d0d3573c9c4a0fdd3dbdf13",
+     "size": 409,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "7e245de298b09ad24fa96f0cdc369b79232522e20de4335954ab8946381face4",
+     "size": 2493,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "95c4eb5c427a0688e53faa0b24d9aa08dcc1191288204481d1e8957bbe0a79c9",
+     "size": 827179,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "62e1f1bdd29724215f10315edd1f55ceab0760c3a5a8ba36e4c622e525bd4de4",
+     "size": 545723456,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4",
+     "size": 32170510,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-embeddinggemma-2.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-embeddinggemma-2.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-embeddinggemma-2.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "embeddinggemma-2/onnx/fp32/5d7edcb25f63",
+   "model": "embeddinggemma-2",
+   "source": "google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b",
+   "backend": "onnx",
+   "variant": "fp32",
+   "quantization": "fp32",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "5d7edcb25f63bc4d47f7de3aaf293fbe5917fa24e83483ea5dcf504ab8763a18",
+   "fingerprint": "1a997574c002",
+   "produced": {
+    "converter": "tools/convert_embeddinggemma2.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "c5b5ec34202a529b475767494efe3ec948a98410ed8a50d1c86afd8b55eb4967",
+     "size": 674,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "e1117ed73f6f483410e37b0ccacd6757dd3d67f2ff086deec42c98f01791ee75",
+     "size": 1085488182,
+     "paths": [
+      "model.onnx"
+     ]
+    },
+    {
+     "sha256": "1fec870425b47fa510b364a43dafd850514a9894aa864e04e064277a4009b420",
+     "size": 177,
+     "paths": [
+      "onnx_gates.json"
+     ]
+    },
+    {
+     "sha256": "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4",
+     "size": 32170510,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "embeddinggemma-300m/coreml/fp16/ce5e791524dc",
+   "model": "embeddinggemma-300m",
+   "source": "google/embeddinggemma-300m@57c266a740f537b4dc058e1b0cda161fd15afa75",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "ce5e791524dc26c3f1814a93f29c17e953de762fd280f379a19042c039733f93",
+   "fingerprint": "8870c14bb6ce",
+   "produced": {
+    "converter": "tools/convert_embeddinggemma.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-09-28"
+   },
+   "files": [
+    {
+     "sha256": "2d0a40061e98f8de23735ebae634fca4a965b90c51028b50da3af3dde360e650",
+     "size": 1289,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "0f6a74dec191473034c98e8f37365dffc6bc506e01c7b3a504e1ad3721ce5d83",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d8adbff921eac943fd8c3c2576fdb6ee74637e38895276e34f149213d05f49fb",
+     "size": 410,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "65a45419639b51d76f78332423907e10e79f02c0e013b0532008c18282757dc7",
+     "size": 2461,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "a8b879170a5bfbefb592d386d5d6b9c3145c104d812211484f813715fa92c08b",
+     "size": 619439,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "cfb234e175b91e00bb1c7f3ce2e7c019c2e1fdf7147736756b7bd6fa6a9658bc",
+     "size": 615489664,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "9b8cd70d3e53b29469ec2d91532802b44a5da7637d1fc69365a2ef0a02eb5244",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "b2ce0dfd4860d6247beb73e62a5b7324d483250a75a58d099241a4c0a749531c",
+     "size": 410,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c733fb3fd5760ccd9dd376e90e0420987b5f5738500695542585427f1a9a907f",
+     "size": 2461,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "e0ffc9c29cd7023687a1c5c632b289bfcf1fe5551ec878fae55c617c8e014609",
+     "size": 619440,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "da8053c1506736aabc154851d9233928a48b511ab2352df88ec3edea84979964",
+     "size": 615850112,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "5fb43dba2973bc2fdeec8e54c2cde0e2f909bee2c38b798aa930d11b54e15e87",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "8ada6b42e1db4c514fd44aee52a84b2b6408e475fb4a43e54aa3c0d370c9bed8",
+     "size": 410,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f97ca1d5a997f85473d168658e50abe7d14c87822fb1f60551f465935f2a1694",
+     "size": 2461,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "106cdbb55be519efaa404cc77a3e0b50f73d3b0b4e0a125cb8efd43e745c62b8",
+     "size": 619440,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "3e5515b142054beffa383bf6acce65a084e5f7c1dd8b50ff0c724d6db8bdcfc9",
+     "size": 616767616,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "6852f8d561078cc0cebe70ca03c5bfdd0d60a45f9d2e0e1e4cc05b68e9ec329e",
+     "size": 33385008,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "embeddinggemma-300m/onnx/fp32/1660ddd66e01",
+   "model": "embeddinggemma-300m",
+   "source": "google/embeddinggemma-300m@57c266a740f537b4dc058e1b0cda161fd15afa75",
+   "backend": "onnx",
+   "variant": "fp32",
+   "quantization": "fp32",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "1660ddd66e010dbeba5620c043cad0326d7aa38149338e986f3074d443e80cb8",
+   "fingerprint": "09b3fb9c9936",
+   "produced": {
+    "converter": "tools/convert_embeddinggemma.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "c91f7132dd488a3461a973e894fe0c016672c5f6df063366613fcf6820fd0c65",
+     "size": 618,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "fad2e0b02942b7bb2f68800da60a8239ddd2c58e6bafa2b659060d759888ed8a",
+     "size": 1231295317,
+     "paths": [
+      "model.onnx"
+     ]
+    },
+    {
+     "sha256": "786cab3fc27209cf6c52ef37fc9520d341c68b31d2b22caef9afba2d13f650e2",
+     "size": 177,
+     "paths": [
+      "onnx_gates.json"
+     ]
+    },
+    {
+     "sha256": "6852f8d561078cc0cebe70ca03c5bfdd0d60a45f9d2e0e1e4cc05b68e9ec329e",
+     "size": 33385008,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "f2llm-v2-160m/coreml/fp16/a359769723eb",
+   "model": "f2llm-v2-160m",
+   "source": "codefuse-ai/F2LLM-v2-160M@4ffe22c31406fc321b65a05b15563d38275ee51f",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "a359769723eb92622449c8d2df18fa78cb55da78115450bd43f4f456fa6fb774",
+   "fingerprint": "bd1c17519e9d",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "725305db2bac6c5fccc278988c6aafead519800c5dce58f8e03a039386bd03de",
+     "size": 3301,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "180ec52fdb817f2ed383697fd393df1610bb7ccf131136622d9caf27935a26cd",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "501770e3fbf0d40d6fca87047570246cf584a8bb01a9862c29d1506631e9eba1",
+     "size": 409,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "1e5bb10486251f42b3db7af8d276fd5fc6dbaa7a41f60f67881fae0743c9bf43",
+     "size": 2524,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "31b95ba7fe559bafc2bde0b63b6564da18f43d4c4994a9f348bcdc04f0eec2a4",
+     "size": 210455,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "534a3d969cce55ce34847c5a30e1fa391458de4c73bad7b71143e5c49e3ce30f",
+     "size": 318485824,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "3dcb2342fa0809bb564659ebda4c37c625b236cadd14f2e3cab117f2bad50202",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "0ec75a86b73c83fa2eaa52642505d82f84009dbdd61388ddc3c3fd7ae2864ab0",
+     "size": 409,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "dfcfa11f742ab512a030aab6c523d6986f2db17e0b9277fe870b07441857a5ef",
+     "size": 2524,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "c799bc8c71b62fe26ac16d6d9927dd16e213bc606fdf28cee57cd1bc0378f112",
+     "size": 210455,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "960bc9fc49b0b994e4aa032223f8beb2a570b0b83a6f1becd5f789b126fdaef9",
+     "size": 318649664,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "f98d85d7201457c9aae72588825ca1239155e0b6d0e5f8b708d06a77c9a21ae3",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "30c72274ef8741b277a68cf84c8275ba426518757e3301bfa9b0cf5970d7d73d",
+     "size": 409,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "24d0547c834c3a93a4aca901a22b8abe774692e734318c3611af6d0a961af804",
+     "size": 2524,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "8749551da2183695da0cd4ec3476a7b402c79f353255bc537f9e41804efd5809",
+     "size": 210455,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "72659554238e43aee0176bd2eb2c4a7bc9002ec542f32ea5e9cf45bc8ea5af62",
+     "size": 319173952,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "7e295e5bb91a3d35335f92fa4294a6e4e0ab4aa586db853e14312a62135bfddc",
+     "size": 8399930,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "f2llm-v2-160m/coreml/fp16/e2ab3af6771f",
+   "model": "f2llm-v2-160m",
+   "source": "codefuse-ai/F2LLM-v2-160M@4ffe22c31406fc321b65a05b15563d38275ee51f",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "e2ab3af6771fecf931984e533917e26c6c81a883d95fa89b0b7acc7b796c38a6",
+   "fingerprint": "96a10fc8e653",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-09-28"
+   },
+   "files": [
+    {
+     "sha256": "8d449115858a0bed2efae0ca7d9d34048ea96354657651cc8e97f26ff43d0205",
+     "size": 1343,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "49e745e56dca0f9d6d174eb534a1378ac1d8b9b9f993dbc2c8ea7cf6b95e326c",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "67553ca8b4973be4b4f2eae1453b070cf7ca2c495714314996c098b6432cadb3",
+     "size": 409,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "7f8d59c5987eb8f8193b9bb48c1245aa38770647d80acea83e9156614c00314c",
+     "size": 2450,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "56e429ccceb113cda3ded914d29af6b16ff6c360fd18a804513985cd029e59f6",
+     "size": 199110,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "303364977dab4b4907926943c769e8a983ea7cd13269481848214fc81546fa92",
+     "size": 318485824,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "174c1dde825cc8e96ac0284ef19b61f51887bac1f022bb7a5ff9f47259e9f5c0",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "05baf638497f4534dbc13e0f7da37d6ccfdebb6470a41846df79bda7e588e8e0",
+     "size": 409,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d62b89cdfd4a70776b0df4f3e6ccac09133dc013224e1022b495535b6a54f389",
+     "size": 2450,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "7101c98f52076d1914c14e3ca8e4162c9ba009482317abc48111ee6606bce89f",
+     "size": 199110,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "77f3d5c692c72c2d6842a760e0176d944c67b2cfbb07b1f3d1e6a6b3bd56c41b",
+     "size": 318649664,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "cd53ea6d660d6a90ed53cee1cd9968e9c15c4a9bc7b92e439ae722e7d1a1bf81",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "b89bdf3cbbd1b6d6179b22d143bea59cfb134dd3d8335ce7777b036c9230736e",
+     "size": 409,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "96264d9fff3d9609eb7882654b2984540b74128cbca34440120aa5302054bca5",
+     "size": 2450,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "5e6baa4f9bdc9f5d0bbc1f7fcb5a0c36a24aec0b1860fc538bc76255098d1163",
+     "size": 199110,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "f756cdedf3c061215e8434ffa368e7445756671383bdf0fe2fb31978b179c3ef",
+     "size": 319173952,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "7e295e5bb91a3d35335f92fa4294a6e4e0ab4aa586db853e14312a62135bfddc",
+     "size": 8399930,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "f2llm-v2-160m/onnx/fp32/8a2a464958b6",
+   "model": "f2llm-v2-160m",
+   "source": "codefuse-ai/F2LLM-v2-160M@4ffe22c31406fc321b65a05b15563d38275ee51f",
+   "backend": "onnx",
+   "variant": "fp32",
+   "quantization": "fp32",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "8a2a464958b6f9f2bee3e34db6ecf5dc95935a54addd0b7d4309767e007d1fa1",
+   "fingerprint": "9c884aa5d79f",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "61792ceb80dccb63cd88c06645bf414140daa55d089df73a6f005649020c7095",
+     "size": 587,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "c41644a7a9e30ce1f260d35f2beec45153457b4e3e1011106c67363a3f82ac6a",
+     "size": 637056080,
+     "paths": [
+      "model.onnx"
+     ]
+    },
+    {
+     "sha256": "5855764405475b2f70cd7480e095b4decadcb2343de9957715e3a5892c78cd02",
+     "size": 176,
+     "paths": [
+      "onnx_gates.json"
+     ]
+    },
+    {
+     "sha256": "7e295e5bb91a3d35335f92fa4294a6e4e0ab4aa586db853e14312a62135bfddc",
+     "size": 8399930,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "gte-modernbert-base/coreml/fp16/362b9ff0ba18",
+   "model": "gte-modernbert-base",
+   "source": "Alibaba-NLP/gte-modernbert-base@e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "362b9ff0ba18fe7300e73628297e3076de0fc4348a99c4e6b73aa3fea48da5f3",
+   "fingerprint": "eba4fc0857b9",
+   "produced": {
+    "converter": "tools/convert_gte_modernbert.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "9c21c7a034d6d361567265b25b0b51757f597937ac808259a9a7c2d38cb74bac",
+     "size": 3524,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "b253bfdd318e9673515d541dfaebc26c5b595dc8f3866954af39f99faeed6789",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "778f0eddddc6755128be614e2b2a130ec3c14a954bb16101a97ea3fd6d8ec918",
+     "size": 409,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ddf3e7986b73bd02ba3793925653f093b3436d6966188359a5f9b81697428351",
+     "size": 2373,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "16af6aba4cc658369a99cb8c0c7dd7e8d7dbaa3c7ddf5053c276b88d4f13a4e2",
+     "size": 369760,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "9db467262153e3f994b962cabe0aa5ce86e2d7ab52b5881cc9d093ab24680b2d",
+     "size": 298109248,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "d16c896948212edb983a272bd6e5372ae8754085252d1eb0a8db6393a9e13904",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "dde45a7e7fbf30324c7a7e35f32b2875657c8c4eaa2661f50e6753c1a73e0e4a",
+     "size": 409,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "366050f4f8db81a158ee027ed2a78646bfd6b993cde712d79dc6ec2ecf8b63d1",
+     "size": 2373,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "07c884b5d7002a25e5bc9b4cb0f328e15d66c65a024265014b5cacdc7702659a",
+     "size": 681440,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "6d640494f9a02129313f951041578b708360c8bbad9a7ddf4a0419a26c800abf",
+     "size": 298174784,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "0fabefb0a83b7867c9377eafd62a4643ae1b7665255d6d721a6edf68381f2acc",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "462f539b3c868c9e5902d060028c3c7090797ffd6a1f9fa9c1cc6f97a9c2c344",
+     "size": 409,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d839c6569442c15486a3b1a55c60a4d1617ba4b48963870760ce572645ad814a",
+     "size": 2373,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "ac4f31e5287d6e3f390b6f199ded4c8d76fca110266d435e0c9f76af3103e92a",
+     "size": 1894624,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "0488b2d1b8560403287506ea7c7df52b80eefd97eb6a4a91187b0b6c11ce83fc",
+     "size": 298305856,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30",
+     "size": 3583228,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "gte-modernbert-base/onnx/fp32/bdd40d45318d",
+   "model": "gte-modernbert-base",
+   "source": "Alibaba-NLP/gte-modernbert-base@e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+   "backend": "onnx",
+   "variant": "fp32",
+   "quantization": "fp32",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "bdd40d45318d05b2ac59ac315bd143042b1cf02ea8af7f19fa0abddfca7e0cc1",
+   "fingerprint": "dd1cbda61fd6",
+   "produced": {
+    "converter": "tools/convert_gte_modernbert.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "508cc744ab46c5fe724f6cae53195f172075d1a743f1f2458b7bd5cc4557ed5d",
+     "size": 453,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "c167bc055e201be46509d65a718c49d9b7f0cf4177682ee98361ab214f7babf5",
+     "size": 596568401,
+     "paths": [
+      "model.onnx"
+     ]
+    },
+    {
+     "sha256": "3bc7e27865ee7ecba5e8d55202e47fecd6734ad69fe658cad8811c5364da55df",
+     "size": 177,
+     "paths": [
+      "onnx_gates.json"
+     ]
+    },
+    {
+     "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30",
+     "size": 3583228,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "laya-typed-decisions/coreml/fp16/7618876e7c10",
+   "model": "laya-typed-decisions",
+   "source": "convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512,
+    1024
+   ],
+   "chunks": 1,
+   "max_seq_len": 1024,
+   "layout": "separate",
+   "digest": "7618876e7c10015252eae1dc5202b32ee9115d98cc506d50fa79b299e3548c1a",
+   "fingerprint": "3aa032691223",
+   "produced": {
+    "converter": "tools/convert_laya.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-02"
+   },
+   "files": [
+    {
+     "sha256": "d16ddfdcef4d5156177c23a7661f76faba6938b4964d5e2c4b3d9825f54687a8",
+     "size": 3120,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "8df266345f69e37136ff53dc1c4c75e5b2b99d4a3d759b17db24f64e3b7a641b",
+     "size": 243,
+     "paths": [
+      "model_1024.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "fd92d5ff3abed2f026496a17dbb283aea32d08a036d9972cd30631dafab52ac6",
+     "size": 451,
+     "paths": [
+      "model_1024.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "7f48c7d0e4508a7345209ff7f275b751c9b732cbd8eb10dafadb85e2007bc308",
+     "size": 3121,
+     "paths": [
+      "model_1024.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "e72698b176a00597c46ee0316ea27dbf1ae1ffb6d2f34ebff0f35f655b02042a",
+     "size": 14512507,
+     "paths": [
+      "model_1024.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "fdd1a4589abe39723c0a57e725e11dc75c646290a0569602b8f0c81f5731a40e",
+     "size": 842620224,
+     "paths": [
+      "model_1024.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "5b47dc7e56e79e31d68d52fd428959822ded4d752e074e30d3a685333426b653",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "362133c5ff33a109f6a8075035841e85aa09443ae920c4f0ae46e92bb278432f",
+     "size": 451,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d2f435110584104e4d19da3bd10bc779c05b9fc6215084985ac5409b2a7f9839",
+     "size": 3085,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "54e84ea433d4ac33b96170344cf4304fef2ffaebc748ae5b62259d1ebee591b2",
+     "size": 689907,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "da2657164371de94f57eca5054224883115af8084dae66c719b99b408c777a28",
+     "size": 842157888,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "0a4f054bf883299a0a49f3f3d93800d45350cc1dbb01374653ab08853d7aa073",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "3df195a6c5829dfb0e1dbc055bffb00beb2f7532875ca6ccd316303467ed45d4",
+     "size": 451,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2839b8e774a3e4c8fe497ed4de014db369e1e4ade744526361de13a3d9e56ae2",
+     "size": 3114,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "ef5cf87812b312f73e01b87deb93b7587ecdade531e583ad45815a8ba799433f",
+     "size": 1402466,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "0de6632c46f8aa561adb5c33400ca38cf72f8933e76c39e7d12d93c1395fa084",
+     "size": 842223936,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "9af8fb7d6a07fcefe53d4fc1ec1536a89f9a0bdc4b68372ac3eb90994a08cec5",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "02ef79d838da5f01f32f1bbd8f0f8ed206ce98d0f0603b1e4b52f6c9ed0e31fc",
+     "size": 451,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "881b44e8ae4ae37720af2b0d612c1cbf73ed0dbd8c14f3fa2df999b6c3a13c1e",
+     "size": 3115,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "f5ff8827ee0fd8f19c1fdffc1429bf9279e3471cb74ca7c4ad91344d43f5f6ec",
+     "size": 4067367,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "443fb1737c3fbc6d16064ec0939a83072099673d5651c0ec7d33a0581c298d93",
+     "size": 842356032,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30",
+     "size": 3583228,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "F",
+     "report": "coreml-x86_64-laya-typed-decisions.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "lfm2.5-embedding-350m/coreml/fp16/3e8d6c5dc276",
+   "model": "lfm2.5-embedding-350m",
+   "source": "LiquidAI/LFM2.5-Embedding-350M@f35ae2c91d687658dbf1f2b449382f0b019b9808",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "3e8d6c5dc2769d6101f2207a970b137da16e297235c3efb4eeeab4d522ecc1bf",
+   "fingerprint": "f8c35d9e0d61",
+   "produced": {
+    "converter": "tools/convert_lfm25_embedding.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-09-28"
+   },
+   "files": [
+    {
+     "sha256": "50e66700861bfa3e50ec1f97c6f7920d52bb139e3d4a5058cbdfc1745ca2145d",
+     "size": 1193,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "2de96fd951e882c0dd7eb03462ab2cae5ca2bca76643a41d29429c4051d1e30d",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "4739733ad7da7f0b6351ad35b3d5c2f610dd33e24b725a9621be5a460fadd3b3",
+     "size": 409,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "692bd7377ab524f5e48865bf4ea14bdefd9ca9a08be037f5fd9d4c715a62dfca",
+     "size": 2517,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "453db81a27f6c48b020afa415e2d12e71cad9c6041b70d1335aaa91a4b8bcf04",
+     "size": 245451,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "bda3000565f8c3f90c6d8f4c98f9047c88982eb407017e1335ef065655967091",
+     "size": 709029056,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "02dfada9c86778f06ead88db3800fd4e5e3803788881e516f168aaec0bf16127",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "09906733ffd33fa94313f9ae85229d3a30a913657adf29f4e653805ff701b557",
+     "size": 409,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f75e6cf1ac58c1dfc4b3dbee76112f833fae6a1b61ce67e6aa73b051d31c448f",
+     "size": 2517,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "8d398e03b49770bc70dc1b86b69e8486202a59fea6d3b3ca442f263f7c242deb",
+     "size": 245451,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "df85dd9debf665e3d141c13c8740a007bbbc19019fe04ec890d62d4647f80b89",
+     "size": 709061824,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "ad434ea2d9d63604aeb82183af41ae91c2533195d654a68887d7a1d10c1b7877",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "5c2df016abeaa992dcd3bcd51448cb3e1c5a7ab4bcf3e93c642998d60944feee",
+     "size": 409,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "7eb89266e245941fc4bd47e4bca52151f4ca87d4f1f1ba40095b1e24a473128b",
+     "size": 2517,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "a5abfb42baa25dd78c60d419d5b159b6cb06c7b8137309718163a3ad5b6519dc",
+     "size": 245451,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "d91a4abdb9082bde88bff040729d5b06a1f6396bde0c3902ac540d01a080286c",
+     "size": 709127360,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "eb89449ddea8caaff6bcefc4993f30da173f3f1c6f30ad96bc964863f692f1cf",
+     "size": 4733275,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "lumma-fev-0.1b/coreml/fp16/dc7b22606d68",
+   "model": "lumma-fev-0.1b",
+   "source": "FrontiersMind/Lumma-fev-0.1b@085f4705aa860a6404d6cc3ff17de8a2969ac0f4",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512,
+    1024,
+    2048
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "dc7b22606d6856187cbebec2ce36ded7bec12a808ccd5aefb4333dc4f3180a80",
+   "fingerprint": "d17afe182074",
+   "produced": {
+    "converter": null,
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "0cd73c0ff9a3d35916ca21a7904d3da3572205414a746b63f72d54c5c541d644",
+     "size": 5384,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "7090a69895ec7f238b8d396ad7665f05f4fdea8008dc36d5730da8cb39fac901",
+     "size": 243,
+     "paths": [
+      "model_1024.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "5ffb01772de3db64773b024ba3ca71592bef73b10c84c04df6850e037d520e21",
+     "size": 456,
+     "paths": [
+      "model_1024.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "936ce62df3b6718895281a7fb8ba35a9c797dd12cf0bccd13dc6f2a5f26f70e4",
+     "size": 3169,
+     "paths": [
+      "model_1024.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "c5b31ec41f1e95acc05dc40997d0d48e76952e7ab3c9c5d88c1506b30bb4b1ab",
+     "size": 8346496,
+     "paths": [
+      "model_1024.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "8379cd296e01ef91fad8777d46bdeb6d6b0dd971cb519ce5ee1a338db126eec8",
+     "size": 476934592,
+     "paths": [
+      "model_1024.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "b1b653695533e8f07d7d5e9482b5822fe1ea435206f8971351f2e47a95f32cf4",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "5fc2b4c54c8b4a51152db4167bac39ae51658163d6c2dbe61e28fabc07384cbb",
+     "size": 456,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f0bd1353917c905fe59f5e2643b178afc78ded3ff432c8041862f6e2f0c99fac",
+     "size": 3134,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "95f4454fd7bfa76c6361219a05d67387ac67e230a8bba2a099de2c09add310c4",
+     "size": 814023,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "00cb095f3bd541ed4dc1efb59c15cf152cfbd5c1e9a401db52b9c2c25c704ff9",
+     "size": 474680256,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "639ab41998c46a014d1225073364da131d5c5f6db88bd838fb6bc6a822d8fcab",
+     "size": 243,
+     "paths": [
+      "model_2048.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "9cf686fed2ff3da75dacebeb11aa8533abb0a434ffed84586cacadbd0ade29e7",
+     "size": 456,
+     "paths": [
+      "model_2048.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "69c8a28fc42aa81390ed1c68039fea7eb7e1604b761b6a80fc8a35cd562b3d22",
+     "size": 3169,
+     "paths": [
+      "model_2048.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "c346f839daf767ee3553f7649d5cfb8f5c13a03b69c61ec765073a8e442a6bee",
+     "size": 30692107,
+     "paths": [
+      "model_2048.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "5fb64cd20bfc6bfad34f0387898d7d3a1639df017924120b36708279828928f1",
+     "size": 483443136,
+     "paths": [
+      "model_2048.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "79022851742bb0bd2ad66f493d6d54fc795277305946b2ece4247579bbc29942",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2dad8a4dae4425f1d322b22d641ea5126ec76cba5982c7c18b2ad048d776f483",
+     "size": 456,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f6d7ee8b627b1622f42f086625e400c6ba0077b4df149cd9cf449635954f3a2a",
+     "size": 3162,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "89e53dba0785ac0e18f215141017bdf0f518cefc91e57850a17ddd184b5e0803",
+     "size": 1218760,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "226c80cabb3f1416e474a02f9cc3e28b539f6388f5eadca96d3d808f61086bbf",
+     "size": 474805696,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "6e9c69ec008aaac1b180b0b62658ad547f3060b56fbdefec84337b9f1f54e910",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "e7064eb2630bc11d555bafa2a6de9c0fc649350c708b7fca1e8bff05b4fbe4df",
+     "size": 456,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "57487611a8f1f08106fe4f39c9a3e3ab08766611ff37c01d984dd330d4cc1698",
+     "size": 3163,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "068da8d32d2e32ebba94ba0deb02ad88910e359b867b5e3fac4d4201f06bca89",
+     "size": 2675544,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "4c6014eec2d7bd37eae70432d529f2051e08ddd586f12709d57384d55f3ceb78",
+     "size": 475253184,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "dc858b896e5a8c86097420a23a90b8a0ad4d2ad23250e1fae99b89f525120c90",
+     "size": 12460256,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "A",
+     "report": "coreml-x86_64-lumma-fev-0.1b.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "modernbert-large-zeroshot-v2.0/coreml/fp16/f08c241503c0",
+   "model": "modernbert-large-zeroshot-v2.0",
+   "source": "MoritzLaurer/ModernBERT-large-zeroshot-v2.0@a51e07b524299e309dd2b88d48b0cfa2bd9ec598",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512,
+    1024,
+    2048
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "f08c241503c0a727a4f04952cdcf535fe1065edb5ecdf7a1d1b77a52538d0d8b",
+   "fingerprint": "e7368750e5ed",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "de1a9f9178112c781d5fd5202fec1d140943f7cf570816ee150fd4056f6cda6e",
+     "size": 5469,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "b3dccf66009bbe93e82df7ec76cf77bb911f4f987d538e4a85cbcf1d6467435d",
+     "size": 243,
+     "paths": [
+      "model_1024.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "52db7978c61096687c987ec3ec9c5315c89bc7c4967a002038e65c504cd9c55a",
+     "size": 405,
+     "paths": [
+      "model_1024.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2e62c9f8043db5bceae21feee56f90280320895144cef01065440e371eed10f6",
+     "size": 2397,
+     "paths": [
+      "model_1024.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "63fe8ae514f64735f05a2f44a8a96d71aacfccb403ff9578136b4361978fe765",
+     "size": 6757809,
+     "paths": [
+      "model_1024.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "b07331d6e98808c2241c95ae2e90fc85d2f28cb168d7dd441e709abf75e168a1",
+     "size": 792221248,
+     "paths": [
+      "model_1024.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "01ef8531dc7028837bbb344edcf6e6e273fab4877f0efa88c498c6ece19adb6c",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "b9b6c0382803e7c1355d85393b1f9661eb703777c280f015c5bfe2e566d4fc7e",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d260dca9d600715560ccb28b11624c30f6868ec83d0ef29d4d9bba937e8b6697",
+     "size": 2392,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "2d480a9a9a18c8ddb5bdb9a6f99a9a3d15f16cfff04e33f852bcd83477098aa9",
+     "size": 445989,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "c6b4003e944523ed1d8047156818a50e72d46fcf36eb981daeffc2554ceb9201",
+     "size": 791762496,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "dca704e4295b7a8fc51585eca44718b33e010b61f4759ccb339edb612ceced80",
+     "size": 243,
+     "paths": [
+      "model_2048.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "bf747c3f306a04a051690fad2a2675746f74bf2dac5270bfee9687f8deeb04e3",
+     "size": 405,
+     "paths": [
+      "model_2048.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "50d9bc2baf5047e93148a7dd5b78caa416f330394f8efec2ea82d12c6242b9d4",
+     "size": 2397,
+     "paths": [
+      "model_2048.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "6ef7141280f575627e17d8f16a2827dd9d7cb7e312b95f4e38aefb76db0ec5c4",
+     "size": 25766321,
+     "paths": [
+      "model_2048.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "3803fc9d2d0d8e935561b70ca902129a47cff3944ac9764b520eef61ccd33446",
+     "size": 792745536,
+     "paths": [
+      "model_2048.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "2685ec381b6f65aaed20dc6401263bb2706735632eb6dc66b114abde8f793a47",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "22910ccb24fb3de11dcfa23aaebd0d50f6637d0abda0876b5e6e81552a67746c",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "697d6a21a66a73261c2da186b276c339b30853286ec6e456a39ad43e448ed21c",
+     "size": 2392,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "25c90547b1fea1ac14c5bfd43f3a4fd450941722f398fe40a50c306cc29c4bf0",
+     "size": 757669,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "b93d0b2036b64eee82f0e74ef1ba18d60d4cbc83243c129060acaad3b9866c9e",
+     "size": 791828032,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "97184ffc3a8992f611c8b17d3a9d6ea1b877595660eb15e20eac12772ab742a2",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c05be00658ae1ab8db056de4966898b8a345530162c12baf44070701ab92aba1",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "60849c7db3c386384c2a8492aeddad8d48e7df4b3b0bd5221dce4935c7092a9e",
+     "size": 2392,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "a53145f4611546529146c787528858a83cf2c009663b8e8995f3361a4143d814",
+     "size": 1970853,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "b66fca08c563f21dbb8dc582429d86840d1c879c8fcf0fc93d6f7b70eb6db06f",
+     "size": 791959104,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30",
+     "size": 3583228,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-modernbert-large-zeroshot-v2.0.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "B",
+     "report": "coreml-arm64-modernbert-large-zeroshot-v2.0.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-modernbert-large-zeroshot-v2.0.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "F",
+     "report": "coreml-x86_64-modernbert-large-zeroshot-v2.0.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "ms-marco-minilm-l6-v2/coreml/fp16/8fa2a339cd21",
+   "model": "ms-marco-minilm-l6-v2",
+   "source": "cross-encoder/ms-marco-MiniLM-L6-v2@233902d25c440f23af6f7d6e94d2946bac0bee0a",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "8fa2a339cd2161658d2d66e2b45f9915495d870d1ec9764086050a4c20b81462",
+   "fingerprint": "f43021a1e361",
+   "produced": {
+    "converter": "tools/convert_bert_classifier.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "9c9a921baa24742b09731563d5378196da7b11688a3fbb30759752fce315ca6c",
+     "size": 3188,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "1f338542f99a35ecea0441ac616c539523b3a1f3a99e845855fb9482f0692411",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "6b6d5a2a52a32a7cd04219f15c003fe63d63b2fa6e182173f499cb1d23801fc6",
+     "size": 436,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "690b7964f7239a4f1e7d3fe8a3f462e297770b46389b04c53eaf862ad5271d52",
+     "size": 2604,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "40ecc15ff18fa7d019e359206506a5cbc7e78ee6a2f95cfa9293c8922d318e6b",
+     "size": 84127,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "d4a504bd9e746b07f36f9e1dd1b807a66f999b5e89f84c4f5aef7cc876c3d50b",
+     "size": 45139008,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "2079e827fb16f8057a6ead70cea9d68fdab27537c6cbab0748080c10217bb5ef",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "0bc115b0e50098b41043999ea15ef6c804e1477c4a2ed34cbad501aa7947932c",
+     "size": 436,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2533133f8c0a914fc71ed2fa81ab8b1ecd0d7fde75dbecc1c496972545077d11",
+     "size": 2604,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "ca3ff1a3a64355b969a52b750f9b8f9d5370310a0d79641b1825626ee6479079",
+     "size": 84127,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "c61a2565fd007960d470fa9a061b772553aba3156e54b291a21bae087d3f0e97",
+     "size": 45237312,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "8fad557451657c3a2555876f131ab0d2843a595e01763f777feb67c020c34037",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "6d01a7630766546b83c7b6c58c8191148fdf7e80f5817a2c43ec455d34254903",
+     "size": 436,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f3415ebffafc52e3164caa66014a6aaa48f1948036aee42afd7b28424d16ffd7",
+     "size": 2604,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "cf0d73ae3ac46c405fc545fbe6ec43ed457ec165ca29d398c93226b583517aa6",
+     "size": 84127,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "87b809e56517e82799d255f600f787a73c3aa7e45892f1842285c7bb414daa69",
+     "size": 45433920,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+     "size": 711396,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "A",
+     "report": "coreml-x86_64-ms-marco-minilm-l6-v2.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "B",
+     "report": "coreml-x86_64-ms-marco-minilm-l6-v2.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "nli-deberta-v3-base/coreml/fp16/e9e431b23a5d",
+   "model": "nli-deberta-v3-base",
+   "source": "cross-encoder/nli-deberta-v3-base@6c749ce3425cd33b46d187e45b92bbf96ee12ec7",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "e9e431b23a5dacf9fe56e89e4b2dc24a5e654053bbcc51d7b28a5cc944ec4a9e",
+   "fingerprint": "b3429f4dbf08",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-12"
+   },
+   "files": [
+    {
+     "sha256": "dab4be4017d65a45df719c14ae8b36117af67753b962f4fc14f1eabf06155eec",
+     "size": 1592,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "08501fa0b7edab99633194b5ab20ba1b31ab56306365ad6793888e189fa4954f",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f8147800931ecfdc009667a736e5fb89875c6134df139e01d39b2d94ac4e2780",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "cd9b722a099a674f58da22c0570425544adf0128b0d3b8855b8dbe7278346bf5",
+     "size": 2272,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "d3e14c47669dd49b9345d2de8e1929a564ea1475fbf46ba994113e1eb862e585",
+     "size": 339209,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "3b2e05456f56f60120f6e37c9ccb007fba52a5c8cfb1719ac8df65326ab142d1",
+     "size": 377473984,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "10e186b0c4bfa28727edea7d59a78879842ee97c6455aea7d7d3e49ba2c77cf3",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "e31e435088161b22ea890c6e9ef451491536e66a5869c7998e420687513b2f0e",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "721d68473e6253f1c1419ed177179fc7db23c218d5b476d0132e4bc07cef6bf1",
+     "size": 2272,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "c09e8dd75ea4e27fe00a0296d5efe4092dc243964b8618fb4ad54979ca48010f",
+     "size": 683497,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "0a7d938688ce37d34c14fd5267e925da57fa2ad3774fd4bb3ed1f997b10fcc6c",
+     "size": 386911168,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "2199645d7fe8ad6fa6e4e98b6ded63d4b4ce6b60d676b2c521a5932fb7b86d74",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2205d8fd98e64ec81ec17029756b5a11b97dfbba99a3caf5d3d6dc073bb03926",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c86848e24151dc7710b6d26050e8916f20bab0220a237c1613a4f9186015cab6",
+     "size": 2272,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "942f98a83015203761421dffdda2d7831549263ccaa0347a8c3eef79e63cacd5",
+     "size": 2060129,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "d1ad0690d5eebb6ed9fb3ddbb0da8855807ef0adfc65917a247a7d23856b8942",
+     "size": 405785536,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+     "size": 8656624,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "C",
+     "report": "coreml-arm64-nli-deberta-v3-base.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "B",
+     "report": "coreml-arm64-nli-deberta-v3-base.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "C",
+     "report": "coreml-arm64-nli-deberta-v3-base.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "F",
+     "report": "coreml-x86_64-nli-deberta-v3-base.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "nli-deberta-v3-small/coreml/fp16/519cb3a96d36",
+   "model": "nli-deberta-v3-small",
+   "source": "cross-encoder/nli-deberta-v3-small@fa2804872c3b4bd748f38c0185cc85775361e735",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "519cb3a96d368b49a42dd461c1bbd4502438634bb4dbe81bf6d60ff0fb684b59",
+   "fingerprint": "73244072f263",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "7b3b036bbb89b47d2add160242f98d06f8f3cb2dae42302eb576e181d57962ee",
+     "size": 1650,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "034a6aea4187cfc2577aa30dfa9711ee834988c2ee00e35889bd2422c0bb1bcf",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "7417af083488ab760bff0719017f803f47ad31947b2f8eb67ccac59461a71586",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "25ac4b3abee5066cf7ab00c23c1d9ba75cce0a95c03932479096b298b3d42b06",
+     "size": 2270,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "868d778f8c093c9cc7b0069bbe0d1d25413855726157b5c2e0d80fef22c572f3",
+     "size": 230413,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "50630da23d66b34bb0bd05a60256b9e6c0ee2e70bcdd042ede25a22a05224a45",
+     "size": 287712448,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "8b7f8cfcce5b5d5feb5fc248ea587adfb9b8a6d6d64aa3968059d97135289f8a",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "1425fb48c457a1211f8bb2c796cd2f32bb9848779620d04e3c6403583b7fbe1d",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f8aea044b0d4236b5227d3d1399bc5306200c0a105a58475681507f2109d2b34",
+     "size": 2270,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "cd868713fb046fe4be77e6e21d5b8577c51e3a4c392098ba6cd01d358eba9e94",
+     "size": 574653,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "514f38fbbce178e99efb75af474028843c0cfa3585d0cd6bb5f06f349618df62",
+     "size": 292431040,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "24761002e3519198a91e363d3554a645df6c4700352e1e5c86bf12f153fb30d7",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c21f037d36a7c638ff60a98a0220e8dffc266fed4130d026b718881613bdcfb1",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "0f9b8292add29a4ca080abc8fe4a91408b75749f5c2e1d2abeeeaabb04732df3",
+     "size": 2270,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "be166cf48da519b965436fe92ff0f9841aa606de1ee6df584e848efb84d8ed6e",
+     "size": 1951225,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "fa00d95c5e6df3ba926c9e0339281119754de1a429b3a19a2023d062e6149b3f",
+     "size": 301868224,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+     "size": 8656624,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-nli-deberta-v3-small.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-nli-deberta-v3-small.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "D",
+     "report": "coreml-arm64-nli-deberta-v3-small.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "F",
+     "report": "coreml-x86_64-nli-gpu.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "nli-deberta-v3-xsmall/coreml/fp16/8836cd60bc41",
+   "model": "nli-deberta-v3-xsmall",
+   "source": "cross-encoder/nli-deberta-v3-xsmall@a150876415327c80daeff35ca6f68f5ed8cf5c24",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "8836cd60bc41a091ad0c9d0cd9ee68a592bfd2ab18952d292b23efb20b09271e",
+   "fingerprint": "c0309559f0c3",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "91a187d203a757efa0b895d8254d6c0270876d9e362e211fe94798d8a80de6d1",
+     "size": 1630,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "a471798d1072556a36fc52c37688b5a7b53c01104a436d2c50abc275949603b6",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "e7a8a5087d5a702aab91942cbe78df760df62b9ec3b1120421e0569f5baaff29",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "cd9b722a099a674f58da22c0570425544adf0128b0d3b8855b8dbe7278346bf5",
+     "size": 2272,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "bee4fa95244c36111ca874126c95e85c229105fc7ca1c0f74dbb0a726c62e7d7",
+     "size": 338689,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "500b44f6153d0b6dd8507060d54162cebec68e897e6b9dd996b66bf246f5ef27",
+     "size": 145981888,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "66d96893798f723bf8d364410556d88e5d05c44e7aa6916d93327660b87f1c4a",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "5e8b1dc6911e28d29796edd600847276f2993cae64a01466de1d2f8626ceb81d",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "721d68473e6253f1c1419ed177179fc7db23c218d5b476d0132e4bc07cef6bf1",
+     "size": 2272,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "e1b7675737d82232525062b834f24ed1839ff5521915e1139a3e01001782d8ed",
+     "size": 682982,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "880890500a6649ade4ff5dc22593e373c7b7412c9f12790780b5d1add383a4b9",
+     "size": 150700480,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "2bdbe853bc56bb4c7385ebd67cd4f7c79cc730bd032c8fca4c1bb79d9aedc1f2",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ce4499d9479402ae13957d3a4ca416a3e7b6d56892cf84647ae5a3986322f255",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c86848e24151dc7710b6d26050e8916f20bab0220a237c1613a4f9186015cab6",
+     "size": 2272,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "800d8ea9cc8aca9d8789f0759a3ecfbee4a07dfbd4523fe91558023d413ce7b0",
+     "size": 2059615,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "74223daa681a72935923ce2ded2e04490647c525f01dab8fb031f52c2e36d414",
+     "size": 160137664,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+     "size": 8656624,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-nli-deberta-v3-xsmall.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "B",
+     "report": "coreml-arm64-nli-deberta-v3-xsmall.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "C",
+     "report": "coreml-arm64-nli-deberta-v3-xsmall.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "nli-minilm2-l6-h768/coreml/fp16/6aceb970649e",
+   "model": "nli-minilm2-l6-h768",
+   "source": "cross-encoder/nli-MiniLM2-L6-H768@b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "6aceb970649e3d1126c3c443c914db20163d42c6a94e53c93f17663ade50cbf1",
+   "fingerprint": "836859313b3e",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-12"
+   },
+   "files": [
+    {
+     "sha256": "bcb1e98667dbd006e95e41d1ab4101370f2eac2f8de63193f0cbfd3a31837d1f",
+     "size": 1659,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "d679f3e067cca563938f774ea29553688e2c460e462de1fdf10c4f74665e8480",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "6f1f27783a7d83c83a020f676c28c6ef3ad042b29f8d29cbb9c955635e8995f8",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "97dfb32cfc6ca93838648ddfe95a37dae3d14e93351a93bece9c3479130b91b9",
+     "size": 2292,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "06c31d5277e5f6440f02cedbce3c64fcec18c264bd91efed64253dafdbc60ed2",
+     "size": 79965,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "15588b3db126dbb1317e8ecf8f460fb336e5cb038bf65d99225581240999a3e7",
+     "size": 163850304,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "24e1a769dc7af52e2364b5be69ddea4e81187338c82eac76d2df78d8fb67ee61",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2a84bc28083ea18cb3b1694aa63b553c4aa03da4b03cd2c9176238442b21dd41",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "48492e3e4bf998e0f82ff8e703a267eedc67674e468a617f911a31d3f8dddff7",
+     "size": 2292,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "ca697ff5993338536963262e1f15d8294c0aff51e108dd8a2d1ecc8b1570983b",
+     "size": 79965,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "dcbb3bbdd7dcae78e5c00ac85afc7dd77f47ec6e2c815bafb8ff831fb8d1ecc1",
+     "size": 164243520,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "ae172cc1b29306ddaea14a2c1d6b7fe8a0f72728aefe541fe203b2e6f1d836dc",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "aff1427d1a8efb9f9e48eb4c556a18e8613418b9ea40c43bec9e4f5fd4421cad",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ba15af92568992c3fa5c758596069dfcb8a8f65b3e1278175769963f70e6d947",
+     "size": 2292,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "9e7f6d3934b68558961748094ed84c4f6b3dc2da214e6da8ab05e6d6ee24916e",
+     "size": 79965,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "ec5f60f5baf71907f9d4ac5ccf2fb89e9bb9d6aca850e0559564c6a5e23acdad",
+     "size": 165029952,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+     "size": 3558647,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-nli-minilm2-l6-h768.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-nli-minilm2-l6-h768.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "C",
+     "report": "coreml-arm64-nli-minilm2-l6-h768.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "F",
+     "report": "coreml-x86_64-nli-gpu.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "nli-minilm2-l6-h768-ane/coreml/fp16/eaddcfd7f732",
+   "model": "nli-minilm2-l6-h768-ane",
+   "source": "cross-encoder/nli-MiniLM2-L6-H768@b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "eaddcfd7f732fcf9bbe54f71a7a44634b35baa3bb7f5e1a93825d824dc78309a",
+   "fingerprint": "f24afe028fe4",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-12"
+   },
+   "files": [
+    {
+     "sha256": "725d2f2423f09b35c92954b4d912d3317d8938222bd72222ea1d263e8efe6b64",
+     "size": 3729,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "231edfc7ba2b433de0fb07c73645ee1bef52c1e3f382ff0e1a0e844b1a980ed8",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "53ddba590b5cd124ddec142ecc1e3a924f54c3b819472dc84c9dcadd7a17097c",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "48362392f3998b45a0067522bbf37e3649a8a1938dbcb8dab9129f83cdb98894",
+     "size": 2399,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "fd893a370b53e6fa73fc7b0257908a96d7531bf07d177bec627b72be060810a2",
+     "size": 105714,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "52232549048593c6aa0e50a6adf7ae92cd7cfade62c498eee07b2c3c70f284f6",
+     "size": 163850304,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "846b8200a5a75de1b358bbc087fe60e1186cb5be84f78de67216c57713c80816",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "e31e435088161b22ea890c6e9ef451491536e66a5869c7998e420687513b2f0e",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "87283a69cea246e332181b73ae46f5f6136036e0c03d147088219f308e3cfb4c",
+     "size": 2427,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "7e3a467fa35edcc788e11cbf5b2373b17a833b5ea07feaafe1c8f13a564bc5d8",
+     "size": 116973,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "fb0e192f7c24ac4ee9369f765a39fa22e440631abc07c4edcd10fdee9aa2868b",
+     "size": 164243520,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "077d3853fea19d061bf09dfdea6b614186a9f270930a054666328135ad88c02f",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "efe49180c800f206f8f86fb8037955877f651df082a92f4d56368fc59faec48e",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2dd7af1dd665cf8b0ebc649aa898c97139c35804038e70452b32c68c8d5ca5c1",
+     "size": 2428,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "bcccb5ea6904090116fe4dcdaa84762ae8bd256d6ff902a86e30ce006437819c",
+     "size": 131903,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "e78690e695964f0e5373d47d76174660335ee97fe1a23d36b8590375e48b3f2d",
+     "size": 165029952,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "7b62d797c95d1563d3467f48daad0eca3e150f2d587e7e687b557c9ef1b25473",
+     "size": 3558647,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "B",
+     "report": "coreml-arm64-nli-minilm2-l6-h768-ane.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-nli-minilm2-l6-h768-ane.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "C",
+     "report": "coreml-arm64-nli-minilm2-l6-h768-ane.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "F",
+     "report": "coreml-x86_64-nli-gpu.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "nlptown-sentiment/coreml/fp16/6a3b7e86f4f5",
+   "model": "nlptown-sentiment",
+   "source": "nlptown/bert-base-multilingual-uncased-sentiment@8f6f4e3a8f70be4b65d3a4a8762b6d781cda240d",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "6a3b7e86f4f55b674d385f272e5ff0d33f62f2712fd7b905f3278b9f27ec8982",
+   "fingerprint": "bf3f296d9a37",
+   "produced": {
+    "converter": "tools/convert_bert_classifier.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-03"
+   },
+   "files": [
+    {
+     "sha256": "a4f8332eab7228a2d1ff6c49b644d7d080273dc5dc4b48e60e683c2bbf7e7447",
+     "size": 2807,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "d5606c260911b5554a08fd6f1a9dd405287ddf9c437ef6e25596eed53dd4dc19",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c035ac2407df1d009f691190b0e54b7a518f0f4966c2d39f33f2a2c7f3da1c51",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "54233fa562d31b4c808a41f57f0b6d771f3ea146b35cb0d238f9c1c7601ea3e3",
+     "size": 2295,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "29e6260e210c6ede88a210840b03a8d5453b6569aa5da1ab4fbb7724120a2c47",
+     "size": 151289,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "60fde8e5e06ebd98da70f811927dee6d77eab19e44c822eec1a3f5f1b48017eb",
+     "size": 334337088,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "61710572b1e4a51ebf4f22e09e626e6e243efe86a1f296b84b09ea8cf0b72d80",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "5557dbf307a9d709510371713f900f792717790ca47b064c13ed30621927cf12",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "0b68cf0cce51959b2fa4fb270b28f7e4a57317221cf778185f63ed6868beda7e",
+     "size": 2295,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "cacc68f2604d3cbdad7575dbd05ad923feb4241911d8e571e332bd42bf66fa6d",
+     "size": 151289,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "495c74147bee5b237b639e9155b2b6b1c0f5c1f20f7341fb868d771838777869",
+     "size": 334730304,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "b5e4bb09d534c8c6d8c476d31461c4291a2f0e066ea4256ab219e380c3bc6a79",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "965b6f601e8743e659b6a5280d6ac3ade1f922d90f1cdad9c3a658724020d764",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "80008901f88be6f865eb60bfe1d7c41338a6982861856b927c412925600768d5",
+     "size": 2295,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "00f7c49431792133cc5a2727f56b5c57a365ea780e905defaf5b3cc98e5813e1",
+     "size": 151289,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "05d0ec925a79b78b3070cb45edc5467e301e15dc0ddb35877b1c2c99f17a46d6",
+     "size": 335516736,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "11aaf894a4ccf3d95e8830e27c0f8152791fbbff2b988e29a265580b86edd216",
+     "size": 2563370,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "A",
+     "report": "coreml-x86_64-nlptown-regrade.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "A",
+     "report": "coreml-x86_64-nlptown-regrade.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "qwen3-embedding-0.6b/coreml/fp16-max2048/3fa955de07dd",
+   "model": "qwen3-embedding-0.6b",
+   "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+   "backend": "coreml",
+   "variant": "fp16-max2048",
+   "quantization": "fp16",
+   "buckets": [
+    1024,
+    2048
+   ],
+   "chunks": 2,
+   "max_seq_len": 2048,
+   "layout": "separate",
+   "digest": "3fa955de07dde6449646b9d30ec92bd9bdf8e42040d548ba7a613969783f784d",
+   "fingerprint": "5d41dfac6a78",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": "9fd0a3a",
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": "macOS 27.0 (26A428)",
+    "xcode": null,
+    "chip": "Apple M1 Max",
+    "date": "2026-10-21"
+   },
+   "files": [
+    {
+     "sha256": "a39f864d054dd12852a28eb932c43899c934451e620fa8ae303f32e24f3a5b42",
+     "size": 6331,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "34a13e12039ba9c09e6f211dbab436be03562ba161998430a89999c30792d81c",
+     "size": 243,
+     "paths": [
+      "model_1024.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "01be8f18e8737cbb2d91876f58f5272f614182d86658cd69fd8c7faa3acf0ed0",
+     "size": 412,
+     "paths": [
+      "model_1024.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ea91e8f356ef94bd0e49a2be8e7e797a00234d149bb15bdf542084f174704588",
+     "size": 2470,
+     "paths": [
+      "model_1024.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "aa61df36b88b7c32518c17b05e7ca2d80a9586afc6a2c59dd8dac3bdf30ba2a3",
+     "size": 207574,
+     "paths": [
+      "model_1024.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "6066f06aa2769a851f64d9a6e0cd01ad91a3a607b6c7621e167f8593efb2268b",
+     "size": 596415680,
+     "paths": [
+      "model_1024.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "1ce5bf0321d5538d60abc6f07bd1f8e9ba27607635dc3238e6c9d924547a2cc6",
+     "size": 243,
+     "paths": [
+      "model_1024.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f2096229d546bc7fd1d4cfc562d11dc0e465fd6b3cae60db4b68f7985ea8f6e7",
+     "size": 411,
+     "paths": [
+      "model_1024.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "09a352af1404a135ae894654fb98e460c8d5b141ab32ef67efe0ce96a9b41cc1",
+     "size": 2480,
+     "paths": [
+      "model_1024.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "8e3111758a24b1402cf2546c9f40cf35b3775a12274a58f4d08cd545662e688d",
+     "size": 433078,
+     "paths": [
+      "model_1024.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "c62d1a82f5e449bf94512fe76343bb2398ffdd360b316e9084a94f3a0144b016",
+     "size": 600425536,
+     "paths": [
+      "model_1024.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "b80130ca8e63fd7bb8f901da5d6ed1ea1fb2540b0626974f8d243e690fa7d850",
+     "size": 243,
+     "paths": [
+      "model_2048.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "1cdbe9ef76717b87319e2eb7c296588ec797f9922090cefe188b9ba3c84298f1",
+     "size": 412,
+     "paths": [
+      "model_2048.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ac4a7457fa6b3d3ce955d99ef6c7ab233ddab5201b1f6957242a8ff709fc740a",
+     "size": 2470,
+     "paths": [
+      "model_2048.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "4fd3f2c211c7e60fe587c50b48cffbb543bbbdb8ff2196e95d5266596dc18703",
+     "size": 207574,
+     "paths": [
+      "model_2048.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "80e257e0d354107919e86e4027ab8bb1daf6454a9616fdbb6366fe5178a2eedb",
+     "size": 603231424,
+     "paths": [
+      "model_2048.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "2acd8bfa0f27d9b281de7b4a007ca0f069583e5e1c109ffbce2b9f21a6854213",
+     "size": 243,
+     "paths": [
+      "model_2048.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "69868a9fb98175ce4377bc69ebedb1339996395b3f86fb643fd819a33c8c8d70",
+     "size": 411,
+     "paths": [
+      "model_2048.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "eebde4f6ba79c0e18d9eabcee9894e65d7dcf8b1a765706e1d0caa6065beae2d",
+     "size": 2480,
+     "paths": [
+      "model_2048.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "d0ea72c5794fe95802c06396e96e73c89737a1ee38d826d30b3aaa3c88960837",
+     "size": 433086,
+     "paths": [
+      "model_2048.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "5f9c7f70f4ba8ea95b4ebc541aaa4beed9920cfcc55378148dcac0b700c76610",
+     "size": 607241280,
+     "paths": [
+      "model_2048.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+     "size": 11423705,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "parity2048-ane.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "parity2048-gpu.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Release candidate for D46 and D48, capped at 2,048 tokens: the max4096 build without its 4,096 bucket, with the capped manifest."
+  },
+  {
+   "id": "qwen3-embedding-0.6b/coreml/fp16-max4096/ed00c7479f96",
+   "model": "qwen3-embedding-0.6b",
+   "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+   "backend": "coreml",
+   "variant": "fp16-max4096",
+   "quantization": "fp16",
+   "buckets": [
+    1024,
+    2048,
+    4096
+   ],
+   "chunks": 2,
+   "max_seq_len": 4096,
+   "layout": "separate",
+   "digest": "ed00c7479f96dae0d95f40c437870ca7dc291397e60f39bfd38ecdc0890d88fd",
+   "fingerprint": "3d55d5e1f532",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": "9fd0a3a",
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": "macOS 27.0 (26A428)",
+    "xcode": null,
+    "chip": "Apple M1 Max",
+    "date": "2026-10-21"
+   },
+   "files": [
+    {
+     "sha256": "55712f1bca519c23c74c1a3a14ed35337fef1b37cf2e0ee1f43584fe079a3c98",
+     "size": 8115,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "34a13e12039ba9c09e6f211dbab436be03562ba161998430a89999c30792d81c",
+     "size": 243,
+     "paths": [
+      "model_1024.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "01be8f18e8737cbb2d91876f58f5272f614182d86658cd69fd8c7faa3acf0ed0",
+     "size": 412,
+     "paths": [
+      "model_1024.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ea91e8f356ef94bd0e49a2be8e7e797a00234d149bb15bdf542084f174704588",
+     "size": 2470,
+     "paths": [
+      "model_1024.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "aa61df36b88b7c32518c17b05e7ca2d80a9586afc6a2c59dd8dac3bdf30ba2a3",
+     "size": 207574,
+     "paths": [
+      "model_1024.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "6066f06aa2769a851f64d9a6e0cd01ad91a3a607b6c7621e167f8593efb2268b",
+     "size": 596415680,
+     "paths": [
+      "model_1024.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "1ce5bf0321d5538d60abc6f07bd1f8e9ba27607635dc3238e6c9d924547a2cc6",
+     "size": 243,
+     "paths": [
+      "model_1024.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f2096229d546bc7fd1d4cfc562d11dc0e465fd6b3cae60db4b68f7985ea8f6e7",
+     "size": 411,
+     "paths": [
+      "model_1024.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "09a352af1404a135ae894654fb98e460c8d5b141ab32ef67efe0ce96a9b41cc1",
+     "size": 2480,
+     "paths": [
+      "model_1024.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "8e3111758a24b1402cf2546c9f40cf35b3775a12274a58f4d08cd545662e688d",
+     "size": 433078,
+     "paths": [
+      "model_1024.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "c62d1a82f5e449bf94512fe76343bb2398ffdd360b316e9084a94f3a0144b016",
+     "size": 600425536,
+     "paths": [
+      "model_1024.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "b80130ca8e63fd7bb8f901da5d6ed1ea1fb2540b0626974f8d243e690fa7d850",
+     "size": 243,
+     "paths": [
+      "model_2048.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "1cdbe9ef76717b87319e2eb7c296588ec797f9922090cefe188b9ba3c84298f1",
+     "size": 412,
+     "paths": [
+      "model_2048.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ac4a7457fa6b3d3ce955d99ef6c7ab233ddab5201b1f6957242a8ff709fc740a",
+     "size": 2470,
+     "paths": [
+      "model_2048.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "4fd3f2c211c7e60fe587c50b48cffbb543bbbdb8ff2196e95d5266596dc18703",
+     "size": 207574,
+     "paths": [
+      "model_2048.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "80e257e0d354107919e86e4027ab8bb1daf6454a9616fdbb6366fe5178a2eedb",
+     "size": 603231424,
+     "paths": [
+      "model_2048.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "2acd8bfa0f27d9b281de7b4a007ca0f069583e5e1c109ffbce2b9f21a6854213",
+     "size": 243,
+     "paths": [
+      "model_2048.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "69868a9fb98175ce4377bc69ebedb1339996395b3f86fb643fd819a33c8c8d70",
+     "size": 411,
+     "paths": [
+      "model_2048.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "eebde4f6ba79c0e18d9eabcee9894e65d7dcf8b1a765706e1d0caa6065beae2d",
+     "size": 2480,
+     "paths": [
+      "model_2048.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "d0ea72c5794fe95802c06396e96e73c89737a1ee38d826d30b3aaa3c88960837",
+     "size": 433086,
+     "paths": [
+      "model_2048.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "5f9c7f70f4ba8ea95b4ebc541aaa4beed9920cfcc55378148dcac0b700c76610",
+     "size": 607241280,
+     "paths": [
+      "model_2048.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "9fce8eed31cca0b8f3278d9d802e5a15e47f02444f0bf235728a4d9badf1769d",
+     "size": 243,
+     "paths": [
+      "model_4096.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "2b76434682d54852bd1b098b8409c8c85c2f3e3b48b60cdcde73b8815960dcf7",
+     "size": 412,
+     "paths": [
+      "model_4096.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "05e224c13bb7faa647b8e7b1c9c0e8fda55684534670e18c1faa6fa467ec6715",
+     "size": 2470,
+     "paths": [
+      "model_4096.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "3761cac7b4fc6a54036c1835e77b4d8f541470b4a90981dac646ee3436478296",
+     "size": 207574,
+     "paths": [
+      "model_4096.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "ffab7671ef889d2c0bdb43e617deff027311f6caca037b6b617ede6104b99282",
+     "size": 629445824,
+     "paths": [
+      "model_4096.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "ddffbb97d18b07b2c8ba90cdf3d0c451470e1eccd957f0661d069073a0165eed",
+     "size": 243,
+     "paths": [
+      "model_4096.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "149712b9f3fd54c88b087baa3dc061e6234addd0bcbffb7d146bd59a9f5cc619",
+     "size": 411,
+     "paths": [
+      "model_4096.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "b91d0deaad8bc42a63fb96127019518bd6c820654a0c4bdfe0b0bf2b4188c35c",
+     "size": 2480,
+     "paths": [
+      "model_4096.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "62485374b1f3d485f0a1cca1d29c7f69c6708e8bf280823b9dc998e1c0dea158",
+     "size": 433097,
+     "paths": [
+      "model_4096.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "d91324429186b7f4db6e18bd4758d0158965f4f7236c81ab8036bb8a2f1f2e76",
+     "size": 633455680,
+     "paths": [
+      "model_4096.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+     "size": 11423705,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "parity-gpu.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Release candidate for D46: chunked (D37), buckets 1,024, 2,048 and 4,096. Graded with compute_plan's 300 s limit raised to 7,200 s."
+  },
+  {
+   "id": "qwen3-embedding-0.6b/onnx/fp16-weights/0134c8bf6715",
+   "model": "qwen3-embedding-0.6b",
+   "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+   "backend": "onnx",
+   "variant": "fp16-weights",
+   "quantization": "fp16 weights",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "0134c8bf67153f85af402b6181c2ce2287d2bc23c4396703a4f39b56cdaffffb",
+   "fingerprint": "0134c8bf6715",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "518ccfb006acfde8e88f7fe9126e34d146e005c0007e0707331bc30206931d2a",
+     "size": 821,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "581dce28242aa376d37c91c1cd17eac70274fb192ddd3fb99d366b9e5be3cf1f",
+     "size": 1139629,
+     "paths": [
+      "model_fp16w.onnx"
+     ]
+    },
+    {
+     "sha256": "67212c12b714e0dae0bd63050bc98a93e36e0e109660232dbe8155fe1244a339",
+     "size": 1191655424,
+     "paths": [
+      "model_fp16w.onnx_data"
+     ]
+    },
+    {
+     "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+     "size": 11423705,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "qwen3-embedding-0.6b/onnx/fp32/3d8d301ded40",
+   "model": "qwen3-embedding-0.6b",
+   "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+   "backend": "onnx",
+   "variant": "fp32",
+   "quantization": "fp32",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "3d8d301ded40f0e18fc63007b5bf81b071ec43535070ab4b569631ab21e23502",
+   "fingerprint": "3cba8ac6c5ff",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "646f8ee6e12603176ddb0af43e622af91586fa8026829613de66432c6416409f",
+     "size": 946,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "e39cb6a3a56ea8fa4341c799898790c0918629027169d41d183eb45878ba8dff",
+     "size": 1125282,
+     "paths": [
+      "model.onnx"
+     ]
+    },
+    {
+     "sha256": "7c7569e58783ee0ad8c5fb797d7944aa4f5928af53fb4c1f626f71885af22969",
+     "size": 2383077376,
+     "paths": [
+      "model.onnx_data"
+     ]
+    },
+    {
+     "sha256": "362cbd7e6915256f6189fde6dfecfea933483a2e4b9b3c19a6619057217a7598",
+     "size": 161,
+     "paths": [
+      "onnx_gates.json"
+     ]
+    },
+    {
+     "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+     "size": 11423705,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded. The archived directory also held the fp16-weights and int8 graphs, byte-identical to the fp16-weights and int8 builds recorded separately; they are left out of this fp32 build."
+  },
+  {
+   "id": "qwen3-embedding-0.6b/onnx/int8/87138d286e84",
+   "model": "qwen3-embedding-0.6b",
+   "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+   "backend": "onnx",
+   "variant": "int8",
+   "quantization": "int8",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "87138d286e847d907ce9bf68f4337cd23b5fe4fbe63322b0725623b7cff3da9f",
+   "fingerprint": "87138d286e84",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "66fa88ddf278f4c1f2ad7229094fecfe5ea93dfca2b78e8520106bf079513036",
+     "size": 820,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "53a9b996cf7b799d4199c5b649020f284413d3bc44c5d012bc74ec85974c7dd1",
+     "size": 1774215,
+     "paths": [
+      "model_int8.onnx"
+     ]
+    },
+    {
+     "sha256": "cec273eac5d1320ac48dd016b2f020be7271320ee224b4a661a67743cbe24db5",
+     "size": 595944448,
+     "paths": [
+      "model_int8.onnx.data"
+     ]
+    },
+    {
+     "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+     "size": 11423705,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "roberta-large-mnli/coreml/fp16/3a4c41fbe27e",
+   "model": "roberta-large-mnli",
+   "source": "FacebookAI/roberta-large-mnli@2a8f12d27941090092df78e4ba6f0928eb5eac98",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": 512,
+   "layout": "separate",
+   "digest": "3a4c41fbe27e7f52ac77ffa0edd875ace8e55a056adac7f57b118e23d820bbaa",
+   "fingerprint": "157c52d47fc5",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-12"
+   },
+   "files": [
+    {
+     "sha256": "521887f18f2d957752b9dbce82eb43a11a29e11383bb1a89fb7d75f684063b9c",
+     "size": 1617,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "f5bea9f62e05c981a9a1c273e90c96ec0f9b98a87dd96a72d7f4cf73a6167da7",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c2c9a6f95be8881ce7f056005f943ccffdcd17066342265bec1d346cbb0e6d5b",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "0271186261bade729528197410233b7de7c7320dbb9f7d5fcb6b95acb2ffd337",
+     "size": 2296,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "89f11f438ed48ecd6d56357616af0f5adcd8ec6d901f11fae36e09c2e7db1dab",
+     "size": 300793,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "50e768b1af09b4859aadfdfe88dac89342f54d4a6c9836027dda41bbad9c776a",
+     "size": 709958144,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "8f6aea96059b13629641f9274091107ab271c194790e4d934239f49abc4c3b10",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "6fd24083c47aade80baec4daf860b1e04d3ff4df57c5e1b58b54a9b3d3a665ba",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f15c8ef03fa705e9af42f9331a3ebddc171079ee988121fec9eeed28c1aae655",
+     "size": 2296,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "15de116a98201309d8d152116d1a63759ce088b0e5ccc77aff4793b5c24d2233",
+     "size": 300793,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "7beda53ff1b0807f5f9f1d77182e8eef99d121d045f2886196e595a69ed293ee",
+     "size": 710220288,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "5f2c5686f74df6e772fcaa1308682240afe9377c073e509e3f818b69e068d007",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "bcf574f04f816c5805f08560cbaa549e0bc072b143a9571d7a5261fe5be8e78b",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "5460d70e1e12e13eda6a09cee514cb5ae16c461c934656c0fc6c6a86ee119afb",
+     "size": 2296,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "9eb1c0811fa07bfca982597e9d4b11a3cc193e3029c161a96165545a44357b90",
+     "size": 300793,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "8f1494c3dd9395d8cdf6d0209ba6e2d1bd0a3fb838f0b1ae28be3fbed4506fa6",
+     "size": 710744576,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+     "size": 1355863,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-roberta-large-mnli.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-roberta-large-mnli.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "D",
+     "report": "coreml-arm64-roberta-large-mnli.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Intel(R) Xeon(R) W-3235 CPU @ 3.30GHz",
+     "os": "macOS 26.6.2 (25G83)",
+     "grade": "F",
+     "report": "coreml-x86_64-roberta-large-mnli.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
+  },
+  {
+   "id": "roberta-large-zeroshot-v2.0-c/coreml/fp16/fd9fc8d72a25",
+   "model": "roberta-large-zeroshot-v2.0-c",
+   "source": "MoritzLaurer/roberta-large-zeroshot-v2.0-c@4c24ed4bba5af8d3162604abc2a141b9d2183ecc",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512
+   ],
+   "chunks": 1,
+   "max_seq_len": null,
+   "layout": "separate",
+   "digest": "fd9fc8d72a25562e967040578a435b497377cfad3d2c557d5bd5a9bc603aef05",
+   "fingerprint": "ef5050c1a84e",
+   "produced": {
+    "converter": "tools/convert_nli.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": null
+   },
+   "files": [
+    {
+     "sha256": "47f0d7a270dbc38b5ee18c3688ca1fce339eb8934672e74d48e9d0a4cfea1cbd",
+     "size": 3397,
+     "paths": [
+      "classifier.toml"
+     ]
+    },
+    {
+     "sha256": "aecc9a1b6c4102fa3c3504e285b6ad0c9feacfc74b92bd457fadc9e4fa5cbf28",
+     "size": 243,
+     "paths": [
+      "model_128.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "aeb2ce50ff35a8964e8f3b28c29e56841f4f8270a3ebd741f067579a9ff1e041",
+     "size": 405,
+     "paths": [
+      "model_128.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "becf9740b066851b397d8997efc47d69f3d997c04b12dd4c6b624ae63bbe98be",
+     "size": 2296,
+     "paths": [
+      "model_128.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "6b9d27fa9fca0e83cbd8ff52be649d16e3213c29589f33a68516c7319c4e17fd",
+     "size": 301217,
+     "paths": [
+      "model_128.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "1b647a71c0c5a7fdb01502baf4c7272fda8d9cacb3e6e2e463f41ce8cff67ef3",
+     "size": 710218304,
+     "paths": [
+      "model_128.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "01f7a8fa3bbd0a210c71ed41cb9a923c96a8cfa36ae86c4f875f363aca0bfb01",
+     "size": 243,
+     "paths": [
+      "model_256.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "1a0107c1e3115eddd506bd314bf589a31285d47b5a31967236cabf409ae92d75",
+     "size": 405,
+     "paths": [
+      "model_256.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "0430eeb130ebb669e0141b32f0c09a9d864c783e1e15b53a47de5142a712de23",
+     "size": 2296,
+     "paths": [
+      "model_256.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "84a1b270ce4b1e7ab25f83d0b102670100daa64b379cee1680d85804772fb8dc",
+     "size": 301217,
+     "paths": [
+      "model_256.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "e16ed23377e82f3a93eed4d4c467b25654953ee1bc561ecbbf988bd455d78bc0",
+     "size": 710742592,
+     "paths": [
+      "model_256.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "7937e72adbf08209b1803fa7291b9e6445adc84ccbba64aabf7145bbed3a2cbd",
+     "size": 243,
+     "paths": [
+      "model_512.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "6b69099448fd9034e125b49bd9b6f635dc9e5e5bac3f82f1c381c267d9435d2b",
+     "size": 405,
+     "paths": [
+      "model_512.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ed318abdc5f6151888cba0d5ebb9f899f714087662e969b58eb9285920adb315",
+     "size": 2296,
+     "paths": [
+      "model_512.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "f2143e65fb7ee9478e7b7bbb95245f74740ba06e7b94dff944231568a1dccc14",
+     "size": 301217,
+     "paths": [
+      "model_512.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "1309bcac48327b85dbcc7316fcfae7adeb767f9fb8f1535d3fcddf0885facc64",
+     "size": 711791168,
+     "paths": [
+      "model_512.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "1e6506713f00e34406a757acb80f9f3233c1c3950857d32bbc41bcd419d5d8b6",
+     "size": 2108615,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "F",
+     "report": "coreml-arm64-roberta-large-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "B",
+     "report": "coreml-arm64-roberta-large-zeroshot-v2.0-c.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "D",
+     "report": "coreml-arm64-roberta-large-zeroshot-v2.0-c.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "sha256sums",
+   "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
+  }
+ ]
+}

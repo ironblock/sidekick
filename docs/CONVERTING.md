@@ -29,6 +29,7 @@ each rule exists (entries cited as Dnn).
 - [Converters](#converters)
 - [ONNX export](#onnx-export)
 - [Shared weights across buckets](#shared-weights-across-buckets)
+- [Recording the build](#recording-the-build)
 - [Adding a family](#adding-a-family)
 - [Refactoring a converter: the acceptance method](#refactoring-a-converter-the-acceptance-method)
 - [Gotchas](#gotchas)
@@ -566,6 +567,24 @@ converter stores them once per chunk (`shared_weights.py`):
   | bge-small-en-v1.5 | 128, 256, 512 | 199.5 MB | 67.4 MB |
   | F2LLM-v2-160M | 128, 256, 512 | 956.3 MB | 319.5 MB |
   | Qwen3-Embedding-0.6B, chunked | 1,024, 2,048 | 2,407.3 MB | 1,215.7 MB |
+
+## Recording the build
+
+Every build gets an entry in the checksum ledger, docs/data/ledger.json,
+whether or not it is ever published (#136; docs/PUBLISHING.md). Record a
+build once it has passed its gates and been graded:
+
+```sh
+python3 tools/ledger.py add <models dir>/<id> --reports <parity reports dir> \
+    --converter-commit "$(git rev-parse --short HEAD)" --os "<macOS version (build)>" --chip "<chip>"
+```
+
+The entry holds each file's sha256 and size, each shared weights file
+once with all its paths, and the grades of the reports that graded those
+exact files (matched by weights hash). A later reconversion is compared with it by
+`python3 tools/ledger.py verify <models dir>/<id>`, which names the layer
+that moved: the weights, the compiled program, the tokenizer or the
+manifest.
 
 ## Adding a family
 
