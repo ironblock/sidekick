@@ -66,7 +66,10 @@ Usage:
              or from docs/MODELS.md
     --docs:  regenerate docs/MODELS.md's tables, and the results file's
              benchmark scores, from in-repo inputs, reading no reports
-             (what CI checks)
+             (what CI checks). It also validates the publishing data:
+             the licence audit (docs/data/licences.toml, tools/licences.py)
+             and the checksum ledger (docs/data/ledger.json,
+             tools/ledger.py)
 
 Standard library only. The output is sorted and formatted the same way on
 every run, so a regenerated file diffs cleanly.
@@ -82,6 +85,10 @@ import statistics
 import sys
 import tomllib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ledger  # noqa: E402  (docs/data/ledger.json, validated with --docs --check)
+import licences  # noqa: E402  (docs/data/licences.toml, likewise)
 
 REPO = Path(__file__).resolve().parent.parent
 DATA = REPO / "docs" / "data"
@@ -1774,6 +1781,10 @@ def docs(results, models, check):
     problems = check_grades(data, rows) + check_hand_written(new, rows) + check_caps(rows, build_caps(models))
     if problems:
         raise SystemExit("docs/MODELS.md disagrees with the results file:\n  " + "\n  ".join(problems))
+    publishing = licences.problems(None, models) + ledger.problems(ledger.load(), models)
+    if publishing:
+        raise SystemExit("the publishing data (docs/data/licences.toml, ledger.json) has problems:\n  "
+                         + "\n  ".join(publishing))
     if check:
         if new != text:
             raise SystemExit("docs/MODELS.md's generated tables are out of date: rerun tools/models_table.py --docs")
