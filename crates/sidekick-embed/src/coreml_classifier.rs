@@ -191,7 +191,7 @@ impl CoremlClassifier {
         let marker_pos = if laya || fev || agentjev { Some(io_name(&io.marker_pos, "marker_pos")?) } else { None };
         let output = io_name(&io.output, "output")?;
 
-        let models = BucketModels::new(&model.dir, &m.artifact, m.chunks(), units);
+        let models = BucketModels::new(&m.id, &model.dir, &m.artifact, m.chunks(), units);
         let io = Io {
             input_ids: io_name(&io.input_ids, "input_ids")?,
             attention_mask: io_name(&io.attention_mask, "attention_mask")?,

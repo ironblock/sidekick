@@ -17,6 +17,8 @@ mod plan;
 pub use model::{input_shapes, interface, load_verdict, CoremlChain, CoremlModel, OutputTensor, HIDDEN_IN, HIDDEN_OUT};
 #[cfg(target_os = "macos")]
 pub use plan::{compute_plan, has_neural_engine};
+#[cfg(target_os = "macos")]
+pub use model::cache_home;
 
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;

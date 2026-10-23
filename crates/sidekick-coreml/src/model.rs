@@ -365,6 +365,13 @@ pub fn interface(path: &Path) -> Result<ModelInterface> {
     })
 }
 
+/// The home directory Core ML caches this process's compiled programs
+/// under (`<home>/Library/Caches/<executable>`): Foundation's, which
+/// `CFFIXED_USER_HOME` overrides, rather than `$HOME`.
+pub fn cache_home() -> std::path::PathBuf {
+    std::path::PathBuf::from(objc2_foundation::NSHomeDirectory().to_string())
+}
+
 /// Compile if needed, then load with the given compute units.
 fn open(path: &Path, units: ComputeUnits) -> Result<Retained<MLModel>> {
     let is_compiled = path
