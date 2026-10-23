@@ -828,6 +828,7 @@ pub fn test_state_scanned(chat_available: bool, api_key: Option<&str>, options: 
         load_timeout: Duration::from_secs(900),
         onnx_threads: Default::default(),
         placements: None,
+        warmup: Default::default(),
     };
     Probes { state, seen, pairs, runs }
 }

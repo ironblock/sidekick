@@ -61,6 +61,18 @@ pub struct Config {
     /// load, and the result is cached. Without it, the plan recorded at
     /// conversion time is reported, when the manifest has one.
     pub report_compute_plans: bool,
+    /// Load each Core ML bucket the daemon serves once at startup, in the
+    /// background, so that Core ML's compile cache holds it before a
+    /// request needs it (D52). Cold buckets go first. Each is released
+    /// after loading, so nothing stays resident that a request didn't ask
+    /// for; a request for a bucket being warmed waits for that load and
+    /// takes it. `[models."<id>"] warm = false` leaves one model out.
+    pub warm_on_start: bool,
+    /// How long the startup warm-up may run, in seconds: no bucket starts
+    /// loading after this. A load in progress finishes, since Core ML can't
+    /// stop one; the buckets left compile on first use, as without
+    /// warming. 0 means no limit.
+    pub warm_budget_secs: u64,
     /// Inference threads for each `onnx` model, unless its
     /// `[models."<id>"]` says otherwise (D40). Default: the physical cores
     /// of the machine's fastest tier (an Apple silicon Mac's P-cores), or
@@ -86,6 +98,9 @@ pub struct ModelConfig {
     pub compute_units: Option<ComputeUnits>,
     /// Inference threads for an `onnx` model (D40).
     pub intra_op_threads: Option<usize>,
+    /// `false` leaves a Core ML model out of the startup warm-up and of
+    /// fetch's (D52); `sidekickd warm <id>` still warms it.
+    pub warm: Option<bool>,
 }
 
 /// Each `onnx` model's inference threads (D40): the operator's for that
@@ -133,6 +148,8 @@ impl Default for Config {
             ignore_cpu_seq_cap: false,
             ignore_ane_seq_cap: false,
             report_compute_plans: false,
+            warm_on_start: true,
+            warm_budget_secs: 1800,
             onnx_intra_op_threads: None,
             onnx_runtime: None,
             models: BTreeMap::new(),
@@ -162,6 +179,16 @@ impl Config {
     /// The operator's compute units, by model id (D38).
     pub fn compute_units(&self) -> BTreeMap<String, ComputeUnits> {
         self.models.iter().filter_map(|(id, m)| Some((id.clone(), m.compute_units?))).collect()
+    }
+
+    /// Models the config leaves out of automatic warm-ups (D52).
+    pub fn warm_skipped(&self) -> std::collections::BTreeSet<String> {
+        self.models.iter().filter(|(_, m)| m.warm == Some(false)).map(|(id, _)| id.clone()).collect()
+    }
+
+    /// The startup warm-up's budget; `None` for no limit.
+    pub fn warm_budget(&self) -> Option<Duration> {
+        (self.warm_budget_secs > 0).then(|| Duration::from_secs(self.warm_budget_secs))
     }
 
     /// The `onnx` models' inference threads. Zero threads is a config
@@ -280,5 +307,19 @@ mod tests {
         assert!(!Config::default().report_compute_plans, "live plan reads are opt-in");
         let c: Config = toml::from_str("report_compute_plans = true").unwrap();
         assert!(c.report_compute_plans);
+    }
+
+    #[test]
+    fn warming_is_on_by_default_with_a_budget_and_a_per_model_opt_out() {
+        let c = Config::default();
+        assert!(c.warm_on_start);
+        assert_eq!(c.warm_budget(), Some(Duration::from_secs(1800)));
+        assert!(c.warm_skipped().is_empty());
+        let c: Config =
+            toml::from_str("warm_on_start = false\nwarm_budget_secs = 0\n[models.big]\nwarm = false\n[models.small]\nwarm = true\n")
+                .unwrap();
+        assert!(!c.warm_on_start);
+        assert_eq!(c.warm_budget(), None, "0 is no limit");
+        assert_eq!(c.warm_skipped(), ["big".to_string()].into());
     }
 }

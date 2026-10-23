@@ -26,6 +26,8 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
         data.push(ModelObject::new(state.chat.id().to_string(), created, "text-generation"));
     }
 
+    // Each Core ML bucket's state in Core ML's compile cache (D52).
+    let warm_targets = crate::warm::targets(&state.registry);
     for id in state.registry.ids() {
         let r = state.registry.get(id).ok();
         let m = r.map(|r| &r.manifest);
@@ -42,6 +44,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             max_seq_len: m.map(|m| m.max_seq_len),
             buckets: m.filter(|m| m.backend == EmbeddingBackendKind::Coreml).map(|m| m.buckets.clone()),
             placement: r.and_then(|r| embedder_placement(&state, r, false)),
+            compile_cache: state.warmup.compile_cache(&warm_targets, id),
             ..ModelObject::new(id.to_string(), created, "feature-extraction")
         });
     }
@@ -70,6 +73,7 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             seq_cap: m.seq_cap.clone(),
             max_seq_len: Some(m.max_seq_len),
             placement: placement(&state, &c.dir, &m.artifact, &m.buckets, m.chunks(), m.compute_units, m.placement.as_ref(), false),
+            compile_cache: state.warmup.compile_cache(&warm_targets, &m.id),
             calibration: (!m.classify.calibration.is_empty()).then(|| m.classify.calibration.clone()),
             ..ModelObject::new(m.id.clone(), created, m.task.name())
         });
@@ -333,6 +337,9 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "models": plans,
         },
         "chunked_models": chunked,
+        // Core ML's compile cache (D52): the startup warm-up's progress,
+        // and each Core ML bucket's state, by model.
+        "warmup": state.warmup.health(&state.registry),
     }))
 }
 

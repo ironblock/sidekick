@@ -22,6 +22,7 @@ pub mod config;
 pub mod fetch;
 pub mod pool;
 pub mod state;
+pub mod warm;
 
 pub use api::build_router;
 pub use config::Config;
@@ -32,18 +33,29 @@ use sidekick_core::{ChatBackend, EmbeddingBackendKind, ModelRegistry, ScanOption
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Assemble state from config with the default (Foundation Models) chat
-/// backend. Tests inject their own backend via `AppState` directly.
-pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
-    let options = ScanOptions {
+/// What the registry scan is told: the daemon config's compute units and
+/// caps, and whether this machine has a Neural Engine.
+pub fn scan_options(config: &Config) -> ScanOptions {
+    ScanOptions {
         compute_units: config.compute_units(),
         ignore_ane_weight_cap: config.ignore_ane_weight_cap,
         ignore_cpu_seq_cap: config.ignore_cpu_seq_cap,
         ignore_ane_seq_cap: config.ignore_ane_seq_cap,
         no_neural_engine: !sidekick_embed::has_neural_engine(),
-    };
+    }
+}
+
+/// The models directory, scanned as the daemon scans it: what it serves,
+/// on the compute units and buckets it serves them with.
+pub fn scan(config: &Config) -> anyhow::Result<ModelRegistry> {
+    Ok(ModelRegistry::scan_with(&config.models_dir(), &scan_options(config))?)
+}
+
+/// Assemble state from config with the default (Foundation Models) chat
+/// backend. Tests inject their own backend via `AppState` directly.
+pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
     let onnx_threads = config.onnx_threads()?;
-    let mut registry = ModelRegistry::scan_with(&config.models_dir(), &options)?;
+    let mut registry = scan(config)?;
     // ONNX Runtime loads only for an onnx model, and then at startup, so a
     // missing runtime skips the onnx models with its reason in /health
     // right away. Without one, it's never loaded (D40).
@@ -75,6 +87,8 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         request_timeout: config.request_timeout(),
         load_timeout: config.load_timeout(),
         onnx_threads,
+        // Started by the daemon once it's serving (`warm::Warmup::start`).
+        warmup: Default::default(),
         placements: config
             .report_compute_plans
             .then(|| sidekick_embed::placement::enable(config.compute_plan_cache_dir()))
