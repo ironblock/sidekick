@@ -417,7 +417,7 @@ def cmd_add(args):
             "converter": args.converter or converter_of(committed_manifest(model) or manifest_text),
             "converter_commit": args.converter_commit,
             "coremltools": meta.get("coremltools"),
-            "torch": meta.get("torch"),
+            "torch": args.torch or meta.get("torch"),
             "python": args.python,
             "os": args.os,
             "xcode": args.xcode,
@@ -623,6 +623,8 @@ def main():
     a.add_argument("--grade", action="append", help="path:chip:letter[:report], when no report matches by hash")
     a.add_argument("--converter")
     a.add_argument("--converter-commit")
+    a.add_argument("--torch", help="PyTorch version (default: the Core ML programs' metadata; an ONNX graph's "
+                                   "producer_version names it)")
     a.add_argument("--python")
     a.add_argument("--os")
     a.add_argument("--xcode")

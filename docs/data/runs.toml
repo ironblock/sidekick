@@ -34,14 +34,14 @@ date = "2026-10-10"
 idle = false
 sidekick = "0.8.0 pre-release (commit 571c7d3)"
 threads = 4
-[runs."native-arm64-bge-small-en-v1.5.json"]
+[runs."native-arm64-bge-small-en-v1.5-hashed.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp32"
-date = "2026-10-10"
-idle = false
-sidekick = "0.8.0 pre-release (commit 571c7d3)"
-threads = 4
+date = "2026-10-23"
+idle = true
+sidekick = "0.15.0+ with file hashes in ONNX reports (commit 55f20bb)"
+threads = 8
 [runs."native-arm64-embeddinggemma-300m.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
@@ -149,6 +149,13 @@ precision = "fp16"
 date = "2026-10-16"
 idle = false
 sidekick = "0.11.0+ with chunked embedders (commit 71ef17c)"
+[runs."coreml-arm64-bge-small-en-v1.5.json"]
+runtime = "Core ML"
+os = "macOS 27.0"
+precision = "fp16"
+date = "2026-10-23"
+idle = true
+sidekick = "0.15.0+ (commit 55f20bb)"
 [runs."native-arm64-f2llm-v2-160m.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
