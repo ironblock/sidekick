@@ -49,7 +49,6 @@ REPO = Path(__file__).resolve().parent.parent
 DATA = REPO / "docs" / "data"
 GITHUB = "https://github.com/ironblock/sidekick"
 OWNER = "<owner>"
-FETCH = "sidekickd fetch"
 
 PATH_NAME = {"coreml-ane": "Neural Engine", "coreml-gpu": "GPU", "coreml-cpu": "CPU", "onnx-cpu": "CPU (ONNX Runtime)"}
 BACKEND_NAME = {"coreml": "Core ML", "onnx": "ONNX"}
@@ -224,7 +223,8 @@ def notice(m, lic):
     if tier == "2b":
         terms = consent_terms(m, lic)
         return ("**This repository is gated.** To download it you accept these terms on Hugging Face, and "
-                f"`{FETCH}` asks you to accept them again before it downloads anything:\n\n"
+                "`sidekickd fetch` shows them and asks you to accept them again (`--accept-terms`) before it "
+                "downloads anything:\n\n"
                 + "\n".join(f"{i}. {t}" for i, t in enumerate(terms, 1))
                 + f"\n\nWhy: {lic['reason']}")
     raise SystemExit(f"{m['name']} is tier 3: sidekick doesn't publish its builds")
@@ -392,22 +392,31 @@ def usage(model, m, manifest, backend, builds, lic, owner):
     variant = builds[0]["variant"] if builds else ("fp32" if backend == "onnx" else "fp16")
     accept = f" --accept-terms {model}" if lic["tier"] == "2b" else ""
     flag = " --backend onnx" if backend == "onnx" else ""
+    pick = f" --variant {variant}" if len({b["variant"] for b in builds}) > 1 else ""
     out = [f"With [sidekick]({GITHUB}) installed, fetch the build into sidekick's models directory and start the "
-           "daemon. Fetch downloads each distinct file once, checks its sha256 against sidekick's checksum ledger "
-           "before placing it, and hard-links a file that several buckets share:",
-           "", "```sh", f"{FETCH} {model}{flag}{accept}", "sidekickd", "```", "",
+           "daemon. `sidekickd fetch` downloads into the Hugging Face cache (through the `hf` CLI when it is "
+           "installed, with your token), checks every file against the Hub's hashes and sidekick's checksum "
+           "ledger, and installs the model as hard links to the cached files, so it takes no extra disk. "
+           "`--buckets` fetches only some sequence lengths of a Core ML build:",
+           "", "```sh", f"sidekickd fetch {model}{flag}{pick}{accept}", "sidekickd", "```", "",
            "Then:", "", request_example(model, m, manifest), "",
            "**Without sidekick's fetch,** download one directory with the Hugging Face CLI, check it, and move it "
            "into place:", "", "```sh",
-           f"hf download {rid} --include '{variant}/*' '{variant}.sha256' --local-dir ./{model}-download",
+           f"hf download {rid} --include '{variant}/*' --include '{variant}.sha256' --local-dir ./{model}-download",
            f"cd ./{model}-download/{variant} && shasum -a 256 -c ../{variant}.sha256 && cd -",
            f"mv ./{model}-download/{variant} \"$HOME/Library/Application Support/sidekick/models/{model}\"",
            "```", "", "That is sidekick's models directory on macOS; on Linux, or with another directory in "
            "sidekick's config, move it there instead."]
+    if backend == "coreml":
+        out += ["", "Don't point sidekick's models directory at a Hugging Face cache snapshot (`hf download` "
+                "without `--local-dir`): its files are symlinks, and Core ML runs a program with a symlinked file "
+                "off the Neural Engine without an error, so sidekick refuses to serve it there. `--local-dir` "
+                "writes real files."]
     if any(b["layout"] == "shared" for b in builds):
-        out += ["", "A shared-weights build (one weights file per chunk, used by every bucket) arrives as copies "
-                "this way; `python3 -m sidekick_convert.shared_weights link <model dir>`, from sidekick's `tools/`, "
-                "turns them back into hard links."]
+        out += ["", "A shared-weights build (one weights file per chunk, used by every bucket, D49) arrives this "
+                "way as a copy of that file per bucket, so it takes more disk than `sidekickd fetch` installs; "
+                "`python3 -m sidekick_convert.shared_weights link <model dir>`, from sidekick's `tools/`, turns the "
+                "copies back into hard links."]
     if backend == "onnx":
         out += ["", "ONNX builds run on ONNX Runtime's CPU backend, on macOS and Linux; the daemon needs its `onnx` "
                 "feature and the ONNX Runtime library its release archives ship."]

@@ -1191,7 +1191,18 @@ fn check_ane_weights(
     options: &ScanOptions,
 ) -> std::result::Result<(), String> {
     let on_ane = matches!(units, ComputeUnits::CpuAndNeuralEngine | ComputeUnits::All);
-    if !on_ane || limit == AneWeightLimit::Ignore || options.ignore_ane_weight_cap {
+    if !on_ane {
+        return Ok(());
+    }
+    if let Some(link) = symlinked_program_file(dir, artifact, buckets, chunks) {
+        return Err(format!(
+            "`{link}` is a symbolic link, and Core ML runs a program with a symlinked file off the ANE without \
+             an error (D51); served with `{}`. Install the files as hard links or copies (`sidekickd fetch` \
+             installs hard links), or serve it on the GPU (`compute_units = \"cpu_and_gpu\"`), where links work",
+            units.name()
+        ));
+    }
+    if limit == AneWeightLimit::Ignore || options.ignore_ane_weight_cap {
         return Ok(());
     }
     match over_ane_weight_limit(dir, artifact, buckets, chunks) {
@@ -1230,6 +1241,38 @@ fn over_ane_weight_limit(dir: &Path, artifact: &str, buckets: &[usize], chunks: 
                 bytes as f64 / (1u64 << 30) as f64
             )
         })
+    })
+}
+
+/// The first file inside a bucket's program that is a symbolic link, as
+/// `<program>/<path>`. Measured on macOS 27 (D51): Core ML plans a compiled
+/// program with any symlinked file in it entirely off the ANE, with no
+/// error, and its outputs then differ from the ANE's; the program's own
+/// directory being a symlink is fine, as are hard links. A Hugging Face
+/// cache snapshot holds every file as a symlink into its blob store, so a
+/// program served from one in place would quietly leave the ANE.
+fn symlinked_program_file(dir: &Path, artifact: &str, buckets: &[usize], chunks: usize) -> Option<String> {
+    fn walk(root: &Path, dir: &Path) -> Option<PathBuf> {
+        for entry in std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+            if meta.file_type().is_symlink() {
+                return Some(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+            }
+            if meta.is_dir() {
+                if let Some(found) = walk(root, &path) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    let mut names: Vec<String> = buckets.iter().flat_map(|&b| artifact_files(artifact, b, chunks)).collect();
+    names.dedup();
+    names.into_iter().find_map(|name| {
+        let program = dir.join(&name);
+        // The program directory itself may be a link: walk what it points to.
+        walk(&program, &program).map(|inner| format!("{name}/{}", inner.display()))
     })
 }
 
@@ -3001,6 +3044,54 @@ max_seq_len = 512
             }
             std::fs::remove_dir_all(&tmp).unwrap();
         }
+    }
+
+    #[test]
+    fn a_program_with_a_symlinked_file_is_refused_on_the_ane() {
+        // How a Hugging Face cache snapshot holds a file: a relative link into
+        // the repo's blob store.
+        let tmp = tmp_dir("ane-symlink");
+        let blobs = tmp.join("blobs");
+        std::fs::create_dir_all(&blobs).unwrap();
+        std::fs::File::create(blobs.join("w")).unwrap().set_len(3 << 20).unwrap();
+        let install = |name: &str, body: &str, how: &str| {
+            let models = tmp.join(name);
+            write_classifier(&models, "s", body);
+            let dir = models.join("s");
+            weights(&dir, "model_128.mlmodelc", "weights", 1 << 20);
+            let program = dir.join("model_512.mlmodelc");
+            match how {
+                "symlinked-file" => {
+                    std::fs::create_dir_all(program.join("weights")).unwrap();
+                    std::os::unix::fs::symlink("../../../../blobs/w", program.join("weights/weight.bin")).unwrap();
+                }
+                "hard-link" => {
+                    std::fs::create_dir_all(program.join("weights")).unwrap();
+                    std::fs::hard_link(blobs.join("w"), program.join("weights/weight.bin")).unwrap();
+                }
+                "symlinked-program" => {
+                    let real = tmp.join(format!("{name}-real"));
+                    weights(&real, "model_512.mlmodelc", "weights", 3 << 20);
+                    std::os::unix::fs::symlink(real.join("model_512.mlmodelc"), &program).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            // The weight check reads a link's target: 3 MiB, not the link's own length.
+            assert_eq!(artifact_weight_bytes(&program), 3 << 20, "{name}");
+            ModelRegistry::scan(&models).unwrap()
+        };
+        let reg = install("file", SENTIMENT, "symlinked-file");
+        assert!(reg.classifier("sentiment").is_err());
+        let reason = &reg.skipped()[0].reason;
+        assert!(reason.contains("`model_512.mlmodelc/weights/weight.bin` is a symbolic link"), "{reason}");
+        assert!(reason.contains("hard links") && reason.contains("cpu_and_gpu"), "{reason}");
+        // The GPU and CPU read through links: served.
+        let gpu = SENTIMENT.replace("\n[classify]", "compute_units = \"cpu_and_gpu\"\n\n[classify]");
+        assert!(install("gpu", &gpu, "symlinked-file").classifier("sentiment").is_ok());
+        // A hard link, or a program directory that is itself a link, is fine on the ANE.
+        assert!(install("hard", SENTIMENT, "hard-link").classifier("sentiment").is_ok());
+        assert!(install("dir", SENTIMENT, "symlinked-program").classifier("sentiment").is_ok());
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
