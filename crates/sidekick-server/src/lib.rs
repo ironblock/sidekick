@@ -19,6 +19,7 @@
 
 pub mod api;
 pub mod config;
+pub mod fetch;
 pub mod pool;
 pub mod state;
 

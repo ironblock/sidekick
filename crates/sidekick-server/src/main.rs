@@ -9,16 +9,18 @@ use std::path::PathBuf;
     about = "OpenAI-compatible server for on-device embeddings, classification and chat (Apple Foundation Models, Core ML, and ONNX Runtime on the CPU)"
 )]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
     /// Config file (default, if present: ~/Library/Application
     /// Support/sidekick/config.toml on macOS, ~/.config/sidekick/config.toml
     /// on Linux; the startup log names the file read)
-    #[arg(long)]
+    #[arg(long, global = true)]
     config: Option<PathBuf>,
     /// Listen address (overrides config)
     #[arg(long)]
     addr: Option<SocketAddr>,
     /// Models directory (overrides config)
-    #[arg(long)]
+    #[arg(long, global = true)]
     models_dir: Option<PathBuf>,
     /// API key required as `Authorization: Bearer <key>` (overrides config;
     /// also settable via SIDEKICK_API_KEY)
@@ -42,6 +44,16 @@ struct Args {
     /// and can fail predictions (D48)
     #[arg(long)]
     ignore_ane_seq_cap: bool,
+}
+
+/// With no command, sidekickd serves.
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+    /// Download a published model build from Hugging Face, verify every
+    /// file, and install it in the models directory (D51). Uses the `hf`
+    /// CLI when it is installed, else downloads into the same Hugging Face
+    /// cache itself.
+    Fetch(sidekick_server::fetch::FetchArgs),
 }
 
 /// `sidekickd --version`: the crate version plus the SDK the Foundation
@@ -82,6 +94,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(dir) = args.models_dir {
         config.models_dir = Some(dir);
+    }
+    if let Some(Command::Fetch(fetch)) = &args.command {
+        return sidekick_server::fetch::run(fetch, &config.models_dir());
     }
     if args.api_key.is_some() {
         config.api_key = args.api_key;
@@ -143,5 +158,19 @@ mod tests {
         assert!(Args::try_parse_from(["sidekickd", "--ignore-cpu-seq-cap"]).unwrap().ignore_cpu_seq_cap);
         assert!(Args::try_parse_from(["sidekickd", "--ignore-ane-seq-cap"]).unwrap().ignore_ane_seq_cap);
         assert!(!Args::try_parse_from(["sidekickd"]).unwrap().ignore_ane_seq_cap);
+    }
+
+    #[test]
+    fn fetch_is_a_subcommand_and_serving_is_the_default() {
+        assert!(Args::try_parse_from(["sidekickd"]).unwrap().command.is_none());
+        let args = Args::try_parse_from([
+            "sidekickd", "fetch", "bge-small-en-v1.5", "--repo", "o/n", "--buckets", "128,512", "--models-dir", "/m",
+        ])
+        .unwrap();
+        let Some(Command::Fetch(f)) = args.command else { panic!("fetch") };
+        assert_eq!((f.model.as_str(), f.repo.as_deref(), f.buckets.as_slice()), ("bge-small-en-v1.5", Some("o/n"), &[128, 512][..]));
+        assert_eq!(args.models_dir, Some(PathBuf::from("/m")), "--models-dir is shared with serving");
+        let onnx = Args::try_parse_from(["sidekickd", "fetch", "m", "--backend", "onnx"]).unwrap();
+        assert!(matches!(onnx.command, Some(Command::Fetch(sidekick_server::fetch::FetchArgs { backend: sidekick_server::fetch::Backend::Onnx, .. }))));
     }
 }
