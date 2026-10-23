@@ -202,7 +202,10 @@ A card holds:
 - **Which build to download:** each variant's shape, length cap and
   download size, and which path to run it on, by its grades.
 - **Use with sidekick:** `sidekickd fetch`, a request for the model's
-  task, and the manual route (`hf download`, `shasum -c`, move into place).
+  task, and the manual route (`hf download --local-dir`, `shasum -c`, move
+  into place), which writes real files, with a warning not to serve a
+  Hugging Face cache snapshot in place (its symlinks take Core ML off the
+  ANE).
 - **Fidelity:** the grade letters and their thresholds, from
   fixtures/parity/expectations.toml; the published grades from
   data/models.json per chip and path; and the grades of these exact files,
@@ -285,31 +288,58 @@ concern, so it says exactly what applies to that model and nothing else:
   acceptance. The gate asks for nothing else: no name, company or country.
 
 The same text is published as TERMS.md beside the card, so a client can
-show it and record exactly what was accepted. #137 asks fetch to refuse a
-tier-2b model until the user names it in an explicit acceptance, and to
-record that; recording the sha256 of the TERMS.md it showed would make a
-change to the terms ask again. A gated repository also needs a Hugging Face
-token from an account that accepted the gate.
+show it and record exactly what was accepted. `sidekickd fetch` shows
+TERMS.md and downloads nothing more until the user names the model with
+`--accept-terms <model>`, and records the sha256 of the terms accepted in
+the installed `fetch.toml`. A gated repository also needs a Hugging Face
+token from an account that accepted the gate, which fetch uses through the
+`hf` CLI; a refused download tells the user to accept the terms on the
+repository's page, which fetch can't do for them.
 
 The gate is honest about its limits: it records consent, it doesn't
 enforce use, and a copy made after download isn't gated.
 
 ## For fetch
 
-What fetch can rely on (the fetch command itself is separate work):
-- the repository id: `<owner>/<model id>-<backend>`;
-- the build: one directory per variant, the install tree as is, at the
-  revision the ledger's `published` entry names;
-- the files: the ledger entry's `files`, each distinct sha256 once with its
-  size and every path. Download each hash once, verify it before placing
-  it, move it to its first path and hard-link the rest, copying where a
-  link is refused (D49);
-- the tier: licences.toml's `tier`; for 2b, TERMS.md and an explicit
-  acceptance first; never a tier-3 model;
-- the card's commands, `sidekickd fetch <id>` with `--backend onnx` and
-  `--accept-terms <id>`, are placeholders in `tools/model_card.py`
-  (`FETCH` and `usage()`) to be matched to fetch's final interface;
-- `ledger.py verify <dir> [--partial]` as the reference check.
+`sidekickd fetch <model> [--backend coreml|onnx] [--variant V]
+[--buckets 128,512] [--accept-terms <model>]` (D51) relies on this layout:
+- **The repository and revision** come from the ledger's latest
+  `published` record for the model and backend (`--repo` and `--revision`
+  name others); the ledger is built into sidekickd from
+  `docs/data/ledger.json`.
+- **The build** is one variant's directory, the install tree as is: the
+  one asked for, else the one last published, else the only one. Fetch
+  first downloads every variant's manifest and TERMS.md; the buckets asked
+  for (all by default) become `hf download --include` patterns for that
+  variant's manifest, tokenizer and programs.
+- **The files land in the Hugging Face cache,** through the user's `hf` CLI
+  when it is installed (its token, Xet, `HF_HOME` and `HF_HUB_CACHE`), else
+  through sidekickd's own anonymous downloader, which writes the same cache
+  layout. The cache stores each distinct file once as a blob, so a shared
+  weights file (D49) downloads once whatever its paths.
+- **Every file is verified** against the Hub's hash for it (the sha256 of
+  an LFS or Xet file, the Git blob id of any other) and against the
+  ledger: the files must be one of the builds it records for that model,
+  backend and variant, with the same sha256 and size at every path, and
+  none of the buckets fetched may be missing a file. A mismatch installs
+  nothing. `ledger.py verify <cache snapshot>/<variant> --partial` makes
+  the same check from Python on the cached files. Run on the installed
+  directory, it reports fetch's `fetch.toml`, and for a subset of buckets
+  the rewritten manifest, as differences.
+- **The model directory is hard links to the cached blobs,** every path of
+  it, with the manifest rewritten for exactly the buckets fetched and a
+  `fetch.toml` recording the repository, commit and every file's sha256.
+  Not symlinks into the snapshot: measured on an M1 Max under macOS 27.0,
+  a compiled `.mlmodelc` with any symlinked file in it (the weights alone,
+  the other files alone, or all of them) is planned entirely off the ANE
+  without an error (0 of 245 operations on the ANE instead of 229, 28 ms
+  per prediction instead of 2, outputs off by up to 0.016), and every file
+  in a Hugging Face snapshot is a symlink. Hard links and copies stay on
+  the ANE, bit-identical, and the registry now refuses an ANE-served
+  program with a symlinked file. Where the filesystem refuses a link (the
+  cache on another volume), fetch copies.
+- **The tier:** a repository with TERMS.md (tier 2b) needs `--accept-terms
+  <model>` first; tier 3 is never published, so there's nothing to fetch.
 
 ## Publishing a build
 
