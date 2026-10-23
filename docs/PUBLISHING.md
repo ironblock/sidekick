@@ -419,6 +419,9 @@ enforce use, and a copy made after download isn't gated.
   another volume), fetch copies.
 - **The tier:** a repository with TERMS.md (tier 2b) needs `--accept-terms
   <model>` first; tier 3 is never published, so there's nothing to fetch.
+- **Then it compiles:** for a Core ML build the daemon will serve, fetch
+  loads each installed bucket once, so that Core ML's compile cache holds
+  it before the first request (D52); `--no-warm` skips this.
 
 ## Publishing a build
 

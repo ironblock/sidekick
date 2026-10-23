@@ -351,10 +351,16 @@ or SGLang works unchanged. What a host needs to know beyond that:
   field it rejected. Sending a classifier to `/v1/embeddings`, or an
   embedder to `/v1/classify`, is a 400 naming the model's task.
 - **Timeouts.** A model's first request after it loads, and the first to
-  reach a larger bucket, waits while Core ML compiles that bucket:
-  seconds, up to minutes for a 2,048-token bucket. That wait doesn't count
-  toward `request_timeout_secs`; the prediction after it does. Give the
-  first request a generous client timeout. A 504 with code `timeout` is a
+  reach a larger bucket, waits while Core ML loads that bucket, and, if
+  its compiled form isn't cached yet, compiles it: seconds, up to minutes
+  for a 2,048-token bucket. The daemon compiles every bucket it serves in
+  the background at startup (D52), so that wait is rare once the startup
+  warm-up is done; `/v1/models` shows each model's buckets under
+  `compile_cache` (`warm`, `warming`, `cold`, `failed`), and a request
+  for a `warming` bucket waits for that compile. After installing models
+  or a macOS update, `sidekickd warm` compiles them ahead of time. The
+  wait doesn't count toward `request_timeout_secs`; the prediction after
+  it does. Give the first request a generous client timeout. A 504 with code `timeout` is a
   prediction that ran too long; one with code `load_timeout` (and a
   `Retry-After` header) means the load outlasted `load_timeout_secs` and
   continues, so retry later.

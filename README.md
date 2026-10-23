@@ -551,6 +551,11 @@ repository or revision (a build not published yet needs `--repo`).
   for exactly those buckets; `--variant` picks a build (`fp16`,
   `fp16-max2048`) when a repository has several. `fetch.toml` in the model
   directory records the repository, the commit and every file's sha256.
+- **A Core ML build is compiled once installed:** fetch loads each bucket
+  it installed, on the compute units the daemon will serve it on, so that
+  the first requests don't wait on Core ML's compile (D52). `--no-warm`
+  skips it, and so does `warm = false` under the model's
+  `[models."<id>"]` in the config.
 
 ### Installing a published build by hand
 
@@ -601,6 +606,8 @@ ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB wei
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
 ignore_ane_seq_cap = false     # serve ANE models past 2,048 tokens or their ane_max_seq_len (slow compiles, failures)
 report_compute_plans = false   # read each loaded bucket's Core ML placement live (costs a second compile)
+warm_on_start = true           # compile every Core ML bucket at startup, in the background (D52)
+warm_budget_secs = 1800        # start no warm-up load after this long; 0 for no limit
 # onnx_intra_op_threads = 8    # inference threads for every onnx model (default: fast physical cores, at most 8)
 # onnx_runtime = "..."         # libonnxruntime to load instead of the bundled one (before ORT_DYLIB_PATH)
 
@@ -612,10 +619,42 @@ report_compute_plans = false   # read each loaded bucket's Core ML placement liv
 # compute_units = "cpu_and_ne"   # cpu_and_ne, cpu_and_gpu, cpu_only or all
 # [models."bge-small-en-v1.5"]
 # intra_op_threads = 2           # an onnx model's inference threads
+# [models."qwen3-embedding-0.6b"]
+# warm = false                   # leave a Core ML model out of startup and fetch warm-ups
 ```
 
 CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ...
---ignore-ane-weight-cap --ignore-cpu-seq-cap`.
+--ignore-ane-weight-cap --ignore-cpu-seq-cap --no-warm --warm-budget-secs N`.
+
+## Warming Core ML's compile cache
+
+The first time sidekickd loads a Core ML bucket, Core ML compiles it for
+the device: seconds for a small model on the ANE, minutes for a long
+bucket of a large one. Core ML keeps the result on disk, for this
+executable and user, the model's path and the macOS build, so later loads
+take a fraction of that. sidekickd compiles ahead of requests (D52):
+
+- **At startup, in the background,** in a `sidekickd warm` child process,
+  every bucket the daemon serves, on the compute units it serves it on,
+  cold ones first. After a macOS update, a model move or a fresh install,
+  that's where the compiles happen, instead of in the first requests. A
+  request for a bucket being compiled waits for that compile and then
+  loads from the cache; requests for other buckets don't wait. Nothing
+  stays loaded that no request asked for. `--no-warm` or `warm_on_start =
+  false` turns it off; `warm_budget_secs` (default 30 minutes) stops it
+  starting new loads after that long.
+- **On demand:** `sidekickd warm [<model>…] [--buckets 128,512]
+  [--budget-secs N]`, or `--list` to see each bucket's state without
+  loading anything. Run it as the user, and with the `sidekickd`, that the
+  daemon runs as: Core ML's cache is per user and per executable name.
+- **After `sidekickd fetch`,** for the buckets fetched; `--no-warm` skips
+  it.
+
+`/v1/models` lists each Core ML model's buckets as `compile_cache`
+(`warm`, `warming`, `cold` or `failed`), and `/health`'s `warmup` shows
+the startup warm-up's progress and each bucket's load times. Measured on
+an M1 Max: bge-small-en-v1.5's first request per bucket took 4.0–5.4 s
+cold and 0.9–1.3 s warmed.
 
 ## Memory
 
