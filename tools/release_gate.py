@@ -59,14 +59,23 @@ An nli build converted before 0.15.0 has no `classes` in its manifest, and
 `classes` line from its committed example manifest added to a copy of the
 manifest, and records that it did.
 
-Usage (macOS; a Python 3.12 environment with mteb==2.26.14 and
-sentence-transformers for the embedders, as tools/mteb_transfer.py needs,
-and `tokenizers` for the MNLI triple; the rest is the standard library):
+Usage (macOS). The gate itself needs only the standard library, so any
+Python 3.11 or later runs it. Two of its steps run in a subprocess of a
+second interpreter, which needs packages: the embedders' MTEB slice
+(tools/mteb_transfer.py: mteb==2.26.14 and sentence-transformers) and the
+textbook MNLI triple (tools/tasks/scoring_run.py sanity: `tokenizers`).
+Build that environment once from the pinned
+tools/release_gate.requirements.txt (its header has the commands), and
+name its interpreter with `--python` or SIDEKICK_GATE_PYTHON:
 
-    python tools/release_gate.py --models-dir <dir> [--models-dir <dir> ...] \\
+    python3 tools/release_gate.py --python <venv>/bin/python \\
+        --models-dir <dir> [--models-dir <dir> ...] \\
         --refs <dir> [--refs <dir> ...] [--paths default|all] [--models <id> ...] \\
         [--daemon <sidekickd>] [--json <file>] [--update-baseline]
 
+    --python       the interpreter for those two steps; default
+                   $SIDEKICK_GATE_PYTHON, else the one running the gate.
+                   It is checked before any model runs.
     --models-dir   a directory of installed builds (one subdirectory per
                    model); the first holding a model wins
     --refs         a directory of parity references, by model id
@@ -77,8 +86,7 @@ and `tokenizers` for the MNLI triple; the rest is the standard library):
     --list         show which published models have a build and a
                    reference here, and exit
 
-Embedders' MTEB slice runs in a subprocess of `--python` (default: this
-interpreter). mteb reads the tasks' datasets, and each checkpoint's
+For the MTEB slice, mteb reads the tasks' datasets, and each checkpoint's
 configuration at its pinned revision (for its prompts), through the
 Hugging Face cache, fetching them on first use.
 """
@@ -892,6 +900,27 @@ def build_daemon(args) -> Path:
     return Path(meta["target_directory"]) / "release" / "sidekickd"
 
 
+def check_python(python: str, todo: list):
+    """Fail before any model runs if `--python` lacks what this run needs:
+    mteb (at the pinned version) for an embedder, `tokenizers` for an nli
+    model the verification harness scores."""
+    kinds = {meta["task"] for _m, meta, _p, _d, build, _r in todo if build is not None}
+    sanity = any(build is not None and m in scoring_models() for m, _meta, _p, _d, build, _r in todo)
+    probe = []
+    if "embed" in kinds:
+        probe.append("import mteb, sentence_transformers; assert mteb.__version__ == '2.26.14', mteb.__version__")
+    if sanity:
+        probe.append("import tokenizers")
+    if not probe:
+        return
+    p = subprocess.run([python, "-c", "; ".join(probe)], capture_output=True, text=True)
+    if p.returncode != 0:
+        raise SystemExit(f"--python {python} can't run the MTEB slice or the MNLI triple "
+                         f"({(p.stderr.strip().splitlines() or ['not runnable'])[-1]}). Build an environment from "
+                         f"tools/release_gate.requirements.txt and pass its interpreter with --python or "
+                         f"SIDEKICK_GATE_PYTHON.")
+
+
 def plan(args, this_chip: str):
     """[(model, meta, path, default path, build or None, reference or None)]."""
     models = models_toml()
@@ -925,8 +954,9 @@ def main() -> int:
     ap.add_argument("--daemon", help="a built sidekickd to gate instead of building one")
     ap.add_argument("--onnx-runtime", help="libonnxruntime for onnx-cpu builds (else ORT_DYLIB_PATH or beside "
                                             "the binary)")
-    ap.add_argument("--python", default=sys.executable,
-                    help="the interpreter for tools/mteb_transfer.py and scoring_run.py sanity")
+    ap.add_argument("--python", default=os.environ.get("SIDEKICK_GATE_PYTHON") or sys.executable,
+                    help="the interpreter for tools/mteb_transfer.py and scoring_run.py sanity, built from "
+                         "tools/release_gate.requirements.txt (default: $SIDEKICK_GATE_PYTHON, else this one)")
     ap.add_argument("--baseline", type=Path, default=BASELINE)
     ap.add_argument("--json", type=Path, help="write this run's full record here")
     ap.add_argument("--update-baseline", action="store_true")
@@ -944,6 +974,7 @@ def main() -> int:
     tol = base.get("tolerances", TOLERANCES)
     by_key = {(e["model"], e["path"]): e for e in base["entries"]}
 
+    check_python(args.python, todo)
     binary = build_daemon(args)
     version = subprocess.run([str(binary), "--version"], capture_output=True, text=True).stdout.strip()
     print(version, flush=True)
