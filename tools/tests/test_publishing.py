@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -280,14 +281,58 @@ class LicencesTest(unittest.TestCase):
         self.assertTrue(any("isn't pinned" in p for p in found), found)
 
 
+BGE_COREML = "bge-small-en-v1.5/coreml/fp16/f1b85f22e0b4"
+
+
 class ModelCardTest(unittest.TestCase):
     def test_tier_2a_card(self):
         card = model_card.render("nli-minilm2-l6-h768")[0]
         self.assertTrue(card.startswith("---\nlicense: apache-2.0\n"))
         self.assertIn("library_name: coreml", card)
-        self.assertIn("**Notice.**", card)
+        self.assertIn("**Licence: Apache-2.0 · publishing tier 2a.**", card)
         self.assertNotIn("extra_gated_prompt", card)
         self.assertIn("## Checksums", card)
+
+    def test_front_matter_is_complete(self):
+        card = model_card.render("bge-small-en-v1.5", build_ids=[BGE_COREML])[0]
+        front = card.split("---\n")[1]
+        for key in ("license: mit", "base_model: BAAI/bge-small-en-v1.5", "base_model_relation: quantized",
+                    "library_name: coreml", "pipeline_tag: feature-extraction", "tags:"):
+            self.assertIn(key, front)
+
+    def test_card_holds_only_what_is_particular_to_it(self):
+        card = model_card.render("bge-small-en-v1.5", build_ids=[BGE_COREML], ref="v9.9.9")[0]
+        sections = re.findall(r"^## (.+)$", card, re.M)
+        self.assertEqual(sections, ["Download", "Fidelity", "Benchmark scores", "Training data", "Original model",
+                                    "Checksums"])
+        # one fetch command, nothing general copied in: no install steps, no grade scale, no convert recipe
+        self.assertEqual(card.count("```sh"), 1)
+        self.assertIn("sidekickd fetch bge-small-en-v1.5\n", card)
+        for general in ("hf download", "shasum -a 256 -c ../", "symlink", "0.9999 (indistinguishable",
+                        "tools/ledger.py verify", "cpu_and_ne", "max_seq_len", 'layout = "shared"'):
+            self.assertNotIn(general, card)
+        # the shared weights file once, with its three paths, inside a collapsed block
+        self.assertIn("<details><summary><code>fp16/</code>: ledger build <code>" + BGE_COREML, card)
+        self.assertIn("<br>`model_256.mlmodelc/weights/weight.bin`", card)
+        # docs links pinned to the ref
+        links = re.findall(r"\(https://github\.com/ironblock/sidekick/blob/([^/]+)/", card)
+        self.assertTrue(links)
+        self.assertEqual(set(links), {"v9.9.9"})
+        self.assertIn("Needs sidekick 9.9.9 or later.", card)
+
+    def test_grades_of_these_files_are_marked(self):
+        card = model_card.render("bge-small-en-v1.5", build_ids=[BGE_COREML])[0]
+        self.assertIn("| Neural Engine (default) | Apple M1 Max | macOS 27.0 | **A** | 0.99997 | This build |", card)
+        self.assertIn("| GPU | Intel Xeon W-3235 | macOS 26.6.2 | **A** | 0.999999 | Unconfirmed |", card)
+
+    def test_doc_links_resolve(self):
+        self.assertEqual(model_card.link_problems(model_card.DOCS), [])
+
+    def test_slug(self):
+        self.assertEqual(model_card.slug("D49 — One weights file per chunk, shared by every bucket"),
+                         "d49--one-weights-file-per-chunk-shared-by-every-bucket")
+        self.assertEqual(model_card.slug("ONNX Runtime on the CPU (`onnx-cpu`)"), "onnx-runtime-on-the-cpu-onnx-cpu")
+        self.assertEqual(model_card.slug("Classifiers (`/v1/classify`)"), "classifiers-v1classify")
 
     def test_tier_2b_card_is_gated(self):
         card = model_card.render("embeddinggemma-300m")[0]
