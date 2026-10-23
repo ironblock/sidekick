@@ -452,40 +452,6 @@ runs badly; `/v1/models` lists each model's (see "Compute units" in
 parse or validate is skipped with a warning, and listed with the reason under
 `skipped_models` in `/health`; the rest of the directory still loads.
 
-**Fetching a published build.** `sidekickd fetch` downloads a build
-sidekick publishes on Hugging Face ([docs/PUBLISHING.md](docs/PUBLISHING.md)),
-verifies every file, and installs it in the models directory (D51):
-
-```sh
-sidekickd fetch bge-small-en-v1.5                  # the Core ML build (on Linux: the ONNX one)
-sidekickd fetch qwen3-embedding-0.6b --buckets 128,512,2048
-sidekickd fetch bge-small-en-v1.5 --backend onnx
-sidekickd fetch <model> --accept-terms <model>     # a model whose repository publishes terms
-```
-
-The ledger records where and at which revision each build was published,
-so the model id is enough; `--repo` and `--revision` name another
-repository or revision (a build not published yet needs `--repo`).
-
-- **Downloads go into the Hugging Face cache,** through the `hf` CLI when
-  it's installed (its token, Xet transfers and settings, such as `HF_HOME`,
-  `HF_HUB_CACHE` and `HF_HUB_OFFLINE`), else by sidekickd itself, anonymously
-  through `curl`, into the same cache in the same layout. Each sees the
-  other's downloads as cached. A gated repository needs `hf`, signed in to
-  an account that accepted its terms on the Hub.
-- **Every file is verified** against the Hub's hash for it and against
-  sidekick's checksum ledger, which is built into sidekickd. A file that
-  matches neither is refused.
-- **The model directory is hard links to the cached files,** so the model
-  takes no more disk than the cache does, and deleting either one leaves
-  the other whole. Core ML runs a program with symlinked files off the ANE
-  without an error, so a symlinked install wouldn't do; where the cache is
-  on another volume, the files are copied.
-- **`--buckets` fetches part of a Core ML build,** and writes the manifest
-  for exactly those buckets; `--variant` picks a build (`fp16`,
-  `fp16-max2048`) when a repository has several. `fetch.toml` in the model
-  directory records the repository, the commit and every file's sha256.
-
 **ONNX models on the CPU.** An embedder may instead be an ONNX graph run by
 ONNX Runtime on the CPU (`backend = "onnx"`, D40), on any platform sidekick
 builds for. Whether it's sidekick's own export (`--format onnx`) or a
@@ -534,6 +500,71 @@ laya-en, from `tools/convert_laya.py`, and nlptown-sentiment, from
 `tools/convert_bert_classifier.py`. Each converter writes the artifacts and
 installs the manifest. [docs/MODELS.md](docs/MODELS.md) has their measured
 accuracy on each compute path.
+
+### Fetching a published build
+
+`sidekickd fetch` downloads a build
+sidekick publishes on Hugging Face ([docs/PUBLISHING.md](docs/PUBLISHING.md)),
+verifies every file, and installs it in the models directory (D51):
+
+```sh
+sidekickd fetch bge-small-en-v1.5                  # the Core ML build (on Linux: the ONNX one)
+sidekickd fetch qwen3-embedding-0.6b --buckets 128,512,2048
+sidekickd fetch bge-small-en-v1.5 --backend onnx
+sidekickd fetch <model> --accept-terms <model>     # a model whose repository publishes terms
+```
+
+The ledger records where and at which revision each build was published,
+so the model id is enough; `--repo` and `--revision` name another
+repository or revision (a build not published yet needs `--repo`).
+
+- **Downloads go into the Hugging Face cache,** through the `hf` CLI when
+  it's installed (its token, Xet transfers and settings, such as `HF_HOME`,
+  `HF_HUB_CACHE` and `HF_HUB_OFFLINE`), else by sidekickd itself, anonymously
+  through `curl`, into the same cache in the same layout. Each sees the
+  other's downloads as cached. A gated repository needs `hf`, signed in to
+  an account that accepted its terms on the Hub.
+- **Every file is verified** against the Hub's hash for it and against
+  sidekick's checksum ledger, which is built into sidekickd. A file that
+  matches neither is refused.
+- **The model directory is hard links to the cached files,** so the model
+  takes no more disk than the cache does, and deleting either one leaves
+  the other whole. Core ML runs a program with symlinked files off the ANE
+  without an error, so a symlinked install wouldn't do; where the cache is
+  on another volume, the files are copied.
+- **`--buckets` fetches part of a Core ML build,** and writes the manifest
+  for exactly those buckets; `--variant` picks a build (`fp16`,
+  `fp16-max2048`) when a repository has several. `fetch.toml` in the model
+  directory records the repository, the commit and every file's sha256.
+
+### Installing a published build by hand
+
+Without `sidekickd fetch`, download one build's directory from its
+repository (`<owner>/<model>-coreml` or `-onnx`; the model card names its
+builds), check it against its `<build>.sha256`, and move it into the models
+directory under the model's id:
+
+```sh
+hf download <owner>/bge-small-en-v1.5-coreml --include 'fp16/*' --include 'fp16.sha256' \
+    --local-dir ./bge-small-download
+(cd ./bge-small-download/fp16 && shasum -a 256 -c ../fp16.sha256)
+mv ./bge-small-download/fp16 "$HOME/Library/Application Support/sidekick/models/bge-small-en-v1.5"
+```
+
+- **Use `--local-dir`.** Don't point the models directory at a Hugging
+  Face cache snapshot (`hf download` without it): every file there is a
+  symlink, and Core ML runs a program with a symlinked file off the Neural
+  Engine without an error (D51), so sidekick refuses to serve it there.
+  `--local-dir` writes real files.
+- **Shared weights arrive as copies.** A build whose buckets share one
+  weights file (D49) is downloaded this way as one copy per bucket, so it
+  takes more disk than fetch installs. `python3 -m
+  sidekick_convert.shared_weights link <model dir>`, run from sidekick's
+  `tools/`, turns the copies back into hard links.
+- **A gated repository** (a model whose card asks you to accept terms)
+  needs `hf auth login` with an account that accepted them on the Hub.
+- **On Linux,** or with another `models_dir` in the config, move the
+  directory there instead.
 
 ## Configuration
 
