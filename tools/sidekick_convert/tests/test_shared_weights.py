@@ -28,6 +28,28 @@ def _artifact(root, name, data):
     return a
 
 
+class KeepPackages(unittest.TestCase):
+    def test_kept_packages_hold_one_copy_of_identical_weights(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, keep = Path(d), Path(d) / "keep"
+            for seq in (128, 256):
+                pkg = root / f"model_{seq}.mlpackage"
+                (pkg / "Data/com.apple.CoreML/weights").mkdir(parents=True)
+                (pkg / "Data/com.apple.CoreML/weights/weight.bin").write_bytes(b"u" * 64)
+                (pkg / "Manifest.json").write_text("{}")
+                shared_weights.keep_package(pkg, keep, "shared")
+                shutil.rmtree(pkg)      # what the converter does next
+            shared_weights.keep_package(root / "model_512.mlpackage", None, "separate")   # no directory: nothing
+            said = []
+            shared_weights.link_kept(keep, log=said.append)
+            a, b = (keep / "shared" / f"model_{s}.mlpackage/Data/com.apple.CoreML/weights/weight.bin"
+                    for s in (128, 256))
+            self.assertTrue(os.path.samefile(a, b))
+            self.assertTrue((keep / "shared/model_128.mlpackage/Manifest.json").exists())
+            self.assertFalse((keep / "separate").exists())
+            self.assertIn("kept 2 .mlpackage source(s)", said[-1])
+
+
 class LinkIdentical(unittest.TestCase):
     def test_identical_weight_files_become_one_file(self):
         with tempfile.TemporaryDirectory() as d:
@@ -127,8 +149,9 @@ class Reexport(unittest.TestCase):
             cls.programs[seq] = shared_weights.Program(seq, None, compiled, pkg, ("x",), "y")
         cls.separate_sizes = {s: (p.compiled / "weights/weight.bin").stat().st_size for s, p in cls.programs.items()}
         group = [cls.programs[s] for s in (4, 8)]
+        cls.keep = root / "keep"
         cls.union, cls.union_bytes = shared_weights.build_union(group, root / "union", core.compile_mlmodelc,
-                                                                log=lambda m: None)
+                                                                log=lambda m: None, keep=cls.keep)
 
     @classmethod
     def tearDownClass(cls):
@@ -143,6 +166,11 @@ class Reexport(unittest.TestCase):
         self.assertGreater(self.union_bytes, max(self.separate_sizes.values()))
         for p in self.programs.values():
             self.assertFalse(p.package.exists(), "the separate package is deleted once re-exported")
+
+    def test_kept_packages_are_the_ones_compiled(self):
+        for s in (4, 8):
+            kept = self.keep / "shared" / f"model_{s}.mlpackage" / "Data/com.apple.CoreML/weights/weight.bin"
+            self.assertEqual(kept.read_bytes(), (self.union[s] / "weights/weight.bin").read_bytes())
 
     def test_programs_are_the_separate_ones_but_for_offsets(self):
         for s in (4, 8):

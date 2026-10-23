@@ -24,6 +24,15 @@ A converter builds a `Job` and hands it to `run()`. For every bucket, `run()`:
    compiling the model a second time. Nothing is installed until every
    bucket has passed.
 
+With `keep_packages` (`--keep-packages DIR`), the .mlpackage sources are
+kept rather than deleted with the work directory: each bucket's package as
+converted (`DIR/separate/`) and, for a shared-weights build, the re-exported
+packages the installed programs were compiled from (`DIR/shared/`, their
+identical weight files hard-linked). The installed programs are what is
+graded and published (docs/PUBLISHING.md); the packages let a release
+candidate be recompiled, or its weights and spec compared before
+compilation.
+
 A job with `chunks` (chunking.py, D37) converts each bucket as a chain of
 programs split at layer boundaries: the fp32 gate also checks the composed
 chunks against the unchunked wrapper, each chunk is converted, compiled and
@@ -233,6 +242,7 @@ class Job:
     head: object = None
     format: str = "coreml"        # "onnx": one dynamic-shape model.onnx instead (onnx_export.py)
     onnx_weights: str = "fp32"    # "fp16": ONNX weights stored in fp16, computed in fp32
+    keep_packages: Path = None    # keep the .mlpackage sources here (keep_package())
 
 
 def trace_convert(wrapper, ports, seq, example, output):
@@ -410,6 +420,11 @@ def run(job, install_dir):
     if job.negative_control:
         print(f"{job.name}: NEGATIVE CONTROL. Gate failures are reported, not fatal; "
               "never install the result where the daemon looks.", flush=True)
+    if job.keep_packages:
+        keep = Path(job.keep_packages).expanduser()
+        if keep.exists() and any(keep.iterdir()):
+            raise SystemExit(f"--keep-packages {keep}: the directory isn't empty")
+        keep.mkdir(parents=True, exist_ok=True)
     reports, bypassed, plans, alternatives = {}, [], {}, {}
     cuts = _plan_chunks(job)
     share = job.shared_weights and len(job.buckets) > 1
@@ -442,6 +457,7 @@ def run(job, install_dir):
             pkg = Path(work) / f"model_{seq}.mlpackage"
             mlmodel.save(str(pkg))
             del mlmodel
+            shared_weights.keep_package(pkg, job.keep_packages, "separate")
             compiled = compile_mlmodelc(pkg, Path(work) / f"compiled_{seq}")
             if not share:
                 shutil.rmtree(pkg)
@@ -475,6 +491,8 @@ def run(job, install_dir):
                 note_bypass(install_dir / name, bypassed)
     if job.install_files:
         print(f"installed {', '.join(n for _, n in job.install_files)} -> {install_dir}", flush=True)
+    if job.keep_packages:
+        shared_weights.link_kept(job.keep_packages, log=lambda m: print(m, flush=True))
     if bypassed:
         print(f"WARNING: installed past the Neural Engine's weight limit (--ignore-ane-weight-cap): "
               f"{'; '.join(bypassed)}", flush=True)
@@ -613,6 +631,7 @@ def _run_chunked(job, seq, cases, wrapper, cuts, report, work, bypassed, plans, 
         pkg = Path(work) / f"model_{seq}.{c.index}.mlpackage"
         mlmodel.save(str(pkg))
         del mlmodel
+        shared_weights.keep_package(pkg, job.keep_packages, "separate")
         compiled = compile_mlmodelc(pkg, Path(work) / f"compiled_{seq}_{c.index}")
         if not keep_packages:
             shutil.rmtree(pkg)

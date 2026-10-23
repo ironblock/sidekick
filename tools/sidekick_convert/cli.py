@@ -13,8 +13,9 @@ over the weight budget as a chain of programs split at layer boundaries
 `--chunks 1` keeps one program per bucket; `--chunk-identity-all` runs the
 chain's bit-identity gate on every bucket, not only the smallest. Every
 bucket of a chunk shares one weights file (shared_weights.py, D49);
-`--no-shared-weights` gives each bucket its own. A converter passes these
-on with job_options().
+`--no-shared-weights` gives each bucket its own. `--keep-packages DIR`
+keeps the .mlpackage sources the programs were compiled from
+(core.keep_package). A converter passes these on with job_options().
 
 Core ML caches a compiled bundle for every model a process loads, keyed by
 the model's path, under ~/Library/Caches/<executable>. A conversion loads
@@ -86,6 +87,10 @@ def parse(description, *, flags=(), default_buckets=(128, 256, 512), argv=None):
     p.add_argument("--no-shared-weights", action="store_true",
                    help="give every bucket its own weights file, as before D49, instead of one file per chunk "
                         "shared by every bucket")
+    p.add_argument("--keep-packages", type=lambda s: Path(s).expanduser(), default=None, metavar="DIR",
+                   help="keep the .mlpackage sources in DIR (an empty or new directory): each bucket's package "
+                        "as converted under separate/, and the shared-weights re-exports the installed programs "
+                        "were compiled from under shared/")
     p.add_argument("--format", choices=("coreml", "onnx"), default="coreml",
                    help="coreml: per-bucket .mlmodelc for the ANE (the default); onnx: one dynamic-shape "
                         "fp32 model.onnx for ONNX Runtime's CPU backend")
@@ -108,4 +113,5 @@ def job_options(args):
     from .chunking import parse_spec
     return {"int8_embedding": args.int8_embedding, "ignore_ane_weight_cap": args.ignore_ane_weight_cap,
             "chunks": parse_spec(args.chunks), "chunk_identity_all": args.chunk_identity_all,
-            "shared_weights": not args.no_shared_weights, "format": args.format, "onnx_weights": args.onnx_weights}
+            "shared_weights": not args.no_shared_weights, "format": args.format, "onnx_weights": args.onnx_weights,
+            "keep_packages": args.keep_packages}
