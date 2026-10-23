@@ -1,0 +1,778 @@
+{
+ "about": "The release gate's baseline: each published model's task sample, run through sidekickd over HTTP, on the paths listed. Written by tools/release_gate.py --update-baseline; do not edit by hand. A change to it is deliberate, and its PR says why.",
+ "tolerances": {
+  "accuracy": {
+   "abs": 0.01,
+   "about": "task accuracy (MNLI, gold labels, relevant top document)"
+  },
+  "agreement": {
+   "abs": 0.01,
+   "about": "share of items whose prediction matches fp32's"
+  },
+  "flips": {
+   "max_share": 0.01,
+   "about": "share of items whose prediction differs from the baseline run's"
+  },
+  "mean_prob": {
+   "abs": 0.002,
+   "about": "mean probability of the predicted label (catches drift without flips)"
+  },
+  "mteb": {
+   "abs": 0.002,
+   "about": "MTEB main score"
+  },
+  "error": {
+   "factor": 2.0,
+   "floor": 1e-05,
+   "about": "1 - worst cosine with fp32 (embedders), largest |score - fp32| (rerankers)"
+  },
+  "sanity": {
+   "abs": 0.01,
+   "about": "each class probability in the textbook MNLI triple"
+  },
+  "exact": {
+   "about": "counts that must not change: refused requests, token-count mismatches, sanity verdicts, probs/nli_probs disagreements"
+  }
+ },
+ "mteb_tasks": [
+  "STSBenchmark",
+  "AskUbuntuDupQuestions"
+ ],
+ "updated": {
+  "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+  "dirty": false,
+  "sidekick": "0.15.0",
+  "chip": "Apple M1 Max",
+  "os": "macOS 27.0",
+  "os_build": "26A428",
+  "date": "2026-10-23"
+ },
+ "entries": [
+  {
+   "model": "bge-small-en-v1.5",
+   "path": "coreml-ane",
+   "kind": "embed",
+   "default": true,
+   "build": {
+    "fingerprint": "9aa8faa7678f2289fadda5d50272447a557750cd81e062702b8d72c3dbd7a761"
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "b1cfa03b50b7002a3e853aaf920872a508e0f0faddd3092ae959a7b85368b902",
+    "reference_sha256": "56a625ea180c8d64ef173160c812b20f2aef992da956ae352113149d3828e5b3"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999660730340497,
+    "mean_cosine_fp32": 0.9999855061969789,
+    "cosine_error_fp32": 3.392696595028166e-05,
+    "token_count_mismatches": 0,
+    "mteb:STSBenchmark": 0.85867,
+    "mteb:STSBenchmark:minus_fp32": 4.0000000000040004e-05,
+    "mteb:AskUbuntuDupQuestions": 0.6182,
+    "mteb:AskUbuntuDupQuestions:minus_fp32": 3.999999999992898e-05
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.85867,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 7.6
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.6182,
+      "inputs": 7103,
+      "over_cap": 0,
+      "seconds": 21.1
+     }
+    }
+   },
+   "seconds": 56.2,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "embeddinggemma-300m",
+   "path": "coreml-ane",
+   "kind": "embed",
+   "default": true,
+   "build": {
+    "fingerprint": "e8212e6d2a4c974fa43b87bfd167b25aec08a59761390bf16cad497b5f71f401"
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "599c8e69e111d889afdfe7bb8a59ee5f697010b4cc9b595a32cf9776164d4b9a",
+    "reference_sha256": "361bbef332ad080ffbc03ef9dd620168178fab0ef59ef05c131bf2a0286872c9"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999723248815018,
+    "mean_cosine_fp32": 0.9999944812037881,
+    "cosine_error_fp32": 2.7675118498216023e-05,
+    "token_count_mismatches": 0,
+    "mteb:STSBenchmark": 0.881716,
+    "mteb:STSBenchmark:minus_fp32": -5.699999999997374e-05,
+    "mteb:AskUbuntuDupQuestions": 0.62524,
+    "mteb:AskUbuntuDupQuestions:minus_fp32": 0.0006399999999999739
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.881716,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 21.8
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.62524,
+      "inputs": 7066,
+      "over_cap": 0,
+      "seconds": 69.1
+     }
+    }
+   },
+   "seconds": 143.1,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "f2llm-v2-160m",
+   "path": "coreml-ane",
+   "kind": "embed",
+   "default": true,
+   "build": {
+    "fingerprint": "7e0f9704841b79dfc7f9b72ecc99dde95c16c5ee475c9dfc7c30bdf79cf3dc90"
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "a899018b1f03a5db13a3612fb5a761de54686dfb4350e2e7eb921e374210a9f3",
+    "reference_sha256": "8f652950b195f2854e023b8c0462204324290bf058f15c32ae606c4942c843cd"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999716106769961,
+    "mean_cosine_fp32": 0.9999864948132874,
+    "cosine_error_fp32": 2.838932300386343e-05,
+    "token_count_mismatches": 0,
+    "mteb:STSBenchmark": 0.846433,
+    "mteb:AskUbuntuDupQuestions": 0.60655
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.846433,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 15.0
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.60655,
+      "inputs": 7103,
+      "over_cap": 0,
+      "seconds": 42.2
+     }
+    }
+   },
+   "seconds": 87.1,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "lfm2.5-embedding-350m",
+   "path": "coreml-ane",
+   "kind": "embed",
+   "default": true,
+   "build": {
+    "fingerprint": "3a84d2df843235fb8bab328f43b43e9ebd441425dddd970f3adc65dc148e8198"
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "7e185b98c17f05a6f4836d4f6ea4f355409c2932f405dafa29a7056352998917",
+    "reference_sha256": "3c8abb8ac57383d307a5659185d28014c600baf9069d5133af9d2c3f8993bc2e"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999883546887445,
+    "mean_cosine_fp32": 0.9999943680474157,
+    "cosine_error_fp32": 1.1645311255525925e-05,
+    "token_count_mismatches": 0,
+    "mteb:STSBenchmark": 0.799789,
+    "mteb:AskUbuntuDupQuestions": 0.59543
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.799789,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 48.9
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.59543,
+      "inputs": 7103,
+      "over_cap": 0,
+      "seconds": 117.7
+     }
+    }
+   },
+   "seconds": 200.9,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "laya-typed-decisions",
+   "path": "coreml-ane",
+   "kind": "classify",
+   "default": true,
+   "build": {
+    "fingerprint": "03dbd3912095ae903a7e1b42f3a0ff7af3ae881812efc00723a700a327e2627d"
+   },
+   "sample": {
+    "name": "parity corpus, labelled cases",
+    "n": 2606,
+    "sha256": "16d7409a8eaffb2f59f759ea7d45222f7466e78f6f2d5759dc7642cd80a82029",
+    "reference_sha256": "8fcf26e7f8d2c32cd7b6edd03589d81d9909a76d50e00654845cb11061348f2c"
+   },
+   "metrics": {
+    "n": 2606,
+    "refused": 0,
+    "gold_accuracy": 0.5510360706062931,
+    "agree_fp32": 0.9992325402916347,
+    "mean_prob": 0.652771644742901
+   },
+   "predictions": {
+    "label": "111111111011111111111111111111110101011111111011011101011111111111101111111101011111110111111000111140a254b33593e92da3db84cb5534545b599864927dc4c95a8446945505e4344a9d56455554c642ab60adad85b55819e974a601617111303171516141014131012121200101115131110151010141015131414000512140416110303171214141303121207170516070215171018121215101412021610171015161515121514131016101513101706150713150014151210131413161009050908100003030410000017011301000200010813180302020200070712050107000203010210020202050302020201130210070001031002060703030913071004090204000013000400000003000007021102000309070200030504031201030503108956541890b4423603656155189618448b1ab71bb0205255b8256001921a650152a19b24b04452825818596bb136626b9511000105100711031103200311041007310731051101110511041104110511051105210431013106110331041107310611001105010511051106110010071104310411051104110011051100200431071100110711051107100031051101310711041103100230062103110431011005110531011100310001003005100301031101110711062004010511041001110520071100310111023105110731050105310431050107310011073001110431031100100111041101310011053103110011061103110131083963344135928201614681134292943243532441562442243921319978492468135136329149363951923485963919915912772747671172721577217223714621777716147247771113747724616677777142771766787727711817181571187647767000301002030032000100000031030030010003010002030300000010000000101003000300003000000030030001100000312012212121111012211012120100122111112121011201111111211020111112022220201212111122211001022010122201122000222011100122102202110112211000211010120021012111222221120101020100102100000110010211001002102101011111011100110111101011000111101011101101111010101110110010111101111111111111101100110100111101162041112022032031010032030031142031142112003003130011162052050131132001110062030132031030041120020002010032023051133051112010130020001132061123042102002051122022042023000021132063040051143030023031030052130110000010050061131110000021132030001103162052052002151152032013032010031011111023021140123132006eje1k0l00100d280je39jlm8d1395l59030ehl6000ajj04200k3060j098003233d0ejm3i3jg6jm3j60i035kod15i414kek13320770000280a30003073a6070370317630382903063308323003332000a700368232033032a3332772483030009037032a20421931e10520520520720320521530d20110531921820a21a20220031920121020530020520020010531120120520520120121310320520821520020521c20821520720520421030520220510120820111820021710520120510231521520021830931620721921910d20110920a10a20520720d21d20020531130020321520120020220520210030520520120c20a21331520320604a970aa8563316a90908a9607133704774779380607433604000a571609595469666791a6040459a61641295936539666a010030"
+   },
+   "seconds": 189.8,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "nli-minilm2-l6-h768",
+   "path": "coreml-gpu",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "fingerprint": "d77e5dc86e3b6152351ca0695cad3b5f40e5ee4e3ee00a7eda7c381491939eac",
+    "served_manifest": "served with `classes = [\"contradiction\", \"entailment\", \"neutral\"]` added under [classify.nli], from examples/classifiers/nli-minilm2-l6-h768/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "05f675e070e54b1ae6e985cea4a0830e5cdbb7cd394eb2b278f7d024c38df09f"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.8344155844155844,
+    "mnli2_matched": 0.8246753246753247,
+    "mnli2_mismatched": 0.8441558441558441,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.9160295949675326,
+    "mnli3_accuracy": 0.8701298701298701,
+    "mnli3_matched": 0.8766233766233766,
+    "mnli3_mismatched": 0.8636363636363636,
+    "agree_fp32_3": 1.0
+   },
+   "predictions": {
+    "probs": "exxxxxxxxxxxeeeeeeeeeexxxeeexxeeexxeexxxxeeeeeeexxexxxeexexexxxeexxxxxxeeeeexexeeeexeexxxxexeexeeexexexexeeexexeeeexeeeexexxexexeexexeexeexxxxeeeexxxeeexexeexxexexxxeexxxxxexxxeexxeeeexeexxexeexxxexxeeexxxexxexxeeeexxeexxeeeeexeexxxxeexeeexexeexxexeexxxexxeexxxxxxeexeexeeexeexexexexxxexxxexxexxexeexeeexxeee",
+    "nli_probs": "nccncccccnnceeeneeeeeennceneccnencceeccncenneeenncecncnecncnncnencnccccenneeceneneeceecccneneecnnncecnceceeeneceeenneeeecnncececnececeecencnnneeeecnneeeneceencececcneecncncnccceecceeeenneccncnecccecneeecccencecnneeeccennneeeeeceecccceecenecenencnncencccnncnecnccccencencnencencececnccnencceccenceneeceeecceen"
+   },
+   "sanity": {
+    "passed": true,
+    "rows": [
+     {
+      "hypothesis": "A man plays an instrument.",
+      "expected": "entailment",
+      "right": true,
+      "scores": {
+       "contradiction": 0.000433,
+       "entailment": 0.986923,
+       "neutral": 0.012644
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "A woman plays a guitar.",
+      "expected": "contradiction",
+      "right": true,
+      "scores": {
+       "contradiction": 0.99876,
+       "entailment": 0.000422,
+       "neutral": 0.000818
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "The sky is overcast.",
+      "expected": "neutral",
+      "right": true,
+      "scores": {
+       "contradiction": 0.104306,
+       "entailment": 0.004034,
+       "neutral": 0.89166
+      },
+      "stock_max_abs_difference": 0.0
+     }
+    ]
+   },
+   "seconds": 2.8,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "nli-deberta-v3-base",
+   "path": "coreml-gpu",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "fingerprint": "382ccf567aa5cfa82d1c6164a6bb2e281f9595fd2e6c43c3cabd0234e5619491",
+    "served_manifest": "served with `classes = [\"contradiction\", \"entailment\", \"neutral\"]` added under [classify.nli], from examples/classifiers/nli-deberta-v3-base/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "fd20665907b77674c7d3730fc7d5a0049a0f381f4abe8eee60bb9b3dc625ba12"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.7987012987012987,
+    "mnli2_matched": 0.7922077922077922,
+    "mnli2_mismatched": 0.8051948051948052,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.9885076200974026,
+    "mnli3_accuracy": 0.8896103896103896,
+    "mnli3_matched": 0.8961038961038961,
+    "mnli3_mismatched": 0.8831168831168831,
+    "agree_fp32_3": 1.0
+   },
+   "predictions": {
+    "probs": "exexxxxxexexeeeeeeeeeeexxeeexxeeexxxexxxxeeeeeeexxexxxeexxxexxeexxexxxxeeeeexexeeeexeexxxxeeeexeeexexexexeeexexeeeexeeeexxeeexexeexexeeeeexexeeeeexxxeeeeexeeexexexxeeexexexexxxexxxeeeeeeexxexeexxxexxeeexxxexxexeeeeexxexexexeeexeexxxxxxxeeexeeeexxexeexxxexxeexxxxxxeexeexeeexeexexexexxxexxxexxxxxeeeexeexxxeee",
+    "nli_probs": "ncenncccennceneneeeeeencceneccnenccnencnceeneeeencecncnecncnncnencncncceneneceneneecneccnneneecnnncecececeeececeeenneeeeccneececneceneeeencnnneeeecnceeeneceencececcneecncncnccceccceeeenneccncnecccecneeecccencncnneeeccennneceeeceecccccncenecenencnecnncccnncnecnccccencencenecencececnccnenccecccnceneeceenccnen"
+   },
+   "sanity": {
+    "passed": true,
+    "rows": [
+     {
+      "hypothesis": "A man plays an instrument.",
+      "expected": "entailment",
+      "right": true,
+      "scores": {
+       "contradiction": 0.000126,
+       "entailment": 0.978219,
+       "neutral": 0.021655
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "A woman plays a guitar.",
+      "expected": "contradiction",
+      "right": true,
+      "scores": {
+       "contradiction": 0.999923,
+       "entailment": 1.9e-05,
+       "neutral": 5.8e-05
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "The sky is overcast.",
+      "expected": "neutral",
+      "right": true,
+      "scores": {
+       "contradiction": 0.007312,
+       "entailment": 0.000225,
+       "neutral": 0.992463
+      },
+      "stock_max_abs_difference": 0.0
+     }
+    ]
+   },
+   "seconds": 5.2,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "roberta-large-mnli",
+   "path": "coreml-gpu",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "fingerprint": "15fd2f18eb546eff02e22cab5a5d7dee4026347e0e24f4a2e0aac5b020f020e8",
+    "served_manifest": "served with `classes = [\"contradiction\", \"neutral\", \"entailment\"]` added under [classify.nli], from examples/classifiers/roberta-large-mnli/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "b3afb2eb9edf1a59e7de8a67d19fdd19d506c7b0d018a94373ac3a5638d56343"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.7987012987012987,
+    "mnli2_matched": 0.8051948051948052,
+    "mnli2_mismatched": 0.7922077922077922,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.9301253063636363,
+    "mnli3_accuracy": 0.8961038961038961,
+    "mnli3_matched": 0.9155844155844156,
+    "mnli3_mismatched": 0.8766233766233766,
+    "agree_fp32_3": 1.0
+   },
+   "predictions": {
+    "probs": "xxexxxxxexexeeeeeeeeeeeexeeexxeeexxexexexeeeeeeexxexxxeexexexxxeexexxxxeeeeexexeeeeeeexxxxexeexxeexexexexeeexexeeeexeeeexxeeexexeexeeeexeexexxeeeexexeeeeexeeexexexxeeexexxxexxxexxxeeeeexexxexeexxxexeeeexxxexxexeeeeexxexexeeeeexeeexxxxexeeexeeexxxexexxxxeexeexxxxxxeexeexeeexeexexexexxxexxxexxxxxeeeexeeexxeee",
+    "nli_probs": "ncenncccennceneneeeeeeneceneccnenccececnceeneeeencecncnecncnncnencncncceneeeneneneeeeecccneneecnnncecececeeececeeenneeeeccneececneceneecencnnneeeecnceeeneceencececcneececncnccceccceeeenneccncnecccecneeecccencecnneeeccennceeeeeceeeccccncenecenencnecnncccnncnecnccccencenceencencececnccnenccecncnceneeceencceen"
+   },
+   "sanity": {
+    "passed": true,
+    "rows": [
+     {
+      "hypothesis": "A man plays an instrument.",
+      "expected": "entailment",
+      "right": true,
+      "scores": {
+       "contradiction": 0.001152,
+       "neutral": 0.004986,
+       "entailment": 0.993861
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "A woman plays a guitar.",
+      "expected": "contradiction",
+      "right": true,
+      "scores": {
+       "contradiction": 0.999395,
+       "neutral": 0.000426,
+       "entailment": 0.000179
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "The sky is overcast.",
+      "expected": "neutral",
+      "right": true,
+      "scores": {
+       "contradiction": 0.212894,
+       "neutral": 0.774562,
+       "entailment": 0.012544
+      },
+      "stock_max_abs_difference": 0.0
+     }
+    ]
+   },
+   "seconds": 9.1,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "nli-minilm2-l6-h768-ane",
+   "path": "coreml-ane",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "fingerprint": "f5de11d8f0c4784a4193f92c24c1247230191efb345080033d2217b05fe3edfc",
+    "served_manifest": "served with `classes = [\"contradiction\", \"entailment\", \"neutral\"]` added under [classify.nli], from examples/classifiers/nli-minilm2-l6-h768-ane/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "43fa3d428cee2a471a3c89be2a3fceadf2c5f57dee94214d96f3fc868a08f492"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.8344155844155844,
+    "mnli2_matched": 0.8246753246753247,
+    "mnli2_mismatched": 0.8441558441558441,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.9159320913636363,
+    "mnli3_accuracy": 0.8766233766233766,
+    "mnli3_matched": 0.8831168831168831,
+    "mnli3_mismatched": 0.8701298701298701,
+    "agree_fp32_3": 0.9935064935064936
+   },
+   "predictions": {
+    "probs": "exxxxxxxxxxxeeeeeeeeeexxxeeexxeeexxeexxxxeeeeeeexxexxxeexexexxxeexxxxxxeeeeexexeeeexeexxxxexeexeeexexexexeeexexeeeexeeeexexxexexeexexeexeexxxxeeeexxxeeexexeexxexexxxeexxxxxexxxeexxeeeexeexxexeexxxexxeeexxxexxexxeeeexxeexxeeeeexeexxxxeexeeexexeexxexeexxxexxeexxxxxxeexeexeeexeexexexexxxexxxexxexxexeexeeexxeee",
+    "nli_probs": "nccncccccnnceeeneeeeeennceneccnencceeccnceeneeenncecncnecncnncnencnccccenneeceneneeceecccneneecnnncecnceceeeneceeenneeeecnncececnececeecencnnneeeecnneeeneceencececcneecncncnccceecceeeenneccncnecccecneeecccencecnneeeccennneeeeeceecccceecenecenencnncencccnncnecnccccencenceencencececnccnencceccenceneeceeecceen"
+   },
+   "sanity": {
+    "passed": true,
+    "rows": [
+     {
+      "hypothesis": "A man plays an instrument.",
+      "expected": "entailment",
+      "right": true,
+      "scores": {
+       "contradiction": 0.000439,
+       "entailment": 0.986832,
+       "neutral": 0.012729
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "A woman plays a guitar.",
+      "expected": "contradiction",
+      "right": true,
+      "scores": {
+       "contradiction": 0.998744,
+       "entailment": 0.000427,
+       "neutral": 0.000829
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "The sky is overcast.",
+      "expected": "neutral",
+      "right": true,
+      "scores": {
+       "contradiction": 0.105288,
+       "entailment": 0.004061,
+       "neutral": 0.890651
+      },
+      "stock_max_abs_difference": 0.0
+     }
+    ]
+   },
+   "seconds": 3.7,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "deberta-v3-large-zeroshot-v2.0-c",
+   "path": "coreml-gpu",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "fingerprint": "eebe0d73a0f0bc79c9483dc2be3a69e8c9fc5e6da1d039ad39fb83791270c5f9",
+    "served_manifest": "served with `classes = [\"entailment\", \"not_entailment\"]` added under [classify.nli], from examples/classifiers/deberta-v3-large-zeroshot-v2.0-c/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "2fe19ea0b2b09a0ef2b38ae38989f21a06ac2d171de6166981ccb6a290ee1d99"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.9415584415584416,
+    "mnli2_matched": 0.948051948051948,
+    "mnli2_mismatched": 0.935064935064935,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.9774569750243507,
+    "probs_vs_nli_probs_disagreements": 0
+   },
+   "predictions": {
+    "probs": "xxexxxxxexxxexexeeeeeexxxexexxxexxxexxxxxeexeeeexxexxxxexxxxxxxexxxxxxxexeeexexexeexxexxxxexeexxxxxexxxeeeeexexeeexxeeeexxxeexexxexexeexexxxxxeeeexxxeeexexeexxexexxxeexxxxxxxxxexxxeeeexxexxxxxexxxexxeeexxxexxexxxeeexxexxxexeeexeexxxxxxxexxxexexexexexxxxxxxxxxxxxxxexxeexeexxexxexexxxxxexxxexxxxxexexxeeexxxex"
+   },
+   "sanity": {
+    "passed": true,
+    "rows": [
+     {
+      "hypothesis": "A man plays an instrument.",
+      "expected": "entailment",
+      "right": true,
+      "scores": {
+       "entailment": 0.993372
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "A woman plays a guitar.",
+      "expected": "contradiction",
+      "right": true,
+      "scores": {
+       "entailment": 0.000703
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "The sky is overcast.",
+      "expected": "neutral",
+      "right": true,
+      "scores": {
+       "entailment": 0.001008
+      },
+      "stock_max_abs_difference": 0.0
+     }
+    ]
+   },
+   "seconds": 10.9,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "bge-m3-zeroshot-v2.0-c",
+   "path": "coreml-gpu",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "fingerprint": "d7d216d2e9012238a3bee2445e3513b20a5a3de9ab3064ef4327b122d6f52379",
+    "served_manifest": "served with `classes = [\"entailment\", \"not_entailment\"]` added under [classify.nli], from examples/classifiers/bge-m3-zeroshot-v2.0-c/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "013d30c1ce7790c0da68afbaab789e5cf4e065883d1ec4747f0e6d76c2701391"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.9318181818181818,
+    "mnli2_matched": 0.9415584415584416,
+    "mnli2_mismatched": 0.922077922077922,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.9513020479181494,
+    "probs_vs_nli_probs_disagreements": 0
+   },
+   "predictions": {
+    "probs": "xxexxxxxxxxxeeexeeeeeexxxexexxxexxxexxxxxeexeeexxxexxxxexxxxxxxexxxxxxxexeeexexexeexeexxxxexeexxxxxexexeeeeexexeeeexeeeexxxxexexxexexeexexxxxxeeeexxxeeexexeexxexexxxeexxxxxxxxxexxxeeeexxexxxxxexxxexxeeexxxexxexxxeeexxexxxeeeeexeexxxxxxxexexexexxxexexxxxxxxxexxxexxexxexxeexxexxexexxxxxexxxexxxxxexeexeeexxeex"
+   },
+   "sanity": {
+    "passed": true,
+    "rows": [
+     {
+      "hypothesis": "A man plays an instrument.",
+      "expected": "entailment",
+      "right": true,
+      "scores": {
+       "entailment": 0.988799
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "A woman plays a guitar.",
+      "expected": "contradiction",
+      "right": true,
+      "scores": {
+       "entailment": 0.000624
+      },
+      "stock_max_abs_difference": 0.0
+     },
+     {
+      "hypothesis": "The sky is overcast.",
+      "expected": "neutral",
+      "right": true,
+      "scores": {
+       "entailment": 0.007108
+      },
+      "stock_max_abs_difference": 0.0
+     }
+    ]
+   },
+   "seconds": 16.2,
+   "provenance": {
+    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  }
+ ],
+ "not_gated": [
+  "all-minilm-l6-v2",
+  "e5-small-v2",
+  "gte-modernbert-base",
+  "embeddinggemma-2",
+  "qwen3-embedding-0.6b",
+  "nlptown-sentiment",
+  "laya-en",
+  "julia-1",
+  "gliner2.5-decide",
+  "lumma-fev-0.1b",
+  "agent-jev",
+  "ms-marco-minilm-l6-v2",
+  "nli-deberta-v3-xsmall",
+  "nli-deberta-v3-small",
+  "deberta-v3-base-zeroshot-v2.0-c",
+  "roberta-large-zeroshot-v2.0-c",
+  "modernbert-large-zeroshot-v2.0"
+ ]
+}
