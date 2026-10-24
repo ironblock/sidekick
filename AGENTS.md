@@ -78,4 +78,10 @@ Light, trunk-based git-flow:
   line reads PASS; put that line in the release PR. A deliberate change to
   a model's numbers (a new conversion, a runtime fix that moves a score)
   updates the baseline with `--update-baseline` in the same PR, and the
-  PR says why.
+  PR says why. Let the gate keep its persistent home
+  (`~/Library/Caches/sidekick-release-gate/` by default, `--home` to move
+  it): Core ML's ANE programs are cached per home in a system cache that
+  can't be deleted, so a fresh home recompiles every ANE model and leaves
+  another copy of its weights on disk each time. With the home kept, only
+  a new build or a new macOS compiles. `--fresh-home` is for when a cold
+  measurement is the point.

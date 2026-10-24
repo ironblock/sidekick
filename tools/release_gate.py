@@ -13,19 +13,23 @@ change) is caught before the tag rather than after.
 
 What it does:
 1. Builds sidekickd (`cargo build --release -p sidekick-server --features
-   coreml,onnx`), or takes `--daemon <binary>`, such as the release
-   archive's.
-2. For each published model (docs/data/models.toml) with a build on this
-   machine, one at a time, on its default path (models.toml's `served`;
-   `--paths all` adds every other path docs/data/models.json grades on this
-   chip): starts sidekickd on 127.0.0.1, on a free port outside 8790-8799,
-   with a temporary home (so Core ML's compile caches and sidekick's own
-   land there and are deleted afterwards) and a models directory holding
-   only that model. The build's files are linked, never copied or changed.
-   A path other than the default is served through the config's
-   `[models."<id>"] compute_units` (D38); the default must be what the
-   build's own manifest serves.
-3. Runs the model's task sample through the HTTP API:
+   coreml,onnx`) and signs it with tools/sign_sidekickd.sh, or takes
+   `--daemon <binary>`, such as the release archive's.
+2. Finds each published model's builds (docs/data/models.toml) in the
+   models directories given, and identifies each build in the checksum
+   ledger (docs/data/ledger.json, the same hashes `tools/ledger.py verify`
+   compares), so the baseline records exactly which build it graded.
+3. For each model, one at a time, on its default path (models.toml's
+   `served`, the fp16 Core ML build) and on any other paths asked for with
+   `--paths` (every (path, precision) docs/data/models.json grades on this
+   chip, such as onnx-cpu's fp32, fp16-weights and int8 builds): serves
+   the build from sidekickd on 127.0.0.1, on a free port outside 8790-8799,
+   in the gate's own home (below), with a models directory holding only
+   that build. A path other than the default is served through the
+   config's `[models."<id>"] compute_units` (D38); the default must be
+   what the build's own manifest serves. A Core ML build is warmed first
+   (`sidekickd warm`, D52), so compiles happen before any request is timed.
+4. Runs the model's task sample through the HTTP API:
    - nli models: the MultiNLI pairs of the nli parity corpus (308, every
      64th validation row), each sent as one label with the template "{}":
      three-way accuracy from `nli_probs`, two-way (entailment or not) from
@@ -41,18 +45,56 @@ What it does:
      and agreement with fp32 (top document, largest score difference).
    - embedders: a fixed MTEB slice through tools/mteb_transfer.py's client
      path, and the parity corpus's vectors' cosine with fp32's.
-4. Compares every number with the baseline entry for the same model and
-   path, under the baseline's tolerances, and ends with a one-line summary.
+5. Compares every number with the baseline entry for the same model, path
+   and build variant, under the baseline's tolerances, and ends with a
+   one-line summary.
+
+The gate's home. Core ML keys a compiled program by, among other things,
+the home directory, the program's path and its weights file's inode, and
+on the ANE the loading binary's signing identifier; the ANE's compiled
+programs live in a system cache nobody can delete, about one copy of the
+weights per compile (docs/design/coreml-cache.md). A fresh home therefore
+recompiles every ANE program and leaks that much disk on every run. So the
+gate keeps one home, `--home` (default
+~/Library/Caches/sidekick-release-gate/), across runs:
+- `home/` is sidekickd's HOME and CFFIXED_USER_HOME: Core ML's and
+  sidekick's caches;
+- `models/<model>/<build>/<model>/` serves each build in place: a
+  directory of hard links to the build's own files (the same inodes, so
+  the same cache keys and the same ledger hashes) at a path that doesn't
+  change between runs. Only a manifest the gate must amend (below) is a
+  copy. A build is never modified;
+- `hashes.json` caches file hashes by inode, size and modification time.
+After each model, the gate deletes the GPU and CPU programs (about one copy
+of the weights each, recompiled in a second or two) from its home, unless
+`--keep-gpu-cache`, and keeps every ANE entry: its compiled program is in
+the system cache, and the entry (with the CPU segments the ANE program
+hands off to) is what lets the next run find it. `--fresh-home` uses a temporary home instead,
+deleted afterwards, for when a cold measurement is the point; every ANE
+program then compiles again.
+
+Safety. Each record notes the free disk before and after it and how many
+programs Apple's ANE compiler finished meanwhile (its unified log). The
+gate stops before a model when free disk is under `--min-free-gib`
+(default 25). A request served on the ANE that takes longer than 90 s (a
+hung ANE request fails after about 100 s and can leave the ANE unusable
+until a reboot) stops all further ANE work in the run.
 
 Inputs that aren't committed: the builds, and the parity references
 (`<refs dir>/<model id>/reference.json` and `reference.safetensors`, from
 tools/parity_reference.py and tools/classifier_reference.py), which hold
-each sample's requests and the fp32 outputs. The baseline records each
-reference's sha256 and each build's fingerprint (a sha256 over its files),
-so a different sample or build is reported, not compared silently.
+each sample's requests and the fp32 outputs. Where several references of a
+model are found, the gate takes the first whose tokenizer and length cap
+match the build's. The baseline records each reference's sha256 and each
+build's ledger id and digest, so a different sample or build is reported,
+not compared silently.
 
-A published model with no build here is listed as not available, never
-fetched. A model in the baseline whose build is missing fails the gate.
+Which build. The models directories are searched in order, and for each
+(model, backend, variant) the first build found is used, unless the
+baseline names a ledger build that one of them is: put the published
+build's directory first. A published model with no build here is listed as
+not available, never fetched. A baselined (model, path, variant) whose
+build is missing fails the gate.
 
 An nli build converted before 0.15.0 has no `classes` in its manifest, and
 `nli_probs` needs them (D47). The gate serves such a build with the one
@@ -70,21 +112,31 @@ name its interpreter with `--python` or SIDEKICK_GATE_PYTHON:
 
     python3 tools/release_gate.py --python <venv>/bin/python \\
         --models-dir <dir> [--models-dir <dir> ...] \\
-        --refs <dir> [--refs <dir> ...] [--paths default|all] [--models <id> ...] \\
-        [--daemon <sidekickd>] [--json <file>] [--update-baseline]
+        --refs <dir> [--refs <dir> ...] [--paths default|all|<path> ...] [--models <id> ...] \\
+        [--daemon <sidekickd>] [--home <dir> | --fresh-home] [--json <file>] [--update-baseline]
 
     --python       the interpreter for those two steps; default
                    $SIDEKICK_GATE_PYTHON, else the one running the gate.
                    It is checked before any model runs.
-    --models-dir   a directory of installed builds (one subdirectory per
-                   model); the first holding a model wins
+    --models-dir   a directory of builds (one subdirectory per build),
+                   searched in order
     --refs         a directory of parity references, by model id
+    --paths        any of `default` (the default path; the default),
+                   `all` (every graded path), and path names (coreml-ane,
+                   coreml-gpu, coreml-cpu, onnx-cpu): every graded
+                   (path, precision) asked for, e.g. `default onnx-cpu`
+    --home         the gate's persistent home (above)
+    --fresh-home   a temporary home instead, deleted afterwards
     --update-baseline
                    write this run's numbers into the baseline, replacing
-                   the entries for the models and paths it ran. Only for
-                   a deliberate change: the PR that commits it says why.
-    --list         show which published models have a build and a
-                   reference here, and exit
+                   the entries for the models, paths and variants it ran.
+                   Only for a deliberate change: the PR that commits it
+                   says why.
+    --list         show each published model's builds and references
+                   here, and exit
+
+An onnx-cpu build needs ONNX Runtime: `--onnx-runtime <libonnxruntime>`,
+ORT_DYLIB_PATH, or the library beside the binary.
 
 For the MTEB slice, mteb reads the tasks' datasets, and each checkpoint's
 configuration at its pinned revision (for its prompts), through the
@@ -119,16 +171,35 @@ DATA = REPO / "docs" / "data"
 BASELINE = DATA / "release-gate.json"
 RERANK_CORPUS = REPO / "fixtures" / "rerank" / "corpus.toml"
 SCORING = REPO / "fixtures" / "tasks" / "verification" / "scoring.toml"
+DEFAULT_HOME = Path.home() / "Library" / "Caches" / "sidekick-release-gate"
+SIGNING_IDENTIFIER = "io.github.ironblock.sidekickd"   # tools/sign_sidekickd.sh
+
+sys.path.insert(0, str(REPO / "tools"))
+import ledger as ledger_tool  # noqa: E402  (tools/ledger.py: the ledger's hashing, standard library only)
 
 # The compute units each path serves on (D38's config values).
 PATH_UNITS = {"coreml-ane": "cpu_and_ne", "coreml-gpu": "cpu_and_gpu", "coreml-cpu": "cpu_only"}
 PATH_ORDER = ["coreml-ane", "coreml-gpu", "coreml-cpu", "onnx-cpu"]
 RESERVED_PORTS = range(8790, 8800)   # sidekickd's default and the ports maintainers run it on
+# docs/data/models.json's precision -> the ledger's variant name.
+PRECISION_VARIANT = {"fp16": "fp16", "fp32": "fp32", "fp16 weights": "fp16-weights", "int8": "int8"}
+DEFAULT_VARIANT = {"coreml": "fp16", "onnx": "fp32"}
+VARIANT_ORDER = ["fp16", "fp32", "fp16-weights", "int8"]
+
+# A request on the ANE taking longer than this is taken for a hang: a hung
+# ANE request fails after about 100 s (docs/design/coreml-cache.md, "A hung
+# ANE request"). Requests elsewhere get the daemon's usual generous limit.
+ANE_REQUEST_TIMEOUT_SECS = 90
+REQUEST_TIMEOUT_SECS = 900
+WARM_TIMEOUT_SECS = 3600
 
 # The MTEB slice: an STS task (symmetric prompts) and a reranking task
 # (query prompts against documents). Both are deterministic, and short on
 # every embedder (seconds to a few minutes on an M1 Max).
 MTEB_TASKS = ["STSBenchmark", "AskUbuntuDupQuestions"]
+# The parity corpus's stress inputs, which the parity suite grades apart
+# from its worst case (crates/sidekick-embed/examples/parity/grade.rs).
+STRESS_TAG = "degenerate"
 
 # What counts as drift, written into the baseline when it is updated; a run
 # is judged by the baseline's own copy. `abs`: |run - baseline| <= value.
@@ -153,6 +224,10 @@ class GateError(Exception):
     """A model that couldn't be run: reported, and the gate fails."""
 
 
+class Hang(GateError):
+    """A request that outlasted its timeout: on the ANE, all ANE work stops."""
+
+
 # ---------------------------------------------------------------- inputs
 
 
@@ -171,39 +246,118 @@ def macos() -> tuple[str, str]:
     return sw("-productVersion"), sw("-buildVersion")
 
 
-def graded_paths(model: str, this_chip: str) -> list[str]:
-    """The paths docs/data/models.json grades `model` on, on this chip."""
+def graded_targets(model: str, this_chip: str) -> list[tuple[str, str]]:
+    """The (path, variant) pairs docs/data/models.json grades `model` on,
+    on this chip."""
     rows = json.loads((DATA / "models.json").read_text())["rows"]
-    paths = {r["path"] for r in rows if r["model"] == model and r["chip"] == this_chip}
-    return [p for p in PATH_ORDER if p in paths]
+    got = {(r["path"], PRECISION_VARIANT.get(r["precision"], r["precision"]))
+           for r in rows if r["model"] == model and r["chip"] == this_chip}
+    return sorted(got, key=lambda t: (PATH_ORDER.index(t[0]),
+                                      VARIANT_ORDER.index(t[1]) if t[1] in VARIANT_ORDER else 99))
 
 
-def find_builds(dirs: list[Path]) -> dict[tuple[str, str], Path]:
-    """{(model id, backend): build dir} across the models directories; the
-    first directory holding a build wins."""
-    out: dict[tuple[str, str], Path] = {}
+class Build:
+    """A build directory: its manifest, and (once hashed) its ledger entry."""
+
+    def __init__(self, path: Path):
+        self.dir = path
+        self.manifest_name = "manifest.toml" if (path / "manifest.toml").is_file() else "classifier.toml"
+        m = tomllib.loads((path / self.manifest_name).read_text())
+        self.model = m.get("id", path.name)
+        self.backend = m.get("backend", "coreml")
+        self.max_seq_len = m.get("max_seq_len")
+        self.files = None
+        self.ledger = None
+        self.nearest = None
+
+    def identify(self, hashes: "HashCache", ledger: dict):
+        """Hash the build, and find it in the ledger."""
+        if self.files is not None:
+            return
+        self.files = hashes.tree(self.dir)
+        self.digest = ledger_tool.digest(self.files)
+        # sha256 over `<sha256>  <relative path>` lines: the verification
+        # runs' model_sha256, and the first baseline's build fingerprint.
+        lines = "".join(f"{sha}  {rel}\n" for rel, (sha, _) in sorted(self.files.items()))
+        self.tree_sha256 = hashlib.sha256(lines.encode()).hexdigest()
+        self.ledger = next((b for b in ledger["builds"] if b["digest"] == self.digest), None)
+        if self.ledger is None:
+            cands = [b for b in ledger["builds"] if b["model"] == self.model and b["backend"] == self.backend]
+            if cands:
+                best = min(cands, key=lambda b: len(ledger_tool.compare(b, self.files)))
+                self.nearest = (best["id"], ledger_tool.compare(best, self.files)[:3])
+
+    @property
+    def variant(self) -> str:
+        return self.ledger["variant"] if self.ledger else DEFAULT_VARIANT.get(self.backend, self.backend)
+
+    def record(self) -> dict:
+        out = {"ledger": self.ledger["id"] if self.ledger else None, "digest": self.digest,
+               "fingerprint": self.tree_sha256, "variant": self.variant, "max_seq_len": self.max_seq_len}
+        if self.ledger is None:
+            out["ledger_note"] = ("not in the ledger" + (f"; nearest {self.nearest[0]}: " + "; ".join(self.nearest[1])
+                                                         if self.nearest else ""))
+        return out
+
+
+class HashCache:
+    """sha256 of files, cached by (device, inode, size, modification time)."""
+
+    def __init__(self, path: Path | None):
+        self.path = path
+        self.cache = {}
+        if path and path.exists():
+            try:
+                self.cache = json.loads(path.read_text())
+            except ValueError:
+                self.cache = {}
+
+    def tree(self, root: Path) -> dict:
+        files = {}
+        for rel, p in ledger_tool.walk(root):
+            st = p.stat()
+            key = f"{st.st_dev}:{st.st_ino}:{st.st_size}:{st.st_mtime_ns}"
+            if key not in self.cache:
+                self.cache[key] = ledger_tool.sha256_file(p)
+            files[rel] = (self.cache[key], st.st_size)
+        if self.path:
+            self.path.write_text(json.dumps(self.cache))
+        return files
+
+
+def find_builds(dirs: list[Path]) -> dict[tuple[str, str], list[Build]]:
+    """{(model id, backend): [builds, in search order]}."""
+    out: dict[tuple[str, str], list[Build]] = {}
     for root in dirs:
         if not root.is_dir():
             raise SystemExit(f"--models-dir {root}: not a directory")
         for d in sorted(p for p in root.iterdir() if p.is_dir()):
-            if (d / "manifest.toml").is_file():
-                m = tomllib.loads((d / "manifest.toml").read_text())
-                key = (m.get("id", d.name), m.get("backend", "coreml"))
-            elif (d / "classifier.toml").is_file():
-                m = tomllib.loads((d / "classifier.toml").read_text())
-                key = (m.get("id", d.name), "coreml")
-            else:
-                continue
-            out.setdefault(key, d)
+            if (d / "manifest.toml").is_file() or (d / "classifier.toml").is_file():
+                b = Build(d)
+                out.setdefault((b.model, b.backend), []).append(b)
     return out
 
 
-def find_reference(dirs: list[Path], model: str) -> Path | None:
-    for root in dirs:
-        d = root / model
-        if (d / "reference.json").is_file() and (d / "reference.safetensors").is_file():
+def find_reference(dirs: list[Path], model: str, build: Build) -> Path | None:
+    """The first reference of `model` made with the build's tokenizer and
+    length cap; else the first with its tokenizer; else the first."""
+    found = [root / model for root in dirs
+             if (root / model / "reference.json").is_file() and (root / model / "reference.safetensors").is_file()]
+    if not found:
+        return None
+    tok = sha256_file(build.dir / "tokenizer.json") if (build.dir / "tokenizer.json").is_file() else None
+
+    def info(d):
+        j = json.loads((d / "reference.json").read_text())
+        return j.get("tokenizer_sha256"), j["model"].get("max_seq_len")
+    infos = [(d, *info(d)) for d in found]
+    for d, t, cap in infos:
+        if t in (None, tok) and cap == build.max_seq_len:
             return d
-    return None
+    for d, t, _cap in infos:
+        if t in (None, tok):
+            return d
+    return found[0]
 
 
 def read_tensors(path: Path, names: list[str]) -> dict[str, tuple[list[int], array]]:
@@ -230,21 +384,7 @@ def read_tensors(path: Path, names: list[str]) -> dict[str, tuple[list[int], arr
 
 
 def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 24), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
-def fingerprint(build: Path) -> str:
-    """sha256 over a build's files: one `<sha256>  <relative path>` line
-    per file, sorted by path (as the verification runs' model_sha256)."""
-    lines = []
-    for p in sorted(build.rglob("*")):
-        if p.is_file():
-            lines.append(f"{sha256_file(p)}  {p.relative_to(build).as_posix()}\n")
-    return hashlib.sha256("".join(lines).encode()).hexdigest()
+    return ledger_tool.sha256_file(path)
 
 
 def git(*args) -> str | None:
@@ -253,6 +393,99 @@ def git(*args) -> str | None:
                               check=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return None
+
+
+def free_gib(path: Path) -> float:
+    return shutil.disk_usage(path).free / 2**30
+
+
+def ane_compiles(start: float, end: float) -> int | None:
+    """Programs Apple's ANE compiler finished between two times, from the
+    unified log; None if the log can't be read."""
+    fmt = "%Y-%m-%d %H:%M:%S"
+    try:
+        p = subprocess.run(["/usr/bin/log", "show", "--style", "compact",
+                            "--start", time.strftime(fmt, time.localtime(start - 1)),
+                            "--end", time.strftime(fmt, time.localtime(end + 1)),
+                            "--predicate", 'process == "ANECompilerService" AND eventMessage BEGINSWITH '
+                                           '"End of compilation of network"'],
+                           capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if p.returncode != 0:
+        return None
+    return sum("End of compilation of network" in line for line in p.stdout.splitlines())
+
+
+# ---------------------------------------------------------------- the gate's home
+
+
+class Home:
+    """The gate's home: persistent (--home) or temporary (--fresh-home)."""
+
+    def __init__(self, root: Path | None):
+        self.temporary = root is None
+        self.root = Path(tempfile.mkdtemp(prefix="sidekick-release-gate-")) if root is None else root
+        self.home = self.root / "home"
+        (self.home / "tmp").mkdir(parents=True, exist_ok=True)
+        self.hashes = HashCache(None if self.temporary else self.root / "hashes.json")
+
+    def close(self):
+        if self.temporary:
+            shutil.rmtree(self.root, ignore_errors=True)
+
+    def serve_dir(self, build: Build) -> tuple[Path, str | None]:
+        """The build in place at a stable path: a directory of hard links
+        to its files, with an amended manifest where one is needed.
+        Returns the models directory to serve, and the amendment's note."""
+        mroot = self.root / "models" / build.model / build.digest[:16]
+        dest = mroot / build.model
+        text, note = served_manifest(build.dir, build.manifest_name, build.model)
+        want = set()
+        for rel, src in ledger_tool.walk(build.dir):
+            want.add(rel)
+            d = dest / rel
+            if rel == build.manifest_name and note:
+                continue
+            d.parent.mkdir(parents=True, exist_ok=True)
+            if d.exists() and os.path.samefile(d, src):
+                continue
+            if d.exists() or d.is_symlink():
+                d.unlink()
+            try:
+                os.link(src, d)
+            except OSError as e:
+                raise GateError(f"can't hard-link {src} into the gate's home ({e}); put --home on the same "
+                                f"volume as the builds")
+        if note:
+            m = dest / build.manifest_name
+            if m.is_file() and m.stat().st_nlink > 1:
+                m.unlink()
+            if not m.is_file() or m.read_text() != text:
+                m.write_text(text)
+        for rel, p in ledger_tool.walk(dest):
+            if rel not in want:
+                p.unlink()
+        return mroot, note
+
+    def prune_gpu_cpu(self) -> int:
+        """Delete the GPU and CPU programs in Core ML's caches in the home
+        (each about the weights' size, recompiled in a second or two), and
+        keep every ANE program's. An ANE entry's `<key>.bundle` holds a
+        `model.anehash` (under `main/main_ane/`, or under
+        `ane_compile/multiprocedure/` for a program split across the ANE and
+        the CPU) and stays whole: its CPU segments (`main_bnns`,
+        `main_classic_cpu*`) are part of it, and deleting any of it makes the
+        ANE compile again. A bundle without one goes. Returns the bytes
+        freed."""
+        freed = 0
+        caches = self.home / "Library" / "Caches"
+        for bundle in caches.glob("*/com.apple.e5rt.e5bundlecache/*/*/*.bundle"):
+            if not bundle.is_dir() or next(bundle.rglob("*.anehash"), None) is not None:
+                continue
+            freed += sum(p.stat().st_size for p in bundle.rglob("*") if p.is_file())
+            shutil.rmtree(bundle, ignore_errors=True)
+        return freed
 
 
 # ---------------------------------------------------------------- daemon
@@ -292,15 +525,17 @@ def served_manifest(build: Path, manifest_name: str, model: str) -> tuple[str, s
 
 
 class Daemon:
-    """One sidekickd serving one model, in a temporary home of its own."""
+    """One sidekickd serving one build from the gate's home."""
 
-    def __init__(self, binary: Path, build: Path, model: str, units: str | None, onnx_runtime: str | None):
-        self.binary, self.build, self.model, self.units = binary, build, model, units
+    def __init__(self, binary: Path, home: Home, models_dir: Path, model: str, units: str | None, ane: bool,
+                 onnx_runtime: str | None):
+        self.binary, self.home, self.models_dir, self.model, self.units = binary, home, models_dir, model, units
+        self.ane = ane
         self.onnx_runtime = onnx_runtime
-        self.root = Path(tempfile.mkdtemp(prefix="sidekick-release-gate-"))
+        self.run = home.root / "run"
         self.proc = None
         self.port = None
-        self.manifest_note = None
+        self.log = None
 
     def __enter__(self):
         try:
@@ -313,31 +548,47 @@ class Daemon:
     def __exit__(self, *exc):
         self.close()
 
-    def start(self):
-        home, models = self.root / "home", self.root / "models"
-        (home / "tmp").mkdir(parents=True)
-        mdir = models / self.model
-        mdir.mkdir(parents=True)
-        manifest_name = "manifest.toml" if (self.build / "manifest.toml").is_file() else "classifier.toml"
-        for p in self.build.iterdir():
-            if p.name != manifest_name:
-                (mdir / p.name).symlink_to(p.resolve())
-        text, self.manifest_note = served_manifest(self.build, manifest_name, self.model)
-        (mdir / manifest_name).write_text(text)
+    def env(self) -> dict:
+        # Core ML's compile caches and sidekick's own follow the home.
+        env = dict(os.environ, HOME=str(self.home.home), CFFIXED_USER_HOME=str(self.home.home),
+                   TMPDIR=str(self.home.home / "tmp"))
+        env.pop("SIDEKICK_API_KEY", None)
+        return env
+
+    def write_config(self):
+        shutil.rmtree(self.run, ignore_errors=True)
+        self.run.mkdir(parents=True)
         self.port = free_port()
-        cfg = [f'addr = "127.0.0.1:{self.port}"', f"models_dir = {json.dumps(str(models))}",
-               "request_timeout_secs = 900", "load_timeout_secs = 3600", "model_idle_ttl_secs = 3600"]
+        timeout = ANE_REQUEST_TIMEOUT_SECS if self.ane else REQUEST_TIMEOUT_SECS
+        cfg = [f'addr = "127.0.0.1:{self.port}"', f"models_dir = {json.dumps(str(self.models_dir))}",
+               f"request_timeout_secs = {timeout}", "load_timeout_secs = 3600", "model_idle_ttl_secs = 3600",
+               "warm_on_start = false"]
         if self.onnx_runtime:
             cfg.append(f"onnx_runtime = {json.dumps(self.onnx_runtime)}")
         if self.units:
             cfg += [f'[models.{json.dumps(self.model)}]', f'compute_units = "{self.units}"']
-        (self.root / "config.toml").write_text("\n".join(cfg) + "\n")
-        # Core ML's compile caches and sidekick's own follow the home
-        # directory: they land in the temporary one and go with it.
-        env = dict(os.environ, HOME=str(home), CFFIXED_USER_HOME=str(home), TMPDIR=str(home / "tmp"))
-        env.pop("SIDEKICK_API_KEY", None)
-        self.log = open(self.root / "sidekickd.log", "wb")
-        self.proc = subprocess.Popen([str(self.binary), "--config", str(self.root / "config.toml")], env=env,
+        (self.run / "config.toml").write_text("\n".join(cfg) + "\n")
+
+    def warm(self) -> float:
+        """Compile the build's buckets for the path it's served on before
+        any request: `sidekickd warm` (D52), the same binary, home and config."""
+        t = time.monotonic()
+        try:
+            p = subprocess.run([str(self.binary), "--config", str(self.run / "config.toml"), "warm", self.model],
+                               env=self.env(), capture_output=True, text=True, timeout=WARM_TIMEOUT_SECS,
+                               stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            raise Hang(f"{self.model}: sidekickd warm didn't finish within {WARM_TIMEOUT_SECS} s")
+        (self.run / "warm.log").write_text(p.stdout + p.stderr)
+        if p.returncode != 0:
+            raise GateError(f"{self.model}: sidekickd warm failed ({p.returncode}):\n{(p.stdout + p.stderr)[-1500:]}")
+        return time.monotonic() - t
+
+    def start(self):
+        if self.port is None:       # not written yet for a warm-up
+            self.write_config()
+        self.log = open(self.run / "sidekickd.log", "wb")
+        self.proc = subprocess.Popen([str(self.binary), "--config", str(self.run / "config.toml")], env=self.env(),
                                      stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
@@ -359,7 +610,7 @@ class Daemon:
 
     def log_tail(self, n=30) -> str:
         try:
-            return "\n".join((self.root / "sidekickd.log").read_text(errors="replace").splitlines()[-n:])
+            return "\n".join((self.run / "sidekickd.log").read_text(errors="replace").splitlines()[-n:])
         except OSError:
             return ""
 
@@ -371,29 +622,34 @@ class Daemon:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait(timeout=30)
-        if getattr(self, "log", None):
+        if self.log:
             self.log.close()
-        shutil.rmtree(self.root, ignore_errors=True)
 
 
 class Client:
-    """JSON over one keep-alive connection."""
+    """JSON over one keep-alive connection. A 504 (the daemon's request
+    timeout) or a socket timeout is a Hang."""
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, timeout: float = 3600):
         host, port = url.removeprefix("http://").split(":")
         self.host, self.port = host, int(port)
+        self.timeout = timeout
         self.conn = None
         self.version = None
 
     def call(self, method: str, route: str, body=None):
         for attempt in range(2):
             if self.conn is None:
-                self.conn = http.client.HTTPConnection(self.host, self.port, timeout=3600)
+                self.conn = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout)
             try:
                 data = None if body is None else json.dumps(body).encode()
                 self.conn.request(method, route, body=data, headers={"content-type": "application/json"})
                 r = self.conn.getresponse()
                 raw = r.read()
+            except (TimeoutError, socket.timeout):
+                self.conn.close()
+                self.conn = None
+                raise Hang(f"{method} {route}: no response within {self.timeout:.0f} s")
             except (http.client.HTTPException, ConnectionError):
                 self.conn.close()
                 self.conn = None
@@ -409,6 +665,8 @@ class Client:
                 payload = json.loads(raw) if raw else None
             except ValueError:
                 payload = {"raw": raw.decode("utf-8", "replace")}
+            if r.status == 504:
+                raise Hang(f"{method} {route}: HTTP 504 (the daemon's request timeout): {json.dumps(payload)[:300]}")
             return r.status, {k.lower(): v for k, v in r.getheaders()}, payload
 
     def post(self, route: str, body: dict):
@@ -551,9 +809,10 @@ def run_classify(client: Client, model: str, info: dict, ref: Path) -> dict:
     r, ref_sha = load_reference(ref)
     max_labels = r["model"]["max_labels"]
     shape, logits = read_tensors(ref / "reference.safetensors", ["torch"])["torch"]
-    cases = [(i, c) for i, c in enumerate(r["cases"]) if c.get("gold")]
-    if not cases:
-        raise GateError(f"{model}: the reference has no labelled cases")
+    # The labelled cases; a corpus with none (text-classification's parity
+    # corpus) runs whole, for agreement with fp32 only.
+    labelled = [(i, c) for i, c in enumerate(r["cases"]) if c.get("gold")]
+    cases = labelled or list(enumerate(r["cases"]))
     fixed = r["model"].get("labels") or []
     groups: dict[str, list] = {}
     for i, c in cases:
@@ -596,14 +855,15 @@ def run_classify(client: Client, model: str, info: dict, ref: Path) -> dict:
         idx, top = g
         k = len(labels)
         fp32 = argmax(logits[i * max_labels: i * max_labels + k])
-        right += labels[idx] in c["gold"]
+        right += bool(c.get("gold")) and labels[idx] in c["gold"]
         agree += idx == fp32
         tops.append(top)
         preds.append(_symbol(idx))
     answered = n - refused
-    return {"sample": {"name": "parity corpus, labelled cases", "n": n, "sha256": sample.hexdigest(),
+    return {"sample": {"name": "parity corpus, " + ("labelled cases" if labelled else "every case"), "n": n, "sha256": sample.hexdigest(),
                        "reference_sha256": ref_sha},
-            "metrics": {"n": n, "refused": refused, "gold_accuracy": right / answered if answered else 0.0,
+            "metrics": {"n": n, "refused": refused,
+                        **({"gold_accuracy": right / answered if answered else 0.0} if labelled else {}),
                         "agree_fp32": agree / answered if answered else 0.0,
                         "mean_prob": sum(tops) / len(tops) if tops else 0.0},
             "predictions": {"label": "".join(preds)}}
@@ -624,6 +884,10 @@ def _symbol(i: int) -> str:
     return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"[i] if i < 62 else "?"
 
 
+def sigmoid(x: float) -> float:
+    return 1 / (1 + math.exp(-x)) if x >= 0 else math.exp(x) / (1 + math.exp(x))
+
+
 def run_rerank(client: Client, model: str, info: dict, ref: Path | None) -> dict:
     """The rerank corpus: each group as one request."""
     corpus = tomllib.loads(RERANK_CORPUS.read_text())["group"]
@@ -635,7 +899,7 @@ def run_rerank(client: Client, model: str, info: dict, ref: Path | None) -> dict
         for i, c in enumerate(r["cases"]):
             fp32[c["id"]] = t[i * shape[1]]
     sample = hashlib.sha256()
-    tops, relevant_hits, relevant_groups, agree, worst = [], 0, 0, 0, 0.0
+    tops, relevant_hits, relevant_groups, agree, worst, worst_p = [], 0, 0, 0, 0.0, 0.0
     scored = 0
     for g in corpus:
         docs = [" ".join([d] * g.get("repeat", 1)) for d in g["documents"]]
@@ -655,11 +919,14 @@ def run_rerank(client: Client, model: str, info: dict, ref: Path | None) -> dict
             scored += 1
             agree += top == argmax(ref_scores)
             worst = max(worst, max(abs(a - b) for a, b in zip(scores, ref_scores)))
+            worst_p = max(worst_p, max(abs(sigmoid(a) - sigmoid(b)) for a, b in zip(scores, ref_scores)))
     m = {"n": len(corpus), "top1_relevant": relevant_hits / relevant_groups if relevant_groups else 0.0}
     if fp32:
         if scored != len(corpus):
             raise GateError(f"{model}: the reference doesn't cover every group of the rerank corpus")
-        m.update({"agree_fp32_top1": agree / scored, "max_abs_diff_fp32": worst})
+        # The score on its own scale (a logit for the ms-marco cross-encoders),
+        # and as its sigmoid, the scale the parity suite grades |dp| on.
+        m.update({"agree_fp32_top1": agree / scored, "max_abs_diff_fp32": worst, "max_abs_dp_fp32": worst_p})
     return {"sample": {"name": "rerank corpus", "n": len(corpus), "sha256": sample.hexdigest(),
                        "reference_sha256": ref_sha},
             "metrics": m, "predictions": {"top": "".join(_symbol(t) for t in tops)}}
@@ -695,10 +962,19 @@ def run_embed_parity(client: Client, model: str, info: dict, ref: Path) -> dict:
             raise GateError(f"{model}: {len(v)} dimensions, the reference has {dims}")
         dot = sum(a * b for a, b in zip(v, w))
         cos.append(dot / (math.sqrt(sum(a * a for a in v)) * math.sqrt(sum(b * b for b in w))))
+    # As the parity suite grades: the worst over the corpus's ordinary
+    # cases, and its stress inputs (tagged "degenerate") apart.
+    stress = [STRESS_TAG in c.get("tags", []) for c in cases]
+    core = [x for x, st in zip(cos, stress) if not st]
+    hard = [x for x, st in zip(cos, stress) if st]
+    m = {"n": len(cases), "worst_cosine_fp32": min(core), "mean_cosine_fp32": sum(cos) / len(cos),
+         "cosine_error_fp32": 1 - min(core), "token_count_mismatches": mismatched}
+    if hard:
+        m.update({"stress_cosine_fp32": min(hard), "stress_error_fp32": 1 - min(hard)})
     return {"sample": {"name": "parity corpus", "n": len(cases), "sha256": sample.hexdigest(),
                        "reference_sha256": ref_sha},
-            "metrics": {"n": len(cases), "worst_cosine_fp32": min(cos), "mean_cosine_fp32": sum(cos) / len(cos),
-                        "cosine_error_fp32": 1 - min(cos), "token_count_mismatches": mismatched}}
+            "metrics": m}
+
 
 
 def run_mteb(python: str, url: str, model: str, path: str, build: Path, work: Path) -> dict:
@@ -706,11 +982,13 @@ def run_mteb(python: str, url: str, model: str, path: str, build: Path, work: Pa
     with it, mteb 2.26.14 loads AskUbuntuDupQuestions without its candidate
     lists and scores bge-small-en-v1.5 0.384 instead of 0.618, silently."""
     out = work / "mteb"
+    shutil.rmtree(out, ignore_errors=True)
     p = subprocess.run([python, str(REPO / "tools" / "mteb_transfer.py"), "run", "--url", url, "--model", model,
                         "--path", path, "--out", str(out), "--build", str(build), "--tasks", *MTEB_TASKS],
                        capture_output=True, text=True)
     if p.returncode != 0:
-        raise GateError(f"{model}: mteb_transfer.py run failed ({p.returncode}):\n{p.stderr[-2000:]}")
+        err = f"{model}: mteb_transfer.py run failed ({p.returncode}):\n{p.stderr[-2000:]}"
+        raise (Hang if "HTTP 504" in p.stderr or "timed out" in p.stderr else GateError)(err)
     published = json.loads((DATA / "mteb_transfer.json").read_text())
     ref = {(s["model"], s["task"]): s["score"] for s in published["scores"] if s["path"] == "reference"}
     tasks, m = {}, {}
@@ -727,52 +1005,70 @@ def run_mteb(python: str, url: str, model: str, path: str, build: Path, work: Pa
 # ---------------------------------------------------------------- one model
 
 
-def kind_of(model: str, meta: dict, build: Path) -> str:
+def kind_of(meta: dict, build: Build) -> str:
     if meta["task"] in ("embed", "rerank"):
         return meta["task"]
-    fmt = tomllib.loads((build / "classifier.toml").read_text()).get("classify", {}).get("format")
+    fmt = tomllib.loads((build.dir / build.manifest_name).read_text()).get("classify", {}).get("format")
     return "nli" if fmt == "nli" else "classify"
 
 
-def run_one(args, binary: Path, model: str, meta: dict, path: str, default: str, build: Path,
-            ref: Path | None) -> dict:
+def run_one(args, binary: Path, home: Home, t: "Target") -> dict:
     t0 = time.monotonic()
-    kind = kind_of(model, meta, build)
+    model, path, build, ref = t.model, t.path, t.build, t.ref
+    kind = kind_of(t.meta, build)
     if kind in ("nli", "classify", "embed") and ref is None:
         raise GateError(f"{model}: no parity reference in --refs")
-    units = None if path == default else PATH_UNITS.get(path)
-    rec = {"model": model, "path": path, "kind": kind, "default": path == default}
-    print(f"[{model} @ {path}] fingerprinting the build", flush=True)
-    rec["build"] = {"fingerprint": fingerprint(build)}
+    units = None if t.default else PATH_UNITS.get(path)
+    rec = {"model": model, "path": path, "variant": t.variant, "kind": kind, "default": t.default,
+           "build": build.record()}
     if ref is not None:
-        check_reference(load_reference(ref)[0], build, model)
-    with Daemon(binary, build, model, units, args.onnx_runtime) as d:
-        if d.manifest_note:
-            rec["build"]["served_manifest"] = d.manifest_note
-        client = Client(d.url)
-        info = client.model_info(model, d.health)
+        check_reference(load_reference(ref)[0], build.dir, model)
+    models_dir, note = home.serve_dir(build)
+    if note:
+        rec["build"]["served_manifest"] = note
+    free0, w0 = free_gib(home.root), time.time()
+    cache = {"free_gib_before": round(free0, 2)}
+    ane = path == "coreml-ane"
+    d = Daemon(binary, home, models_dir, model, units, ane, args.onnx_runtime)
+    try:
         if path.startswith("coreml-"):
-            if info.get("backend", "coreml") != "coreml" or info.get("compute_units") != PATH_UNITS[path]:
-                raise GateError(f"{model}: served as {info.get('backend')}/{info.get('compute_units')}, not {path}"
-                                + ("" if units else " (the build's manifest doesn't serve its published default)"))
-        elif path == "onnx-cpu" and info.get("backend") != "onnx":
-            raise GateError(f"{model}: served by {info.get('backend')}, not onnx")
-        print(f"[{model} @ {path}] serving on {d.url}; running the {kind} sample", flush=True)
-        if kind == "nli":
-            rec.update(run_nli(client, model, info, ref))
-            if model in scoring_models():
-                rec["sanity"] = run_sanity(args.python, d.url, model, build)
-        elif kind == "classify":
-            rec.update(run_classify(client, model, info, ref))
-        elif kind == "rerank":
-            rec.update(run_rerank(client, model, info, ref))
-        else:
-            part = run_embed_parity(client, model, info, ref)
-            mt = run_mteb(args.python, d.url, model, path, build, d.root)
-            rec.update(part)
-            rec["metrics"].update(mt["metrics"])
-            rec["mteb"] = mt["mteb"]
-        rec["sidekick"] = client.version
+            d.write_config()
+            print(f"[{t.label}] warming (sidekickd warm)", flush=True)
+            cache["warm_seconds"] = round(d.warm(), 1)
+        with d:
+            client = Client(d.url, timeout=ANE_REQUEST_TIMEOUT_SECS + 60 if ane else 3600)
+            info = client.model_info(model, d.health)
+            if path.startswith("coreml-"):
+                if info.get("backend", "coreml") != "coreml" or info.get("compute_units") != PATH_UNITS[path]:
+                    raise GateError(f"{model}: served as {info.get('backend')}/{info.get('compute_units')}, not "
+                                    f"{path}" + ("" if units else
+                                                 " (the build's manifest doesn't serve its published default)"))
+            elif path == "onnx-cpu" and info.get("backend") != "onnx":
+                raise GateError(f"{model}: served by {info.get('backend')}, not onnx")
+            print(f"[{t.label}] serving on {d.url}; running the {kind} sample", flush=True)
+            if kind == "nli":
+                rec.update(run_nli(client, model, info, ref))
+                if model in scoring_models():
+                    rec["sanity"] = run_sanity(args.python, d.url, model, build.dir)
+            elif kind == "classify":
+                rec.update(run_classify(client, model, info, ref))
+            elif kind == "rerank":
+                rec.update(run_rerank(client, model, info, ref))
+            else:
+                part = run_embed_parity(client, model, info, ref)
+                mt = run_mteb(args.python, d.url, model, path, build.dir, d.run)
+                rec.update(part)
+                rec["metrics"].update(mt["metrics"])
+                rec["mteb"] = mt["mteb"]
+            rec["sidekick"] = client.version
+    finally:
+        if not args.keep_gpu_cache:
+            home.prune_gpu_cpu()
+        cache["free_gib_after"] = round(free_gib(home.root), 2)
+        if path.startswith("coreml-"):
+            cache["ane_compiles"] = ane_compiles(w0, time.time())
+        rec["cache"] = cache
+        t.cache = cache
     rec["seconds"] = round(time.monotonic() - t0, 1)
     return rec
 
@@ -785,10 +1081,10 @@ def metric_rule(name: str) -> str:
         return "exact"
     if name.startswith("mteb:"):
         return "mteb"
-    if name in ("cosine_error_fp32", "max_abs_diff_fp32"):
+    if name in ("cosine_error_fp32", "stress_error_fp32", "max_abs_diff_fp32", "max_abs_dp_fp32"):
         return "error"
-    if name in ("worst_cosine_fp32", "mean_cosine_fp32"):
-        return "derived"        # judged through cosine_error_fp32
+    if name in ("worst_cosine_fp32", "mean_cosine_fp32", "stress_cosine_fp32"):
+        return "derived"        # judged through cosine_error_fp32 and stress_error_fp32
     if name == "mean_prob":
         return "mean_prob"
     if name.startswith("agree"):
@@ -796,12 +1092,22 @@ def metric_rule(name: str) -> str:
     return "accuracy"
 
 
+def same_build(rec: dict, base: dict) -> bool:
+    """By the ledger digest where the baseline has one; else by the first
+    baseline's fingerprint (the same tree hash)."""
+    b, r = base["build"], rec["build"]
+    if "digest" in b:
+        return r["digest"] == b["digest"]
+    return r["fingerprint"] == b["fingerprint"]
+
+
 def compare(rec: dict, base: dict, tol: dict) -> list[str]:
     """What drifted beyond tolerance: one line each."""
     out = []
-    if rec["build"]["fingerprint"] != base["build"]["fingerprint"]:
-        out.append(f"build differs from the baseline's ({rec['build']['fingerprint'][:12]} vs "
-                   f"{base['build']['fingerprint'][:12]}); a deliberate change re-baselines")
+    if not same_build(rec, base):
+        out.append(f"build differs from the baseline's ({rec['build'].get('ledger') or rec['build']['digest'][:12]} "
+                   f"vs {base['build'].get('ledger') or base['build'].get('digest', base['build']['fingerprint'])[:12]}); "
+                   f"a deliberate change re-baselines")
     if rec.get("sample", {}).get("sha256") != base.get("sample", {}).get("sha256"):
         out.append("the task sample differs from the baseline's (another reference or corpus)")
     for name, b in base.get("metrics", {}).items():
@@ -868,11 +1174,12 @@ def headline(rec: dict) -> str:
             s += f", triple {'ok' if rec['sanity']['passed'] else 'FAILED'}"
         return s
     if k == "classify":
-        return f"gold {m['gold_accuracy']:.3f}, fp32 agreement {m['agree_fp32']:.3f}, refused {m['refused']}"
+        gold = f"gold {m['gold_accuracy']:.3f}, " if "gold_accuracy" in m else "no gold labels, "
+        return f"{gold}fp32 agreement {m['agree_fp32']:.4f}, refused {m['refused']}"
     if k == "rerank":
         s = f"relevant top-1 {m['top1_relevant']:.3f}"
         if "agree_fp32_top1" in m:
-            s += f", fp32 top-1 agreement {m['agree_fp32_top1']:.3f}, max |Δ| {m['max_abs_diff_fp32']:.3g}"
+            s += f", fp32 top-1 agreement {m['agree_fp32_top1']:.3f}, max |Δp| {m['max_abs_dp_fp32']:.3g}"
         return s
     parts = [f"{t} {m[f'mteb:{t}']:.4f}" for t in MTEB_TASKS if f"mteb:{t}" in m]
     return ", ".join(parts) + f"; worst cos fp32 {m['worst_cosine_fp32']:.6f}"
@@ -881,31 +1188,51 @@ def headline(rec: dict) -> str:
 # ---------------------------------------------------------------- main
 
 
-def provenance(this_chip: str, versions: set) -> dict:
+def provenance(this_chip: str, versions: set, signing: str | None) -> dict:
     os_version, os_build = macos()
-    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain", "--untracked-files=no")),
+    # Uncommitted changes to tracked files, the baseline this gate writes excepted.
+    status = git("status", "--porcelain", "--untracked-files=no", "--", ".",
+                 f":(exclude){BASELINE.relative_to(REPO).as_posix()}")
+    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(status),
             "sidekick": sorted(v for v in versions if v)[0] if any(versions) else None,
+            "signing_identifier": signing,
             "chip": this_chip, "os": f"macOS {os_version}", "os_build": os_build,
             "date": datetime.date.today().isoformat()}
 
 
+def signing_identifier(binary: Path) -> str | None:
+    p = subprocess.run(["codesign", "--display", "--verbose=1", str(binary)], capture_output=True, text=True)
+    return next((line.split("=", 1)[1] for line in (p.stdout + p.stderr).splitlines()
+                 if line.startswith("Identifier=")), None)
+
+
 def build_daemon(args) -> Path:
+    """The binary to gate, signed with the stable identifier Core ML's ANE
+    cache is keyed by (tools/sign_sidekickd.sh): a built one is signed
+    here; a given one is checked and used as it is."""
     if args.daemon:
-        return Path(args.daemon).resolve()
-    print("building sidekickd (release, coreml + onnx)", flush=True)
-    subprocess.run(["cargo", "build", "--release", "-p", "sidekick-server", "--features", "coreml,onnx",
-                    "--bin", "sidekickd"], cwd=REPO, check=True)
-    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=REPO,
-                                     capture_output=True, text=True, check=True).stdout)
-    return Path(meta["target_directory"]) / "release" / "sidekickd"
+        binary = Path(args.daemon).resolve()
+    else:
+        print("building sidekickd (release, coreml + onnx)", flush=True)
+        subprocess.run(["cargo", "build", "--release", "-p", "sidekick-server", "--features", "coreml,onnx",
+                        "--bin", "sidekickd"], cwd=REPO, check=True)
+        meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=REPO,
+                                         capture_output=True, text=True, check=True).stdout)
+        binary = Path(meta["target_directory"]) / "release" / "sidekickd"
+        subprocess.run([str(REPO / "tools" / "sign_sidekickd.sh"), str(binary)], check=True)
+    ident = signing_identifier(binary)
+    if ident != SIGNING_IDENTIFIER:
+        print(f"note: {binary} is signed as {ident!r}, not {SIGNING_IDENTIFIER}: its ANE programs won't hit "
+              f"the cache other builds left (tools/sign_sidekickd.sh)", flush=True)
+    return binary
 
 
 def check_python(python: str, todo: list):
     """Fail before any model runs if `--python` lacks what this run needs:
     mteb (at the pinned version) for an embedder, `tokenizers` for an nli
     model the verification harness scores."""
-    kinds = {meta["task"] for _m, meta, _p, _d, build, _r in todo if build is not None}
-    sanity = any(build is not None and m in scoring_models() for m, _meta, _p, _d, build, _r in todo)
+    kinds = {t.meta["task"] for t in todo if t.build is not None}
+    sanity = any(t.build is not None and t.model in scoring_models() for t in todo)
     probe = []
     if "embed" in kinds:
         probe.append("import mteb, sentence_transformers; assert mteb.__version__ == '2.26.14', mteb.__version__")
@@ -921,25 +1248,70 @@ def check_python(python: str, todo: list):
                          f"SIDEKICK_GATE_PYTHON.")
 
 
-def plan(args, this_chip: str):
-    """[(model, meta, path, default path, build or None, reference or None)]."""
+class Target:
+    """One (model, path, variant) to run, with its build and reference."""
+
+    def __init__(self, model, meta, path, variant, default):
+        self.model, self.meta, self.path, self.variant, self.default = model, meta, path, variant, default
+        self.build: Build | None = None
+        self.ref: Path | None = None
+        self.cache = None
+
+    @property
+    def key(self):
+        return (self.model, self.path, self.variant)
+
+    @property
+    def label(self):
+        v = "" if self.variant == DEFAULT_VARIANT["onnx" if self.path == "onnx-cpu" else "coreml"] else f" {self.variant}"
+        return f"{self.model} @ {self.path}{v}"
+
+
+def entry_key(e: dict) -> tuple:
+    return (e["model"], e["path"], e.get("variant") or DEFAULT_VARIANT["onnx" if e["path"] == "onnx-cpu" else "coreml"])
+
+
+def plan(args, this_chip: str, by_key: dict, home: Home) -> list[Target]:
     models = models_toml()
     builds = find_builds([Path(d) for d in args.models_dir])
     refs = [Path(d) for d in args.refs]
+    ledger = ledger_tool.load()
     wanted = args.models or list(models)
     unknown = [m for m in wanted if m not in models]
     if unknown:
         raise SystemExit(f"not published (docs/data/models.toml): {', '.join(unknown)}")
+    named = {p for p in args.paths if p in PATH_ORDER}
+    bad = [p for p in args.paths if p not in PATH_ORDER and p not in ("default", "all")]
+    if bad:
+        raise SystemExit(f"--paths: unknown {', '.join(bad)}")
     out = []
     for model in wanted:
         meta = models[model]
-        default = meta["served"]
-        paths = [default]
-        if args.paths == "all":
-            paths += [p for p in graded_paths(model, this_chip) if p != default]
-        for path in paths:
+        default = (meta["served"], "fp16")
+        targets = [default] if ("default" in args.paths or "all" in args.paths) else []
+        for path, variant in graded_targets(model, this_chip):
+            if (path, variant) != default and ("all" in args.paths or path in named):
+                targets.append((path, variant))
+        for path, variant in targets:
+            t = Target(model, meta, path, variant, path == meta["served"] and variant == "fp16")
             backend = "onnx" if path == "onnx-cpu" else "coreml"
-            out.append((model, meta, path, default, builds.get((model, backend)), find_reference(refs, model)))
+            want = by_key.get(t.key, {}).get("build", {}).get("ledger")
+            cands = builds.get((model, backend), [])
+            for b in cands:      # the baseline's build, if it is here
+                if want:
+                    b.identify(home.hashes, ledger)
+                    if b.ledger and b.ledger["id"] == want:
+                        t.build = b
+                        break
+            if t.build is None:  # else the first of the variant
+                for b in cands:
+                    b.identify(home.hashes, ledger)
+                    if b.variant == variant:
+                        t.build = b
+                        break
+            if t.build is not None:
+                t.ref = find_reference(refs, model, t.build)
+            out.append(t)
     return out
 
 
@@ -947,9 +1319,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models-dir", action="append", default=[], required=True,
-                    help="a directory of installed builds (repeatable; the first holding a model wins)")
+                    help="a directory of builds (repeatable, searched in order)")
     ap.add_argument("--refs", action="append", default=[], help="a directory of parity references (repeatable)")
-    ap.add_argument("--paths", choices=("default", "all"), default="default")
+    ap.add_argument("--paths", nargs="+", default=["default"],
+                    help="default, all, or path names: the graded (path, precision) pairs to run")
     ap.add_argument("--models", nargs="+", help="only these published models")
     ap.add_argument("--daemon", help="a built sidekickd to gate instead of building one")
     ap.add_argument("--onnx-runtime", help="libonnxruntime for onnx-cpu builds (else ORT_DYLIB_PATH or beside "
@@ -957,6 +1330,13 @@ def main() -> int:
     ap.add_argument("--python", default=os.environ.get("SIDEKICK_GATE_PYTHON") or sys.executable,
                     help="the interpreter for tools/mteb_transfer.py and scoring_run.py sanity, built from "
                          "tools/release_gate.requirements.txt (default: $SIDEKICK_GATE_PYTHON, else this one)")
+    ap.add_argument("--home", type=Path, default=DEFAULT_HOME,
+                    help=f"the gate's persistent home (default {DEFAULT_HOME})")
+    ap.add_argument("--fresh-home", action="store_true", help="a temporary home instead, deleted afterwards")
+    ap.add_argument("--keep-gpu-cache", action="store_true",
+                    help="keep Core ML's GPU and CPU entries in the home after each model")
+    ap.add_argument("--min-free-gib", type=float, default=25.0,
+                    help="stop before a model when free disk is below this (default 25)")
     ap.add_argument("--baseline", type=Path, default=BASELINE)
     ap.add_argument("--json", type=Path, help="write this run's full record here")
     ap.add_argument("--update-baseline", action="store_true")
@@ -964,98 +1344,136 @@ def main() -> int:
     args = ap.parse_args()
 
     this_chip = chip()
-    todo = plan(args, this_chip)
-    if args.list:
-        for model, meta, path, default, build, ref in todo:
-            print(f"{model:36} {path:11} build: {'yes' if build else 'not available here':20} "
-                  f"reference: {'yes' if ref else 'none'}")
-        return 0
     base = json.loads(args.baseline.read_text()) if args.baseline.exists() else {"entries": []}
     tol = base.get("tolerances", TOLERANCES)
-    by_key = {(e["model"], e["path"]): e for e in base["entries"]}
+    by_key = {entry_key(e): e for e in base["entries"]}
+    home = Home(None if args.fresh_home else args.home.expanduser().resolve())
+    try:
+        return gate(args, this_chip, base, tol, by_key, home)
+    finally:
+        home.close()
 
+
+def gate(args, this_chip, base, tol, by_key, home) -> int:
+    todo = plan(args, this_chip, by_key, home)
+    if args.list:
+        for t in todo:
+            b = t.build
+            print(f"{t.label:48} " + (f"{(b.ledger or {}).get('id') or 'not in the ledger':58} {b.dir}"
+                                      if b else "not available here")
+                  + (f"\n{'':48} reference: {t.ref}" if b else ""))
+        return 0
     check_python(args.python, todo)
     binary = build_daemon(args)
     version = subprocess.run([str(binary), "--version"], capture_output=True, text=True).stdout.strip()
     print(version, flush=True)
+    print(f"home: {home.root}" + (" (temporary)" if home.temporary else ""), flush=True)
     t_all = time.monotonic()
-    results, errors, unavailable = [], {}, []
-    for model, meta, path, default, build, ref in todo:
-        if build is None:
-            unavailable.append((model, path))
-            print(f"[{model} @ {path}] not available here", flush=True)
+    results, errors, unavailable, not_run = [], {}, [], []
+    ane_stopped = None
+    stop = None
+    for t in todo:
+        if t.build is None:
+            unavailable.append(t.label)
+            print(f"[{t.label}] not available here", flush=True)
+            continue
+        if stop:
+            not_run.append(t.label)
+            continue
+        free = free_gib(home.root)
+        if free < args.min_free_gib:
+            stop = f"free disk {free:.1f} GiB, under --min-free-gib {args.min_free_gib:g}"
+            print(f"[{t.label}] STOP: {stop}; nothing further runs", flush=True)
+            not_run.append(t.label)
+            continue
+        if ane_stopped and t.path == "coreml-ane":
+            errors[t.key] = f"not run: ANE work stopped after a hang ({ane_stopped})"
+            print(f"[{t.label}] {errors[t.key]}", flush=True)
             continue
         try:
-            rec = run_one(args, binary, model, meta, path, default, build, ref)
+            rec = run_one(args, binary, home, t)
         except GateError as e:
-            errors[(model, path)] = str(e)
-            print(f"[{model} @ {path}] ERROR: {e}", flush=True)
+            errors[t.key] = str(e)
+            print(f"[{t.label}] ERROR: {e}", flush=True)
+            if isinstance(e, Hang) and t.path == "coreml-ane":
+                ane_stopped = t.label
+                print(f"[{t.label}] an ANE request hung: no further ANE work in this run", flush=True)
             continue
-        b = by_key.get((model, path))
+        b = by_key.get(t.key)
         rec["drift"] = compare(rec, b, tol) if b else None
         results.append(rec)
         f = flips(rec, b)
         state = ("no baseline" if b is None else "ok" if not rec["drift"] else "DRIFT")
-        print(f"[{model} @ {path}] {state} in {rec['seconds']} s: {headline(rec)}"
-              + (f"; {f} prediction(s) differ from the baseline run" if f else ""), flush=True)
+        c = rec.get("cache", {})
+        print(f"[{t.label}] {state} in {rec['seconds']} s: {headline(rec)}"
+              + (f"; {f} prediction(s) differ from the baseline run" if f else "")
+              + (f" [ANE compiles {c['ane_compiles']}, free {c['free_gib_before']} -> {c['free_gib_after']} GiB]"
+                 if "ane_compiles" in c else ""), flush=True)
         for line in rec["drift"] or []:
             print(f"    {line}", flush=True)
     total = round(time.monotonic() - t_all, 1)
 
-    # Baselined models this run couldn't serve: the gate can't vouch for them.
-    missing = [(m, p) for (m, p) in unavailable if (m, p) in by_key]
+    # Baselined targets this run couldn't serve: the gate can't vouch for them.
+    ran = {(r["model"], r["path"], r["variant"]) for r in results} | set(errors)
+    missing = [k for k in by_key if k not in ran and (not args.models or k[0] in args.models)
+               and any(t.key == k for t in todo)]
     drifted = [r for r in results if r["drift"]]
     unbaselined = [r for r in results if r["drift"] is None]
-    prov = provenance(this_chip, {r.get("sidekick") for r in results})
+    prov = provenance(this_chip, {r.get("sidekick") for r in results}, signing_identifier(binary))
     prov["daemon"] = version
 
     print()
-    print(f"{'model':36} {'path':11} {'seconds':>8}  result")
+    print(f"{'model @ path':52} {'seconds':>8}  result")
     for r in results:
-        print(f"{r['model']:36} {r['path']:11} {r['seconds']:8.1f}  {headline(r)}")
-    for (m, p), e in errors.items():
-        print(f"{m:36} {p:11} {'':>8}  ERROR: {e.splitlines()[0]}")
+        label = f"{r['model']} @ {r['path']}" + (f" {r['variant']}" if r["variant"] not in DEFAULT_VARIANT.values()
+                                                 else "")
+        print(f"{label:52} {r['seconds']:8.1f}  {headline(r)}")
+    for (m, p, v), e in errors.items():
+        print(f"{m + ' @ ' + p + ' ' + v:52} {'':>8}  ERROR: {e.splitlines()[0]}")
     if unavailable:
-        print(f"not available here ({len(unavailable)}): " + ", ".join(f"{m} @ {p}" for m, p in unavailable))
+        print(f"not available here ({len(unavailable)}): " + ", ".join(unavailable))
+    if not_run:
+        print(f"not run ({stop}): " + ", ".join(not_run))
 
     if args.json:
         args.json.write_text(json.dumps({"provenance": prov, "seconds": total, "results": results,
-                                         "errors": {f"{m} @ {p}": e for (m, p), e in errors.items()},
-                                         "not_available": [f"{m} @ {p}" for m, p in unavailable]},
-                                        indent=1) + "\n")
+                                         "errors": {" ".join(k): e for k, e in errors.items()},
+                                         "not_available": unavailable, "not_run": not_run}, indent=1) + "\n")
 
     if args.update_baseline:
-        if errors:
-            print("refusing to update the baseline from a run with errors", file=sys.stderr)
+        if errors or not_run:
+            print("refusing to update the baseline from a run with errors or models not run", file=sys.stderr)
             return 1
         write_baseline(args.baseline, base, results, prov)
         print(f"baseline updated: {len(results)} entries written to {args.baseline}")
 
-    ok = not errors and not drifted and not missing
+    ok = not errors and not drifted and not missing and not not_run
     sha = (prov["commit"] or "unknown")[:7] + ("+dirty" if prov["dirty"] else "")
     print(f"release gate: {'PASS' if ok else 'FAIL'} — {len(results) - len(drifted) - len(unbaselined)} within "
           f"tolerance, {len(drifted)} drifted, {len(errors)} errors, {len(missing)} baselined but missing, "
-          f"{len(unbaselined)} without a baseline, {len(unavailable)} not available here — "
+          f"{len(not_run)} not run, {len(unbaselined)} without a baseline, {len(unavailable)} not available here — "
           f"{prov['sidekick'] or version} ({sha}), {prov['chip']}, {prov['os']}, {total / 60:.1f} min")
     return 0 if ok else 1
 
 
 def write_baseline(path: Path, base: dict, results: list[dict], prov: dict):
-    keep = {(e["model"], e["path"]): e for e in base.get("entries", [])}
+    keep = {entry_key(e): e for e in base.get("entries", [])}
     for r in results:
-        e = {k: r[k] for k in ("model", "path", "kind", "default", "build", "sample", "metrics", "predictions",
-                               "sanity", "mteb", "seconds") if k in r}
+        e = {k: r[k] for k in ("model", "path", "variant", "kind", "default", "build", "sample", "metrics",
+                               "predictions", "sanity", "mteb", "seconds") if k in r}
         e["provenance"] = {**{k: prov[k] for k in ("commit", "dirty", "chip", "os", "os_build", "date")},
                            "sidekick": r.get("sidekick")}
-        keep[(r["model"], r["path"])] = e
+        keep[entry_key(e)] = e
     order = list(models_toml())
     entries = sorted(keep.values(), key=lambda e: (order.index(e["model"]) if e["model"] in order else 999,
-                                                   PATH_ORDER.index(e["path"])))
+                                                   PATH_ORDER.index(e["path"]),
+                                                   VARIANT_ORDER.index(entry_key(e)[2])
+                                                   if entry_key(e)[2] in VARIANT_ORDER else 99))
     gated = {e["model"] for e in entries}
     out = {
         "about": ("The release gate's baseline: each published model's task sample, run through sidekickd over "
-                  "HTTP, on the paths listed. Written by tools/release_gate.py --update-baseline; do not edit "
-                  "by hand. A change to it is deliberate, and its PR says why."),
+                  "HTTP, on the paths and build variants listed. Written by tools/release_gate.py "
+                  "--update-baseline; do not edit by hand. A change to it is deliberate, and its PR says why."),
         "tolerances": base.get("tolerances", TOLERANCES),
         "mteb_tasks": MTEB_TASKS,
         "updated": {k: prov[k] for k in ("commit", "dirty", "sidekick", "chip", "os", "os_build", "date")},
