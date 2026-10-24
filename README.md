@@ -632,16 +632,15 @@ The first time sidekickd loads a Core ML bucket, Core ML compiles it for
 the device: seconds for a small model on the ANE, minutes for a long
 bucket of a large one. Later loads find the result in Core ML's cache and
 take a fraction of that, as long as they come from an executable with the
-same name, the same user, the same model files at the same path, the same
-compute units and the same macOS build, and, on the ANE, the same
-code-signing identifier. (The compiled ANE program itself is kept in a
-system-wide cache, which deleting your own cache doesn't clear;
-[docs/design/coreml-cache.md](docs/design/coreml-cache.md) has the
-details.) sidekickd compiles ahead of requests (D52):
+same name, the same user, the same model files at the same path and the
+same compute units, and, on the ANE, the same code-signing identifier.
+Where the compiled programs are kept, and what a macOS update is expected
+to do to them, is under [Memory](#memory) below. sidekickd compiles ahead
+of requests (D52):
 
 - **At startup, in the background,** in a `sidekickd warm` child process,
   every bucket the daemon serves, on the compute units it serves it on,
-  cold ones first. After a macOS update, a model move or a fresh install,
+  cold ones first. After a model move, a fresh install or a macOS update,
   that's where the compiles happen, instead of in the first requests. A
   request for a bucket being compiled waits for that compile and then
   loads from the cache, and requests for cached buckets don't wait. The
@@ -666,8 +665,8 @@ details.) sidekickd compiles ahead of requests (D52):
 `/v1/models` lists each Core ML model's buckets as `compile_cache`
 (`warm`, `warming`, `cold` or `failed`), and `/health`'s `warmup` shows
 the startup warm-up's progress and each bucket's load times. Measured on
-an M1 Max: bge-small-en-v1.5's first request per bucket took 4.0–5.4 s
-cold and 0.9–1.3 s warmed.
+an M1 Max, macOS 27.0: bge-small-en-v1.5's first request per bucket on the
+ANE took 4.0–5.4 s cold and 0.9–1.3 s warmed.
 
 ## Memory
 
@@ -722,8 +721,8 @@ everything else the machine runs):
   one (see Quickstart). The cache directory is named for the macOS build,
   and Apple's Core AI documentation says an OS update invalidates
   specialized models, so every bucket is expected to compile again after
-  one (not yet measured across an update; docs/design/coreml-cache.md has
-  the measurements).
+  one. That is inferred, not yet measured across an update
+  ([docs/design/coreml-cache.md, "OS updates"](docs/design/coreml-cache.md#os-updates)).
 
   A request that has to wait for a compile doesn't count it against
   `request_timeout_secs` (default 60): its deadline
