@@ -186,8 +186,8 @@ runs are tied to recorded files.
 only (standard library):
 
 ```sh
-python3 tools/model_card.py MODEL [--backend onnx] [--build ID ...] --owner ACCOUNT --out DIR
-python3 tools/model_card.py --check    # every card the ledger allows renders (CI)
+python3 tools/model_card.py MODEL [--backend onnx] [--build ID ...] --owner ACCOUNT [--ref vX.Y.Z] --out DIR
+python3 tools/model_card.py --check    # every card the ledger allows renders, every link resolves (CI)
 ```
 
 With `--out`, it also writes `<variant>.sha256` per build, a NOTICE where
@@ -195,34 +195,43 @@ the licence requires one, and TERMS.md for a tier-2b model. Documents the
 licence requires a copy of (licences.toml's `ship_copies`, such as the
 Gemma Terms of Use) are fetched from their source at upload.
 
-A card holds:
-- **Hugging Face front matter:** `license` (`other` with `license_name` and
-  `license_link` for a custom licence), `base_model` (the checkpoint
-  converted), `base_model_relation: quantized` for fp16 or smaller weights,
-  `library_name` (`coreml` or `onnx`), `pipeline_tag`, `tags` (with the
-  tier), `datasets` (training sets hosted on the Hub), and for tier 2b the
-  `extra_gated_*` fields below.
-- **The tier notice:** for 2a, what the training data includes and why the
-  tier, in plain words; for 2b, the consent terms.
-- **Modified files:** that the files are a conversion, as Apache-2.0 and
-  the Gemma terms require, and which licence files the repository carries.
-- **Which build to download:** each variant's shape, length cap and
-  download size, and which path to run it on, by its grades.
-- **Use with sidekick:** `sidekickd fetch`, a request for the model's
-  task, and the manual route (`hf download --local-dir`, `shasum -c`, move
-  into place), which writes real files, with a warning not to serve a
-  Hugging Face cache snapshot in place (its symlinks take Core ML off the
-  ANE).
-- **Fidelity:** the grade letters and their thresholds, from
-  fixtures/parity/expectations.toml; the published grades from
-  data/models.json per chip and path; and the grades of these exact files,
-  by hash.
-- **Benchmark scores** (the original model's, labelled as such),
-  **provenance** per build, **checksums** per build (each distinct file
-  once, with all its paths), **how to convert it yourself** (the converter
-  command from the committed manifest, then `ledger.py verify`), and the
-  **training data and licences** table with base model, travelling terms
-  and anything unverified.
+A card holds only what is particular to its model and its builds.
+Everything that is the same for every model lives once in sidekick's docs,
+and the card links there, so a correction is made in one place and no card
+can drift from it: how fetch works and how to install by hand (README),
+what a grade means and the benchmark caveats (docs/MODELS.md), the tier
+policy and the gate (this document), and how to reproduce a build
+(docs/CONVERTING.md). In order:
+
+| Section | What it holds |
+|---|---|
+| Front matter | `license` (`other` with `license_name` and `license_link` for a custom licence), `base_model` (the checkpoint converted), `base_model_relation: quantized` (the Hub has no "converted" relation; it uses `quantized` for format conversions such as GGUF at any precision, and the others would claim training that did not happen), `library_name` (`coreml` or `onnx`), `pipeline_tag`, `tags` (with the tier), `datasets` (training sets hosted on the Hub), and for tier 2b the `extra_gated_*` fields below |
+| Summary | The model, what kind it is, the backend, and what the repository holds |
+| Licence notice | The licence and tier with the model's own reason (2a), or the gate's consent terms (2b), linked to the tier policy |
+| Download | One row per build: weights, sequence buckets, max tokens, download size, whether the buckets share one weights file, and each compute path's grade on Apple silicon; then the one `sidekickd fetch` command; for ONNX, the publisher's own export where it grades A |
+| Fidelity | One row per compute path and chip: grade, worst cosine (embedders) or worst \|Δp\| (classifiers), and whether the grading report's file hashes match this repository's files |
+| Benchmark scores | The original model's headline scores, with their source |
+| Training data | Each dataset with its licence and terms, travelling terms, and anything not confirmed from a primary source (collapsed) |
+| Original model | The upstream repository, revision, licence and base model; what this repository changed (the modified-files notice Apache-2.0 and the Gemma terms ask for) and which licence files it carries |
+| Checksums | Per build, collapsed: its ledger build id, what it was built with, and every distinct file's sha256, size and paths |
+
+Names are written for people: "Neural Engine", not `cpu_and_ne`; "Max
+tokens", not `max_seq_len`; "Shared weights: Yes", not `layout =
+"shared"`. Machine identifiers (ledger build ids, sha256s, paths, the
+fetch command) appear only where a reader copies them, in code
+formatting.
+
+**Links are pinned to a release tag.** A card's links into this repository
+point at `blob/vX.Y.Z/` (`--ref`, by default the workspace version), not
+`main`. A card is published with a sidekick release and its repository
+commit is tagged with that release, so it is a versioned artifact, like the
+release notes in docs/releases/, which pin their links the same way. The
+docs at that tag describe the fetch and the daemon the card's "Needs
+sidekick X.Y.Z or later" names, and a heading renamed after the release
+can't break a published card. The cost: a card is staged on the release's
+version bump and the tag is cut before the repository is made public, or
+its links 404 until then. `model_card.py --check` resolves every link
+against the working tree, which is what that tag will hold.
 
 ## Compiled programs, not packages
 
@@ -357,9 +366,11 @@ Not automated yet; for the first uploads:
 2. `ledger.py add <build> --reports <reports>`: the build is in the ledger
    with its grades, and `ledger.py verify` passes on the directory to be
    uploaded.
-3. `model_card.py MODEL --build ID --owner ACCOUNT --out <staging>`, then
-   add the documents `ship_copies` names and the files `ship_files` names
-   (from the source repository at its pinned revision).
+3. `model_card.py MODEL --build ID --owner ACCOUNT --ref vX.Y.Z --out
+   <staging>`, with the release that publishes it (its links point at that
+   tag), then add the documents `ship_copies` names and the files
+   `ship_files` names (from the source repository at its pinned revision).
+   Cut the sidekick release before the repository is made public.
 4. Upload `<staging>` and the build directory (as `<variant>/`) with the
    Hugging Face CLI under the maintainer's account; for tier 2b, set the
    repository to gated, automatic approval, before the first upload of

@@ -30,6 +30,7 @@ each rule exists (entries cited as Dnn).
 - [ONNX export](#onnx-export)
 - [Shared weights across buckets](#shared-weights-across-buckets)
 - [Recording the build](#recording-the-build)
+- [Reproducing a published build](#reproducing-a-published-build)
 - [Adding a family](#adding-a-family)
 - [Refactoring a converter: the acceptance method](#refactoring-a-converter-the-acceptance-method)
 - [Gotchas](#gotchas)
@@ -592,6 +593,40 @@ exact files (matched by weights hash). A later reconversion is compared with it 
 `python3 tools/ledger.py verify <models dir>/<id>`, which names the layer
 that moved: the weights, the compiled program, the tokenizer or the
 manifest.
+
+## Reproducing a published build
+
+Every build sidekick publishes on Hugging Face can be rebuilt from its
+original checkpoint. The model card names the checkpoint and its revision,
+the converter, and the build's ledger id; its "Checksums" section lists the
+converter's commit and the tool versions the build was made with.
+
+1. Check out sidekick at the converter's commit (or a later one), and set
+   up the converter's environment ([Converters](#converters): Python,
+   coremltools and Xcode for Core ML, `onnx` and `onnxruntime` for
+   `--format onnx`).
+2. Download the checkpoint at the card's revision, with
+   `hf download <repo> --revision <revision> --local-dir <checkpoint dir>`.
+3. Run the converter into a fresh directory, with the build's options:
+   the committed manifest's header (examples/manifests/,
+   examples/classifiers/) gives the command, and an ONNX build adds
+   `--format onnx`:
+
+   ```sh
+   python tools/convert_bge_small.py <checkpoint dir> <models dir>/bge-small-en-v1.5
+   ```
+
+4. Compare the result with the published build's entry:
+
+   ```sh
+   python3 tools/ledger.py verify <models dir>/bge-small-en-v1.5 --id <ledger id from the card>
+   ```
+
+   It names each file that differs and its layer: the weights, the
+   compiled program, the tokenizer or the manifest. Core ML compiles on
+   another macOS or Xcode version can legitimately change the compiled
+   program while the weights stay identical; the parity suite (docs/MODELS.md)
+   then grades the rebuild, which is what decides whether it is as good.
 
 ## Adding a family
 

@@ -1,13 +1,27 @@
 """Generate the model card (README.md) for a sidekick build's Hugging Face
-repository (#137; docs/PUBLISHING.md).
+repository (#137; docs/PUBLISHING.md, "Model cards").
 
 One repository per model per backend (Core ML, ONNX), holding every build of
 that model for that backend, each in a directory named for its variant
 (`fp16/`, `fp16-max2048/`, ...) laid out exactly as sidekick installs it.
-The card is generated from sidekick's committed data, never written by hand:
-- docs/data/models.toml: the model's name, task, checkpoint and served path;
-- the committed manifest (examples/manifests/, examples/classifiers/): the
-  buckets, length cap, prefixes and the converter that produces the build;
+
+A card holds only what is particular to its model and builds: what the
+model is, its licence notice, which build to download, the one fetch
+command, its grades, its benchmark scores, its training data, the upstream
+model, and the builds' checksums. Everything that is the same for every
+model (how fetch, serving and installation work, what a grade means, the
+licence-tier policy, how to convert a model yourself) lives once in
+sidekick's own docs, and the card links there. Those links are pinned to a
+release tag (`--ref`, default `v<workspace version>`): a card is published
+with a sidekick release and tagged with it on the Hub, so it links the docs
+of that release, as release notes do, and a heading renamed later never
+breaks a published card. --check resolves every link against the working
+tree, which is what the tag will hold.
+
+The card is generated from committed data, never written by hand:
+- docs/data/models.toml: the model's name, family, task and checkpoint;
+- the committed manifest (examples/manifests/, examples/classifiers/): its
+  dimensions, compute units and converter;
 - docs/data/models.json: the fidelity grades per path and chip, and the
   benchmark scores;
 - docs/data/licences.toml: the licence, training data and publishing tier,
@@ -18,7 +32,7 @@ The card is generated from sidekick's committed data, never written by hand:
 
 Usage:
     python3 tools/model_card.py MODEL [--backend coreml|onnx] [--build ID ...]
-        [--owner HF_ACCOUNT] [--out DIR]
+        [--owner HF_ACCOUNT] [--ref vX.Y.Z] [--out DIR]
     python3 tools/model_card.py --check
 
 Without --out the card is printed. With --out, DIR receives the README.md,
@@ -28,8 +42,9 @@ for a tier-2b model TERMS.md, the consent terms fetch shows and records.
 Copies of documents the licence requires (licences.toml's `ship_copies`)
 are fetched from their source at upload, not generated here.
 --check renders every publishable model and backend the ledger holds builds
-for, and fails on any that can't be rendered, or on a tier-3 build marked
-published.
+for, resolves every link each card makes into sidekick's docs, and fails on
+a card that can't be rendered, a link that doesn't resolve, or a tier-3
+build marked published.
 
 Standard library only.
 """
@@ -50,22 +65,44 @@ DATA = REPO / "docs" / "data"
 GITHUB = "https://github.com/ironblock/sidekick"
 OWNER = "<owner>"
 
-PATH_NAME = {"coreml-ane": "Neural Engine", "coreml-gpu": "GPU", "coreml-cpu": "CPU", "onnx-cpu": "CPU (ONNX Runtime)"}
+PATH_NAME = {"coreml-ane": "Neural Engine", "coreml-gpu": "GPU", "coreml-cpu": "CPU", "onnx-cpu": "CPU"}
 BACKEND_NAME = {"coreml": "Core ML", "onnx": "ONNX"}
 BACKEND_PATHS = {"coreml": ("coreml-ane", "coreml-gpu", "coreml-cpu"), "onnx": ("onnx-cpu",)}
 CHIP_NAME = {}  # filled from runs.toml's [chips]
 PIPELINE = {"embed": "feature-extraction", "rerank": "text-ranking"}
 COMPUTE_UNITS = {None: "coreml-ane", "cpu_and_ne": "coreml-ane", "cpu_and_gpu": "coreml-gpu",
                  "cpu_only": "coreml-cpu", "all": "coreml-ane"}
-# Converters the committed manifest doesn't name (the conversion library's
-# BERT recipe), by model.
-CONVERTER = {"all-minilm-l6-v2": "tools/convert_bert_embedder.py", "e5-small-v2": "tools/convert_bert_embedder.py"}
+WEIGHTS_NAME = {"fp32": "32-bit float", "fp16": "16-bit float", "fp16 weights": "16-bit float, computed in 32-bit",
+                "int8": "8-bit integer"}
+TERMS_NAME = {"permissive": "Permissive", "share-alike": "Share-alike", "non-commercial": "Non-commercial",
+              "unknown": "Unknown"}
+DISCLOSURE_NAME = {"full": "fully disclosed", "partial": "partly disclosed", "undisclosed": "undisclosed"}
+TASK_NAME = {"embed": "embedding model", "rerank": "reranker", "text-classification": "classifier",
+             "zero-shot-classification": "zero-shot classifier", "text-ranking": "reranker"}
+SOURCE_KIND = {"mteb": "MTEB results", "mixed": "MTEB results, some tasks self-reported",
+               "self-reported": "the model's authors", "independent": "an independent evaluation"}
 
-CONCERN_TEXT = {
-    "copyleft-data": "share-alike (CC BY-SA) terms",
-    "unlicensed-data": "no licence that a primary source states (scraped or user-generated content)",
-    "undisclosed-data": "sources the model's authors don't disclose",
-    "unnamed-synthetic-generator": "synthetic data from a generator the authors don't name, whose output terms can't be checked",
+# Where the card points for everything that isn't particular to it: (file,
+# heading anchor). --check resolves each one against the working tree.
+DOCS = {
+    "fetch": ("README.md", "fetching-a-published-build"),
+    "by-hand": ("README.md", "installing-a-published-build-by-hand"),
+    "embed": ("README.md", "embeddings"),
+    "classify": ("README.md", "classification"),
+    "rerank": ("README.md", "rerank"),
+    "onnx": ("docs/MODELS.md", "onnx-runtime-on-the-cpu-onnx-cpu"),
+    "grades-embed": ("docs/MODELS.md", "confidence-grades-the-parity-suite"),
+    "grades-classify": ("docs/MODELS.md", "classifiers-v1classify"),
+    "grades-rerank": ("docs/MODELS.md", "rerankers-v1rerank"),
+    "benchmarks": ("docs/MODELS.md", "benchmark-scores"),
+    "transfer": ("docs/MODELS.md", "measured-on-sidekicks-builds"),
+    "licences": ("docs/MODELS.md", "licences-and-training-data"),
+    "tiers": ("docs/PUBLISHING.md", "what-is-published-licence-tiers"),
+    "consent": ("docs/PUBLISHING.md", "consent-for-tier-2b-gated-repositories"),
+    "ledger": ("docs/PUBLISHING.md", "the-checksum-ledger"),
+    "compiled": ("docs/PUBLISHING.md", "compiled-programs-not-packages"),
+    "reproduce": ("docs/CONVERTING.md", "reproducing-a-published-build"),
+    "shared": ("docs/DECISIONS.md", "d49--one-weights-file-per-chunk-shared-by-every-bucket"),
 }
 
 
@@ -83,6 +120,11 @@ def load_inputs():
         "ledger": ledger_mod.load(),
         "publishing": tomllib.loads((DATA / "publishing.toml").read_text()),
     }
+
+
+def default_ref():
+    """The release tag a card's links are pinned to: the workspace version's."""
+    return "v" + tomllib.loads((REPO / "Cargo.toml").read_text())["workspace"]["package"]["version"]
 
 
 def committed_manifest(model, backend):
@@ -140,6 +182,63 @@ def yq(s):
     return json.dumps(s, ensure_ascii=False)
 
 
+def count(n, word):
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+class Links:
+    """Links into sidekick's docs at one ref, remembered for --check."""
+
+    def __init__(self, ref):
+        self.ref = ref
+        self.used = set()
+
+    def __call__(self, key, text):
+        path, anchor = DOCS[key]
+        self.used.add(key)
+        return f"[{text}]({GITHUB}/blob/{self.ref}/{path}#{anchor})"
+
+
+# --- anchors -----------------------------------------------------------------
+
+def slug(heading):
+    """GitHub's anchor for a Markdown heading."""
+    h = heading.strip().lower()
+    h = re.sub(r"[^\w\- ]", "", h)
+    return h.replace(" ", "-")
+
+
+def anchors(path):
+    """Every heading anchor GitHub generates for a Markdown file, with its
+    -1, -2 suffixes for repeated headings; code blocks are skipped."""
+    seen, out, fenced = {}, set(), False
+    for line in Path(path).read_text().splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+            continue
+        m = None if fenced else re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line)
+        if m:
+            s = slug(m.group(1))
+            n = seen.get(s, 0)
+            seen[s] = n + 1
+            out.add(s if n == 0 else f"{s}-{n}")
+    return out
+
+
+def link_problems(keys):
+    problems = []
+    cache = {}
+    for key in sorted(keys):
+        path, anchor = DOCS[key]
+        if not (REPO / path).exists():
+            problems.append(f"link {key}: {path} doesn't exist")
+            continue
+        found = cache.setdefault(path, anchors(REPO / path))
+        if anchor not in found:
+            problems.append(f"link {key}: {path} has no heading #{anchor}")
+    return problems
+
+
 # --- the parts of a card -----------------------------------------------------
 
 def task_of(m, manifest):
@@ -154,18 +253,10 @@ def result_rows(results, model, backend):
                                        BACKEND_PATHS[backend].index(r["path"]), r["precision"]))
 
 
-def measure(r):
-    if r["error_text"] is None:
-        return "not graded"
-    if r["error_kind"] == "dp":
-        return f"worst |Δp| {r['error_text']}" + (f", {r['ratio']}× its fp16 ceiling" if r.get("ratio") else "")
-    return f"worst cosine {r['error_text']}"
-
-
 def consent_terms(m, lic):
     """The terms a user accepts to download a tier-2b build: built from the
     audit's concerns and the datasets behind them. Plain Markdown, used
-    both as the gate's prompt and on the card."""
+    as the gate's prompt, on the card, and as TERMS.md."""
     repo, rev = split_source(m["source"])
     items = []
     nc = [d for d in lic["training_data"] if d["terms"] == "non-commercial"]
@@ -203,31 +294,26 @@ def terms_text(m, lic):
             + "\n".join(f"{i}. {t}" for i, t in enumerate(consent_terms(m, lic), 1)) + "\n")
 
 
-def notice(m, lic):
-    """The tier notice at the top of the card."""
+def notice(m, lic, link):
+    """The licence notice for the model's tier, as a blockquote."""
     tier = lic["tier"]
+    head = f"**Licence: {lic['licence']} · publishing tier {tier}.**"
     if tier == "1":
-        return (f"**Licence: {lic['licence']}.** The model's licence and all of its declared training data are "
-                "permissive.")
-    if tier == "2a":
-        kinds = [CONCERN_TEXT[c] for c in lic["concerns"] if c in CONCERN_TEXT]
-        sa = [d["name"] for d in lic["training_data"] if d["terms"] == "share-alike"]
-        lines = [f"**Notice.** These weights are published under the original model's licence, "
-                 f"{lic['licence']}, but its training data includes " + "; ".join(kinds) + "."]
-        if sa:
-            lines.append(f"Share-alike datasets: {', '.join(sa)}.")
-        lines.append(f"{lic['reason']} Whether a dataset's terms reach a model trained on it is legally "
-                     "unsettled; the [training data](#training-data-and-licences) is listed below with each "
-                     "source's licence, so you can judge for yourself.")
-        return " ".join(lines)
-    if tier == "2b":
+        body = [f"> {head} The licence and all of the declared training data are permissive. "
+                + link("tiers", "How sidekick decides what it publishes") + "."]
+    elif tier == "2a":
+        body = [f"> {head} {lic['reason']} Whether a dataset's terms reach a model trained on it is legally "
+                "unsettled; the [training data](#training-data) below gives each source's licence. "
+                + link("tiers", "How sidekick decides what it publishes") + "."]
+    elif tier == "2b":
         terms = consent_terms(m, lic)
-        return ("**This repository is gated.** To download it you accept these terms on Hugging Face, and "
-                "`sidekickd fetch` shows them and asks you to accept them again (`--accept-terms`) before it "
-                "downloads anything:\n\n"
-                + "\n".join(f"{i}. {t}" for i, t in enumerate(terms, 1))
-                + f"\n\nWhy: {lic['reason']}")
-    raise SystemExit(f"{m['name']} is tier 3: sidekick doesn't publish its builds")
+        body = [f"> {head} **This repository is gated.** To download it, accept these terms on Hugging Face; "
+                "`sidekickd fetch` shows them and asks for `--accept-terms` too.", ">"]
+        body += [f"> {i}. {t}" for i, t in enumerate(terms, 1)]
+        body += [">", f"> Why: {lic['reason']} " + link("consent", "About the gate") + "."]
+    else:
+        raise SystemExit(f"{m['name']} is tier 3: sidekick doesn't publish its builds")
+    return "\n".join(body)
 
 
 def carried_files(lic):
@@ -236,18 +322,6 @@ def carried_files(lic):
         files.append("NOTICE")
     files += [c["file"] for c in lic.get("ship_copies", [])]
     return files
-
-
-def modified(backend, builds, lic):
-    quant = sorted({b["quantization"] for b in builds}) or (["fp32"] if backend == "onnx" else ["fp16"])
-    text = (f"**Modified files.** Every file here except `tokenizer.json` is modified from the original model: "
-            f"its weights converted to {BACKEND_NAME[backend]} in {' and '.join(quant)}, with the graph rewrites "
-            f"sidekick's converter applies to keep each path accurate "
-            f"([docs/CONVERTING.md]({GITHUB}/blob/main/docs/CONVERTING.md)), and a sidekick manifest added.")
-    files = carried_files(lic)
-    if files:
-        text += f" The repository also carries {', '.join(f'`{f}`' for f in files)}, as the licence requires."
-    return text
 
 
 def front_matter(model, m, manifest, lic, backend, builds):
@@ -259,8 +333,10 @@ def front_matter(model, m, manifest, lic, backend, builds):
         lines.append(f"license_name: {yq(lic['licence'])}")
         lines.append(f"license_link: {lic['licence_sources'][-1]}")
     lines.append(f"base_model: {repo}")
-    if any(b["quantization"] != "fp32" for b in builds) or backend == "coreml":
-        lines.append("base_model_relation: quantized")
+    # The Hub has no "converted" relation. "quantized" is the one it uses for
+    # format conversions (GGUF, at any precision); finetune, adapter and
+    # merge would each claim training that didn't happen.
+    lines.append("base_model_relation: quantized")
     lines.append(f"library_name: {backend}")
     lines.append(f"pipeline_tag: {task_of(m, manifest)}")
     tags = ["sidekick", backend]
@@ -287,11 +363,18 @@ def front_matter(model, m, manifest, lic, backend, builds):
     return "\n".join(lines)
 
 
-def build_size(b):
-    distinct = sum(e["size"] or 0 for e in b["files"])
-    on_disk = sum((e["size"] or 0) * len(e["paths"]) for e in b["files"])
-    unknown = any(e["size"] is None for e in b["files"])
-    return (None, None) if unknown else (distinct, on_disk)
+def summary(model, m, manifest, backend, builds, rows):
+    repo, rev = split_source(m["source"])
+    what = TASK_NAME.get(m["task"] if m["task"] != "classify" else task_of(m, manifest), "model")
+    dims = f" ({manifest['dims']} dimensions)" if manifest.get("dims") else ""
+    article = "an" if m["family"][0].lower() in "aeiou" else "a"
+    where = ("for Apple silicon's Neural Engine, GPU and CPU" if backend == "coreml"
+             else "for ONNX Runtime's CPU backend on macOS and Linux")
+    held = (f"one build, `{builds[0]['variant']}/`" if len(builds) == 1
+            else f"{len(builds)} builds" if builds else "no build yet")
+    return (f"[{repo}]({hf_url(repo, rev)}), {article} {m['family']} {what}{dims}, converted to "
+            f"{BACKEND_NAME[backend]} by [sidekick]({GITHUB}) {where}. This repository holds {held}, "
+            "graded against the original model on every compute path it runs on.")
 
 
 def served_path(m, manifest, backend):
@@ -300,275 +383,234 @@ def served_path(m, manifest, backend):
     return COMPUTE_UNITS.get(manifest.get("compute_units"), m.get("served", "coreml-ane"))
 
 
-def use_for(rows, backend, served):
-    """Where each graded path stands, by chip: "Apple M1 Max: GPU A
-    (served), Neural Engine C, CPU C". `rows` are published result rows or
-    a build's own grades (both have chip, path and grade)."""
-    by_chip = {}
-    for r in sorted(rows, key=lambda r: (not chip(r["chip"]).startswith("Apple M1"), chip(r["chip"]),
-                                         BACKEND_PATHS[backend].index(r["path"]))):
-        if r["grade"] is None:
-            continue
-        name = PATH_NAME[r["path"]] + (" (served)" if backend == "coreml" and r["path"] == served else "")
-        entry = f"{name} {r['grade']}"
-        if entry not in by_chip.setdefault(r["chip"], []):
-            by_chip[r["chip"]].append(entry)
-    return "; ".join(f"{chip(c)}: {', '.join(v)}" for c, v in by_chip.items())
+def build_size(b):
+    if any(e["size"] is None for e in b["files"]):
+        return None
+    return sum(e["size"] for e in b["files"])
 
 
-def downloads(model, m, manifest, backend, builds, rows):
+def runs_on(b, rows, backend, served):
+    """Each compute path's grade on Apple silicon (any chip where nothing
+    was graded there), the default marked: the build's own grade where its
+    files were graded, else the published one."""
+    def apple(g):
+        return chip(g["chip"]).startswith("Apple")
+
+    own = [g for g in b["grades"] if g["grade"]]
+    published = [r for r in rows if r["grade"] and r["precision"] == b["quantization"]]
+    if any(apple(g) for g in own + published):
+        own, published = [g for g in own if apple(g)], [r for r in published if apple(r)]
+    grades = {}
+    for g in own:
+        grades.setdefault(g["path"], set()).add(g["grade"])
+    for r in published:
+        if r["path"] not in {g["path"] for g in own}:
+            grades.setdefault(r["path"], set()).add(r["grade"])
+    out = []
+    for p in BACKEND_PATHS[backend]:
+        if p in grades:
+            worst = max(grades[p])
+            name = PATH_NAME[p] + (" (default)" if backend == "coreml" and p == served else "")
+            out.append(f"{name} {worst}")
+    return ", ".join(out) or "not graded yet"
+
+
+def download(model, m, manifest, backend, builds, rows, lic, link):
     served = served_path(m, manifest, backend)
     out = []
     if builds:
         trows = []
         for b in builds:
-            distinct, on_disk = build_size(b)
-            shape = (f"buckets {', '.join(map(str, b['buckets']))}" + (f", {b['chunks']} chunks each" if b["chunks"] > 1 else "")
-                     if b["buckets"] else "dynamic length")
-            size = mb(distinct) + (f" ({mb(on_disk)} installed)" if on_disk and on_disk != distinct else "")
-            trows.append([f"`{b['variant']}/`", b["quantization"], shape, b["max_seq_len"] or "", size])
-        out.append(table(["directory", "weights", "shape", "max tokens", "download"], trows))
-        out.append("")
+            shape = ", ".join(map(str, b["buckets"])) if b["buckets"] else "any length"
+            if b["chunks"] > 1:
+                shape += f" ({b['chunks']} programs each)"
+            shared = ""
+            if backend == "coreml":
+                shared = "Yes, one file for all buckets" if b["layout"] == "shared" else "No, one per bucket"
+            cap = b["max_seq_len"]
+            if not cap and not b["buckets"]:
+                cap = next((r["max_seq_len"] for r in rows if r.get("max_seq_len")), manifest.get("max_seq_len"))
+            elif not cap:
+                cap = manifest.get("max_seq_len") if manifest.get("buckets") == b["buckets"] else max(b["buckets"])
+            row = [f"`{b['variant']}/`", WEIGHTS_NAME.get(b["quantization"], b["quantization"]), shape,
+                   cap or "", mb(build_size(b))]
+            if backend == "coreml":
+                row.append(shared)
+            row.append(runs_on(b, rows, backend, served))
+            trows.append(row)
+        header = ["Build", "Weights", "Sequence buckets" if backend == "coreml" else "Input length", "Max tokens",
+                  "Download"] + (["Shared weights"] if backend == "coreml" else []) + ["Runs on (grade)"]
+        out.append(table(header, trows))
     else:
-        out.append("No build of this model for this backend is in sidekick's checksum ledger yet. The table below "
-                   "lists the grades its builds were given; a build's files appear here when it is recorded.\n")
-    graded = [g for b in builds for g in b["grades"]]
-    covered = {g["chip"] for g in graded} | {chip(g["chip"]) for g in graded}
-    merged = graded + [r for r in rows if r["chip"] not in covered]
-    out.append(f"Download one directory: each is a complete sidekick model directory. Which path to run it on, by "
-               f"the grades under [Fidelity](#fidelity) (a build's own where its files were graded, else the "
-               f"published ones): {use_for(merged, backend, served) or 'not graded yet'}.")
+        out.append("No build of this model for this backend is recorded in sidekick's checksum ledger yet.")
+    variants = {b["variant"] for b in builds}
+    cmd = f"sidekickd fetch {model}"
+    cmd += " --backend onnx" if backend == "onnx" else ""
+    cmd += f" --variant {builds[0]['variant']}" if len(variants) > 1 else ""
+    cmd += f" --accept-terms {model}" if lic["tier"] == "2b" else ""
+    since = link.ref.removeprefix("v") if re.match(r"^v\d", link.ref) else None
+    out += ["", "```sh", cmd, "```", "",
+            (f"Needs sidekick {since} or later. " if since else "")
+            + " · ".join([link("fetch", "How fetch works"), link("by-hand", "Installing without fetch"),
+                          link({"embed": "embed", "classify": "classify", "rerank": "rerank"}[m["task"]],
+                               "Calling the model")])]
     if backend == "coreml":
-        out.append("\nCore ML builds are compiled models (`.mlmodelc`), the exact files that were graded. "
-                   "The first load of each bucket on a path compiles it for that device, which can take from "
-                   "seconds to minutes; later loads are fast.")
+        out[-1] += " · " + link("compiled", "Why compiled programs")
     alts = [a for a in INPUTS["publishing"].get("alternatives", []) if a["model"] == model]
     if backend == "onnx" and alts:
-        out.append("\n**Alternatives.** The publisher's own ONNX export also grades A against the checkpoint, "
-                   "and sidekick serves it as it serves its own (manifest: `pooling` and `[io]` as in the "
-                   "committed onnx manifest):\n")
-        out.append(table(["file", "revision", "sha256", "size", "grade"],
-                         [[f"[{a['repo']}/{a['file']}](https://huggingface.co/{a['repo']}/blob/{a['revision']}/{a['file']})",
-                           a["revision"][:12], f"`{a['sha256']}`", mb(a["size"]), f"{a['grade']} ({a['worst']})"]
+        out += ["", "The publisher's own export also grades A, and sidekick serves it the same way "
+                + f"({link('onnx', 'ONNX Runtime on the CPU')}):", ""]
+        out.append(table(["Export", "Revision", "sha256", "Size", "Grade"],
+                         [[f"[{a['repo']} `{a['file']}`](https://huggingface.co/{a['repo']}/blob/{a['revision']}/{a['file']})",
+                           f"`{a['revision'][:12]}`", f"`{a['sha256']}`", mb(a["size"]), a["grade"]]
                           for a in alts]))
-        for a in alts:
-            if a.get("note"):
-                out.append(f"\n{a['note']}")
     return "\n".join(out)
 
 
-def request_example(model, m, manifest):
-    fmt = manifest.get("classify", {}).get("format")
-    if m["task"] == "embed":
-        body = {"model": model, "input": ["The battery lasts for days.", "It broke on day two."]}
-        if manifest.get("prefixes", {}).get("query"):
-            body["input_type"] = "query"
-        url = "/v1/embeddings"
-    elif m["task"] == "rerank":
-        body = {"model": model, "query": "Will it rain tomorrow?",
-                "documents": ["It rained all day yesterday.", "Tomorrow brings heavy showers."]}
-        url = "/v1/rerank"
-    elif fmt == "nli":
-        body = {"model": model, "input": "The config sets port 8080 and enables TLS.",
-                "candidate_labels": ["the port is 8080", "the server logs to a file"]}
-        url = "/v1/classify"
-    elif fmt == "laya":
-        body = {"model": model, "input": "Please reset my password, I can't log in.", "question_type": "choice",
-                "instructions": "Which team should handle this ticket?",
-                "candidate_labels": ["billing", "account", "other"]}
-        url = "/v1/classify"
-    elif manifest.get("task", "text-classification") == "text-classification":
-        body = {"model": model, "input": ["The battery lasts for days.", "It broke on day two."]}
-        url = "/v1/classify"
-    else:
-        return (f"Its request format (`format = \"{fmt}\"`) is described in "
-                f"[docs/design/classify.md]({GITHUB}/blob/main/docs/design/classify.md).")
-    return ("```sh\ncurl -s localhost:8790" + url + " -H 'content-type: application/json' -d '"
-            + json.dumps(body, ensure_ascii=False) + "'\n```")
+def measure_header(m):
+    return "Worst cosine" if m["task"] == "embed" else "Worst \\|Δp\\|"
 
 
-def usage(model, m, manifest, backend, builds, lic, owner):
-    rid = repo_id(owner, model, backend)
-    variant = builds[0]["variant"] if builds else ("fp32" if backend == "onnx" else "fp16")
-    accept = f" --accept-terms {model}" if lic["tier"] == "2b" else ""
-    flag = " --backend onnx" if backend == "onnx" else ""
-    pick = f" --variant {variant}" if len({b["variant"] for b in builds}) > 1 else ""
-    out = [f"With [sidekick]({GITHUB}) installed, fetch the build into sidekick's models directory and start the "
-           "daemon. `sidekickd fetch` downloads into the Hugging Face cache (through the `hf` CLI when it is "
-           "installed, with your token), checks every file against the Hub's hashes and sidekick's checksum "
-           "ledger, and installs the model as hard links to the cached files, so it takes no extra disk. "
-           "`--buckets` fetches only some sequence lengths of a Core ML build:",
-           "", "```sh", f"sidekickd fetch {model}{flag}{pick}{accept}", "sidekickd", "```", "",
-           "Then:", "", request_example(model, m, manifest), "",
-           "**Without sidekick's fetch,** download one directory with the Hugging Face CLI, check it, and move it "
-           "into place:", "", "```sh",
-           f"hf download {rid} --include '{variant}/*' --include '{variant}.sha256' --local-dir ./{model}-download",
-           f"cd ./{model}-download/{variant} && shasum -a 256 -c ../{variant}.sha256 && cd -",
-           f"mv ./{model}-download/{variant} \"$HOME/Library/Application Support/sidekick/models/{model}\"",
-           "```", "", "That is sidekick's models directory on macOS; on Linux, or with another directory in "
-           "sidekick's config, move it there instead."]
-    if backend == "coreml":
-        out += ["", "Don't point sidekick's models directory at a Hugging Face cache snapshot (`hf download` "
-                "without `--local-dir`): its files are symlinks, and Core ML runs a program with a symlinked file "
-                "off the Neural Engine without an error, so sidekick refuses to serve it there. `--local-dir` "
-                "writes real files."]
-    if any(b["layout"] == "shared" for b in builds):
-        out += ["", "A shared-weights build (one weights file per chunk, used by every bucket, D49) arrives this "
-                "way as a copy of that file per bucket, so it takes more disk than `sidekickd fetch` installs; "
-                "`python3 -m sidekick_convert.shared_weights link <model dir>`, from sidekick's `tools/`, turns the "
-                "copies back into hard links."]
-    if backend == "onnx":
-        out += ["", "ONNX builds run on ONNX Runtime's CPU backend, on macOS and Linux; the daemon needs its `onnx` "
-                "feature and the ONNX Runtime library its release archives ship."]
-    return "\n".join(out)
+def fidelity(model, m, manifest, backend, builds, rows, link):
+    served = served_path(m, manifest, backend) if backend == "coreml" else None
+    several = len(builds) > 1
+    # (path, chip, report) -> the build whose files that report graded
+    graded = {(g["path"], chip(g["chip"]), g["report"]): b for b in builds for g in b["grades"]}
+    weights = len({r["precision"] for r in rows} | {b["quantization"] for b in builds}) > 1
 
+    def path_name(path, default):
+        return PATH_NAME[path] + (" (default)" if default else "")
 
-def fidelity(model, m, manifest, backend, builds, rows, results):
-    g = results["grades"]
-    out = ["sidekick's parity suite grades every path against the original checkpoint run in fp32 (PyTorch), on a "
-           "fixed corpus of edge cases (empty, single-token, bucket-boundary, over-length and multilingual inputs), "
-           "and fails a build outright on any hard gate (bucket and padding invariance, determinism, a finite "
-           "output). The letters:", ""]
-    if m["task"] == "embed":
-        out.append(f"- **A**: worst-case cosine to fp32 at least {g['cosine']['A']} (indistinguishable from fp32); "
-                   f"**B** ≥ {g['cosine']['B']}; **C** ≥ {g['cosine']['C']}; **D** below; **F**: a gate failed.")
-    else:
-        out.append(f"- **A**: worst |Δp| (probability) at most {g['dp']['A']}; **B** ≤ {g['dp']['B']}; "
-                   f"**C** ≤ {g['dp']['C']}; **D** above; **F**: a gate failed. A model whose reference carries "
-                   f"an ideal-fp16 ceiling gets the better of that and its p99 as a multiple of the ceiling "
-                   f"(A ≤ {g['ratio']['A']}×, B ≤ {g['ratio']['B']}×, C ≤ {g['ratio']['C']}×). A flipped "
-                   "prediction caps the grade at C.")
-    committed = manifest.get("buckets")
-    differ = [b["variant"] for b in builds if backend == "coreml" and committed and b["buckets"] != committed]
-    lead = "Published grades ([docs/MODELS.md]({}/blob/main/docs/MODELS.md))".format(GITHUB)
-    if differ:
-        lead += (f", for the model's committed build (buckets {', '.join(map(str, committed))}); "
-                 f"the files here are a different build of it, whose own grades follow")
-    out += ["", lead + ":", ""]
-    out.append(table(["chip", "OS", "path", "weights", "grade", "measure", "date"],
-                     [[chip(r["chip"]), r["os"] or "",
-                       PATH_NAME[r["path"]] + (" (served)" if r["served"] and backend == "coreml" else ""),
-                       r["precision"], f"**{r['grade']}**" if r["grade"] else "", measure(r), r["date"] or ""]
-                      for r in rows]))
-    notes = [f"- {chip(r['chip'])}, {PATH_NAME[r['path']]}: {r['note']}" for r in rows if r.get("note")]
+    def files(b):
+        return (f"This build (`{b['variant']}/`)" if several else "This build") if b else "Unconfirmed"
+
+    trows, covered = [], set()
+    for r in rows:
+        b = next((graded[(r["path"], chip(r["chip"]), rep)] for (path, c, rep) in graded
+                  if path == r["path"] and c == chip(r["chip"]) and rep and rep in (r["source"] or "")
+                  and graded[(path, c, rep)]["quantization"] == r["precision"]), None)
+        if b:
+            covered.add((r["path"], chip(r["chip"]), b["id"]))
+        measure = r["error_text"] or "—"
+        if r["error_kind"] == "dp" and r.get("ratio"):
+            measure += f" ({r['ratio']}× the fp16 ceiling)"
+        trows.append([path_name(r["path"], r["served"] and backend == "coreml"), chip(r["chip"]), r["os"] or ""]
+                     + ([WEIGHTS_NAME.get(r["precision"], r["precision"])] if weights else [])
+                     + [f"**{r['grade']}**" if r["grade"] else "", measure, files(b)])
+    for b in builds:
+        for g in b["grades"]:
+            key = (g["path"], chip(g["chip"]), b["id"])
+            if key not in covered:
+                covered.add(key)
+                trows.append([path_name(g["path"], g["path"] == served), chip(g["chip"]),
+                              (g["os"] or "").split(" (")[0]]
+                             + ([WEIGHTS_NAME.get(b["quantization"], b["quantization"])] if weights else [])
+                             + [f"**{g['grade']}**", "—", files(b)])
+    kind = {"embed": "grades-embed", "classify": "grades-classify", "rerank": "grades-rerank"}[m["task"]]
+    header = ["Compute path", "Chip", "OS"] + (["Weights"] if weights else []) + \
+        ["Grade", measure_header(m), "Graded files"]
+    out = [f"Graded against the original model in fp32 by sidekick's parity suite. {link(kind, 'What the grades mean')}.",
+           "", table(header, trows), "",
+           "*This build*: the grading report's file hashes match this repository's files. *Unconfirmed*: "
+           "graded on a build of the same model that can't be matched to these files by hash."]
+    notes = [f"- **{PATH_NAME[r['path']]}, {chip(r['chip'])}:** {r['note']}" for r in rows if r.get("note")]
     if notes:
         out += ["", *notes]
-    runs = [r for r in results["benchmarks"]["transfer"].get("runs", [])
-            if r["model"] == model and r.get("build") in {b["fingerprint"] for b in builds}]
-    for r in runs:
-        b = next(b for b in builds if b["fingerprint"] == r["build"])
-        out += ["", f"sidekick also ran MTEB tasks through the files of `{b['variant']}/` (build fingerprint "
-                f"`{r['build']}`, {PATH_NAME[r['path']]}, {chip(r['chip'])}, {r['date']}): "
-                f"[docs/MODELS.md]({GITHUB}/blob/main/docs/MODELS.md#measured-on-sidekicks-builds) compares "
-                "its scores with the original's."]
-    for b in builds:
-        if b["grades"]:
-            out += ["", f"The files of `{b['variant']}/` are the ones these reports graded (matched by each "
-                    "bucket's weights sha256):", ""]
-            out.append(table(["chip", "OS", "path", "grade", "report"],
-                             [[chip(x["chip"]), x["os"] or "", PATH_NAME[x["path"]], f"**{x['grade']}**",
-                               x["report"] or ""] for x in b["grades"]]))
     return "\n".join(out)
 
 
-def benchmarks(model, results):
-    scores = [s for s in results["benchmarks"]["scores"] if s["model"] == model]
-    scores = [s for s in scores if s["value_text"] is not None]
+def benchmarks(model, builds, results, link):
+    scores = [s for s in results["benchmarks"]["scores"] if s["model"] == model and s["value_text"] is not None]
     heads = [s for s in scores if s["category"] == "Mean (task)"] or scores[:6]
-    if not heads:
+    runs = [r for r in results["benchmarks"]["transfer"].get("runs", [])
+            if r["model"] == model and r.get("build") in {b["fingerprint"] for b in builds}]
+    if not heads and not runs:
         return ""
-    kinds = results["benchmarks"]["source_kinds"]
-    rows = [[s["benchmark"], s["category"], s["metric"], s["value_text"], kinds.get(s["source_kind"], s["source_kind"]),
-             f"[source]({s['source_url']})"] for s in heads]
-    return ("These are the original model's published scores, not measurements of this build; the fidelity grades "
-            "above say how closely this build reproduces the original. Every score, with its caveats, is in "
-            f"[docs/MODELS.md]({GITHUB}/blob/main/docs/MODELS.md#benchmark-scores).\n\n"
-            + table(["benchmark", "category", "metric", "score", "source", ""], rows))
-
-
-def provenance(m, b):
-    p = b["produced"]
-    repo, rev = split_source(b["source"])
-    rows = [["source", f"[{repo}]({hf_url(repo, rev)}) at `{rev}`"],
-            ["converter", f"`{p['converter'] or 'unknown'}` at commit `{p['converter_commit']}`" if p["converter_commit"]
-             else f"`{p['converter'] or 'unknown'}`, commit not recorded"]]
-    for k, label in (("coremltools", "coremltools"), ("torch", "PyTorch"), ("python", "Python"), ("os", "OS"),
-                     ("xcode", "Xcode"), ("chip", "machine"), ("date", "converted")):
-        if p.get(k):
-            rows.append([label, p[k]])
-    rows.append(["ledger id", f"`{b['id']}`"])
-    rows.append(["digest", f"`{b['digest']}` (sha256 over every path and file hash)"])
-    rows.append(["fingerprint", f"`{b['fingerprint']}` (weights, programs, tokenizer and manifest; as in "
-                                "tools/mteb_transfer.py)"])
-    out = table(["", f"`{b['variant']}/`"], rows)
-    if b.get("note"):
-        out += f"\n\n{b['note']}"
-    return out
-
-
-def checksums(b):
-    rows = [[f"`{e['sha256']}`", mb(e["size"]) if e["size"] is not None else "unknown",
-             "<br>".join(f"`{p}`" for p in e["paths"])] for e in b["files"]]
-    shared = [e for e in b["files"] if len(e["paths"]) > 1]
-    lead = (f"`{b['variant']}/`: {len(b['files'])} distinct files" +
-            (f", {len(shared)} of them at several paths (stored once)" if shared else "") +
-            f". The same list is in `{b['variant']}.sha256` and in sidekick's "
-            f"[docs/data/ledger.json]({GITHUB}/blob/main/docs/data/ledger.json).")
-    return lead + "\n\n" + table(["sha256", "size", "paths"], rows)
-
-
-def convert_yourself(model, m, manifest_text, backend, builds):
-    conv = (builds[0]["produced"]["converter"] if builds else None) or ledger_mod.converter_of(manifest_text) \
-        or CONVERTER.get(model)
-    cmd = None
-    lines = manifest_text.splitlines()
-    for i, ln in enumerate(lines):
-        mm = re.match(r"^#\s+(python3? tools/convert_\S+\.py .*)$", ln)
-        if mm:
-            cmd = mm.group(1).replace("<models>", "<models dir>")
-            break
-    if not cmd:
-        mm = re.search(r"`(tools/convert_[a-z0-9_]+\.py[^`]*)`", manifest_text)
-        extra = mm.group(1).split(" ", 1)[1] if mm and " " in mm.group(1) else ""
-        cmd = f"python tools/{conv.removeprefix('tools/') if conv else 'convert_<model>.py'} <checkpoint dir> " \
-              f"<models dir>/{model}" + (f" {extra}" if extra else "")
-    if backend == "onnx":
-        cmd += " --format onnx"
-    repo, rev = split_source(m["source"])
-    return "\n".join([
-        f"Every build here can be reproduced from the checkpoint with sidekick's converter, `{conv or 'see below'}`, "
-        f"which runs the same gates the published build passed. Download [{repo}]({hf_url(repo, rev)}) at revision "
-        f"`{rev}`, then, from a checkout of [sidekick]({GITHUB}):", "", "```sh", cmd,
-        f"python3 tools/ledger.py verify <models dir>/{model}", "```", "",
-        "`ledger.py verify` compares the result with this card's checksums and names the layer that differs: "
-        "the weights, the compiled program, the tokenizer or the manifest. "
-        + ("A Core ML compile on another macOS or Xcode version can legitimately change the compiled program "
-           "while the weights stay identical. " if backend == "coreml" else "")
-        + f"Requirements and each converter's options: [docs/CONVERTING.md]({GITHUB}/blob/main/docs/CONVERTING.md)."])
+    out = []
+    if heads:
+        out.append("The original model's published scores, not this build's. "
+                   + link("benchmarks", "Every score, with its caveats") + ".")
+        out += ["", table(["Benchmark", "Score", "Measure", "Source"],
+                          [[s["benchmark"], s["value_text"],
+                            ("Mean over its tasks" if s["category"] == "Mean (task)" else f"{s['category']}, {s['metric']}"),
+                            f"[{SOURCE_KIND.get(s['source_kind'], s['source_kind'])}]({s['source_url']})"]
+                           for s in heads])]
+    for r in runs:
+        b = next(b for b in builds if b["fingerprint"] == r["build"])
+        out += ["", f"sidekick also ran MTEB tasks through `{b['variant']}/` itself: "
+                + link("transfer", "its scores beside the original's") + "."]
+    return "\n".join(out)
 
 
 def training(lic):
-    out = []
-    base = lic["base_model"] or "none declared"
-    if "@" in base:
-        r, rev = base.split("@", 1)
-        base = f"[{r}]({hf_url(r, rev)}) at `{rev[:12]}`"
-    out.append(f"- **Model licence:** {lic['licence']} ([source]({lic['licence_sources'][0]}))")
-    out.append(f"- **Base model:** {base}" + (f", {lic['base_model_licence']}" if lic["base_model_licence"] else ""))
-    out.append(f"- **Training data disclosure:** {lic['training_disclosure']}")
-    out.append(f"- **Publishing tier:** {lic['tier']} (sidekick's licence audit, "
-               f"[docs/data/licences.toml]({GITHUB}/blob/main/docs/data/licences.toml), read {lic['read']})")
-    out.append("")
-    out.append(table(["dataset", "licence (original source)", "terms", "stage"],
-                     [[f"[{d['name']}]({d['source']})", d["licence"], d["terms"], d["stage"]]
+    out = [f"Training data: {DISCLOSURE_NAME[lic['training_disclosure']]}. Each dataset under its original "
+           "source's licence:", ""]
+    out.append(table(["Dataset", "Licence", "Terms", "Stage"],
+                     [[f"[{d['name']}]({d['source']})", d["licence"], TERMS_NAME[d["terms"]], d["stage"]]
                       for d in lic["training_data"]]))
     if lic["custom_terms"]:
-        out += ["", "Terms that travel with the weights:", ""]
-        out += [f"- [{t['name']}]({t['url']}): {t['requires']}" for t in lic["custom_terms"]]
-    out += ["", f"The base model's own pretraining data doesn't count toward the tier: {lic['base_pretraining']}"]
+        out += ["", table(["Terms that travel with the weights", "What they require"],
+                          [[f"[{t['name']}]({t['url']})", t["requires"]] for t in lic["custom_terms"]])]
     if lic["unverified"]:
-        out += ["", "Not confirmed from a primary source:", ""]
+        out += ["", "<details><summary>Not confirmed from a primary source</summary>", ""]
         out += [f"- {u}" for u in lic["unverified"]]
+        out += ["", "</details>"]
+    return "\n".join(out)
+
+
+def original(model, m, manifest_text, backend, builds, lic, link):
+    repo, rev = split_source(m["source"])
+    base = lic["base_model"] or "None declared"
+    if "@" in base:
+        r, brev = base.split("@", 1)
+        base = f"[{r}]({hf_url(r, brev)})"
+    if lic["base_model_licence"]:
+        base += f" ({lic['base_model_licence']})"
+    conv = next((b["produced"]["converter"] for b in builds if b["produced"]["converter"]), None) \
+        or ledger_mod.converter_of(manifest_text)
+    weights = sorted({WEIGHTS_NAME.get(b["quantization"], b["quantization"]).split(",")[0] for b in builds}) \
+        or (["32-bit float"] if backend == "onnx" else ["16-bit float"])
+    rows = [["Model", f"[{repo}]({hf_url(repo, rev)})"],
+            ["Revision", f"`{rev}`"],
+            ["Licence", f"[{lic['licence']}]({lic['licence_sources'][0]})"],
+            ["Base model", base],
+            ["Changes in this repository",
+             f"Converted to {BACKEND_NAME[backend]} in {' and '.join(weights).lower()}"
+             + (f" by `{conv}`" if conv else "") + ", with a sidekick manifest added. "
+             + link("reproduce", "Reproduce it")]]
+    files = carried_files(lic)
+    if files:
+        rows.append(["Also included, as the licence requires", ", ".join(f"`{f}`" for f in files)])
+    return table(["", ""], rows)
+
+
+LEDGER_TEXT = "sidekick's checksum ledger"
+
+
+def build_details(b, link):
+    p = b["produced"]
+    made = []
+    if p["converter"]:
+        made.append(["Converter", f"`{p['converter']}`" + (f" at `{p['converter_commit'][:12]}`" if p["converter_commit"] else "")])
+    for k, label in (("coremltools", "coremltools"), ("torch", "PyTorch"), ("python", "Python"), ("os", "OS"),
+                     ("xcode", "Xcode"), ("chip", "Converted on"), ("date", "Converted")):
+        if p.get(k):
+            made.append([label, p[k]])
+    if b["backend"] == "coreml":
+        made.append(["Shared weights", "Yes: " + link("shared", "one weights file for every bucket")
+                     if b["layout"] == "shared" else "No: one weights file per bucket"])
+    if b["evidence"] == "sha256sums":
+        made.append(["Recorded from", "an archived copy's checksums"])
+    shared = [e for e in b["files"] if len(e["paths"]) > 1]
+    rows = [[f"`{e['sha256']}`", mb(e["size"]), "<br>".join(f"`{p}`" for p in e["paths"])] for e in b["files"]]
+    paths = sum(len(e["paths"]) for e in b["files"])
+    out = [f"<details><summary><code>{b['variant']}/</code>: ledger build <code>{b['id']}</code>, "
+           f"{count(paths, 'file')}{f', {len(shared)} shared' if shared else ''}</summary>", "",
+           f"`sidekickd fetch` checks every file against {link('ledger', LEDGER_TEXT)}; "
+           f"`{b['variant']}.sha256` has the same list for `shasum -a 256 -c`.", ""]
+    if made:
+        out += [table(["Built with", ""], made), ""]
+    out += [table(["sha256", "Size", "Path"], rows), "", "</details>"]
     return "\n".join(out)
 
 
@@ -588,7 +630,9 @@ def select_builds(model, backend, ids=None):
     return builds
 
 
-def render(model, backend="coreml", build_ids=None, owner=OWNER):
+def render(model, backend="coreml", build_ids=None, owner=OWNER, ref=None, links=None):
+    """The card, its builds and the licence entry. `links` collects which
+    docs links the card makes, for --check."""
     if not INPUTS:
         INPUTS.update(load_inputs())
     m = INPUTS["models"].get(model)
@@ -599,53 +643,31 @@ def render(model, backend="coreml", build_ids=None, owner=OWNER):
         raise SystemExit(f"{model} has no licence verdict in docs/data/licences.toml: not publishable")
     if lic["tier"] == "3":
         raise SystemExit(f"{model} is tier 3 ({lic['reason']})")
+    link = links if links is not None else Links(ref or default_ref())
     manifest, manifest_text = committed_manifest(model, backend)
     builds = select_builds(model, backend, build_ids)
     rows = result_rows(INPUTS["results"], model, backend)
-    repo, rev = split_source(m["source"])
-    bname = BACKEND_NAME[backend]
-    intro = (f"[{repo}]({hf_url(repo, rev)}) converted to {bname} and graded by "
-             f"[sidekick]({GITHUB}), a local inference daemon for macOS that serves embeddings, classifiers and "
-             "rerankers beside Apple's on-device Foundation Models. ")
-    intro += ("Each build is a set of static-shape programs, one per sequence-length bucket, compiled for "
-              "Apple silicon's Neural Engine, GPU and CPU (and the CPU and GPU of Intel Macs)."
-              if backend == "coreml" else
-              "Each build is one dynamic-shape ONNX graph for ONNX Runtime's CPU backend.")
     parts = [
-        front_matter(model, m, manifest, lic, backend, builds),
-        "",
-        f"# {m['name']} ({bname}, for sidekick)",
-        "",
-        intro,
-        "",
-        notice(m, lic),
-        "",
-        modified(backend, builds, lic),
-        "",
-        "## Which build to download",
-        "",
-        downloads(model, m, manifest, backend, builds, rows),
-        "",
-        "## Use it with sidekick",
-        "",
-        usage(model, m, manifest, backend, builds, lic, owner),
-        "",
-        "## Fidelity",
-        "",
-        fidelity(model, m, manifest, backend, builds, rows, INPUTS["results"]),
+        front_matter(model, m, manifest, lic, backend, builds), "",
+        f"# {m['name']} for sidekick ({BACKEND_NAME[backend]})", "",
+        summary(model, m, manifest, backend, builds, rows), "",
+        notice(m, lic, link), "",
+        "## Download", "",
+        download(model, m, manifest, backend, builds, rows, lic, link), "",
+        "## Fidelity", "",
+        fidelity(model, m, manifest, backend, builds, rows, link),
     ]
-    bench = benchmarks(model, INPUTS["results"])
+    bench = benchmarks(model, builds, INPUTS["results"], link)
     if bench:
         parts += ["", "## Benchmark scores", "", bench]
-    for b in builds:
-        parts += ["", f"## Provenance: `{b['variant']}/`", "", provenance(m, b)]
-    parts += ["", "## Checksums", ""]
-    parts += [checksums(b) for b in builds] or ["Recorded when a build is."]
-    parts += ["", "## Convert it yourself", "", convert_yourself(model, m, manifest_text, backend, builds)]
-    parts += ["", "## Training data and licences", "", training(lic)]
+    parts += ["", "## Training data", "", training(lic)]
+    parts += ["", "## Original model", "", original(model, m, manifest_text, backend, builds, lic, link)]
+    if builds:
+        parts += ["", "## Checksums", ""]
+        parts += ["\n\n".join(build_details(b, link) for b in builds)]
     parts += ["", "---", "",
-              f"Generated by `tools/model_card.py` from sidekick's committed data. Report a problem with this build "
-              f"at {GITHUB}/issues."]
+              f"Generated by `tools/model_card.py` from sidekick's committed data. Report a problem at "
+              f"{GITHUB}/issues."]
     return "\n".join(parts) + "\n", builds, lic
 
 
@@ -657,8 +679,8 @@ def sums_text(b):
     return "\n".join(t for _, t in sorted(lines)) + "\n"
 
 
-def write(out, model, backend, build_ids, owner):
-    card, builds, lic = render(model, backend, build_ids, owner)
+def write(out, model, backend, build_ids, owner, ref=None):
+    card, builds, lic = render(model, backend, build_ids, owner, ref)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "README.md").write_text(card)
@@ -674,6 +696,7 @@ def write(out, model, backend, build_ids, owner):
 def check():
     INPUTS.update(load_inputs())
     problems = []
+    link = Links(default_ref())
     seen = sorted({(b["model"], b["backend"]) for b in INPUTS["ledger"]["builds"]})
     n = 0
     for model, backend in seen:
@@ -684,13 +707,14 @@ def check():
                     problems.append(f"{b['id']} is marked published, but {model} is tier 3")
             continue
         try:
-            render(model, backend)
+            render(model, backend, links=link)
             n += 1
         except SystemExit as e:
             problems.append(f"{model} ({backend}): {e}")
+    problems += link_problems(link.used)
     if problems:
         raise SystemExit("model cards:\n  " + "\n  ".join(problems))
-    print(f"model cards: {n} render")
+    print(f"model cards: {n} render, {len(link.used)} doc links resolve")
 
 
 def main():
@@ -699,6 +723,8 @@ def main():
     p.add_argument("--backend", choices=("coreml", "onnx"), default="coreml")
     p.add_argument("--build", action="append", help="a ledger build id to include (default: every build)")
     p.add_argument("--owner", default=OWNER, help="the Hugging Face account the repository belongs to")
+    p.add_argument("--ref", help="the sidekick release tag the card's doc links are pinned to "
+                                 "(default: v<workspace version>)")
     p.add_argument("--out", help="write README.md, checksum files and any NOTICE here")
     p.add_argument("--check", action="store_true", help="render every publishable card the ledger allows")
     args = p.parse_args()
@@ -708,9 +734,9 @@ def main():
     if not args.model:
         p.error("name a model, or pass --check")
     if args.out:
-        write(args.out, args.model, args.backend, args.build, args.owner)
+        write(args.out, args.model, args.backend, args.build, args.owner, args.ref)
     else:
-        sys.stdout.write(render(args.model, args.backend, args.build, args.owner)[0])
+        sys.stdout.write(render(args.model, args.backend, args.build, args.owner, args.ref)[0])
 
 
 if __name__ == "__main__":
