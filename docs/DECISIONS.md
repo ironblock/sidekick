@@ -1,10 +1,13 @@
 # Decision log
 
-Autonomous judgment calls made during initial implementation, so review can
-target the decisions rather than reverse-engineer them. Newest last.
+Why sidekick works the way it does: each architectural decision, the
+evidence it rests on and the alternatives it turned down, numbered in the
+order they were made (newest last). An entry is amended in place when a
+later measurement or decision changes it, and the amendment says what
+changed; the code and the other docs cite entries by number (D1, D2, …).
 
 ## D1 — Daemon is OpenAI-compatible; the tier router lives behind it, not beside it
-Per discussion: `sidekickd` mimics llama.cpp/MLX servers in miniature. The
+`sidekickd` mimics llama.cpp/MLX servers in miniature. The
 "library" consumer shape still exists (crates are cleanly layered), but no
 separate library facade was built yet — YAGNI until a second consumer shows up.
 

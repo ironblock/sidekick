@@ -284,8 +284,7 @@ up to `total`, chunks that aren't the model's number or don't sum to their
 bucket's counts, or on a static embedder, is ignored with a warning in
 the daemon's log: it only describes the model, so it never takes the
 model offline. A bad alternative is dropped on its own, keeping the main
-plan. Daemons up to 0.5 ignore the table, and daemons before 0.7 ignore
-`chunks` and `alternatives`.
+plan.
 
 Live reads are off by default because a plan read is a second compile.
 Measured on an M1 Max under macOS 27.0, Core ML doesn't share a plan's
@@ -310,12 +309,6 @@ bucket) after it returned. With live reads on:
   keyed by the artifact (its program's content, its weights' sizes and
   modification times), the compute units and the macOS build, so a
   restart doesn't read them again.
-
-Compatibility: sidekick 0.4 and earlier ignore unknown keys in both
-manifest files. A 0.4 daemon given a manifest with `compute_units` loads it
-with `.cpuAndNeuralEngine` and reports `cpu_and_ne`; it doesn't fail. (A
-gliner2-format manifest is skipped by 0.4 anyway, since it predates that
-format.)
 
 ## ONNX Runtime on the CPU
 

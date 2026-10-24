@@ -46,12 +46,12 @@ otherwise 1) and refuses a stated tier that differs, so a verdict can't
 drift from its evidence. Tier 3 is the one judgement it can't recompute, so
 a tier-3 entry must record the licence terms that put it there.
 
-Today no model is tier 1: MS MARCO, Natural Questions, SNLI, MultiNLI and
-undisclosed corpora are in nearly every model's training data. 18 models are
-2a, 9 are 2b, and LFM2.5-Embedding-350M is tier 3: its licence licenses
-commercial use only below a revenue threshold, which a publisher can't
-vouch for on a user's behalf. [MODELS.md](MODELS.md#licences-and-training-data)
-summarizes them.
+No model is tier 1 today: MS MARCO, Natural Questions, SNLI, MultiNLI and
+undisclosed corpora are in nearly every model's training data.
+LFM2.5-Embedding-350M is tier 3: its licence licenses commercial use only
+below a revenue threshold, which a publisher can't vouch for on a user's
+behalf. Each model's tier is in licences.toml, and
+[MODELS.md](MODELS.md#licences-and-training-data) summarizes them.
 
 ## Repositories and their layout
 
@@ -177,12 +177,12 @@ release candidate, not published), so the package hashes #136 asks for
 (the weights and spec before compilation) can be taken from them; recording
 them in the ledger is a follow-up too.
 
-The ledger holds 36 builds today: 16 hashed from build directories, and 20
-recorded from the SHA256SUMS and size listings of archived copies
-(`evidence = "sha256sums"`), whose local directories were deleted once the
-archive was verified. Four of the archived and hashed builds carry the same
-fingerprints as the MTEB transfer runs in data/mteb_transfer.json, so those
-runs are tied to recorded files.
+Some builds were hashed from their directories, others recorded from the
+SHA256SUMS and size listings of archived copies (`evidence =
+"sha256sums"`), whose local directories were deleted once the archive was
+verified; `ledger.py list` shows them all. Builds whose fingerprints match
+the MTEB transfer runs in data/mteb_transfer.json tie those runs to
+recorded files.
 
 ## Model cards
 
