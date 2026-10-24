@@ -177,8 +177,11 @@ as `huggingface_hub` does, so it shares the cache with `hf` and Python:
 | `HF_ENDPOINT` | The Hub's address, for a mirror. |
 | `PATH` | Where fetch looks for the `hf` CLI, which brings its own token and settings (`HF_TOKEN`, Xet transfers). |
 
-**Building from source:** `SIDEKICK_FM_STUB=1` builds the Foundation
-Models stub instead of the Swift shim ([DEVELOPMENT.md](DEVELOPMENT.md)).
+**Building from source:**
+
+| Variable | |
+|---|---|
+| `SIDEKICK_FM_STUB` | `1` builds the Foundation Models stub instead of the Swift shim ([DEVELOPMENT.md](DEVELOPMENT.md#the-foundation-models-shim-and-the-sdk)). |
 
 ## Where ONNX Runtime is loaded from
 
