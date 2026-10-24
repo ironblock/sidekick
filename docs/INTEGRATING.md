@@ -279,22 +279,14 @@ or SGLang works unchanged. What a host needs to know beyond that:
   OpenAI shape `{"error": {"message", "type", "code"}}`. A 400 names the
   field it rejected. Sending a classifier to `/v1/embeddings`, or an
   embedder to `/v1/classify`, is a 400 naming the model's task.
-- **Timeouts.** A model's first request after it loads, and the first to
-  reach a larger bucket, waits while Core ML loads that bucket, and, if
-  its compiled form isn't cached yet, compiles it: seconds, up to minutes
-  for a 2,048-token bucket. The daemon compiles every bucket it serves in
-  the background at startup (D52), so that wait is rare once the startup
-  warm-up is done; `/v1/models` shows each model's buckets under
-  `compile_cache` (`warm`, `warming`, `cold`, `failed`), and a request
-  for a `warming` bucket waits for that compile. The machine runs one ANE
-  compile at a time, so a cold bucket's first request can also wait for
-  another's compile. After installing models
-  or a macOS update, `sidekickd warm` compiles them ahead of time. The
-  wait doesn't count toward `request_timeout_secs`; the prediction after
-  it does. Give the first request a generous client timeout. A 504 with code `timeout` is a
-  prediction that ran too long; one with code `load_timeout` (and a
-  `Retry-After` header) means the load outlasted `load_timeout_secs` and
-  continues, so retry later.
+- **Timeouts.** A bucket's first request can wait for Core ML to compile
+  it: seconds, up to minutes for a 2,048-token bucket. The daemon compiles
+  every bucket in the background at startup, so the wait is rare once that
+  is done, and `/v1/models` shows each bucket's `compile_cache` state
+  ([RUNNING.md](RUNNING.md#first-loads-and-the-compile-cache)). Give the
+  first request a generous client timeout, and on a 504 `load_timeout`
+  retry after its `Retry-After`: the load continues
+  ([API.md](API.md#errors)).
 - **Provenance.** Record the `sidekick-model` response header
   (`<id>@<revision>`) with any stored label or score, so results from
   different model revisions don't mix silently. The other headers, and
