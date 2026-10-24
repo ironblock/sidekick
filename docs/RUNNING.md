@@ -85,13 +85,14 @@ installed by converting it ([CONVERTING.md](CONVERTING.md)).
 
 `sidekickd fetch` downloads a build
 sidekick publishes on Hugging Face ([PUBLISHING.md](PUBLISHING.md)),
-verifies every file, and installs it in the models directory (D51):
+verifies every file, and installs it in the models directory (D51). It
+fetches the builds in [the published list](MODELS.md#published-builds):
 
 ```sh
-sidekickd fetch bge-small-en-v1.5                  # the Core ML build (on Linux: the ONNX one)
+sidekickd fetch bge-small-en-v1.5                     # its Core ML build (on Linux, its ONNX build)
 sidekickd fetch bge-small-en-v1.5 --buckets 128,256   # only the buckets for inputs up to 256 tokens
-sidekickd fetch bge-small-en-v1.5 --backend onnx
-sidekickd fetch <model> --accept-terms <model>     # a model whose repository publishes terms
+sidekickd fetch <model> --backend onnx                # a model's ONNX build, on any OS
+sidekickd fetch <model> --accept-terms <model>        # a build whose repository publishes terms
 ```
 
 The ledger records where and at which revision each build was published,
