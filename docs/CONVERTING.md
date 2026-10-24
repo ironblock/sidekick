@@ -437,9 +437,10 @@ backbone, head and gate texts, gated against the same fp32 references
   models stop at 512; EmbeddingGemma-2's reaches 2,048). The ONNX graph
   runs each input at its own length, so its cap costs nothing until a long
   input arrives, and can be the length the model was trained for, once it
-  is graded there. Qwen3-Embedding-0.6B's Core ML buckets stop at 512 and
-  its ONNX build takes 4,096, graded on the long-input parity corpus
-  (`fixtures/parity/corpus_long.toml`; docs/MODELS.md). A cap past 512
+  is graded there. Qwen3-Embedding-0.6B's ONNX build takes 4,096, graded
+  on the long-input parity corpus (`fixtures/parity/corpus_long.toml`;
+  its Core ML builds are in
+  [MODELS.md](MODELS.md#qwen3-embedding-06bs-core-ml-builds)). A cap past 512
   should be graded on that corpus before it ships, with its time and
   memory at the cap measured (`examples/onnx_memory`,
   `tools/bench_onnx.py`). Raising a cap changes the vectors of inputs

@@ -76,10 +76,14 @@ the daemon afterwards.
 Hugging Face and recorded in its checksum ledger. Not every model is: a
 model's licence tier decides whether it may be published
 ([PUBLISHING.md](PUBLISHING.md#what-is-published-licence-tiers)), and
-builds are published one release at a time. The list of published builds,
-generated from the ledger, is in
-[MODELS.md](MODELS.md#published-builds); every other model in MODELS.md is
-installed by converting it ([CONVERTING.md](CONVERTING.md)).
+builds are published one release at a time. Each backend's build of a
+model is published on its own, in its own repository
+(`sidekickd/<model>-coreml`, `sidekickd/<model>-onnx`), so a model can
+have a Core ML build to fetch, an ONNX build, or both; `--backend` picks
+one (the default is Core ML on macOS and ONNX on Linux). The list of
+published builds, each with its backend, is generated from the ledger in
+[MODELS.md](MODELS.md#published-builds). A model or backend not listed
+there is installed by converting it ([CONVERTING.md](CONVERTING.md)).
 
 ### Fetching a published build
 
@@ -89,9 +93,9 @@ verifies every file, and installs it in the models directory ([D51](DECISIONS.md
 fetches the builds in [the published list](MODELS.md#published-builds):
 
 ```sh
-sidekickd fetch bge-small-en-v1.5                     # its Core ML build (on Linux, its ONNX build)
+sidekickd fetch bge-small-en-v1.5                     # its Core ML build on macOS; its ONNX build on Linux
 sidekickd fetch bge-small-en-v1.5 --buckets 128,256   # only the buckets for inputs up to 256 tokens
-sidekickd fetch <model> --backend onnx                # a model's ONNX build, on any OS
+sidekickd fetch bge-small-en-v1.5 --backend onnx      # its ONNX build, on any OS (an Intel Mac included)
 sidekickd fetch <model> --accept-terms <model>        # a build whose repository publishes terms
 ```
 
