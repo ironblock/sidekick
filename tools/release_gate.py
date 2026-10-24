@@ -121,9 +121,10 @@ name its interpreter with `--python` or SIDEKICK_GATE_PYTHON:
     --models-dir   a directory of builds (one subdirectory per build),
                    searched in order
     --refs         a directory of parity references, by model id
-    --paths        `default` (the default), `all`, or path names
-                   (coreml-ane, coreml-gpu, coreml-cpu, onnx-cpu): the
-                   default path plus every graded (path, precision) asked for
+    --paths        any of `default` (the default path; the default),
+                   `all` (every graded path), and path names (coreml-ane,
+                   coreml-gpu, coreml-cpu, onnx-cpu): every graded
+                   (path, precision) asked for, e.g. `default onnx-cpu`
     --home         the gate's persistent home (above)
     --fresh-home   a temporary home instead, deleted afterwards
     --update-baseline
@@ -196,6 +197,9 @@ WARM_TIMEOUT_SECS = 3600
 # (query prompts against documents). Both are deterministic, and short on
 # every embedder (seconds to a few minutes on an M1 Max).
 MTEB_TASKS = ["STSBenchmark", "AskUbuntuDupQuestions"]
+# The parity corpus's stress inputs, which the parity suite grades apart
+# from its worst case (crates/sidekick-embed/examples/parity/grade.rs).
+STRESS_TAG = "degenerate"
 
 # What counts as drift, written into the baseline when it is updated; a run
 # is judged by the baseline's own copy. `abs`: |run - baseline| <= value.
@@ -801,9 +805,10 @@ def run_classify(client: Client, model: str, info: dict, ref: Path) -> dict:
     r, ref_sha = load_reference(ref)
     max_labels = r["model"]["max_labels"]
     shape, logits = read_tensors(ref / "reference.safetensors", ["torch"])["torch"]
-    cases = [(i, c) for i, c in enumerate(r["cases"]) if c.get("gold")]
-    if not cases:
-        raise GateError(f"{model}: the reference has no labelled cases")
+    # The labelled cases; a corpus with none (text-classification's parity
+    # corpus) runs whole, for agreement with fp32 only.
+    labelled = [(i, c) for i, c in enumerate(r["cases"]) if c.get("gold")]
+    cases = labelled or list(enumerate(r["cases"]))
     fixed = r["model"].get("labels") or []
     groups: dict[str, list] = {}
     for i, c in cases:
@@ -846,14 +851,15 @@ def run_classify(client: Client, model: str, info: dict, ref: Path) -> dict:
         idx, top = g
         k = len(labels)
         fp32 = argmax(logits[i * max_labels: i * max_labels + k])
-        right += labels[idx] in c["gold"]
+        right += bool(c.get("gold")) and labels[idx] in c["gold"]
         agree += idx == fp32
         tops.append(top)
         preds.append(_symbol(idx))
     answered = n - refused
-    return {"sample": {"name": "parity corpus, labelled cases", "n": n, "sha256": sample.hexdigest(),
+    return {"sample": {"name": "parity corpus, " + ("labelled cases" if labelled else "every case"), "n": n, "sha256": sample.hexdigest(),
                        "reference_sha256": ref_sha},
-            "metrics": {"n": n, "refused": refused, "gold_accuracy": right / answered if answered else 0.0,
+            "metrics": {"n": n, "refused": refused,
+                        **({"gold_accuracy": right / answered if answered else 0.0} if labelled else {}),
                         "agree_fp32": agree / answered if answered else 0.0,
                         "mean_prob": sum(tops) / len(tops) if tops else 0.0},
             "predictions": {"label": "".join(preds)}}
@@ -874,6 +880,10 @@ def _symbol(i: int) -> str:
     return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"[i] if i < 62 else "?"
 
 
+def sigmoid(x: float) -> float:
+    return 1 / (1 + math.exp(-x)) if x >= 0 else math.exp(x) / (1 + math.exp(x))
+
+
 def run_rerank(client: Client, model: str, info: dict, ref: Path | None) -> dict:
     """The rerank corpus: each group as one request."""
     corpus = tomllib.loads(RERANK_CORPUS.read_text())["group"]
@@ -885,7 +895,7 @@ def run_rerank(client: Client, model: str, info: dict, ref: Path | None) -> dict
         for i, c in enumerate(r["cases"]):
             fp32[c["id"]] = t[i * shape[1]]
     sample = hashlib.sha256()
-    tops, relevant_hits, relevant_groups, agree, worst = [], 0, 0, 0, 0.0
+    tops, relevant_hits, relevant_groups, agree, worst, worst_p = [], 0, 0, 0, 0.0, 0.0
     scored = 0
     for g in corpus:
         docs = [" ".join([d] * g.get("repeat", 1)) for d in g["documents"]]
@@ -905,11 +915,14 @@ def run_rerank(client: Client, model: str, info: dict, ref: Path | None) -> dict
             scored += 1
             agree += top == argmax(ref_scores)
             worst = max(worst, max(abs(a - b) for a, b in zip(scores, ref_scores)))
+            worst_p = max(worst_p, max(abs(sigmoid(a) - sigmoid(b)) for a, b in zip(scores, ref_scores)))
     m = {"n": len(corpus), "top1_relevant": relevant_hits / relevant_groups if relevant_groups else 0.0}
     if fp32:
         if scored != len(corpus):
             raise GateError(f"{model}: the reference doesn't cover every group of the rerank corpus")
-        m.update({"agree_fp32_top1": agree / scored, "max_abs_diff_fp32": worst})
+        # The score on its own scale (a logit for the ms-marco cross-encoders),
+        # and as its sigmoid, the scale the parity suite grades |dp| on.
+        m.update({"agree_fp32_top1": agree / scored, "max_abs_diff_fp32": worst, "max_abs_dp_fp32": worst_p})
     return {"sample": {"name": "rerank corpus", "n": len(corpus), "sha256": sample.hexdigest(),
                        "reference_sha256": ref_sha},
             "metrics": m, "predictions": {"top": "".join(_symbol(t) for t in tops)}}
@@ -945,10 +958,18 @@ def run_embed_parity(client: Client, model: str, info: dict, ref: Path) -> dict:
             raise GateError(f"{model}: {len(v)} dimensions, the reference has {dims}")
         dot = sum(a * b for a, b in zip(v, w))
         cos.append(dot / (math.sqrt(sum(a * a for a in v)) * math.sqrt(sum(b * b for b in w))))
+    # As the parity suite grades: the worst over the corpus's ordinary
+    # cases, and its stress inputs (tagged "degenerate") apart.
+    stress = [STRESS_TAG in c.get("tags", []) for c in cases]
+    core = [x for x, st in zip(cos, stress) if not st]
+    hard = [x for x, st in zip(cos, stress) if st]
+    m = {"n": len(cases), "worst_cosine_fp32": min(core), "mean_cosine_fp32": sum(cos) / len(cos),
+         "cosine_error_fp32": 1 - min(core), "token_count_mismatches": mismatched}
+    if hard:
+        m.update({"stress_cosine_fp32": min(hard), "stress_error_fp32": 1 - min(hard)})
     return {"sample": {"name": "parity corpus", "n": len(cases), "sha256": sample.hexdigest(),
                        "reference_sha256": ref_sha},
-            "metrics": {"n": len(cases), "worst_cosine_fp32": min(cos), "mean_cosine_fp32": sum(cos) / len(cos),
-                        "cosine_error_fp32": 1 - min(cos), "token_count_mismatches": mismatched}}
+            "metrics": m}
 
 
 
@@ -1056,10 +1077,10 @@ def metric_rule(name: str) -> str:
         return "exact"
     if name.startswith("mteb:"):
         return "mteb"
-    if name in ("cosine_error_fp32", "max_abs_diff_fp32"):
+    if name in ("cosine_error_fp32", "stress_error_fp32", "max_abs_diff_fp32", "max_abs_dp_fp32"):
         return "error"
-    if name in ("worst_cosine_fp32", "mean_cosine_fp32"):
-        return "derived"        # judged through cosine_error_fp32
+    if name in ("worst_cosine_fp32", "mean_cosine_fp32", "stress_cosine_fp32"):
+        return "derived"        # judged through cosine_error_fp32 and stress_error_fp32
     if name == "mean_prob":
         return "mean_prob"
     if name.startswith("agree"):
@@ -1149,11 +1170,12 @@ def headline(rec: dict) -> str:
             s += f", triple {'ok' if rec['sanity']['passed'] else 'FAILED'}"
         return s
     if k == "classify":
-        return f"gold {m['gold_accuracy']:.3f}, fp32 agreement {m['agree_fp32']:.4f}, refused {m['refused']}"
+        gold = f"gold {m['gold_accuracy']:.3f}, " if "gold_accuracy" in m else "no gold labels, "
+        return f"{gold}fp32 agreement {m['agree_fp32']:.4f}, refused {m['refused']}"
     if k == "rerank":
         s = f"relevant top-1 {m['top1_relevant']:.3f}"
         if "agree_fp32_top1" in m:
-            s += f", fp32 top-1 agreement {m['agree_fp32_top1']:.3f}, max |Δ| {m['max_abs_diff_fp32']:.3g}"
+            s += f", fp32 top-1 agreement {m['agree_fp32_top1']:.3f}, max |Δp| {m['max_abs_dp_fp32']:.3g}"
         return s
     parts = [f"{t} {m[f'mteb:{t}']:.4f}" for t in MTEB_TASKS if f"mteb:{t}" in m]
     return ", ".join(parts) + f"; worst cos fp32 {m['worst_cosine_fp32']:.6f}"
@@ -1258,9 +1280,10 @@ def plan(args, this_chip: str, by_key: dict, home: Home) -> list[Target]:
     out = []
     for model in wanted:
         meta = models[model]
-        targets = [(meta["served"], "fp16")]
+        default = (meta["served"], "fp16")
+        targets = [default] if ("default" in args.paths or "all" in args.paths) else []
         for path, variant in graded_targets(model, this_chip):
-            if (path, variant) != targets[0] and ("all" in args.paths or path in named):
+            if (path, variant) != default and ("all" in args.paths or path in named):
                 targets.append((path, variant))
         for path, variant in targets:
             t = Target(model, meta, path, variant, path == meta["served"] and variant == "fp16")
@@ -1292,7 +1315,7 @@ def main() -> int:
                     help="a directory of builds (repeatable, searched in order)")
     ap.add_argument("--refs", action="append", default=[], help="a directory of parity references (repeatable)")
     ap.add_argument("--paths", nargs="+", default=["default"],
-                    help="default, all, or path names: the default path plus these graded paths")
+                    help="default, all, or path names: the graded (path, precision) pairs to run")
     ap.add_argument("--models", nargs="+", help="only these published models")
     ap.add_argument("--daemon", help="a built sidekickd to gate instead of building one")
     ap.add_argument("--onnx-runtime", help="libonnxruntime for onnx-cpu builds (else ORT_DYLIB_PATH or beside "

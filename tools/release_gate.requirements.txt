@@ -4,6 +4,10 @@
 # the textbook MNLI triple (tools/tasks/scoring_run.py sanity, which needs
 # `tokenizers`). The gate itself uses only the standard library.
 #
+# pillow, torchvision, torchaudio and torchcodec are here only because mteb
+# refuses to load google/embeddinggemma-2's wrapper (a multimodal model)
+# without its image, audio and video extras; the gate embeds text only.
+#
 # Every package is pinned to the version the committed baseline
 # (docs/data/release-gate.json) was measured with, so a rebuilt
 # environment reproduces it. Python 3.12:
@@ -51,6 +55,7 @@ networkx==3.7
 numpy==2.5.4
 packaging==26.3
 pandas==3.0.6
+pillow==13.0.0
 polars==2.0.0
 polars-runtime-32==2.0.0
 propcache==0.5.4
@@ -75,6 +80,9 @@ sympy==1.14.0
 threadpoolctl==3.7.0
 tokenizers==0.23.3
 torch==2.14.1
+torchaudio==2.11.0
+torchcodec==0.17.0
+torchvision==0.29.1
 tqdm==4.70.1
 transformers==5.20.2
 typer==0.27.3
