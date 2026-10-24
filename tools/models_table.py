@@ -288,7 +288,7 @@ def from_reports(dirs, runs, models, grades):
                     long, long_failed = long_note(m, p["path"], grades, f.name)
                     row["gate_failed"] = row["gate_failed"] or long_failed
                     row["note"] = join_notes(notes.get(f"{f.name}:{m['id']}:{row['path']}"), long,
-                                             failures_note(p, m))
+                                             capped_note(m["id"], p), failures_note(p, m))
                     row["threads"] = runs.get("threads", {}).get(f"{f.name}:{m['id']}", row["threads"])
                     # a gate failed on long inputs fails the row (F), whatever the main corpus's letter
                     finish(row, grades, None if long_failed else p["letter"])
@@ -303,7 +303,8 @@ def from_reports(dirs, runs, models, grades):
                                worst_case=p.get("worst_case"), stress=rounded(finite(p.get("stress_dp"))),
                                mean=rounded(finite(p.get("mean_dp"))), rank_flips=len(p.get("flips") or []))
                     grading_ms(row, p, meta)
-                    row["note"] = join_notes(notes.get(f"{f.name}:{c['id']}:{row['path']}"), failures_note(p, c))
+                    row["note"] = join_notes(notes.get(f"{f.name}:{c['id']}:{row['path']}"),
+                                             capped_note(c["id"], p), failures_note(p, c))
                     finish(row, grades, p["letter"])
                     rows.append(row)
     return rows, used
@@ -345,6 +346,20 @@ def grading_ms(row, p, meta):
 
 def join_notes(*notes):
     return ". ".join(n for n in notes if n) or None
+
+
+def capped_note(model, p):
+    """A path the parity suite graded under a length cap (the report's
+    `capped`: the cases past it, which the path doesn't run), as a note
+    naming the cap: D33's on the cpu path, or the manifest's lower
+    `cpu_max_seq_len`; D48's on the ane path, or the manifest's
+    `ane_max_seq_len`."""
+    capped = p.get("capped") or []
+    if not capped:
+        return None
+    cap, why = path_cap(model, p["path"])
+    return (f"Served and graded up to {cap:,} tokens on this path ({why}); "
+            f"{len(capped)} longer case{'s' if len(capped) != 1 else ''} not run")
 
 
 def failures_note(p, m):
@@ -537,6 +552,27 @@ def build_caps(models):
         elif classify.exists():
             caps[mid] = {"coreml": load_toml(classify).get("max_seq_len"), "onnx": None}
     return caps
+
+
+# The runtime's length caps by compute path: the CPU's (D33) and the ANE's
+# (D48), as sidekick_core's MAX_CPU_INVARIANT_SEQ and DEFAULT_ANE_MAX_SEQ.
+CPU_SEQ_CAP, ANE_SEQ_CAP = 1024, 2048
+
+
+def path_cap(model, path):
+    """The cap a Core ML path serves `model` under, and where it comes from,
+    from its committed manifest (a report's path name: cpu or ane)."""
+    embed, classify = MANIFESTS / model / "manifest.toml", CLASSIFIERS / model / "classifier.toml"
+    m = load_toml(embed if embed.exists() else classify)
+    if path == "cpu":
+        own = m.get("cpu_max_seq_len")
+        if own is not None and own < CPU_SEQ_CAP:
+            return own, "its manifest's cpu_max_seq_len, below the CPU's cap; D33"
+        return CPU_SEQ_CAP, "the CPU's cap; D33"
+    own = m.get("ane_max_seq_len")
+    if own is not None:
+        return own, "its manifest's ane_max_seq_len; D48"
+    return ANE_SEQ_CAP, "the ANE's cap; D48"
 
 
 def cap_of(row, caps):
