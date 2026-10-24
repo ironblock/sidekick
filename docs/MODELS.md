@@ -2356,8 +2356,12 @@ Read the model's `modeling_*.py` before anything else. The recipe survives:
   is the unpadded forward (LFM2.5 constraint D).
 - **Each loaded bucket maps the whole model.** On disk, every bucket of a
   chunk shares one weights file (D49), so 350M params ≈ 700 MB installed
-  for any number of buckets; in memory, and in Core ML's cache, each loaded
-  bucket still holds its own ≈ 700 MB.
+  for any number of buckets; in memory each loaded bucket still holds its
+  own ≈ 700 MB, and Core ML's compiled cache keeps one per bucket and
+  compute path. On the
+  GPU and the CPU that copy is in the user's cache; an ANE compile puts it
+  in the system's ANE cache instead, on the system volume, where deleting
+  the user's cache doesn't reach it (docs/design/coreml-cache.md).
 
 Gates to pass, in order: fp32 rewrite parity ≥ 0.9999 (only if rewriting),
 `CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.999, `ane_check` per bucket (compute
@@ -2403,4 +2407,8 @@ path (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`, D24).
 An embeddinggemma artifact read that way repeatedly while predicting at ANE
 speed, and the same file copied to another path read normally (2015/2024).
 Those caches grow large: the parity suite's reached 40 GB and ane_check's
-25 GB. They're safe to delete.
+25 GB. They're safe to delete, but that frees only the GPU and CPU
+programs. Each ANE compile also leaves about its program's weights in the
+system's ANE cache, on the system volume, which users can't delete
+(System Integrity Protection); those copies accumulate with every
+recompile, from throwaway homes too (docs/design/coreml-cache.md).

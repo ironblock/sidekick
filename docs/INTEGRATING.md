@@ -200,6 +200,29 @@ build with `cargo build --release -p sidekick-embed-ffi` →
 FoundationModels linkage — it runs Core ML and static models on any macOS
 they run on). Releases ship it only in the Apple silicon archive.
 
+**Compiled models are cached under your app's identity, not sidekickd's.**
+The dylib loads models in your process, so Core ML caches what it
+compiles for that process: under your executable's name (or your bundle
+identifier), your user's home and, on the Neural Engine, your binary's
+code-signing identifier. Two consequences:
+- **The daemon's compiles don't help you, and yours don't help it.** A
+  model sidekickd has already compiled compiles again on its first load
+  in your app, and the reverse; each takes seconds for a small model and
+  minutes for a long bucket of a large one.
+- **Keep your code-signing identifier stable.** A signed app's identifier
+  is its bundle identifier, which doesn't change. An unbundled tool built
+  with cargo is signed by the linker as `<name>-<hash>`, and the hash
+  changes with the version, so every upgrade compiles every ANE model
+  again. Sign such a host ad hoc with a fixed identifier after each build
+  (`codesign --force --sign - --identifier <your id> <binary>`), as
+  `tools/sign_sidekickd.sh` does for sidekickd.
+
+That the host's identity, not the dylib's, is the one that counts follows
+from Core ML keying its cache to the loading process; it was measured
+with standalone executables (docs/design/coreml-cache.md, "The cache
+key"), not with
+the dylib.
+
 Suggested `dlopen` search order for hosts:
 
 1. `$SIDEKICK_DYLIB` (explicit override)
