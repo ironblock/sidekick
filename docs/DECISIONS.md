@@ -1906,7 +1906,9 @@ which operation sums differently there isn't isolated.
   it. The parity suite grades the cpu path under it, as above.
 - **Qwen3-Embedding-0.6B's manifest sets 512.** Its CPU path serves the
   128, 256 and 512 buckets, as its earlier 512-token build did; the ANE
-  serves all five, and the GPU too.
+  serves all five, and the GPU too. Graded again under it, the same build's
+  cpu path is B (worst cosine 0.999684), with bucket invariance of 1.0
+  over its 88 comparisons, and the run passes every gate.
 
 ## D34 — The fev format: Lumma-fev decision models
 Lumma-fev (FrontiersMind/Lumma-fev, Apache-2.0) is a family of decision

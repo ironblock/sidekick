@@ -323,7 +323,7 @@ the median per input, ANE (CPU).
 | embeddinggemma-2 | F 0.99993 | A 0.9999993 | **A** 0.999995 (numbers-order) | 0.001 | 0 | 10.1 (28.0) |
 | F2LLM-v2-160M | B 0.99986 | A 0.999999 | **A** 0.99999 (a run of digits) | 0.001 (0.000) | 0 | 5.3 (13.0) |
 | LFM2.5-Embedding-350M | B 0.99986 | A 0.999999 | **A** 0.99999 (a delimiter flood) | 0.003 (0.000) | 0 | 14.9 (33.8) |
-| Qwen3-Embedding-0.6B | B 0.99968 | A 0.999997 | **A** 0.99999 (delim-bert-specials) | 0.002 | 0 | 33.3 (69.0) |
+| Qwen3-Embedding-0.6B | B 0.99968 | A 0.999997 | **A** 0.99999 (delim-bert-specials) | 0.002 | 0 | 30.7 (67.2) |
 <!-- /generated -->
 
 - **Similarity drift** is the largest change in any pairwise similarity
@@ -763,14 +763,32 @@ every length on the long-input corpus (see Accuracy).
 
 The one place these docs state how far Qwen3-Embedding-0.6B's Core ML
 builds go; every other mention links here.
-- **The committed recipe** (`convert_qwen3_embedding.py` with its
-  manifest's buckets, 128, 256 and 512) stops at 512, so converting the
-  model yourself gives 512.
-- **Longer builds, recorded but not yet published.** Two release
-  candidates are in the checksum ledger, sharing their weights across
-  buckets (D49): `fp16-max2048` (buckets 1,024 and 2,048, graded A on the
-  ANE and the GPU) and `fp16-max4096` (1,024, 2,048 and 4,096, graded A on
-  the GPU). What they cost is under "Core ML past 512" below.
+- **The build: 2,048 tokens.** The committed recipe
+  (`convert_qwen3_embedding.py`, which converts its manifest's buckets)
+  builds 128, 256, 512, 1,024 and 2,048 tokens, D46's target for this
+  model, each bucket two chunks (D37) and each chunk's weights one file
+  shared by every bucket (D49): 1.23 GB in all. Converting the model
+  yourself gives the same build. This is the build prepared for
+  publishing, ledger build `qwen3-embedding-0.6b/coreml/fp16/2c652898a8f8`.
+- **What each path serves.**
+  - The ANE (the default) and the GPU serve all five buckets, up to
+    2,048 tokens: A on both corpora (worst cosine 0.999986 on the ANE,
+    0.999997 on the GPU), every gate passed, the ANE identical across
+    processes.
+  - The CPU serves up to 512 tokens: its manifest's `cpu_max_seq_len`,
+    below D33's 1,024. On Core ML's CPU this model's buckets agree exactly
+    up to 512 tokens and differ past it (inputs of 511 and 512 tokens gave
+    0.999914 and 0.999917 between the 512 and the 1,024 bucket, against
+    the CPU's exact bucket gate; D33's amendment). Graded under that cap
+    it is B (worst cosine 0.99968), with its buckets bit-identical.
+  - An input of 513 to 2,048 tokens therefore runs on the ANE or the GPU,
+    and is refused or truncated on a model served `cpu_only`.
+- **Not published: 4,096 tokens.** A release candidate with a 4,096-token
+  bucket is in the checksum ledger (`fp16-max4096`, graded A on the GPU),
+  with `fp16-max2048` (1,024 and 2,048 only) before it. On the ANE the
+  4,096 bucket compiles for half an hour and fails some predictions
+  (below, "Core ML past 512"); D48's ANE cap would let a build add it for
+  the GPU alone, which isn't decided.
 
 #### What a long input costs
 
@@ -836,11 +854,12 @@ builds go; every other mention links here.
   349–350 and 938–943 ms per input, about 14–15× faster than onnx-cpu's
   figure at 4,096 (measured another way). On the ANE they take 377–384
   ms, 1.2 s and 5.0–5.6 s; the 1,024 and 2,048 buckets, graded as an
-  install of their own, grade A there (0.999986) and pass every gate. The
-  4,096 bucket compiles for 29 minutes on the ANE, and 7 of its 51 timed
-  predictions failed.
+  install of their own and again in the five-bucket build, grade A there
+  (0.999986) and pass every gate. The 4,096 bucket compiles for 29
+  minutes on the ANE, and 7 of its 51 timed predictions failed.
 - **Each Core ML path's limit.** Core ML's CPU path is capped at 1,024
-  tokens (D33), and its ANE path at 2,048, or a manifest's
+  tokens (D33), or a manifest's lower `cpu_max_seq_len` (512 for this
+  model), and its ANE path at 2,048, or a manifest's
   `ane_max_seq_len` (D48): the buckets past the cap aren't loaded there,
   and `/v1/models` shows the cap under `seq_cap`. The GPU path is
   uncapped, so a 4,096-token bucket can serve the GPU from the same
@@ -1698,7 +1717,7 @@ The primary English benchmark: 41 tasks.
 | embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / ≤ 8,192 (advertised) | a prompt per task type | 67.53 †2 | 51.33 †2 | 88.82 | 51.70 | 86.39 | 46.03 | 82.75 | 35.09 | sidekick's revision |
 | F2LLM-v2-160M | ANE **A**, onnx-cpu **A** | 512 / 8,192 | an instruction per task | 65.93 †23 | 49.33 †4 | 87.13 †8 | 52.55 †8 | 82.08 | 45.26 | 80.76 †3 | 28.63 | another revision, same weights |
 | LFM2.5-Embedding-350M | ANE **A** | 512 | | | | | | | | | | |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / ≤ 32,768 (advertised) | an instruction per task | 70.47 †2 | 61.83 †2 | 84.58 | 54.05 | 84.37 | 48.18 | 86.57 | 33.43 | another revision, same weights |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 2,048 (onnx-cpu 4,096) / ≤ 32,768 (advertised) | an instruction per task | 70.47 †2 | 61.83 †2 | 84.58 | 54.05 | 84.37 | 48.18 | 86.57 | 33.43 | another revision, same weights |
 <!-- /generated -->
 
 ### Measured on sidekick's builds
@@ -1727,15 +1746,15 @@ converted for this run with the committed recipe
 report graded. Each build's fingerprint is below.
 
 <!-- generated: mteb-transfer-source -->
-Measured on Apple M1 Max (macOS 27.0) with sidekick 0.14.0, 2026-10-20 to 2026-10-21; fp32 run: sentence-transformers 6.1.0, transformers 5.20.2, torch 2.14.1, fp32 on the CPU. Tasks as mteb 2.26.14 defines MTEB(eng, v2); published scores from [mteb/results at 3b0980076221](https://huggingface.co/datasets/mteb/results/tree/3b098007622127a024fb9065b23b6898aa936b34). Data: [mteb_transfer.json](data/mteb_transfer.json).
+Measured on Apple M1 Max (macOS 27.0) with sidekick 0.14.0, 0.15.0, 2026-10-20 to 2026-10-23; fp32 run: sentence-transformers 6.1.0, transformers 5.20.2, torch 2.14.1, fp32 on the CPU. Tasks as mteb 2.26.14 defines MTEB(eng, v2); published scores from [mteb/results at 3b0980076221](https://huggingface.co/datasets/mteb/results/tree/3b098007622127a024fb9065b23b6898aa936b34). Data: [mteb_transfer.json](data/mteb_transfer.json).
 
-Builds measured (`build`: sha256 over each build's weights, tokenizer and manifest) and each fp32 run's context: bge-small-en-v1.5: fp32 512 tokens, ANE `ee77eb54ccf5` (512 tokens), onnx-cpu `c8fd8219c99f` (512 tokens); embeddinggemma-300m: fp32 2,048 tokens, ANE `8870c14bb6ce` (512 tokens), onnx-cpu `09b3fb9c9936` (512 tokens); Qwen3-Embedding-0.6B: fp32 32,768 tokens, ANE `d7d7dc99a6e7` (512 tokens), onnx-cpu `2779ceece204` (4,096 tokens).
+Builds measured (`build`: sha256 over each build's weights, tokenizer and manifest) and each fp32 run's context: bge-small-en-v1.5: fp32 512 tokens, ANE `ee77eb54ccf5` (512 tokens), onnx-cpu `c8fd8219c99f` (512 tokens); embeddinggemma-300m: fp32 2,048 tokens, ANE `8870c14bb6ce` (512 tokens), onnx-cpu `09b3fb9c9936` (512 tokens); Qwen3-Embedding-0.6B: fp32 32,768 tokens, ANE `9cf10c0b7d4c` (2,048 tokens), onnx-cpu `2779ceece204` (4,096 tokens).
 <!-- /generated -->
 
 What it shows (every figure computed from the data):
 
 <!-- generated: mteb-transfer-findings -->
-- **Same tokens, same score.** Over the model–task pairs where a build and the fp32 run embed the same tokens (neither cuts an input, or both cut at the same length): ANE is within 0.09 point of the fp32 run on 11 of them and differs on clustering by −0.44 (bge-small-en-v1.5); onnx-cpu scores what the fp32 run scores to every printed digit on 14 of them. Over every input the adapter check compares, the builds' vectors are at least 0.99994 cosine of the fp32 run's.
+- **Same tokens, same score.** Over the model–task pairs where a build and the fp32 run embed the same tokens (neither cuts an input, or both cut at the same length): ANE is within 0.09 point of the fp32 run on 12 of them and differs on clustering by −0.44 (bge-small-en-v1.5), +0.07 (Qwen3-Embedding-0.6B); onnx-cpu scores what the fp32 run scores to every printed digit on 14 of them. Over every input the adapter check compares, the builds' vectors are at least 0.99994 cosine of the fp32 run's.
 - **The fp32 run against the published scores**, on the tasks where it sees the tokens the MTEB run saw:
   - bge-small-en-v1.5: MTEB ran it at sidekick's revision. On its 4 tasks run by MTEB (both runs' context: 512 tokens), the fp32 run is within 0.07 of the published score. Its 2 scores imported from the model card differ from the fp32 run by up to 3.99.
   - embeddinggemma-300m: MTEB ran it at revision 64614b0b, whose files are identical to sidekick's pin's except README.md and notebook.ipynb (so the same weights, tokenizer and prompts); the fp32 run at that revision scores 65.97 on ArguAna, the same as at the pin. On its 6 tasks run by MTEB (both runs' context: 2,048 tokens), the fp32 run is within 5.57 of the published score (the largest, ArguAna).
@@ -1768,9 +1787,7 @@ here.
 | embeddinggemma-300m | ArguAna | onnx-cpu | 512 | 241 of 9,924 (2.4%) | 1,413 | 2,048 | 66.10 | 65.97 | +0.12 |
 | embeddinggemma-300m | STS22.v2 | ANE | 512 | 172 of 392 (43.9%) | 11,478 | 2,048 | 67.08 | 66.17 | +0.91 |
 | embeddinggemma-300m | STS22.v2 | onnx-cpu | 512 | 172 of 392 (43.9%) | 11,478 | 2,048 | 67.06 | 66.17 | +0.89 |
-| Qwen3-Embedding-0.6B | ArXivHierarchicalClusteringP2P | ANE | 512 | 1 of 81 (1.2%) | 577 | 32,768 | 64.79 | 64.54 | +0.25 |
-| Qwen3-Embedding-0.6B | ArguAna | ANE | 512 | 243 of 9,924 (2.4%) | 1,398 | 32,768 | 69.21 | 69.34 | −0.13 |
-| Qwen3-Embedding-0.6B | STS22.v2 | ANE | 512 | 169 of 392 (43.1%) | 11,678 | 32,768 | 70.57 | 70.84 | −0.27 |
+| Qwen3-Embedding-0.6B | STS22.v2 | ANE | 2,048 | 9 of 392 (2.3%) | 11,678 | 32,768 | 70.44 | 70.84 | −0.40 |
 | Qwen3-Embedding-0.6B | STS22.v2 | onnx-cpu | 4,096 | 3 of 392 (0.8%) | 11,678 | 32,768 | 70.65 | 70.84 | −0.19 |
 <!-- /generated -->
 
@@ -1792,12 +1809,12 @@ from it):
 | embeddinggemma-300m | ANE **A**, onnx-cpu **A** | AskUbuntuDupQuestions (Reranking) | 7,066 | 62.95 | 62.46 (−0.49) | 62.52 (−0.43) | 62.46 (−0.49) | none over 512 / none over 512 |
 | embeddinggemma-300m | ANE **A**, onnx-cpu **A** | ArguAna (Retrieval) | 9,924 | 71.54 | 65.97 (−5.57) | 66.05 (−5.49) | 66.10 (−5.44) | 2.4% over 512 / 2.4% over 512 |
 | embeddinggemma-300m | ANE **A**, onnx-cpu **A** | STS22.v2 (STS) | 392 | 67.52 | 66.17 (−1.35) | 67.08 (−0.44) | 67.06 (−0.46) | 43.9% over 512 / 43.9% over 512 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | Banking77Classification (Classification) | 7,696 | 81.01 | 80.74 (−0.27) | 80.77 (−0.24) | 80.74 (−0.27) | none over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | STSBenchmark (STS) | 2,552 | 91.13 | 91.22 (+0.09) | 91.21 (+0.08) | 91.22 (+0.09) | none over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | ArXivHierarchicalClusteringP2P (Clustering) | 81 | 63.72 | 64.54 (+0.82) | 64.79 (+1.07) | 64.54 (+0.82) | 1.2% over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | AskUbuntuDupQuestions (Reranking) | 7,103 | 65.13 | 63.41 (−1.72) | 63.32 (−1.81) | 63.41 (−1.72) | none over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | ArguAna (Retrieval) | 9,924 | 70.97 | 69.34 (−1.63) | 69.21 (−1.76) | 69.34 (−1.63) | 2.4% over 512 / none over 4,096 |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | STS22.v2 (STS) | 392 | 71.11 | 70.84 (−0.27) | 70.57 (−0.54) | 70.65 (−0.46) | 43.1% over 512 / 0.8% over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | Banking77Classification (Classification) | 7,696 | 81.01 | 80.74 (−0.27) | 80.77 (−0.24) | 80.74 (−0.27) | none over 2,048 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | STSBenchmark (STS) | 2,552 | 91.13 | 91.22 (+0.09) | 91.21 (+0.08) | 91.22 (+0.09) | none over 2,048 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | ArXivHierarchicalClusteringP2P (Clustering) | 81 | 63.72 | 64.54 (+0.82) | 64.61 (+0.89) | 64.54 (+0.82) | none over 2,048 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | AskUbuntuDupQuestions (Reranking) | 7,103 | 65.13 | 63.41 (−1.72) | 63.32 (−1.81) | 63.41 (−1.72) | none over 2,048 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | ArguAna (Retrieval) | 9,924 | 70.97 | 69.34 (−1.63) | 69.35 (−1.62) | 69.34 (−1.63) | none over 2,048 / none over 4,096 |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | STS22.v2 (STS) | 392 | 71.11 | 70.84 (−0.27) | 70.44 (−0.67) | 70.65 (−0.46) | 2.3% over 2,048 / 0.8% over 4,096 |
 <!-- /generated -->
 
 The adapter check: on STSBenchmark, where no input is over any cap, every
@@ -1830,7 +1847,7 @@ text and prompt:
 | embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / ≤ 2,048 (advertised) | a prompt per task type | 61.14 †1 | 62.49 †1 | 60.90 | 51.17 | 81.40 | 63.22 | 74.73 | 64.40 | 24.66 | 5.61 | another revision, weights not checked (gated) |
 | embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / ≤ 8,192 (advertised) | a prompt per task type | 60.52 †1 | 60.60 †1 | 62.30 | 47.58 | 78.70 | 62.32 | 73.89 | 65.48 | 25.23 | -0.61 | sidekick's revision |
 | F2LLM-v2-160M | ANE **A**, onnx-cpu **A** | 512 / 8,192 | an instruction per task | 57.98 †15 | 54.08 †3 | 58.86 †3 | 50.83 †5 | 76.02 †1 | 60.34 | 70.10 †3 | 65.59 | 23.05 | -3.39 | another revision, same weights |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / ≤ 32,768 (advertised) | an instruction per task | 64.34 †1 | 64.65 †1 | 66.83 | 52.33 | 80.83 | 61.41 | 76.17 | 72.23 | 24.58 | 5.09 | another revision, same weights |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 2,048 (onnx-cpu 4,096) / ≤ 32,768 (advertised) | an instruction per task | 64.34 †1 | 64.65 †1 | 66.83 | 52.33 | 80.83 | 61.41 | 76.17 | 72.23 | 24.58 | 5.09 | another revision, same weights |
 <!-- /generated -->
 
 ### MTEB(eng, v1)
@@ -1848,7 +1865,7 @@ complete only here.
 | embeddinggemma-300m | ANE **A**, onnx-cpu **A** | 512 / ≤ 2,048 (advertised) | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 87.29 | (2 of 4 tasks) | (8 of 10 tasks) | | another revision, weights not checked (gated) |
 | embeddinggemma-2 | ANE **A**, onnx-cpu **A** | 2,048 / ≤ 8,192 (advertised) | a prompt per task type | (25 of 56 tasks) | (4 of 15 tasks) | (8 of 12 tasks) | | 86.39 | (2 of 4 tasks) | (8 of 10 tasks) | | sidekick's revision |
 | F2LLM-v2-160M | ANE **A**, onnx-cpu **A** | 512 / 8,192 | an instruction per task | 63.41 †35 | 46.46 †9 | 85.96 †11 | 47.54 †11 | 82.08 | 53.71 †1 | 80.94 †3 | 29.25 | another revision, same weights |
-| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 512 (onnx-cpu 4,096) / ≤ 32,768 (advertised) | an instruction per task | 67.05 †4 | 55.52 †4 | 81.98 | 49.85 | 84.37 | 59.40 | 86.97 | 29.78 | another revision, same weights |
+| Qwen3-Embedding-0.6B | ANE **A**, onnx-cpu **A** | 2,048 (onnx-cpu 4,096) / ≤ 32,768 (advertised) | an instruction per task | 67.05 †4 | 55.52 †4 | 81.98 | 49.85 | 84.37 | 59.40 | 86.97 | 29.78 | another revision, same weights |
 <!-- /generated -->
 
 ### NanoBEIR-multilingual
