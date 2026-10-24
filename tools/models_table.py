@@ -1383,6 +1383,24 @@ def named_prompts(rows, models):
     return table(["model", "`prompt_name`", "prompt"], out)
 
 
+def published_builds(rows, models):
+    """The builds the checksum ledger records as published on Hugging Face,
+    which `sidekickd fetch` installs by model id: the latest upload of each
+    (docs/RUNNING.md, "Which models are published")."""
+    builds = sorted((b for b in ledger.load()["builds"] if b["published"]),
+                    key=lambda b: (list(models).index(b["model"]) if b["model"] in models else len(models),
+                                   b["backend"], b["variant"]))
+    if not builds:
+        return ["None yet: no build in the checksum ledger has a published record."]
+    out = []
+    for b in builds:
+        p = b["published"][-1]
+        buckets = ", ".join(f"{n:,}" for n in b["buckets"])
+        out.append([f"`{b['model']}`", b["backend"], f"`{b['variant']}`", buckets,
+                    f"[{p['repo']}](https://huggingface.co/{p['repo']})", f"`{p['revision'][:12]}`", p["sidekick"]])
+    return table(["model", "backend", "variant", "buckets", "repository", "revision", "sidekick release"], out)
+
+
 def mteb_source(rows, models, bench):
     """Where the MTEB scores came from, as a sentence."""
     m = bench["mteb"]
@@ -1627,7 +1645,8 @@ def transfer_cap(rows, models, bench):
 
 TABLES = {"coreml-grades": coreml_grades, "onnx-accuracy": onnx_accuracy, "latency": latency,
           "threads": threads, "memory": memory, "cosine-scale": cosine_scale,
-          "classifier-scales": classifier_scales, "prompts": prompts, "named-prompts": named_prompts}
+          "classifier-scales": classifier_scales, "prompts": prompts, "named-prompts": named_prompts,
+          "published-builds": published_builds}
 # Tables from the results file's benchmark scores.
 BENCH_TABLES = {"mteb-eng-v2": mteb_table("MTEB(eng, v2)", every_embedder=True),
                 "mteb-multilingual-v2": mteb_table("MTEB(Multilingual, v2)"),

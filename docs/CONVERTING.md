@@ -34,6 +34,8 @@ each rule exists (entries cited as Dnn).
 - [Adding a family](#adding-a-family)
 - [Refactoring a converter: the acceptance method](#refactoring-a-converter-the-acceptance-method)
 - [Gotchas](#gotchas)
+- [Quick triage: is a model worth converting?](#quick-triage-is-a-model-worth-converting)
+- [Will a new model convert? A checklist](#will-a-new-model-convert-a-checklist)
 - [Tests](#tests)
 
 ## Layers
@@ -376,6 +378,10 @@ committed one over it, which would drop its `[placement]` table.
 | `convert_embeddinggemma2.py` | EmbeddingGemma 2 (Gemma 4 text tower, per-layer inputs), RMSNorm pre-scales, TanhGelu | mean pool, scaled per bucket | needs transformers 5.19; see below |
 | `convert_lfm25_embedding.py` | LFM2 (short convolutions with pad zeroing, attention), per-layer precision scales | CLS pool, L2 in graph | `--no-pad-zeroing` builds the negative control |
 | `convert_nli.py` | BERT/RoBERTa/XLM-R (explicit), DeBERTa-v3 (relative shift) or ModernBERT (residual K), by model_type | the checkpoint's sequence-classification head, one (premise, hypothesis) pair per prediction | zero-shot `format = "nli"`; gates the manifest's served path, reports the others |
+| `convert_julia.py` | mmBERT-small (ModernBERT), explicit | laya's marker head, Julia-1's option rendering | Julia-1's own code, pinned by sha256, is the fp32 reference; laya's interface |
+| `convert_gliner2.py` | DeBERTa-v3, relative shift | GLiNER2's per-token classifier, read at the label markers | zero-shot `format = "gliner2"`; needs the gliner2 package for the gate inputs |
+| `convert_fev.py` | Nandi causal decoder | fev's pointer head | zero-shot `format = "fev"`; the checkpoint's own code is the fp32 reference |
+| `convert_agentjev.py` | Qwen3 decoder, tree mask, bucket-invariant softmax | AgentJev's set transformer and scorer | zero-shot `format = "agentjev"`; chunked by default (D37) |
 
 Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
 `--time` and its own flags; the embedder converters also take `--format
@@ -431,9 +437,10 @@ backbone, head and gate texts, gated against the same fp32 references
   models stop at 512; EmbeddingGemma-2's reaches 2,048). The ONNX graph
   runs each input at its own length, so its cap costs nothing until a long
   input arrives, and can be the length the model was trained for, once it
-  is graded there. Qwen3-Embedding-0.6B's Core ML buckets stop at 512 and
-  its ONNX build takes 4,096, graded on the long-input parity corpus
-  (`fixtures/parity/corpus_long.toml`; docs/MODELS.md). A cap past 512
+  is graded there. Qwen3-Embedding-0.6B's ONNX build takes 4,096, graded
+  on the long-input parity corpus (`fixtures/parity/corpus_long.toml`;
+  its Core ML builds are in
+  [MODELS.md](MODELS.md#qwen3-embedding-06bs-core-ml-builds)). A cap past 512
   should be graded on that corpus before it ships, with its time and
   memory at the cap measured (`examples/onnx_memory`,
   `tools/bench_onnx.py`). Raising a cap changes the vectors of inputs
@@ -447,9 +454,10 @@ backbone, head and gate texts, gated against the same fp32 references
 - **Gates,** through ONNX Runtime's Python API: every gate case against the
   checkpoint's own output (cosine at least 0.99999), the cases in one
   right-padded batch against their unpadded runs, and random pad ids. The
-  daemon ships ONNX Runtime 1.28.3 (1.23.2 on Intel macOS, the last release
-  built for it), pinned by `tools/fetch_onnxruntime.sh`; the parity suite
-  grades the export on that runtime.
+  daemon ships a pinned ONNX Runtime
+  ([INSTALL.md](INSTALL.md#onnx-runtime)), fetched by
+  `tools/fetch_onnxruntime.sh`; the parity suite grades the export on
+  that runtime.
 - **Manifest.** The installed manifest is derived from the committed Core ML
   one (same id, tokenizer, dims, prefixes, Matryoshka), with backend
   `onnx`, artifact `model.onnx`, the pooling, and every extra graph input
@@ -935,6 +943,237 @@ refine two points there:
 - **Gate units**: a reranker's raw logit is |x| ~ 10, so its error is gated
   in sigmoid space (cross-encoders train with a binary cross-entropy), with
   |Δlogit| reported.
+
+## Quick triage: is a model worth converting?
+
+The triage, the checklist and the gates below are for Core ML. The ANE's
+weight cap, fp16 range and precision limits don't apply to onnx-cpu, which
+computes in fp32 with dynamic shapes, so an embedder rejected only by those
+may still serve there (Qwen3-Embedding-0.6B was one, until chunking (D37)
+gave it an ANE build). Its gate is the ONNX export's own (fp32 parity
+against the checkpoint, batch and pad invariance; "[ONNX export](#onnx-export)"), then the parity suite's `onnx-cpu` path.
+
+Most rejections are visible long before a conversion. Cheapest first:
+
+1. **`config.json` (seconds).**
+   - `model_type` / `architectures` is the strongest signal. Validated:
+     `bert`, `gemma3_text` (with a range rewrite), `lfm2`, `qwen3`,
+     `modernbert` (with explicit attention). A checkpoint can wrap one of
+     these, as laya's `encoder/config.json` does.
+   - Also check:
+     - **QK-norm** (`q_norm`/`k_norm` in the modeling code): keeps
+       activations small (LFM2.5 ~25, F2LLM ~420), so no range rewrite.
+     - **bf16 training**: nothing kept its activations in fp16 range.
+     - **Size**: each bucket stores the whole model at ~2 bytes/param, and
+       Core ML runs an ML program on the ANE only if its weights fit in about
+       1 GiB: about 500M parameters in fp16, embedding table included.
+       Measured on an M1 Max with macOS 27 (October 2026) by cutting
+       agent-jev's Qwen3-0.6B at different depths: 0.964 GiB of weights put
+       99.4% of operations on the ANE, and 1.022 GiB put 0%. Over the cap,
+       `cpu_and_ne` silently runs the whole model on the CPU, with no error,
+       so a compute plan of 0 ANE operations is the symptom. Splitting each
+       bucket into programs at layer boundaries (`--chunks`, D37) keeps every
+       program well under the cap at no cost in accuracy. Storing only the
+       embedding table in int8 also brought agent-jev (1.12 GiB) to 0.97 GiB
+       and 98% on the ANE, but with almost no headroom and a measurable cost
+       in accuracy (agent-jev's notes compare the two). This is Core ML's
+       documented limit: Apple's coremltools guide ("MLModel Utilities",
+       Bisect Model) states it as 1 GB for the Neural Engine on iPhone, and
+       its `ct.models.utils.bisect_model` splits a model into two chunks
+       under it. It may differ on other chips and OS releases; measure it
+       there. GPU serving has no such cap (GLiNER2.5-Decide and agent-jev).
+     - **Needed sequence length**: buckets are ≤512, and the ANE's advantage
+       shrinks with length.
+     - **Output shape**: one vector per input fits `/v1/embeddings`, and a
+       sequence-classification head (or laya's format) fits `/v1/classify`
+       (D28). Rerankers and multi-vector models need a new API.
+2. **The modeling code (minutes).** See the checklist below: data-dependent
+   shapes, attention that can't run as SDPA, and non-attention token mixers.
+3. **`tools/probe_activations.py` (minutes, PyTorch on the CPU, no Core
+   ML).** It hooks every normalization layer's input and reports peak
+   activation, which dimension carries it, how many times the median
+   dimension it is, and which norm type reads it. Its one calibrated verdict
+   is fp16 range: over 65504 needs a range rewrite (EmbeddingGemma), and
+   under ~30,000 is safe to convert directly.
+
+   | model | norms | peak (dim) | × median | probe says | measured on ANE |
+   |---|---|---|---|---|---|
+   | bge-small-en-v1.5 | LayerNorm | 338 (99) | 146× | no range issue | 0.99998 |
+   | LFM2.5-Embedding-350M | RMSNorm | 1.9 | 17× | no range issue | 0.99999 after the precision rewrite |
+   | embeddinggemma-300m | RMSNorm | 152,485 (731) | 313× | range rewrite | 0.99999 after range + MLP rewrites |
+   | gte-modernbert-base | LayerNorm | 47,973 (251) | 502× | no range issue | 0.99998 (explicit attention + 2^15 range rewrite) |
+   | laya (ModernBERT-large) | LayerNorm | 27,296 (379) | 556× | no range issue | CLS ≥ 0.997 (explicit attention) |
+
+   The verdict is about the residual stream. A written-out RMSNorm squares
+   its input, so any norm input past 256 overflows in fp16:
+   EmbeddingGemma 2's peak at ~1,600 cost Core ML's CPU path 5% until the
+   norms were pre-scaled.
+
+   Massive activations, one dimension hundreds of times the rest on a few
+   tokens, are common, and they are not by themselves an ANE problem. The
+   ModernBERT failure once blamed on them was a Core ML attention bug. Expect
+   those tokens' own output vectors to be slightly less accurate, which
+   matters only when you read individual token vectors.
+4. **Convert with explicit attention, then gate (hours):** the gates at the
+   end of the checklist. Pad invariance in `ane_check` catches a dropped
+   attention mask in seconds.
+
+## Will a new model convert? A checklist
+
+Read the model's `modeling_*.py` before anything else. The recipe survives:
+
+- **Encoder-style, single-vector output** — bidirectional attention (or a
+  published bidirectional patch), CLS or mean pooling; or a causal decoder
+  with last-token pooling (F2LLM). Multi-vector, and rerank heads don't fit
+  the API; generative models have no pooled vector at all.
+- **Last-token pooling has two traps** — (1) select the last real token
+  in-graph via the mask (`mask · (1 − shift_left(mask))`, masked sum), never
+  a data-dependent gather index; (2) the embedding IS the trailing EOS
+  token, so truncation must preserve it — the server keeps `[first max-1,
+  last]` for exactly this reason. A short-input-only parity gate misses
+  both; test an over-length input that fills the largest bucket.
+- **Explicit attention with fp16-safe masks.** For Core ML, masks must use a
+  finite constant such as -30000, not `-inf`/`finfo.min`, which NaN in fp16
+  (D15). The converters patch the mask builders to do this. Then use
+  attention that converts to explicit matmul → softmax → matmul (gemma,
+  F2LLM, ModernBERT via `attn_implementation="eager"`). Passing `scale=` to
+  `F.scaled_dot_product_attention` works too: coremltools then emits
+  explicit ops instead of the fused one. Whatever the form, `ane_check`'s
+  pad-invariance gate must pass.
+- **Fused SDPA drops the mask on the ANE when the mask is an input of the
+  ANE procedure that runs the attention.** That is, when no op inside that
+  procedure computes the mask. It may be a model input, the output of an op
+  on the CPU, or the output of an earlier ANE procedure. The output then
+  equals unmasked attention exactly, for every mask shape, dtype and fill
+  value tried and at both opsets (D25). The compute plan shows it:
+  - `scaled_dot_product_attention` is on the NeuralEngine, and
+  - its `attn_mask` comes from a model input or a CPU op, or from an ANE op
+    with a CPU op between it and the attention.
+
+  ModernBERT builds its masks before the CPU-only embedding gather, so the
+  mask plumbing lands on the CPU. `python tools/repro_sdpa_mask.py --check
+  <model>` applies the rule to a compiled model. A fused attention whose plan
+  shows no device (bge-small) is correct only through a Core ML fallback that
+  doesn't run it natively. At the iOS26 opset that fallback is gone and bge
+  fails to load on CPU_AND_NE, so keep the macOS15 target for fused-attention
+  models.
+- **Fused SDPA on the CPU (`CPU_ONLY`) has two more defects**
+  (reproduced by the same tool):
+  - A query row whose keys are all masked returns NaN when
+    |fill| × √head_dim > 65504, e.g. -30000 at head dim 64. Explicit
+    attention returns a finite row.
+  - q/k/v split straight off a packed projection with
+    `.transpose(3, 1).unbind(2)` give wrong output. `.permute(2, 0, 3, 1, 4)`
+    is correct.
+
+  CPU_ONLY parity catches both.
+- **Static-shape-friendly graph** (for Core ML; an ONNX export takes dynamic
+  axes by design) — no data-dependent shapes. Stock
+  `rotate_half`/`repeat_kv` and any `F.conv1d(padding=shape-derived)`
+  need the traceable rewrites (D17 constraint 8, LFM2.5 constraint B).
+- **fp16-safe activations** — calibrate first (forward hooks, max |activation|
+  on a mixed corpus). Under ~30k: convert directly (bge, LFM2.5). Over:
+  apply the D17 power-of-two range rewrite (gemma). For Core ML, watch for
+  `-1e9` mask constants (rewrite at -30000) and rmsnorm eps below ~1e-4.
+- **Keep every linear-layer input near rms 1.** The ANE's `linear` op has
+  an absolute precision floor on its input, not a relative one: its
+  relative error is ~3e-4 / rms(input) (0.04% at rms 1, 2% at 0.016, 10% at
+  0.004; the GPU is flat at 0.04%). Scaling the weights doesn't help; only
+  the input's magnitude matters. Measure the rms of every linear input in
+  fp32 with forward pre-hooks. Likely offenders are MLP down projections
+  after a gated product (act(gate)·up is a product of two small numbers),
+  in-graph heads that pool at a reduced scale, and any model whose
+  activations are tiny everywhere (LFM2.5: every output projection at rms
+  0.003–0.07). A small activation range spares a range rewrite, but it
+  isn't safe on the ANE. Fix with a power-of-two scale folded into the
+  weights upstream. Cancel it with a scale-invariant norm or the final L2
+  normalize (EmbeddingGemma, D17). Where only a residual add follows,
+  cancel it with an explicit multiply rather than weights divided into
+  fp16's subnormal range (LFM2.5, D19).
+- **Keep every linear-layer output under 2^15 on the ANE.** The ANE's
+  `linear` op saturates at 32,768, half of fp16's 65,504: an output of
+  33,000 comes back inf. Its add, mul and layer_norm handle the full fp16
+  range, so fp16 headroom alone doesn't protect a projection. Measure the
+  largest output of every linear in fp32 with forward hooks. Keep it at or
+  below 0.85 × 2^15 by running the residual stream at a power-of-two 1/K
+  that the norms cancel (gte-modernbert: K = 2, D25). Massive activations
+  are the usual cause: ModernBERT writes one at 35,000–51,500.
+- **Don't use Core ML's native GELU or SiLU ops on the ANE.** Measured
+  absolute error on [-1, 1]: gelu ~6e-3, silu ~1.5e-2, versus tanh 1.6e-3,
+  sigmoid 3e-3, and exact mul/relu. Build GELU as
+  `x * (1 + tanh(x * (c + c·0.044715·x²)))` with the factor 2 absorbed
+  downstream, and SiLU as `x * (1 + tanh(x / 2))` (LFM2.5, F2LLM). Check the
+  converted program for surviving `gelu`/`silu` ops: coremltools has passes
+  that fuse such patterns, and `x * sigmoid(x)` converts straight back to
+  the native silu.
+- **Massive activations are not disqualifying.** A few feature dimensions
+  reaching tens of thousands on delimiter/[SEP] tokens (ModernBERT ~48,000,
+  EmbeddingGemma ~152,000) convert fine once attention is explicit and values
+  fit fp16. Their cost is a small per-token effect on those tokens. An
+  earlier version of this checklist called them an "ANE killer" under
+  LayerNorm; that was the fused-attention mask bug misdiagnosed (D25).
+- **Token mixing other than attention** (convs, SSMs): decide the padding
+  semantics explicitly. Attention masks silence pad *keys*, but anything
+  convolutional reads pad *states* — zero them per layer if the reference
+  is the unpadded forward (LFM2.5 constraint D).
+- **Each loaded bucket maps the whole model.** On disk, every bucket of a
+  chunk shares one weights file (D49), so 350M params ≈ 700 MB installed
+  for any number of buckets; in memory each loaded bucket still holds its
+  own ≈ 700 MB, and Core ML's compiled cache keeps one per bucket and
+  compute path. On the
+  GPU and the CPU that copy is in the user's cache; an ANE compile puts it
+  in the system's ANE cache instead, on the system volume, where deleting
+  the user's cache doesn't reach it (docs/design/coreml-cache.md).
+
+Gates to pass, in order: fp32 rewrite parity ≥ 0.9999 (only if rewriting),
+`CPU_ONLY` ≥ 0.999, `CPU_AND_NE` ≥ 0.999, `ane_check` per bucket (compute
+plan eligible and pad invariance on both paths; its ratio should be clearly
+above 1.0 on a quiet machine). Then generate a reference with
+`tools/parity_reference.py` and run the parity suite. It repeats those gates
+through the product code on every path and adds the adversarial corpus. Its
+grade is the one to publish, and `--suggest-floors` records it for the
+chip. For an embedder's ONNX build: the export's fp32 gate, then the
+suite's `onnx-cpu` path.
+
+For Core ML, flexible input shapes are ruled out (D15), and on macOS 27 one
+kind became dangerous. Under `.cpuOnly`, an artifact whose inputs have several
+enumerated shapes (`ct.EnumeratedShapes`) aborts the process at its first
+prediction ("E5RT: No memory object bound to port"). Under
+`.cpuAndNeuralEngine` and `.all` it still falls back to the CPU: 85 ms per
+bge-small embed at seq 128, where a static bucket takes 2.2 ms on the ANE.
+The abort is an Objective-C exception Rust can't catch. It would take down
+`sidekickd`, or the host app linking `libsidekick.dylib`.
+
+So on macOS 27, `CoremlModel::load` refuses such a model, whatever the
+compute units, with an error that names the input. Two cases only get a
+warning: range-shaped inputs (`ct.RangeDim`), which run on the CPU and never
+aborted, and any flexible layout on earlier macOS (D27). Always ship one
+static-shape artifact per bucket, and run `ane_check` on each: it reads the
+compute plan without predicting, so it rejects any flexible artifact without
+running it.
+
+Make every parity metric NaN-safe. `min(worst, cos)` returns the old value
+when `cos` is NaN, which hid a NaN-producing CPU path behind "parity
+1.000000" during the ModernBERT investigation; fail on non-finite output
+instead, as the converters' parity checks do.
+
+Three hard-won measurement gotchas: run residency checks on a quiet machine
+(see [the method note](MODELS.md) — concurrent GPU load makes ratios swing 2x), and
+treat `E5RT ... ANECCompile() FAILED` stderr lines as *possibly transient
+service state*, not proof of a bad artifact — the same file measured 1.48x
+with failures and 2.63x clean forty minutes apart. Re-measure before
+re-converting. Likewise, a compute plan with *every* operation unassigned
+("no operations are assigned to any compute device"), or "internal
+failure", can be a broken entry in Core ML's compiled-bundle cache for that
+path (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`, D24).
+An embeddinggemma artifact read that way repeatedly while predicting at ANE
+speed, and the same file copied to another path read normally (2015/2024).
+Those caches grow large: the parity suite's reached 40 GB and ane_check's
+25 GB. They're safe to delete, but that frees only the GPU and CPU
+programs. Each ANE compile also leaves about its program's weights in the
+system's ANE cache, on the system volume, which users can't delete
+(System Integrity Protection); those copies accumulate with every
+recompile, from throwaway homes too (docs/design/coreml-cache.md).
 
 ## Tests
 

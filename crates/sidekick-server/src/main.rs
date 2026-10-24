@@ -257,4 +257,101 @@ mod tests {
         assert_eq!(serve.warm_budget_secs, Some(0));
         assert!(!Args::try_parse_from(["sidekickd"]).unwrap().no_warm);
     }
+
+    /// docs/CONFIG.md names every setting the daemon reads: each config key
+    /// (top level and `[models."<id>"]`), each flag of every command, and
+    /// each environment variable. Keys come from serde's own list of the
+    /// fields it accepts, flags from clap, and environment variables from
+    /// the crates' sources, so a new setting fails here until it is
+    /// documented.
+    #[test]
+    fn config_md_documents_every_setting() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let doc = std::fs::read_to_string(root.join("docs/CONFIG.md")).expect("docs/CONFIG.md");
+        let mut missing = Vec::new();
+
+        // Config keys: the fields serde lists when it refuses an unknown one.
+        let fields = |toml_text: &str| -> Vec<String> {
+            let err = toml::from_str::<Config>(toml_text).expect_err("an unknown key is refused").to_string();
+            // "expected `a`", "expected `a` or `b`", or "expected one of `a`, `b`, …".
+            let list = err.split(", expected").nth(1).unwrap_or_else(|| panic!("serde's field list: {err}"));
+            list.split('`').skip(1).step_by(2).map(str::to_string).collect()
+        };
+        let keys = fields("not_a_config_key = 1");
+        let model_keys = fields("[models.m]\nnot_a_config_key = 1");
+        assert!(keys.contains(&"addr".to_string()) && model_keys.contains(&"compute_units".to_string()));
+        for key in keys.iter().chain(&model_keys) {
+            if !doc.contains(&format!("`{key}`")) {
+                missing.push(format!("config key `{key}`"));
+            }
+        }
+
+        // Flags and the environment variables clap reads, for every command.
+        fn walk(cmd: &clap::Command, missing: &mut Vec<String>, doc: &str) {
+            for arg in cmd.get_arguments().filter(|a| !a.is_hide_set()) {
+                if let Some(long) = arg.get_long().filter(|l| !["help", "version"].contains(l)) {
+                    // `--flag` alone, or `--flag <value>`.
+                    if !doc.contains(&format!("`--{long}`")) && !doc.contains(&format!("`--{long} ")) {
+                        missing.push(format!("flag --{long} ({})", cmd.get_name()));
+                    }
+                }
+                if let Some(env) = arg.get_env() {
+                    let env = env.to_string_lossy();
+                    if !doc.contains(&format!("`{env}`")) {
+                        missing.push(format!("environment variable {env}"));
+                    }
+                }
+            }
+            for sub in cmd.get_subcommands() {
+                if !doc.contains(&format!("sidekickd {}", sub.get_name())) {
+                    missing.push(format!("command `sidekickd {}`", sub.get_name()));
+                }
+                walk(sub, missing, doc);
+            }
+        }
+        walk(&Args::command(), &mut missing, &doc);
+
+        // Environment variables the code reads: every string literal in the
+        // crates' non-test sources shaped like one of sidekick's, ONNX
+        // Runtime's or Hugging Face's, and `PATH`. RUST_LOG is read inside
+        // tracing-subscriber. SIDEKICK_FM_SDK is set by sidekick-fm's build
+        // script for the compiler, not read from the environment.
+        const PREFIXES: [&str; 7] = ["SIDEKICK_", "ORT_", "HF_", "HUGGINGFACE_", "TRANSFORMERS_", "XDG_", "RUST_"];
+        let mut vars = std::collections::BTreeSet::from(["RUST_LOG".to_string()]);
+        let mut files = Vec::new();
+        for krate in std::fs::read_dir(root.join("crates")).unwrap() {
+            let krate = krate.unwrap().path();
+            files.push(krate.join("build.rs"));
+            let mut dirs = vec![krate.join("src")];
+            while let Some(dir) = dirs.pop() {
+                for entry in std::fs::read_dir(&dir).into_iter().flatten() {
+                    let path = entry.unwrap().path();
+                    if path.is_dir() {
+                        dirs.push(path);
+                    } else if path.extension().is_some_and(|e| e == "rs") {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+        for file in files.iter().filter(|f| f.is_file()) {
+            let text = std::fs::read_to_string(file).unwrap();
+            // Tests sit at the end of a file; what they read isn't the daemon's.
+            let code = text.split("#[cfg(test)]").next().unwrap();
+            for literal in code.split('"').skip(1).step_by(2) {
+                let shaped = literal.len() > 3 && literal.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+                if shaped && (literal == "PATH" || PREFIXES.iter().any(|p| literal.starts_with(p))) && literal != "SIDEKICK_FM_SDK" {
+                    vars.insert(literal.to_string());
+                }
+            }
+        }
+        assert!(vars.contains("ORT_DYLIB_PATH") && vars.contains("HF_HUB_CACHE"), "the source scan found {vars:?}");
+        for var in vars {
+            if !doc.contains(&format!("`{var}`")) {
+                missing.push(format!("environment variable {var}"));
+            }
+        }
+
+        assert!(missing.is_empty(), "docs/CONFIG.md doesn't document: {}", missing.join(", "));
+    }
 }

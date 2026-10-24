@@ -46,12 +46,12 @@ otherwise 1) and refuses a stated tier that differs, so a verdict can't
 drift from its evidence. Tier 3 is the one judgement it can't recompute, so
 a tier-3 entry must record the licence terms that put it there.
 
-Today no model is tier 1: MS MARCO, Natural Questions, SNLI, MultiNLI and
-undisclosed corpora are in nearly every model's training data. 18 models are
-2a, 9 are 2b, and LFM2.5-Embedding-350M is tier 3: its licence licenses
-commercial use only below a revenue threshold, which a publisher can't
-vouch for on a user's behalf. [MODELS.md](MODELS.md#licences-and-training-data)
-summarizes them.
+No model is tier 1 today: MS MARCO, Natural Questions, SNLI, MultiNLI and
+undisclosed corpora are in nearly every model's training data.
+LFM2.5-Embedding-350M is tier 3: its licence licenses commercial use only
+below a revenue threshold, which a publisher can't vouch for on a user's
+behalf. Each model's tier is in licences.toml, and
+[MODELS.md](MODELS.md#licences-and-training-data) summarizes them.
 
 ## Repositories and their layout
 
@@ -177,12 +177,12 @@ release candidate, not published), so the package hashes #136 asks for
 (the weights and spec before compilation) can be taken from them; recording
 them in the ledger is a follow-up too.
 
-The ledger holds 36 builds today: 16 hashed from build directories, and 20
-recorded from the SHA256SUMS and size listings of archived copies
-(`evidence = "sha256sums"`), whose local directories were deleted once the
-archive was verified. Four of the archived and hashed builds carry the same
-fingerprints as the MTEB transfer runs in data/mteb_transfer.json, so those
-runs are tied to recorded files.
+Some builds were hashed from their directories, others recorded from the
+SHA256SUMS and size listings of archived copies (`evidence =
+"sha256sums"`), whose local directories were deleted once the archive was
+verified; `ledger.py list` shows them all. Builds whose fingerprints match
+the MTEB transfer runs in data/mteb_transfer.json tie those runs to
+recorded files.
 
 ## Model cards
 
@@ -202,10 +202,12 @@ Gemma Terms of Use) are fetched from their source at upload.
 A card holds only what is particular to its model and its builds.
 Everything that is the same for every model lives once in sidekick's docs,
 and the card links there, so a correction is made in one place and no card
-can drift from it: how fetch works and how to install by hand (README),
-what a grade means and the benchmark caveats (docs/MODELS.md), the tier
+can drift from it: how fetch works and how to install by hand
+([RUNNING.md](RUNNING.md#installing-models)), how to call the model
+([API.md](API.md)), what a grade means and the benchmark caveats
+([MODELS.md](MODELS.md)), the tier
 policy and the gate (this document), and how to reproduce a build
-(docs/CONVERTING.md). In order:
+([CONVERTING.md](CONVERTING.md#reproducing-a-published-build)). In order:
 
 | Section | What it holds |
 |---|---|
@@ -386,11 +388,10 @@ enforce use, and a copy made after download isn't gated.
   first downloads every variant's manifest and TERMS.md; the buckets asked
   for (all by default) become `hf download --include` patterns for that
   variant's manifest, tokenizer and programs.
-- **The files land in the Hugging Face cache,** through the user's `hf` CLI
-  when it is installed (its token, Xet, `HF_HOME` and `HF_HUB_CACHE`), else
-  through sidekickd's own anonymous downloader, which writes the same cache
-  layout. The cache stores each distinct file once as a blob, so a shared
-  weights file (D49) downloads once whatever its paths.
+- **The files land in the Hugging Face cache,** which stores each distinct
+  file once as a blob, so a shared weights file (D49) downloads once
+  whatever its paths. How fetch downloads (the `hf` CLI or its own
+  downloader) is in [RUNNING.md](RUNNING.md#fetching-a-published-build).
 - **Every file is verified** against the Hub's hash for it (the sha256 of
   an LFS or Xet file, the Git blob id of any other) and against the
   ledger: the files must be one of the builds it records for that model,
@@ -403,20 +404,12 @@ enforce use, and a copy made after download isn't gated.
 - **The model directory is hard links to the cached blobs,** every path of
   it, with the manifest rewritten for exactly the buckets fetched and a
   `fetch.toml` recording the repository, commit and every file's sha256.
-  Not symlinks into the snapshot, every file of which is a symlink into
-  `blobs/`: measured on an M1 Max under macOS 27.0, bge-small-en-v1.5's
-  compiled programs with their files symlinked there are planned entirely
-  off the ANE without an error (0 of 245 operations on the ANE instead of
-  229, 28 ms per prediction instead of 2, outputs off by up to 0.016).
-  That happens when Core ML's current loader can't compile a program for
-  the ANE (bge-small's fused attention, D25) and falls back to its older
-  one, which can't read a link that leaves the program directory. Programs
-  the current loader takes stayed on the ANE through symlinks, measured on
-  synthetic programs and yet to be confirmed on a sidekick build (D51's
-  amendment). Hard links and copies stay on the ANE, bit-identical, in
-  either case, and the registry refuses an ANE-served program with a
-  symlinked file. Where the filesystem refuses a link (the cache on
-  another volume), fetch copies.
+  Not symlinks into the snapshot: a program whose files link out of its
+  directory can run off the ANE without an error
+  ([design/coreml-cache.md](design/coreml-cache.md#symlinks-and-the-fallback-loader)),
+  and the registry refuses an ANE-served program with a symlinked file.
+  Where the filesystem refuses a link (the cache on another volume),
+  fetch copies.
 - **The tier:** a repository with TERMS.md (tier 2b) needs `--accept-terms
   <model>` first; tier 3 is never published, so there's nothing to fetch.
 - **Then it compiles:** for a Core ML build the daemon will serve, fetch
@@ -448,3 +441,6 @@ Not automated yet; for the first uploads:
    if not, re-upload with each distinct file at its first path only.
 6. Tag the repository commit `sidekick-vX.Y.Z`, and record it:
    `ledger.py published ID --repo ... --revision ... --sidekick X.Y.Z`.
+   Then run `tools/models_table.py --docs`, which lists the build in
+   MODELS.md's [Published builds](MODELS.md#published-builds); CI fails
+   until the list matches the ledger.

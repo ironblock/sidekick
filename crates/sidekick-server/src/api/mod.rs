@@ -98,7 +98,7 @@ pub fn wrong_route(id: &str, task: &str, route: &str) -> ApiError {
     )
 }
 
-/// Provenance headers for an inference response (docs/design/classify.md):
+/// Provenance headers for an inference response (docs/API.md):
 /// the daemon version, the model (`<id>@<revision>` when its manifest
 /// names a source revision), the compute units the serving instance was
 /// loaded with, and the sequence-length bucket each input ran in. Chat has

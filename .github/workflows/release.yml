@@ -148,7 +148,14 @@ jobs:
           cp "$(dirname "${ORT_LIB}")/../ThirdPartyNotices.txt" "dist/${NAME}/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"
           cp target/release/libsidekick.dylib "dist/${NAME}/"
           cp crates/sidekick-embed-ffi/include/sidekick.h "dist/${NAME}/"
-          cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/INTEGRATING.md "dist/${NAME}/"
+          cp LICENSE THIRD_PARTY_NOTICES.md "dist/${NAME}/"
+          # The archive's README.md and INTEGRATING.md link into the
+          # repository; pinned to this release's tag, since a relative link
+          # resolves to nothing once unpacked. Fails if one survives.
+          REF="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then REF="$(git rev-parse HEAD)"; fi
+          python3 tools/doclinks.py pin --ref "${REF}" README.md "dist/${NAME}/README.md"
+          python3 tools/doclinks.py pin --ref "${REF}" docs/INTEGRATING.md "dist/${NAME}/INTEGRATING.md"
           cp "docs/releases/${{ needs.notes.outputs.version }}.md" "dist/${NAME}/RELEASE_NOTES.md"
           tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
           (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
@@ -218,7 +225,14 @@ jobs:
           cp "${ORT_LIB}" "dist/${NAME}/libonnxruntime.so"
           cp "$(dirname "${ORT_LIB}")/../LICENSE" "dist/${NAME}/ONNXRUNTIME_LICENSE"
           cp "$(dirname "${ORT_LIB}")/../ThirdPartyNotices.txt" "dist/${NAME}/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"
-          cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/INTEGRATING.md "dist/${NAME}/"
+          cp LICENSE THIRD_PARTY_NOTICES.md "dist/${NAME}/"
+          # The archive's README.md and INTEGRATING.md link into the
+          # repository; pinned to this release's tag, since a relative link
+          # resolves to nothing once unpacked. Fails if one survives.
+          REF="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then REF="$(git rev-parse HEAD)"; fi
+          python3 tools/doclinks.py pin --ref "${REF}" README.md "dist/${NAME}/README.md"
+          python3 tools/doclinks.py pin --ref "${REF}" docs/INTEGRATING.md "dist/${NAME}/INTEGRATING.md"
           cp "docs/releases/${{ needs.notes.outputs.version }}.md" "dist/${NAME}/RELEASE_NOTES.md"
           tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
           (cd dist && sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
@@ -276,7 +290,14 @@ jobs:
           cp "${ORT_LIB}" "dist/${NAME}/libonnxruntime.dylib"
           cp "$(dirname "${ORT_LIB}")/../LICENSE" "dist/${NAME}/ONNXRUNTIME_LICENSE"
           cp "$(dirname "${ORT_LIB}")/../ThirdPartyNotices.txt" "dist/${NAME}/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt"
-          cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/INTEGRATING.md "dist/${NAME}/"
+          cp LICENSE THIRD_PARTY_NOTICES.md "dist/${NAME}/"
+          # The archive's README.md and INTEGRATING.md link into the
+          # repository; pinned to this release's tag, since a relative link
+          # resolves to nothing once unpacked. Fails if one survives.
+          REF="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then REF="$(git rev-parse HEAD)"; fi
+          python3 tools/doclinks.py pin --ref "${REF}" README.md "dist/${NAME}/README.md"
+          python3 tools/doclinks.py pin --ref "${REF}" docs/INTEGRATING.md "dist/${NAME}/INTEGRATING.md"
           cp "docs/releases/${{ needs.notes.outputs.version }}.md" "dist/${NAME}/RELEASE_NOTES.md"
           tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
           (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")

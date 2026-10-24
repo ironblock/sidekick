@@ -1,10 +1,13 @@
 # Decision log
 
-Autonomous judgment calls made during initial implementation, so review can
-target the decisions rather than reverse-engineer them. Newest last.
+Why sidekick works the way it does: each architectural decision, the
+evidence it rests on and the alternatives it turned down, numbered in the
+order they were made (newest last). An entry is amended in place when a
+later measurement or decision changes it, and the amendment says what
+changed; the code and the other docs cite entries by number (D1, D2, …).
 
 ## D1 — Daemon is OpenAI-compatible; the tier router lives behind it, not beside it
-Per discussion: `sidekickd` mimics llama.cpp/MLX servers in miniature. The
+`sidekickd` mimics llama.cpp/MLX servers in miniature. The
 "library" consumer shape still exists (crates are cleanly layered), but no
 separate library facade was built yet — YAGNI until a second consumer shows up.
 
@@ -136,6 +139,15 @@ compute plans (D35) and chunked models (D37); and, for ONNX Runtime
 (never a path), each onnx model's threads and their source, the
 detected cores, and which models are quantized. It still carries no
 credentials.
+
+**Amendment (October 2026): the key guards every route but `/health`.**
+"`/v1/*` only" stopped being exact when routes outside `/v1/` arrived:
+`/rerank` and Cohere's `/v2/rerank` and `/v2/embed` (D29), and vLLM's
+`/tokenize` and `/detokenize` (D44). Each of them serves a model as the
+`/v1/` routes do, so the key guards them too: with an `api_key` set,
+every route needs `Authorization: Bearer <key>` except `/health`, which
+stays open for probes. A missing or wrong key is a 401 with code
+`invalid_api_key`. A client that probes `/v1/models` must send the key.
 
 ## D14 — Compute units default to `.cpuAndNeuralEngine`
 Not `.all`: keeping background work off the GPU is the project's thesis. The
@@ -3279,6 +3291,12 @@ do, and the prompts are copied from the checkpoint into the manifest.
   and say so. If a client needs `START` with an instruction, or more
   instruction models arrive, an `instruction` field can be added beside
   `prompt_name` without changing it.
+
+  The same holds for the model's own document prompt. Measured on a
+  900-word text, that prompt typed into the text under `none` against the
+  default request, both truncated the same way: under `START`, cosine
+  0.877 for EmbeddingGemma and 0.893 for LFM2.5-Embedding-350M; under
+  `END`, identical vectors.
 
 ## D46 — How far each build goes toward its model's context
 Most builds stop short of their model's trained context, because the
