@@ -54,11 +54,20 @@
 #   base_pretraining            what the base model declares for pretraining
 #   custom_terms                terms that travel with the weights, and what
 #                               they require of a redistributor
+#   licence_text                the licence text a published build carries
+#                               as LICENSE: a file in docs/data/licence-texts/
+#                               (its index.toml records the source, pinned,
+#                               and the sha256). Required for an MIT or
+#                               Apache-2.0 model that is published
+#   notice_text                 the upstream NOTICE file a published build
+#                               carries as NOTICE (Apache-2.0 Section 4(d)),
+#                               likewise, where the model's repository has one
 #   ship_files                  files from the source repository, at the
 #                               pinned revision, that a published build
-#                               carries
+#                               carries, copied at upload
 #   notice                      text a published build carries as its own
-#                               NOTICE file
+#                               NOTICE file (one sidekick writes, such as the
+#                               Gemma Terms of Use's required notice)
 #   ship_copies                 documents a published build carries a copy
 #                               of, taken from `url` when it is uploaded
 #   concerns                    what the card's notice states:
@@ -116,6 +125,7 @@ training_data = [
 ]
 base_pretraining = "MiniLM (6-layer cut of microsoft/MiniLM-L12-H384-uncased) distilled on English Wikipedia and BookCorpus per the MiniLM paper (arXiv 2002.10957v2, read via its HTML rendering); Wikipedia is CC BY-SA, BookCorpus has no licence from its authors."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = [
   "non-commercial-data",
   "copyleft-data",
@@ -149,6 +159,7 @@ training_data = [
 ]
 base_pretraining = "No base model declared; BAAI pre-trained it with RetroMAE on a corpus not named for the English models."
 custom_terms = []
+licence_text = "flagopen-flagembedding.LICENSE"
 concerns = ["undisclosed-data"]
 tier = "2a"
 reason = "The card permits commercial use, but neither it nor the C-Pack paper names the English pre-training corpus or the sources of the ~200M English training pairs. Undisclosed training data: 2a."
@@ -179,6 +190,7 @@ training_data = [
 ]
 base_pretraining = "MiniLM, distilled on English Wikipedia and BookCorpus per arXiv 2002.10957v2; Wikipedia is CC BY-SA. The E5 paper says E5-small is 'initialized from MiniLM'; the exact checkpoint is inferred from the matching 12-layer, 384-dim shape (unilm e5 README at 31c5b904ca1bf2afb4c234a6675c683a4e5fc7cd)."
 custom_terms = []
+licence_text = "mit.txt"
 concerns = [
   "non-commercial-data",
   "copyleft-data",
@@ -218,6 +230,7 @@ training_data = [
 ]
 base_pretraining = "ModernBERT-base card: '2 trillion tokens of English text and code'; sources not itemised on the card (undisclosed at the card level)."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = [
   "non-commercial-data",
   "copyleft-data",
@@ -290,6 +303,7 @@ base_pretraining = "No separate base checkpoint is declared; the card's Model Da
 custom_terms = [
   { name = "Gemma Prohibited Use Policy (required by the model card)", url = "https://ai.google.dev/gemma/prohibited_use_policy", requires = "The model card at the pinned revision says 'Deployments must adhere to the Gemma Prohibited Use Policy'. Not a condition of Apache-2.0 itself, but the card states it as a requirement; a redistributor should reproduce the statement and link to https://ai.google.dev/gemma/prohibited_use_policy. Apache-2.0 Section 4 otherwise applies: include the licence, mark modified (converted) files, keep attribution notices (the repo has no NOTICE file)." },
 ]
+licence_text = "apache-2.0.txt"
 concerns = [
   "use-policy",
   "undisclosed-data",
@@ -326,6 +340,7 @@ training_data = [
 ]
 base_pretraining = "Pruned from F2LLM-v2-0.6B-Preview (Apache-2.0), which was trained from Qwen/Qwen3-0.6B (Apache-2.0) on the same F2LLM-v2 data; Qwen3 pre-training: 36T tokens, sources undisclosed (Qwen3-0.6B-Base card)."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = [
   "non-commercial-data",
   "copyleft-data",
@@ -396,6 +411,7 @@ training_data = [
 ]
 base_pretraining = "Qwen3-0.6B-Base card: 'pre-trained on 36 trillion tokens across 119 languages' including 'coding, STEM, reasoning, book, multilingual, and synthetic data'; sources not disclosed."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = [
   "non-commercial-data",
   "copyleft-data",
@@ -426,6 +442,7 @@ training_data = [
 ]
 base_pretraining = "Wikipedia in the 102 languages with the largest Wikipedias (base card, 'Training data'); Wikipedia text is CC BY-SA, so copyleft."
 custom_terms = []
+licence_text = "mit.txt"
 concerns = ["undisclosed-data"]
 tier = "2a"
 reason = "Fine-tuned on product reviews in six languages whose source and terms the card doesn't state. Undisclosed training data: 2a."
@@ -453,6 +470,7 @@ training_data = [
 ]
 base_pretraining = "ModernBERT-large card: '2 trillion tokens of English text and code'; the card names no corpora (it defers to the paper). Recorded as partially disclosed."
 custom_terms = []
+licence_text = "nandhakishorm-laya.LICENSE"
 concerns = ["undisclosed-data"]
 tier = "2a"
 reason = "The card describes its training data by task family only. Undisclosed training data: 2a."
@@ -481,6 +499,7 @@ training_data = [
 ]
 base_pretraining = "Base is laya (see laya-en): its own fine-tuning data is undisclosed (13 task families named, no datasets); its backbone ModernBERT-large was pretrained on '2 trillion tokens of English text and code' with no corpora listed on its card."
 custom_terms = []
+licence_text = "nandhakishorm-laya.LICENSE"
 concerns = [
   "unnamed-synthetic-generator",
   "undisclosed-data",
@@ -511,6 +530,7 @@ training_data = [
 ]
 base_pretraining = "mmBERT-small card: 3T+ tokens over five phases, published as jhu-clsp/mmbert-* datasets (each card says MIT: p1 d9929e1c, p2 7695a8f1, p3 e7c27a30, midtraining a0bf7f69, decay f9ced60b). Sources per the card: filtered DCLM, FineWeb2, FineWeb2-HQ, Wikipedia (MegaWika), StarCoder and ProLong code, ArXiv, PeS2o and StackExchange. Wikipedia and StackExchange are CC BY-SA, so copyleft; the MIT label on the aggregated dataset cards does not relicense their sources."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = ["undisclosed-data"]
 tier = "2a"
 reason = "Fine-tuned on 'decision-format examples' from a pipeline the card doesn't describe. Undisclosed training data: 2a."
@@ -538,6 +558,7 @@ training_data = [
 ]
 base_pretraining = "gliner2-large-v1 card: 'Multi-domain datasets for NER, classification, and structured extraction' (no names). The GLiNER2 paper (arXiv 2507.18546v1) describes 254k examples: 136k real documents (news, Wikipedia, law, PubMed, arXiv; no datasets or licences named) and 119k synthetic examples generated with GPT-4o, all annotated with GPT-4o (OpenAI terms restrict using outputs to develop competing models; that binds the generator's customer, its reach to weights is unsettled); Wikipedia is CC BY-SA. Encoder: DeBERTa-v3-large (MIT; card says 160GB 'as DeBERTa V2')."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = ["undisclosed-data"]
 tier = "2a"
 reason = "The card describes no fine-tuning data. Undisclosed training data: 2a."
@@ -569,7 +590,8 @@ training_data = [
 ]
 base_pretraining = "Nandi-Mini-150M: pre-trained from scratch on 525B tokens of English and 10 Indic languages; card promises dataset composition 'coming soon'; no datasets or licences named."
 custom_terms = []
-ship_files = ["NOTICE"]
+licence_text = "frontiersmind-lumma-fev-0.1b.LICENSE"
+notice_text = "frontiersmind-lumma-fev-0.1b.NOTICE"
 concerns = [
   "unnamed-synthetic-generator",
   "undisclosed-data",
@@ -603,6 +625,7 @@ training_data = [
 ]
 base_pretraining = "Qwen3-0.6B-Base card: 36T tokens across 119 languages (coding, STEM, reasoning, book, multilingual and synthetic data); no datasets or licences named."
 custom_terms = []
+licence_text = "malevrigns-agent-jev.LICENSE"
 concerns = ["unnamed-synthetic-generator"]
 tier = "2a"
 reason = "Its declared data is permissive (LocalLLaMA/typed-decisions, Apache-2.0; MBPP, CC BY 4.0), but typed-decisions is synthetic from an unnamed generator and teacher, whose output terms can't be checked. Synthetic data from an unnamed generator: 2a."
@@ -630,6 +653,7 @@ training_data = [
 ]
 base_pretraining = "Declared base cross-encoder/ms-marco-MiniLM-L12-v2 is itself MS MARCO-trained, from microsoft/MiniLM-L12-H384-uncased (MIT, rev 44acabbe), distilled from an in-house UniLMv2 teacher trained on 'English Wikipedia, BookCorpus, OpenWebText, CC-News, and Stories' (MiniLM paper, arXiv 2002.10957, section 5.1). Wikipedia is CC BY-SA; BookCorpus and the web corpora carry no licence of their own."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = ["non-commercial-data"]
 tier = "2b"
 reason = "Trained on MS MARCO passage ranking, whose terms limit it to non-commercial research. Non-commercial training data: 2b."
@@ -658,6 +682,7 @@ training_data = [
 ]
 base_pretraining = "MiniLMv2 L6xH768 distilled from RoBERTa-Large; MiniLMv2 paper (arXiv 2012.15828): 'For models distilled from RoBERTa, we use similar pre-training datasets as in' RoBERTa (BookCorpus, Wikipedia, CC-News, OpenWebText, Stories), not itemised. Wikipedia is CC BY-SA (copyleft)."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Fine-tuned on SNLI (CC BY-SA 4.0) and MultiNLI (mostly under the permissive OANC licence, with one CC BY-SA 3.0 work). Share-alike training data and nothing non-commercial: 2a."
@@ -686,6 +711,7 @@ training_data = [
 ]
 base_pretraining = "DeBERTa-v3 card: 'trained using the 160GB data as DeBERTa V2'; DeBERTaV3 paper (arXiv 2111.09543, Table 12) itemises it as Wikipedia + BookCorpus (16GB), OpenWebText (38GB), Stories (31GB), CC-News (76GB). Wikipedia is CC BY-SA (copyleft); BookCorpus is unlicensed scraped books; the rest is crawled web text with no licence."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Fine-tuned on SNLI (CC BY-SA 4.0) and MultiNLI (mostly under the permissive OANC licence, with one CC BY-SA 3.0 work). Share-alike training data and nothing non-commercial: 2a."
@@ -712,6 +738,7 @@ training_data = [
 ]
 base_pretraining = "DeBERTa-v3 card: 'trained using the 160GB data as DeBERTa V2'; DeBERTaV3 paper (arXiv 2111.09543, Table 12) itemises it as Wikipedia + BookCorpus (16GB), OpenWebText (38GB), Stories (31GB), CC-News (76GB). Wikipedia is CC BY-SA (copyleft); BookCorpus is unlicensed scraped books; the rest is crawled web text with no licence."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Fine-tuned on SNLI (CC BY-SA 4.0) and MultiNLI (mostly under the permissive OANC licence, with one CC BY-SA 3.0 work). Share-alike training data and nothing non-commercial: 2a."
@@ -738,6 +765,7 @@ training_data = [
 ]
 base_pretraining = "DeBERTa-v3 card: 'trained using the 160GB data as DeBERTa V2'; DeBERTaV3 paper (arXiv 2111.09543, Table 12) itemises it as Wikipedia + BookCorpus (16GB), OpenWebText (38GB), Stories (31GB), CC-News (76GB). Wikipedia is CC BY-SA (copyleft); BookCorpus is unlicensed scraped books; the rest is crawled web text with no licence."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Fine-tuned on SNLI (CC BY-SA 4.0) and MultiNLI (mostly under the permissive OANC licence, with one CC BY-SA 3.0 work). Share-alike training data and nothing non-commercial: 2a."
@@ -763,6 +791,7 @@ training_data = [
 ]
 base_pretraining = "roberta-large card (and roberta-large-mnli card, quoting it): BookCorpus, English Wikipedia, CC-News, OpenWebText, Stories (160GB). Wikipedia is CC BY-SA (copyleft); BookCorpus is unlicensed scraped books; the rest is crawled web text with no licence."
 custom_terms = []
+licence_text = "mit.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Fine-tuned on MultiNLI only, whose fiction genre includes one CC BY-SA 3.0 work. Share-alike training data: 2a, the narrowest exposure of any model here."
@@ -792,6 +821,7 @@ training_data = [
 ]
 base_pretraining = "MiniLMv2 L6xH768 distilled from RoBERTa-Large; MiniLMv2 paper (arXiv 2012.15828): 'For models distilled from RoBERTa, we use similar pre-training datasets as in' RoBERTa (BookCorpus, Wikipedia, CC-News, OpenWebText, Stories), not itemised. Wikipedia is CC BY-SA (copyleft)."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Fine-tuned on SNLI (CC BY-SA 4.0) and MultiNLI (mostly under the permissive OANC licence, with one CC BY-SA 3.0 work). Share-alike training data and nothing non-commercial: 2a. The same checkpoint as nli-minilm2-l6-h768; only the conversion differs."
@@ -822,6 +852,7 @@ training_data = [
 ]
 base_pretraining = "DeBERTa-v3 card: 'trained using the 160GB data as DeBERTa V2'; DeBERTaV3 paper (arXiv 2111.09543, Table 12) itemises it as Wikipedia + BookCorpus (16GB), OpenWebText (38GB), Stories (31GB), CC-News (76GB). Wikipedia is CC BY-SA (copyleft); BookCorpus is unlicensed scraped books; the rest is crawled web text with no licence."
 custom_terms = []
+licence_text = "mit.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Trained on Mixtral-generated synthetic data (Apache-2.0), MultiNLI (one CC BY-SA 3.0 work) and FEVER-NLI, whose Wikipedia evidence is CC BY-SA 3.0. No ANLI. Share-alike training data and nothing non-commercial: 2a."
@@ -853,6 +884,7 @@ training_data = [
 ]
 base_pretraining = "DeBERTa-v3 card: 'trained using the 160GB data as DeBERTa V2'; DeBERTaV3 paper (arXiv 2111.09543, Table 12) itemises it as Wikipedia + BookCorpus (16GB), OpenWebText (38GB), Stories (31GB), CC-News (76GB). Wikipedia is CC BY-SA (copyleft); BookCorpus is unlicensed scraped books; the rest is crawled web text with no licence."
 custom_terms = []
+licence_text = "mit.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Trained on Mixtral-generated synthetic data (Apache-2.0), MultiNLI (one CC BY-SA 3.0 work) and FEVER-NLI, whose Wikipedia evidence is CC BY-SA 3.0. No ANLI. Share-alike training data and nothing non-commercial: 2a. Its config names the non -c model, which trained partly on ANLI, as its origin; its weights' hash and upload date argue against that lineage (see unverified)."
@@ -885,6 +917,7 @@ training_data = [
 ]
 base_pretraining = "roberta-large card (and roberta-large-mnli card, quoting it): BookCorpus, English Wikipedia, CC-News, OpenWebText, Stories (160GB). Wikipedia is CC BY-SA (copyleft); BookCorpus is unlicensed scraped books; the rest is crawled web text with no licence."
 custom_terms = []
+licence_text = "mit.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Trained on Mixtral-generated synthetic data (Apache-2.0), MultiNLI (one CC BY-SA 3.0 work) and FEVER-NLI, whose Wikipedia evidence is CC BY-SA 3.0. No ANLI. Share-alike training data and nothing non-commercial: 2a."
@@ -916,6 +949,7 @@ training_data = [
 ]
 base_pretraining = "bge-m3-retromae is FacebookAI/xlm-roberta-large (MIT, card at c23d21b0620b635a76227c604d44e43a9f0ee389; 2.5TB filtered CommonCrawl, 100 languages) extended to 8,192 tokens and further pretrained with RetroMAE on 'Pile, Wudao, and mC4' (BGE-M3 paper, arXiv 2402.03216v4). The Pile includes Books3 and other unlicensed text; mC4 is ODC-By; Wudao's licence was not checked."
 custom_terms = []
+licence_text = "mit.txt"
 concerns = ["copyleft-data"]
 tier = "2a"
 reason = "Trained on Mixtral-generated synthetic data (Apache-2.0), MultiNLI (one CC BY-SA 3.0 work) and FEVER-NLI, whose Wikipedia evidence is CC BY-SA 3.0. No ANLI. Share-alike training data and nothing non-commercial: 2a."
@@ -958,6 +992,7 @@ training_data = [
 ]
 base_pretraining = "ModernBERT-large: '2 trillion tokens of English text and code' (card); paper (arXiv 2412.13663v2) names only 'web documents, code, and scientific literature', not itemised or released. Undisclosed."
 custom_terms = []
+licence_text = "apache-2.0.txt"
 concerns = [
   "non-commercial-data",
   "copyleft-data",

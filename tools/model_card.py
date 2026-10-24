@@ -39,6 +39,9 @@ Without --out the card is printed. With --out, DIR receives the README.md,
 one `<variant>.sha256` per build (`shasum -a 256 -c` format, paths relative
 to the variant's directory), a NOTICE where the licence requires one, and
 for a tier-2b model TERMS.md, the consent terms fetch shows and records.
+It also writes LICENSE from the model's committed licence text
+(licences.toml's `licence_text`, docs/data/licence-texts/) and NOTICE from
+its upstream NOTICE (`notice_text`).
 Copies of documents the licence requires (licences.toml's `ship_copies`)
 are fetched from their source at upload, not generated here.
 --check renders every publishable model and backend the ledger holds builds
@@ -317,11 +320,64 @@ def notice(m, lic, link):
 
 
 def carried_files(lic):
+    """Files other than LICENSE and an upstream NOTICE that the licence asks
+    a published build to carry."""
     files = list(lic.get("ship_files", []))
     if lic.get("notice") and "NOTICE" not in files:
         files.append("NOTICE")
     files += [c["file"] for c in lic.get("ship_copies", [])]
     return files
+
+
+def licence_file(model, m, lic):
+    """The LICENSE a published build carries: the committed text named by
+    licence_text, byte for byte; for the SPDX MIT template (a model whose
+    repository publishes no licence file), with a header saying so and its
+    copyright line naming the model's authors."""
+    name = lic.get("licence_text")
+    if not name:
+        return None
+    text = (licences_mod.TEXTS / name).read_text()
+    if name != "mit.txt":
+        return text
+    repo, rev = split_source(m["source"])
+    card = lic["licence_sources"][0]
+    header = (f"{repo} is licensed under the MIT License by its authors, as its model card at revision {rev} "
+              f"states:\n{card}\nIts repository publishes no licence file or copyright line of its own. Below is "
+              "the MIT License's text from the SPDX License List, its copyright line naming the model's "
+              "authors.\n\n")
+    line = "Copyright (c) <year> <copyright holders>"
+    assert line in text, "the SPDX MIT text changed: update licence_file()"
+    return header + text.replace(line, f"Copyright (c) the authors of {repo}")
+
+
+def licence_rows(lic):
+    """The "Original model" rows naming the licence files this repository
+    carries, and where each came from."""
+    texts = licences_mod.load_texts()["texts"]
+    rows = []
+    name = lic.get("licence_text")
+    if name:
+        src = texts[name]["source"]
+        if name == "apache-2.0.txt":
+            what = (f"the [Apache License 2.0]({src}) as the Apache Software Foundation publishes it; the model's "
+                    "repository carries no licence file")
+        elif name == "mit.txt":
+            what = (f"the [MIT License]({src}), naming the model's authors; the model's repository carries no "
+                    "licence file or copyright line")
+        else:
+            what = f"the upstream licence text, with its copyright line, from [{short_source(src)}]({src})"
+        rows.append(["Licence file", f"`LICENSE`: {what}"])
+    if lic.get("notice_text"):
+        src = texts[lic["notice_text"]]["source"]
+        rows.append(["Notice file", f"`NOTICE`: the upstream NOTICE, from [{short_source(src)}]({src})"])
+    return rows
+
+
+def short_source(url):
+    """"FlagOpen/FlagEmbedding" from a pinned GitHub or Hugging Face link."""
+    parts = url.split("/")
+    return "/".join(parts[3:5]) if len(parts) > 4 else url
 
 
 def front_matter(model, m, manifest, lic, backend, builds):
@@ -573,6 +629,7 @@ def original(model, m, manifest_text, backend, builds, lic, link):
     rows = [["Model", f"[{repo}]({hf_url(repo, rev)})"],
             ["Revision", f"`{rev}`"],
             ["Licence", f"[{lic['licence']}]({lic['licence_sources'][0]})"],
+            *licence_rows(lic),
             ["Base model", base],
             ["Changes in this repository",
              f"Converted to {BACKEND_NAME[backend]} in {' and '.join(weights).lower()}"
@@ -686,7 +743,12 @@ def write(out, model, backend, build_ids, owner, ref=None):
     (out / "README.md").write_text(card)
     for b in builds:
         (out / f"{b['variant']}.sha256").write_text(sums_text(b))
-    if lic.get("notice"):
+    licence = licence_file(model, INPUTS["models"][model], lic)
+    if licence:
+        (out / "LICENSE").write_text(licence)
+    if lic.get("notice_text"):
+        (out / "NOTICE").write_bytes((licences_mod.TEXTS / lic["notice_text"]).read_bytes())
+    elif lic.get("notice"):
         (out / "NOTICE").write_text(lic["notice"] + "\n")
     if lic["tier"] == "2b":
         (out / "TERMS.md").write_text(terms_text(INPUTS["models"][model], lic))
@@ -708,6 +770,7 @@ def check():
             continue
         try:
             render(model, backend, links=link)
+            licence_file(model, INPUTS["models"][model], lic)
             n += 1
         except SystemExit as e:
             problems.append(f"{model} ({backend}): {e}")

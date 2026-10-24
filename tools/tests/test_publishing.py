@@ -237,10 +237,10 @@ def entry(**kw):
         "training_data": [{"name": "d", "licence": "MIT", "terms": "permissive",
                            "source": "https://example.org/d", "stage": "fine-tune"}],
         "base_pretraining": "", "custom_terms": [], "concerns": [], "tier": "1", "reason": "r",
-        "unverified": [], "read": "2026-10-21",
+        "unverified": [], "read": "2026-10-21", "licence_text": "mit.txt",
     }
     base.update(kw)
-    return base
+    return {k: v for k, v in base.items() if v is not None}
 
 
 class LicencesTest(unittest.TestCase):
@@ -271,10 +271,22 @@ class LicencesTest(unittest.TestCase):
         self.assertTrue(any("non-commercial data" in p for p in found), found)
 
     def test_tier_three_needs_its_terms(self):
-        found = self.check(entry(tier="3"))
+        found = self.check(entry(tier="3", licence="L", licence_text=None))
         self.assertTrue(any("tier 3" in p for p in found), found)
         terms = [{"name": "L", "url": "https://e.org/l", "requires": "a revenue cap"}]
-        self.assertEqual(self.check(entry(tier="3", custom_terms=terms, concerns=["custom-terms"])), [])
+        self.assertEqual(self.check(entry(tier="3", licence="L", licence_text=None, custom_terms=terms,
+                                          concerns=["custom-terms"])), [])
+        found = self.check(entry(tier="3", licence="L", custom_terms=terms, concerns=["custom-terms"]))
+        self.assertTrue(any("ships nothing" in p for p in found), found)
+
+    def test_licence_text(self):
+        found = self.check(entry(licence_text=None))
+        self.assertTrue(any("set licence_text" in p for p in found), found)
+        found = self.check(entry(licence_text="apache-2.0.txt"))
+        self.assertTrue(any("is the Apache-2.0 text" in p for p in found), found)
+        found = self.check(entry(licence_text="nowhere.txt"))
+        self.assertTrue(any("isn't in docs/data/licence-texts/index.toml" in p for p in found), found)
+        self.assertEqual(licences.text_problems(), [])
 
     def test_links_must_be_pinned(self):
         found = self.check(entry(licence_sources=["https://huggingface.co/a/b/blob/main/README.md"]))
@@ -345,6 +357,24 @@ class ModelCardTest(unittest.TestCase):
         card = model_card.render("bge-small-en-v1.5", "onnx")[0]
         self.assertIn("library_name: onnx", card)
         self.assertIn("828e1496d7fabb79cfa4dcd84fa38625c0d3d21da474a00f08db0f559940cf35", card)
+
+    def test_licence_files_written(self):
+        texts = TOOLS.parent / "docs" / "data" / "licence-texts"
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
+            model_card.write(Path(tmp) / "bge", "bge-small-en-v1.5", "coreml", [BGE_COREML], "o")
+            self.assertEqual((Path(tmp) / "bge" / "LICENSE").read_bytes(),
+                             (texts / "flagopen-flagembedding.LICENSE").read_bytes())
+            self.assertFalse((Path(tmp) / "bge" / "NOTICE").exists())
+            model_card.write(Path(tmp) / "lumma", "lumma-fev-0.1b", "coreml", None, "o")
+            self.assertEqual((Path(tmp) / "lumma" / "NOTICE").read_bytes(),
+                             (texts / "frontiersmind-lumma-fev-0.1b.NOTICE").read_bytes())
+            model_card.write(Path(tmp) / "roberta", "roberta-large-mnli", "coreml", None, "o")
+            mit = (Path(tmp) / "roberta" / "LICENSE").read_text()
+            self.assertIn("Copyright (c) the authors of FacebookAI/roberta-large-mnli", mit)
+            self.assertNotIn("<copyright holders>", mit)
+        card = model_card.render("bge-small-en-v1.5", build_ids=[BGE_COREML])[0]
+        self.assertIn("| Licence file | `LICENSE`: the upstream licence text, with its copyright line, from "
+                      "[FlagOpen/FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding/blob/", card)
 
     def test_tier_three_is_refused(self):
         with self.assertRaises(SystemExit):

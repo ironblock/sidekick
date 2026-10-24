@@ -1,0 +1,62 @@
+# The licence and NOTICE texts sidekick's published repositories carry
+# (docs/PUBLISHING.md, "Licence files"), byte for byte as their source
+# publishes them. Each model's entry in docs/data/licences.toml names its
+# `licence_text`, and `notice_text` where its upstream repository has a
+# NOTICE file; tools/model_card.py --out writes them as LICENSE and NOTICE
+# at the repository's root. tools/licences.py checks every file here
+# against its sha256.
+#
+# Fields: source (pinned to a revision where the host allows; a page that
+# can't be pinned is pinned by its sha256), sha256 of the file as committed,
+# the date it was read, and what it is for.
+#
+# A model's own repository is the first source. Where it carries no licence
+# file, the text comes from the repository its licence_sources cite, and
+# failing that from the licence's publisher: the Apache Software
+# Foundation's Apache-2.0 text, or the SPDX License List's MIT text, whose
+# copyright line tools/model_card.py fills with "the authors of <model>"
+# and explains in a header, because no copyright line was published.
+
+schema = 1
+
+[texts."apache-2.0.txt"]
+source = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+read = "2026-10-23"
+note = "The Apache License 2.0 as the Apache Software Foundation publishes it, for Apache-2.0 models whose repositories carry no licence file. The page can't be pinned to a revision; the sha256 pins the text."
+
+[texts."mit.txt"]
+source = "https://github.com/spdx/license-list-data/blob/31ba1a50e5397e00a304dbadc76531740e89ee48/text/MIT.txt"
+sha256 = "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+read = "2026-10-23"
+note = "The MIT License from the SPDX License List (v3.29.0), for MIT models whose repositories carry no licence file. Its copyright line is a template."
+
+[texts."flagopen-flagembedding.LICENSE"]
+source = "https://github.com/FlagOpen/FlagEmbedding/blob/fd1a2bdf69488ffebe0327999d4400d8c8058a0b/LICENSE"
+sha256 = "587a673933425dbc36ec61268d3b954051b2d3ef3c9b322ede357976055ffdd5"
+read = "2026-10-23"
+note = "bge-small-en-v1.5's MIT licence with its copyright line, from the FlagEmbedding repository its card cites; the model repository has no LICENSE file."
+
+[texts."nandhakishorm-laya.LICENSE"]
+source = "https://github.com/NandhaKishorM/laya/blob/6f0496f797dc7127265d62e1543a62de507d943c/LICENSE"
+sha256 = "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+read = "2026-10-23"
+note = "laya's Apache-2.0 licence, from the GitHub repository its card cites; the model repositories have no LICENSE file. The same terms as the ASF text, without its appendix. No NOTICE file at that revision."
+
+[texts."malevrigns-agent-jev.LICENSE"]
+source = "https://github.com/malevrigns/agent-jev/blob/ca6723b8b184b3cf380f7765089298dd5f1de8d6/LICENSE"
+sha256 = "f4d9b0aad8ff9e650f5890fa3eeb7c1311479cab901f8a9b416a2d9acaf54266"
+read = "2026-10-23"
+note = "agent-jev's Apache-2.0 licence, from the GitHub repository its card cites; the model repository has no LICENSE file. No NOTICE file at that revision."
+
+[texts."frontiersmind-lumma-fev-0.1b.LICENSE"]
+source = "https://huggingface.co/FrontiersMind/Lumma-fev-0.1b/blob/085f4705aa860a6404d6cc3ff17de8a2969ac0f4/LICENSE"
+sha256 = "31a0bd25f3b4cbb1c264ea54e90a3bd6e4a5a9acc064669e6a2121640b5eb369"
+read = "2026-10-23"
+note = "From the model's own repository. It differs from the ASF text in two places: its appendix names the copyright holder, and Section 8 reads 'exemplary damages' where the ASF text reads 'consequential damages'. Shipped as published."
+
+[texts."frontiersmind-lumma-fev-0.1b.NOTICE"]
+source = "https://huggingface.co/FrontiersMind/Lumma-fev-0.1b/blob/085f4705aa860a6404d6cc3ff17de8a2969ac0f4/NOTICE"
+sha256 = "f5afbda8620dc4f51a74715d43991beab2faf8ae1b8df9bc4c1cbe561a5ce340"
+read = "2026-10-23"
+note = "The model repository's NOTICE file, which Apache-2.0 Section 4(d) requires a redistribution to carry."

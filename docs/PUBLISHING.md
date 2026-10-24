@@ -12,6 +12,7 @@ maintainer's step, listed at the end.
 - [Repositories and their layout](#repositories-and-their-layout)
 - [The checksum ledger](#the-checksum-ledger)
 - [Model cards](#model-cards)
+- [Licence files](#licence-files)
 - [Compiled programs, not packages](#compiled-programs-not-packages)
 - [Consent for tier 2b: gated repositories](#consent-for-tier-2b-gated-repositories)
 - [For fetch](#for-fetch)
@@ -212,7 +213,7 @@ policy and the gate (this document), and how to reproduce a build
 | Fidelity | One row per compute path and chip: grade, worst cosine (embedders) or worst \|Δp\| (classifiers), and whether the grading report's file hashes match this repository's files |
 | Benchmark scores | The original model's headline scores, with their source |
 | Training data | Each dataset with its licence and terms, travelling terms, and anything not confirmed from a primary source (collapsed) |
-| Original model | The upstream repository, revision, licence and base model; what this repository changed (the modified-files notice Apache-2.0 and the Gemma terms ask for) and which licence files it carries |
+| Original model | The upstream repository, revision, licence, the licence file this repository carries as `LICENSE` (and `NOTICE`) and where it came from, and the base model; what this repository changed (the modified-files notice Apache-2.0 and the Gemma terms ask for) and any other files the licence requires |
 | Checksums | Per build, collapsed: its ledger build id, what it was built with, and every distinct file's sha256, size and paths |
 
 Names are written for people: "Neural Engine", not `cpu_and_ne`; "Max
@@ -232,6 +233,51 @@ can't break a published card. The cost: a card is staged on the release's
 version bump and the tag is cut before the repository is made public, or
 its links 404 until then. `model_card.py --check` resolves every link
 against the working tree, which is what that tag will hold.
+
+## Licence files
+
+Every published repository carries its model's licence text at its root as
+`LICENSE`, as MIT ("this permission notice shall be included in all copies")
+and Apache-2.0 (Section 4(a), "a copy of this License") require of a
+redistributor, and an Apache-2.0 model's upstream NOTICE file as `NOTICE`
+(Section 4(d)).
+
+The texts are committed in [data/licence-texts/](data/licence-texts/), byte
+for byte as their source publishes them, each with its source pinned to a
+revision and its sha256 in `index.toml`; licences.toml names each model's
+`licence_text` and `notice_text`, and `tools/licences.py` refuses an MIT or
+Apache-2.0 model without one, or a text whose hash moved.
+`tools/model_card.py --out` writes them, and the card's "Original model"
+table names the file and its source. Where each text comes from, in order:
+
+1. **The model's own repository,** at the pinned revision: Lumma-fev-0.1b's
+   LICENSE and NOTICE (the only registry model whose repository has either).
+2. **The repository its licence sources cite,** pinned: FlagEmbedding's
+   LICENSE for bge-small-en-v1.5 (MIT, with its copyright line), laya's for
+   laya-en and laya-typed-decisions, agent-jev's own. None of them has a
+   NOTICE file.
+3. **The licence's publisher,** for a model whose repository publishes no
+   licence file: the Apache Software Foundation's Apache-2.0 text (pinned by
+   sha256, since the page has no revisions), or the SPDX License List's MIT
+   text. MIT's text begins with a copyright line, and these models publish
+   none, so the shipped LICENSE says so in a header and names "the authors
+   of <model>" rather than inventing a year or holder.
+
+**Other licences in the registry:**
+- **The Gemma Terms of Use** (embeddinggemma-300m) require a copy of the
+  terms with every copy and a NOTICE with a prescribed sentence. The NOTICE
+  is generated (`notice`); the terms and the Prohibited Use Policy are
+  fetched at upload (`ship_copies`), since ai.google.dev pages can't be
+  pinned. Committing their text here, like the others, is open.
+- **EmbeddingGemma 2** is Apache-2.0 and ships the ASF text; its card's
+  Prohibited Use Policy requirement is part of its gate's terms.
+- **The LFM Open License v1.0** (lfm2.5-embedding-350m) also requires a
+  copy with every redistribution, but the model is tier 3 and isn't
+  published.
+- **Base models' licences** aren't shipped: a model's own licence is the
+  one its weights are distributed under. Most bases are MIT or Apache-2.0
+  too; whether a fine-tune must also carry its base's notice is a question
+  for the maintainer.
 
 ## Compiled programs, not packages
 
@@ -368,8 +414,10 @@ Not automated yet; for the first uploads:
    uploaded.
 3. `model_card.py MODEL --build ID --owner ACCOUNT --ref vX.Y.Z --out
    <staging>`, with the release that publishes it (its links point at that
-   tag), then add the documents `ship_copies` names and the files
-   `ship_files` names (from the source repository at its pinned revision).
+   tag). It writes the card, the checksum files, `LICENSE` and any
+   `NOTICE` ([Licence files](#licence-files)); then add the documents
+   `ship_copies` names and the files `ship_files` names (from the source
+   repository at its pinned revision).
    Cut the sidekick release before the repository is made public.
 4. Upload `<staging>` and the build directory (as `<variant>/`) with the
    Hugging Face CLI under the maintainer's account; for tier 2b, set the
