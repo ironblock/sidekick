@@ -100,13 +100,14 @@ pub fn ane_path_cap(ignore: bool, max_seq_len: usize, ane_max_seq_len: Option<us
 /// The CPU length cap the cpu path runs under (D33), as the runtime serves
 /// a model with `cpu_only`: [`sidekick_core::MAX_CPU_INVARIANT_SEQ`], past
 /// which Core ML's CPU sums attention in a length-dependent order, so a
-/// model's buckets differ slightly. Its worker loads no bucket past it, and
-/// the cases longer than it are reported as capped rather than graded.
-/// `None` when the model is within it, when its manifest sets
-/// `cpu_seq_limit = "ignore"` (the runtime serves every bucket then), or
-/// under `--ignore-cpu-seq-cap` (`ignore`).
-pub fn cpu_path_cap(ignore: bool, max_seq_len: usize, limit: CpuSeqLimit) -> Option<usize> {
-    let cap = sidekick_core::MAX_CPU_INVARIANT_SEQ;
+/// model's buckets differ slightly, or the manifest's lower
+/// `cpu_max_seq_len`. Its worker loads no bucket past it, and the cases
+/// longer than it are reported as capped rather than graded. `None` when
+/// the model is within it, when its manifest sets `cpu_seq_limit =
+/// "ignore"` (the runtime serves every bucket then), or under
+/// `--ignore-cpu-seq-cap` (`ignore`).
+pub fn cpu_path_cap(ignore: bool, max_seq_len: usize, limit: CpuSeqLimit, cpu_max_seq_len: Option<usize>) -> Option<usize> {
+    let cap = sidekick_core::manifest::cpu_seq_cap(cpu_max_seq_len);
     (!ignore && limit == CpuSeqLimit::Enforce && max_seq_len > cap).then_some(cap)
 }
 
@@ -121,9 +122,15 @@ pub struct PathCaps {
 }
 
 impl PathCaps {
-    fn new(o: &Options, max_seq_len: usize, cpu_seq_limit: CpuSeqLimit, ane_max_seq_len: Option<usize>) -> Self {
+    fn new(
+        o: &Options,
+        max_seq_len: usize,
+        cpu_seq_limit: CpuSeqLimit,
+        cpu_max_seq_len: Option<usize>,
+        ane_max_seq_len: Option<usize>,
+    ) -> Self {
         Self {
-            cpu: cpu_path_cap(o.ignore_cpu_cap, max_seq_len, cpu_seq_limit),
+            cpu: cpu_path_cap(o.ignore_cpu_cap, max_seq_len, cpu_seq_limit, cpu_max_seq_len),
             ane: ane_path_cap(o.ignore_ane_cap, max_seq_len, ane_max_seq_len),
         }
     }
@@ -511,7 +518,7 @@ fn worker(args: &[String]) -> Result<(), String> {
         {
             let m = &model.manifest;
             let cap = match path {
-                Path3::Cpu => cpu_path_cap(ignore_cpu_cap, m.max_seq_len, m.cpu_seq_limit),
+                Path3::Cpu => cpu_path_cap(ignore_cpu_cap, m.max_seq_len, m.cpu_seq_limit, m.cpu_max_seq_len),
                 Path3::Ane => ane_path_cap(ignore_ane_cap, m.max_seq_len, m.ane_max_seq_len),
                 _ => None,
             };
@@ -530,7 +537,9 @@ fn worker(args: &[String]) -> Result<(), String> {
     }
     let m = &model.manifest;
     let cap = match path {
-        Path3::Cpu => cpu_path_cap(ignore_cpu_cap, m.max_seq_len, m.cpu_seq_limit.unwrap_or_default()),
+        Path3::Cpu => {
+            cpu_path_cap(ignore_cpu_cap, m.max_seq_len, m.cpu_seq_limit.unwrap_or_default(), m.cpu_max_seq_len)
+        }
         Path3::Ane => ane_path_cap(ignore_ane_cap, m.max_seq_len, m.ane_max_seq_len),
         _ => None,
     };
@@ -1402,7 +1411,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
         let caps = if onnx {
             PathCaps::default()
         } else {
-            PathCaps::new(&o, m.max_seq_len, m.cpu_seq_limit.unwrap_or_default(), m.ane_max_seq_len)
+            PathCaps::new(&o, m.max_seq_len, m.cpu_seq_limit.unwrap_or_default(), m.cpu_max_seq_len, m.ane_max_seq_len)
         };
         for (path, cap) in caps.iter() {
             if !m.buckets.iter().any(|&b| b <= cap) && worker_paths.contains(&path) {
@@ -2126,14 +2135,17 @@ mod tests {
     fn the_cpu_path_runs_under_the_cpu_cap() {
         use sidekick_core::MAX_CPU_INVARIANT_SEQ;
         // Past 1,024 tokens: capped there, as the runtime serves cpu_only.
-        assert_eq!(cpu_path_cap(false, 2048, CpuSeqLimit::Enforce), Some(MAX_CPU_INVARIANT_SEQ));
+        assert_eq!(cpu_path_cap(false, 2048, CpuSeqLimit::Enforce, None), Some(MAX_CPU_INVARIANT_SEQ));
         // Within it, or at it: nothing to cap.
-        assert_eq!(cpu_path_cap(false, 1024, CpuSeqLimit::Enforce), None);
-        assert_eq!(cpu_path_cap(false, 512, CpuSeqLimit::Enforce), None);
+        assert_eq!(cpu_path_cap(false, 1024, CpuSeqLimit::Enforce, None), None);
+        assert_eq!(cpu_path_cap(false, 512, CpuSeqLimit::Enforce, None), None);
+        // The manifest's own, lower cap (Qwen3-Embedding-0.6B's 512).
+        assert_eq!(cpu_path_cap(false, 2048, CpuSeqLimit::Enforce, Some(512)), Some(512));
+        assert_eq!(cpu_path_cap(false, 512, CpuSeqLimit::Enforce, Some(512)), None);
         // A manifest that lifts the cap is served, and graded, uncapped.
-        assert_eq!(cpu_path_cap(false, 2048, CpuSeqLimit::Ignore), None);
+        assert_eq!(cpu_path_cap(false, 2048, CpuSeqLimit::Ignore, Some(512)), None);
         // --ignore-cpu-seq-cap grades every bucket, for measurement.
-        assert_eq!(cpu_path_cap(true, 2048, CpuSeqLimit::Enforce), None);
+        assert_eq!(cpu_path_cap(true, 2048, CpuSeqLimit::Enforce, Some(512)), None);
     }
 
     #[test]
@@ -2141,16 +2153,17 @@ mod tests {
         let o = parse(&["--models-dir".into(), "unused".into()]).unwrap();
         // Qwen3-Embedding-0.6B's Core ML build, 2,048 tokens: the cpu path
         // capped at 1,024, the ane path within its cap.
-        let caps = PathCaps::new(&o, 2048, CpuSeqLimit::Enforce, None);
+        let caps = PathCaps::new(&o, 2048, CpuSeqLimit::Enforce, None, None);
         assert_eq!((caps.of(Path3::Cpu), caps.of(Path3::Gpu), caps.of(Path3::Ane)), (Some(1024), None, None));
+        assert_eq!(PathCaps::new(&o, 2048, CpuSeqLimit::Enforce, Some(512), None).cpu, Some(512));
         assert_eq!(caps.iter().collect::<Vec<_>>(), [(Path3::Cpu, 1024)]);
         // 4,096 tokens: both capped; the gpu path never is.
-        let caps = PathCaps::new(&o, 4096, CpuSeqLimit::Enforce, None);
+        let caps = PathCaps::new(&o, 4096, CpuSeqLimit::Enforce, None, None);
         assert_eq!(caps.iter().collect::<Vec<_>>(), [(Path3::Cpu, 1024), (Path3::Ane, 2048)]);
         assert_eq!(caps.of(Path3::OnnxCpu), None);
         // Each flag lifts its own path's cap only.
         let o = parse(&["--models-dir".into(), "unused".into(), "--ignore-cpu-seq-cap".into()]).unwrap();
-        assert_eq!(PathCaps::new(&o, 4096, CpuSeqLimit::Enforce, None).iter().collect::<Vec<_>>(), [(Path3::Ane, 2048)]);
+        assert_eq!(PathCaps::new(&o, 4096, CpuSeqLimit::Enforce, None, None).iter().collect::<Vec<_>>(), [(Path3::Ane, 2048)]);
         assert_eq!(cap_name(Path3::Cpu, 1024), "the CPU cap of 1024 tokens (D33)");
         assert_eq!(cap_name(Path3::Ane, 2048), "the ANE cap of 2048 tokens (D48)");
     }

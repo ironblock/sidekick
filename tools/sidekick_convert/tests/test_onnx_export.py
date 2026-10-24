@@ -91,6 +91,17 @@ class ManifestTest(unittest.TestCase):
         self.assertNotIn("Settings for the ONNX build only", text)
         self.assertEqual(text.count("max_seq_len"), 1)
 
+    def test_core_ml_serving_keys_are_left_out(self):
+        coreml = COREML_MANIFEST.replace(
+            "max_seq_len = 16\n",
+            "max_seq_len = 16\n# why the CPU serves less\n# of it\ncpu_max_seq_len = 8\ncompute_units = \"cpu_and_gpu\"\n")
+        text = onnx_export.manifest_text(coreml, "mean", onnx_export.TOKEN_OUTPUT)
+        m = tomllib.loads(text)
+        self.assertNotIn("cpu_max_seq_len", m)
+        self.assertNotIn("compute_units", m)
+        self.assertNotIn("why the CPU serves less", text)
+        self.assertEqual(text, onnx_export.manifest_text(COREML_MANIFEST, "mean", onnx_export.TOKEN_OUTPUT))
+
     def test_sidecar_sets_only_known_top_level_keys(self):
         with self.assertRaises(SystemExit):
             onnx_export.manifest_text(COREML_MANIFEST, "mean", onnx_export.TOKEN_OUTPUT, onnx_extra="dims = 8\n")

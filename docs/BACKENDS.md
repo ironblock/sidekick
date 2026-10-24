@@ -113,11 +113,15 @@ and 2,048-token buckets, 0.018 for agent-jev. Running the matmul in slices
 restores invariance only at about 13 times the error, so no conversion
 fixes it ([D33](DECISIONS.md#d33--cap-cpu-served-models-at-1024-tokens) records the measurement; `tools/repro_cpu_matmul_accumulation.py`
 reproduces it standalone).
-Up to 1,024 tokens the CPU is bucket-invariant, and the GPU and the ANE
-are unaffected by it (the ANE has a cap of its own, below).
+Up to 1,024 tokens the CPU is bucket-invariant for most models, and the
+GPU and the ANE are unaffected by it (the ANE has a cap of its own,
+below). Not for every model: Qwen3-Embedding-0.6B's buckets already differ
+on the CPU between 512 and 1,024 tokens (D33's amendment), so its manifest
+lowers the cap (`cpu_max_seq_len`, below).
 
 So a model served on the CPU runs no longer than
-`MAX_CPU_INVARIANT_SEQ` (1,024 tokens):
+`MAX_CPU_INVARIANT_SEQ` (1,024 tokens), or its manifest's lower
+`cpu_max_seq_len`:
 - For `compute_units = "cpu_only"` and a `max_seq_len` over 1,024, the
   registry drops the buckets above it, and the largest bucket kept becomes
   the model's effective `max_seq_len`. Longer inputs then follow the
@@ -136,16 +140,27 @@ So a model served on the CPU runs no longer than
   model under `seq_caps`.
 - `all` isn't capped by it: Core ML chooses the device per operation, may not
   use the CPU at all, and `all` exists for measuring what it does.
+- `cpu_max_seq_len` (top level, either manifest file, coreml backend only,
+  1 to 1,024) is a lower cap measured for that artifact: for a model whose
+  buckets differ on the CPU below 1,024 tokens. It can only lower the cap;
+  a value past 1,024 is refused, since lifting it is `cpu_seq_limit =
+  "ignore"`'s. It applies wherever the CPU cap does (`cpu_only`, and
+  `cpu_and_ne` on a Mac without a Neural Engine), and `seq_cap`'s `reason`
+  names it when it set the cap.
 - To serve every bucket anyway, accepting differences between buckets past
-  1,024 tokens: `cpu_seq_limit = "ignore"` (top level, either manifest
-  file, coreml backend only), or `sidekickd --ignore-cpu-seq-cap`
-  (`ignore_cpu_seq_cap = true` in the config) for every model.
-- The parity suite serves every bucket. On its CPU path it reports a
+  the cap: `cpu_seq_limit = "ignore"` (top level, either manifest file,
+  coreml backend only), or `sidekickd --ignore-cpu-seq-cap`
+  (`ignore_cpu_seq_cap = true` in the config) for every model. Either
+  lifts a `cpu_max_seq_len` too.
+- The parity suite grades the cpu path under the same cap, as it grades
+  the ane path under the ANE's: its cpu worker loads only the buckets
+  within it and runs only the cases that fit, and the cases past it are
+  listed as `capped` in the cpu path's grade, not failed. Within the cap
+  the CPU's bucket gate stays exact. `--ignore-cpu-seq-cap` grades the cpu
+  path past the cap, for measurement; there it reports a classifier's
   bucket comparison into a bucket past 1,024 tokens as this documented
-  limit, with the variation it measured, instead of gating it; up to 1,024
-  tokens the CPU's bucket gate stays exact, and the GPU and ANE paths are
-  gated as before. Its worker output records each bucket comparison, so a
-  saved run can be graded again under a changed rule.
+  limit instead of gating it. Its worker output records each bucket
+  comparison, so a saved run can be graded again under a changed rule.
 
 ### The ANE sequence cap
 
@@ -195,8 +210,9 @@ tokens):
   and the cases past it are listed as `capped` in the ane path's grade, not
   failed. For a model served on the ANE it reads no compute plan for a
   bucket past the cap, since that compiles the bucket for the ANE, and
-  records the plan as not read. The cpu and gpu paths run every bucket;
-  `--ignore-ane-seq-cap` grades the ane path past the cap.
+  records the plan as not read. The gpu path runs every bucket, and the
+  cpu path runs under the CPU cap above; `--ignore-ane-seq-cap` grades the
+  ane path past the cap.
 
 ### Where Core ML places operations
 

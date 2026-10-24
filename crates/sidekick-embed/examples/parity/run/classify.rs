@@ -375,7 +375,7 @@ pub fn grade_model(
     // The length caps (D33 on the cpu path, D48 on the ane path): a capped
     // path runs the buckets and cases within its cap, or nothing when no
     // bucket or case is.
-    let caps = PathCaps::new(o, m.max_seq_len, m.cpu_seq_limit, m.ane_max_seq_len);
+    let caps = PathCaps::new(o, m.max_seq_len, m.cpu_seq_limit, m.cpu_max_seq_len, m.ane_max_seq_len);
     let capped_refs: Vec<(Path3, usize, (ClassifyReference, Vec<String>))> =
         caps.iter().map(|(path, cap)| (path, cap, reference.within(cap))).collect();
     let mut worker_paths = worker_paths;

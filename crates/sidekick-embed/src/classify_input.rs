@@ -794,6 +794,7 @@ mod tests {
             ane_weight_limit: Default::default(),
             cpu_seq_limit: Default::default(),
             ane_max_seq_len: None,
+            cpu_max_seq_len: None,
             seq_cap: None,
             compute_units_source: Default::default(),
             placement: None,

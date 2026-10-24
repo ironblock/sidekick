@@ -1882,6 +1882,32 @@ the daemon's `ignore_cpu_seq_cap` serves it.
   CPU softmax already varies between buckets past 512 keys. Such a change
   reflects what the cpu path serves, not a change to the model.
 
+**Amendment (October 2026, M1 Max, macOS 27.0): a manifest may lower the
+CPU cap (`cpu_max_seq_len`).** 1,024 tokens isn't where every model's
+buckets start to differ on the CPU. Qwen3-Embedding-0.6B's five-bucket
+Core ML build (128 to 2,048 tokens) was graded on the cpu path under the
+1,024 cap above. Its accuracy was B level (worst cosine 0.999684, as its
+512-token build), but its bucket invariance was 0.999802 against the
+0.999999 gate. A corpus of inputs at the bucket boundaries placed the
+difference: a 511- and a 512-token input, run in the 512 bucket and again
+in the 1,024 bucket, gave cosines of 0.999914 and 0.999917 between the two.
+The 128-, 256- and 512-token buckets agree exactly on the CPU (1 − 2e-16
+in the 512-token build's report), so the difference enters with the 1,024
+bucket. That is below the 1,024 keys D33 measured on one matmul;
+which operation sums differently there isn't isolated.
+- **Decision.** A top-level manifest key, `cpu_max_seq_len` (either
+  manifest file, coreml backend only, 1 to 1,024), lowers this record's cap
+  for one model. It mirrors D48's `ane_max_seq_len` but only lowers: a
+  value past 1,024 is refused, since lifting the cap is `cpu_seq_limit =
+  "ignore"`'s. It applies wherever this record's cap does (`cpu_only`, and
+  `cpu_and_ne` on a Mac without a Neural Engine). `cpu_seq_limit =
+  "ignore"` and the daemon's `ignore_cpu_seq_cap` still lift the cap
+  entirely, and `/v1/models`' `seq_cap.reason` says when the manifest set
+  it. The parity suite grades the cpu path under it, as above.
+- **Qwen3-Embedding-0.6B's manifest sets 512.** Its CPU path serves the
+  128, 256 and 512 buckets, as its earlier 512-token build did; the ANE
+  serves all five, and the GPU too.
+
 ## D34 — The fev format: Lumma-fev decision models
 Lumma-fev (FrontiersMind/Lumma-fev, Apache-2.0) is a family of decision
 models on a causal decoder backbone. Lumma-fev-0.1b (154M parameters) reads

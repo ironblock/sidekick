@@ -231,6 +231,12 @@ def gate(runner, cases, pad_id_range, report=print):
     return result
 
 
+# Top-level keys of a Core ML manifest that describe how Core ML serves it,
+# which the runtime refuses in an onnx manifest (docs/BACKENDS.md): the ONNX
+# build's manifest leaves them out, each with the comment above it.
+COREML_ONLY = frozenset({"compute_units", "ane_weight_limit", "cpu_seq_limit", "cpu_max_seq_len", "ane_max_seq_len"})
+
+
 def manifest_text(coreml_text, pooling, output, extra_inputs=(), onnx_extra=""):
     """The installed manifest for the ONNX artifact, from the committed
     Core ML one: the same model (tokenizer, dims, prefixes, Matryoshka,
@@ -241,7 +247,8 @@ def manifest_text(coreml_text, pooling, output, extra_inputs=(), onnx_extra=""):
     the committed onnx.toml beside the Core ML manifest, if any: settings
     for the ONNX build only. Its top-level keys (max_seq_len) replace the
     Core ML manifest's, each with the comment above it; its tables
-    ([onnx]) are appended as they are (manifest.onnx_sidecar)."""
+    ([onnx]) are appended as they are (manifest.onnx_sidecar). The Core ML
+    manifest's own serving keys (COREML_ONLY) are left out."""
     overrides, tables = _manifest.onnx_sidecar(onnx_extra)
     out, section, header = [], None, True
     for line in coreml_text.splitlines():
@@ -259,6 +266,10 @@ def manifest_text(coreml_text, pooling, output, extra_inputs=(), onnx_extra=""):
         elif section is None and key == "pooling":
             line = f'pooling = "{pooling or "none"}"'
         elif section is None and key == "buckets":
+            continue
+        elif section is None and key in COREML_ONLY:
+            while out and out[-1].lstrip().startswith("#"):
+                out.pop()              # the key's own comment goes with it
             continue
         elif section is None and key in overrides:
             comments, line = overrides.pop(key)

@@ -66,7 +66,7 @@ warm_budget_secs = 1800        # start no warm-up load after this long; 0 for no
 | `request_timeout_secs` | 60 | Bounds a request's work: a generation, or the predictions after any load the request waited on. A request past it is a 504 with code `timeout`. |
 | `load_timeout_secs` | 900 | How long a request waits for its model and buckets to load, compiles included. A load past it is a 504 with code `load_timeout` and continues in the background, so a retry finds it ready. |
 | `ignore_ane_weight_cap` | false | Load models served on the ANE even past Core ML's 1 GiB weight limit ([BACKENDS.md](BACKENDS.md#the-ane-weight-cap)). For experimentation. |
-| `ignore_cpu_seq_cap` | false | Serve `cpu_only` models past 1,024 tokens ([BACKENDS.md](BACKENDS.md#the-cpu-sequence-cap)). |
+| `ignore_cpu_seq_cap` | false | Serve `cpu_only` models past 1,024 tokens, or past their manifest's lower `cpu_max_seq_len` ([BACKENDS.md](BACKENDS.md#the-cpu-sequence-cap)). |
 | `ignore_ane_seq_cap` | false | Serve ANE models past their ANE cap ([BACKENDS.md](BACKENDS.md#the-ane-sequence-cap)). For measurement. |
 | `report_compute_plans` | false | Read where Core ML places each loaded bucket's operations on this machine, once per bucket, in the background ([BACKENDS.md](BACKENDS.md#where-core-ml-places-operations)). Each read is a second compile. |
 | `warm_on_start` | true | Compile every Core ML bucket the daemon serves at startup, in the background ([RUNNING.md](RUNNING.md#first-loads-and-the-compile-cache)). |
