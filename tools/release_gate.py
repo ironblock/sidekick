@@ -471,14 +471,17 @@ class Home:
     def prune_gpu_cpu(self) -> int:
         """Delete the GPU and CPU programs in Core ML's caches in the home
         (each about the weights' size, recompiled in a second or two), and
-        keep every ANE program's: an entry's `<key>.bundle` without a
-        `main_ane` goes; one with it stays whole (its `main_bnns` holds the
-        segments the ANE program runs on the CPU, and deleting it forces
-        the ANE to compile again). Returns the bytes freed."""
+        keep every ANE program's. An ANE entry's `<key>.bundle` holds a
+        `model.anehash` (under `main/main_ane/`, or under
+        `ane_compile/multiprocedure/` for a program split across the ANE and
+        the CPU) and stays whole: its CPU segments (`main_bnns`,
+        `main_classic_cpu*`) are part of it, and deleting any of it makes the
+        ANE compile again. A bundle without one goes. Returns the bytes
+        freed."""
         freed = 0
         caches = self.home / "Library" / "Caches"
         for bundle in caches.glob("*/com.apple.e5rt.e5bundlecache/*/*/*.bundle"):
-            if not bundle.is_dir() or any(p.name == "main_ane" for p in bundle.rglob("main_ane")):
+            if not bundle.is_dir() or next(bundle.rglob("*.anehash"), None) is not None:
                 continue
             freed += sum(p.stat().st_size for p in bundle.rglob("*") if p.is_file())
             shutil.rmtree(bundle, ignore_errors=True)
@@ -582,7 +585,8 @@ class Daemon:
         return time.monotonic() - t
 
     def start(self):
-        self.write_config()
+        if self.port is None:       # not written yet for a warm-up
+            self.write_config()
         self.log = open(self.run / "sidekickd.log", "wb")
         self.proc = subprocess.Popen([str(self.binary), "--config", str(self.run / "config.toml")], env=self.env(),
                                      stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
@@ -1186,7 +1190,10 @@ def headline(rec: dict) -> str:
 
 def provenance(this_chip: str, versions: set, signing: str | None) -> dict:
     os_version, os_build = macos()
-    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain", "--untracked-files=no")),
+    # Uncommitted changes to tracked files, the baseline this gate writes excepted.
+    status = git("status", "--porcelain", "--untracked-files=no", "--", ".",
+                 f":(exclude){BASELINE.relative_to(REPO).as_posix()}")
+    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(status),
             "sidekick": sorted(v for v in versions if v)[0] if any(versions) else None,
             "signing_identifier": signing,
             "chip": this_chip, "os": f"macOS {os_version}", "os_build": os_build,
