@@ -187,8 +187,11 @@ Notes:
   in place of `purpose`, as the daemon's `prompt_name`. It was added in
   0.15.0 without an ABI version bump, so resolve it with `dlsym` if the host
   must also run against older libraries.
-- The first `sk_embed` per model loads it (Core ML: ~1s for bge-small,
-  seconds for large encoders) and it stays resident until `sk_pool_close`.
+- The first `sk_embed` per model loads it, and the first input to each
+  bucket compiles that bucket unless Core ML's cache already holds it for
+  your process: seconds for a small model, minutes for a long bucket of a
+  large one ([RUNNING.md](RUNNING.md#first-loads-and-the-compile-cache)).
+  The model stays resident until `sk_pool_close`.
   Loads don't block calls on other, already-loaded models.
 - Thread-safe; calls from multiple threads are fine. On Apple silicon the
   ANE serializes predictions anyway, so client-side batching beats
