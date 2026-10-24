@@ -12,10 +12,16 @@ the one judgement it can't recompute (a licence that forbids
 redistribution or commercial use, or makes commercial use depend on the
 user's circumstances), so a tier-3 entry must say why in `reason`.
 
+It also checks the licence texts a published build carries
+(docs/data/licence-texts/, docs/PUBLISHING.md "Licence files"): every MIT
+or Apache-2.0 model names one, and every committed text matches the sha256
+its index records.
+
 Standard library only.
 """
 
 import argparse
+import hashlib
 import re
 import tomllib
 from pathlib import Path
@@ -38,7 +44,45 @@ REQUIRED = {
     "base_pretraining": str, "custom_terms": list, "concerns": list, "tier": str, "reason": str,
     "unverified": list, "read": str,
 }
-OPTIONAL = {"ship_files": list, "notice": str, "ship_copies": list}
+OPTIONAL = {"ship_files": list, "notice": str, "ship_copies": list, "licence_text": str, "notice_text": str}
+
+# Licence texts (docs/data/licence-texts/): which licences a published build
+# must carry the text of, and the publisher texts used where the model's own
+# repository has none.
+TEXTS = REPO / "docs" / "data" / "licence-texts"
+LICENCE_TEXT_REQUIRED = ("MIT", "Apache-2.0")
+GENERIC = {"apache-2.0.txt": "Apache-2.0", "mit.txt": "MIT"}
+
+
+def load_texts():
+    return tomllib.loads((TEXTS / "index.toml").read_text())
+
+
+def text_problems(index=None):
+    """The licence-text index against the files: every file listed and
+    present, its sha256 as recorded, its source an https link pinned where
+    the host allows."""
+    index = load_texts() if index is None else index
+    out = []
+    if index.get("schema") != 1:
+        out.append("licence-texts/index.toml: schema must be 1")
+    texts = index.get("texts", {})
+    on_disk = {p.name for p in TEXTS.iterdir() if p.is_file() and p.name != "index.toml"}
+    for name in sorted(on_disk - set(texts)):
+        out.append(f"licence-texts/{name} isn't in index.toml")
+    for name, t in sorted(texts.items()):
+        w = f"licence-texts/{name}"
+        if name not in on_disk:
+            out.append(f"{w}: listed but missing")
+            continue
+        if not all(isinstance(t.get(k), str) and t[k] for k in ("source", "sha256", "read", "note")):
+            out.append(f"{w}: needs source, sha256, read and note")
+            continue
+        if hashlib.sha256((TEXTS / name).read_bytes()).hexdigest() != t["sha256"]:
+            out.append(f"{w}: sha256 isn't the recorded one")
+        if not t["source"].startswith("https://") or not pinned(t["source"]):
+            out.append(f"{w}: source {t['source']} must be https, pinned to a revision where the host allows")
+    return out
 DATASET = ("name", "licence", "terms", "source", "stage")
 
 # A link to a host that versions its files must name the revision it was read at.
@@ -98,7 +142,8 @@ def hf_license(entry):
 def problems(data=None, models=None):
     data = load() if data is None else data
     models = load_models() if models is None else models
-    out = []
+    out = text_problems()
+    texts = load_texts().get("texts", {})
     if data.get("schema") != SCHEMA:
         out.append(f"licences.toml: schema {data.get('schema')!r}, expected {SCHEMA}")
     entries = data.get("models", {})
@@ -151,8 +196,19 @@ def problems(data=None, models=None):
                 out.append(f"{w}: a ship_copies entry needs file, of and url")
             else:
                 urls.append(c["url"])
-        if e["tier"] == "3" and (e.get("ship_files") or e.get("ship_copies") or e.get("notice")):
+        if e["tier"] == "3" and any(e.get(k) for k in ("ship_files", "ship_copies", "notice", "licence_text",
+                                                         "notice_text")):
             out.append(f"{w}: tier 3 isn't published, so it ships nothing")
+        if e["tier"] != "3" and e["licence"] in LICENCE_TEXT_REQUIRED and not e.get("licence_text"):
+            out.append(f"{w}: an {e['licence']} model ships its licence text: set licence_text")
+        for k in ("licence_text", "notice_text"):
+            if k in e and e[k] not in texts:
+                out.append(f"{w}: {k} {e[k]!r} isn't in docs/data/licence-texts/index.toml")
+        if e.get("licence_text") in GENERIC and GENERIC[e["licence_text"]] != e["licence"]:
+            out.append(f"{w}: licence_text {e['licence_text']} is the {GENERIC[e['licence_text']]} text, "
+                       f"not {e['licence']}")
+        if e.get("notice_text") and e.get("notice"):
+            out.append(f"{w}: notice_text and notice would both be NOTICE")
         for u in urls:
             if not u.startswith("https://"):
                 out.append(f"{w}: {u!r} isn't an https link")

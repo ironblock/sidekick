@@ -4,6 +4,12 @@
 
 schema = 1
 
+# The Hugging Face organization sidekick's repositories belong to:
+# <owner>/<model id>-coreml and <owner>/<model id>-onnx. fetch doesn't read
+# this: it fetches from the repository the ledger's `published` record names.
+# tools/model_card.py --check refuses a published record under another owner.
+owner = "sidekickd"
+
 # The ONNX builds sidekick publishes are its own exports
 # (tools/sidekick_convert/onnx_export.py). Where a model's publisher ships an
 # ONNX export of its own that grades A against the checkpoint, the card lists

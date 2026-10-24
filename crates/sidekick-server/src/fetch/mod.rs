@@ -14,7 +14,7 @@
 //! 4. The model directory is a real directory of hard links to the cached
 //!    files, with the manifest for exactly the buckets fetched (`install`).
 //!
-//! The repositories are docs/PUBLISHING.md's: `<owner>/<model id>-coreml`
+//! The repositories are docs/PUBLISHING.md's: `sidekickd/<model id>-coreml`
 //! and `-onnx`, one directory per variant holding the install tree as is.
 
 mod hfcache;
