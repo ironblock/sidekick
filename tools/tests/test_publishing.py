@@ -256,8 +256,12 @@ class LicencesTest(unittest.TestCase):
         self.assertEqual(licences.floor_tier(entry(training_data=sa)), "2a")
         self.assertEqual(licences.floor_tier(entry(training_disclosure="partial")), "2a")
         self.assertEqual(licences.floor_tier(entry(concerns=["unnamed-synthetic-generator"])), "2a")
-        self.assertEqual(licences.floor_tier(entry(training_data=nc)), "2b")
+        # non-commercial training data is disclosed, not gated: only travelling terms are 2b
+        self.assertEqual(licences.floor_tier(entry(training_data=nc, concerns=["non-commercial-data"])), "2a")
         self.assertEqual(licences.floor_tier(entry(concerns=["use-policy"])), "2b")
+        self.assertEqual(licences.floor_tier(entry(concerns=["custom-terms"])), "2b")
+        found = self.check(entry(training_data=nc, concerns=["non-commercial-data"], tier="2b"))
+        self.assertTrue(any("puts it at 2a" in p for p in found), found)
 
     def test_tier_must_follow_the_data(self):
         sa = [{"name": "s", "licence": "CC-BY-SA-4.0", "terms": "share-alike", "source": "https://e.org", "stage": "x"}]
@@ -267,8 +271,19 @@ class LicencesTest(unittest.TestCase):
 
     def test_concerns_must_match_the_data(self):
         nc = [{"name": "n", "licence": "CC-BY-NC-4.0", "terms": "non-commercial", "source": "https://e.org", "stage": "x"}]
-        found = self.check(entry(training_data=nc, tier="2b"))
+        found = self.check(entry(training_data=nc, tier="2a"))
         self.assertTrue(any("non-commercial data" in p for p in found), found)
+
+    def test_hub_ids(self):
+        d = [{"name": "MS MARCO", "licence": "MS MARCO terms (non-commercial research only)", "terms": "non-commercial",
+              "hub": ["microsoft/ms_marco"], "source": "https://github.com/microsoft/msmarco", "stage": "x"},
+             {"name": "NQ", "licence": "CC-BY-SA-3.0", "terms": "share-alike", "stage": "x",
+              "source": "https://huggingface.co/datasets/google-research-datasets/natural_questions/blob/" + "0" * 40 + "/README.md"}]
+        self.assertEqual(licences.hf_datasets(entry(training_data=d)),
+                         ["microsoft/ms_marco", "google-research-datasets/natural_questions"])
+        d[0]["hub"] = ["not an id"]
+        found = self.check(entry(training_data=d, concerns=["non-commercial-data", "copyleft-data"], tier="2a"))
+        self.assertTrue(any("hub must be a list" in p for p in found), found)
 
     def test_tier_three_needs_its_terms(self):
         found = self.check(entry(tier="3", licence="L", licence_text=None))
@@ -345,6 +360,26 @@ class ModelCardTest(unittest.TestCase):
                          "d49--one-weights-file-per-chunk-shared-by-every-bucket")
         self.assertEqual(model_card.slug("ONNX Runtime on the CPU (`onnx-cpu`)"), "onnx-runtime-on-the-cpu-onnx-cpu")
         self.assertEqual(model_card.slug("Classifiers (`/v1/classify`)"), "classifiers-v1classify")
+
+    def test_non_commercial_data_is_a_notice_not_a_gate(self):
+        card = model_card.render("qwen3-embedding-0.6b")[0]
+        front = card.split("---\n")[1]
+        self.assertIn("licence-tier-2a", front)
+        self.assertNotIn("extra_gated", front)
+        self.assertIn("- microsoft/ms_marco\n", front)
+        self.assertIn("- google-research-datasets/natural_questions\n", front)
+        self.assertNotIn("--accept-terms", card)
+        self.assertIn("**Training data with non-commercial terms.**", card)
+        self.assertIn("**The data:** MS MARCO (non-commercial research only).", card)
+        self.assertNotIn("MS MARCO: MS MARCO terms", card)
+        self.assertIn("legally unsettled", card)
+        self.assertIn("gives no assurance", card)
+        self.assertIn("these files are distributed under Apache-2.0, as the original model is", card)
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
+            model_card.write(Path(tmp) / "q", "qwen3-embedding-0.6b", "onnx", None, None)
+            self.assertFalse((Path(tmp) / "q" / "TERMS.md").exists())
+            model_card.write(Path(tmp) / "g", "embeddinggemma-300m", "coreml", None, None)
+            self.assertTrue((Path(tmp) / "g" / "TERMS.md").exists())
 
     def test_tier_2b_card_is_gated(self):
         card = model_card.render("embeddinggemma-300m")[0]

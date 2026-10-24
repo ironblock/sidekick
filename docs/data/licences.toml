@@ -11,14 +11,15 @@
 #       stages that produced these weights, are permissive (Apache-2.0, MIT,
 #       BSD, CC BY, CC0, ODC-By, public domain), and the data is fully
 #       disclosed.
-#   2a  Publish, with a plain notice on the model card. The training data
-#       is share-alike (CC BY-SA) but nothing is non-commercial; or it is
-#       undisclosed, has no licence a primary source states, or is synthetic
-#       from a generator that isn't named.
+#   2a  Publish, with a notice on the model card. The training data has
+#       non-commercial terms (the card states them as prominently as a gate
+#       would), or is share-alike (CC BY-SA), undisclosed, without a licence
+#       a primary source states, or synthetic from a generator that isn't
+#       named.
 #   2b  Publish behind explicit consent (a gated repository; see
-#       docs/PUBLISHING.md). The training data carries non-commercial terms,
-#       or the model carries terms that must travel with it (the Gemma Terms
-#       of Use and Prohibited Use Policy).
+#       docs/PUBLISHING.md): only for terms that must be passed on to every
+#       recipient of the files (the Gemma Terms of Use and Prohibited Use
+#       Policy).
 #   3   Don't publish. The licence forbids redistribution or commercial use,
 #       or makes commercial use depend on the user's circumstances. sidekick
 #       still documents converting the model locally, and the checksum
@@ -50,7 +51,9 @@
 #                               one), `terms` (permissive | share-alike |
 #                               non-commercial | unknown), a source pinned to
 #                               a revision where the host allows it, the
-#                               training stage, and a note
+#                               training stage, a note, and `hub`: its Hugging
+#                               Face dataset ids where its source isn't a Hub
+#                               dataset page (for the card's `datasets`)
 #   base_pretraining            what the base model declares for pretraining
 #   custom_terms                terms that travel with the weights, and what
 #                               they require of a redistributor
@@ -103,7 +106,7 @@ training_data = [
   { name = "WikiAnswers duplicate questions", licence = "unknown", terms = "unknown", source = "https://github.com/afader/oqa/blob/c59161c7bd0fbb1b79f1ec88668a971a88cff70d/README.md", stage = "contrastive fine-tune", note = "77M pairs. Crawled from WikiAnswers; the oqa README states no licence. The HF re-host embedding-data/WikiAnswers@aa3d54a99f6314a888c3db3c67e6b27650913a9d labels itself MIT, but that is the re-hoster's label; its licensing section says 'More Information Needed'." },
   { name = "PAQ (question, answer) pairs", licence = "CC-BY-SA-3.0", terms = "share-alike", source = "https://github.com/facebookresearch/PAQ/blob/2bfd2c85e58eaac626d8d5082299a676662f51d3/README.md", stage = "contrastive fine-tune", note = "64M pairs. Copyleft." },
   { name = "Stack Exchange (title, body), (title+body, answer), (title, answer), duplicate questions", licence = "CC-BY-SA-4.0", terms = "share-alike", source = "https://huggingface.co/datasets/flax-sentence-embeddings/stackexchange_xml/blob/0bea7f6680d8ce12e1bfa6d8762d62ac3d44fd1c/README.md", stage = "contrastive fine-tune", note = "~69M pairs. Card cites the archive.org Stack Exchange data dump, 'Attribution-ShareAlike 4.0'. Copyleft." },
-  { name = "MS MARCO triplets", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "contrastive fine-tune", note = "9.1M triplets. Terms: 'intended for non-commercial research purposes only ... without extending any license'. The repo's CC-BY-4.0 covers its documentation, not the datasets." },
+  { name = "MS MARCO triplets", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", hub = ["microsoft/ms_marco"], source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "contrastive fine-tune", note = "9.1M triplets. Terms: 'intended for non-commercial research purposes only ... without extending any license'. The repo's CC-BY-4.0 covers its documentation, not the datasets." },
   { name = "GooAQ", licence = "Apache-2.0", terms = "permissive", source = "https://huggingface.co/datasets/allenai/gooaq/blob/1ba0309027cdfec65262323dd1117d2b23d91cb7/README.md", stage = "contrastive fine-tune" },
   { name = "Yahoo Answers (title/question/answer pairs)", licence = "unknown", terms = "unknown", source = "https://huggingface.co/datasets/community-datasets/yahoo_answers_topics/blob/6652a1e7c94f7260a0bfd0c9092dd48e2d536ea1/README.md", stage = "contrastive fine-tune", note = "2.5M pairs. HF card licence 'unknown'; model card links a Kaggle copy. Scraped user content." },
   { name = "CodeSearchNet", licence = "other (per-repository licences)", terms = "unknown", source = "https://huggingface.co/datasets/code-search-net/code_search_net/blob/bd0cf261e357a3eb5c8fba490d23ec1a1cd59555/README.md", stage = "contrastive fine-tune", note = "Card: each example comes from a GitHub repository with its own licence; per-example licences not included. Repos without a redistribution-permitting licence were removed, which may include copyleft." },
@@ -131,8 +134,8 @@ concerns = [
   "copyleft-data",
   "unlicensed-data",
 ]
-tier = "2b"
-reason = "The card fully discloses a 1.17B-pair fine-tuning mixture that includes non-commercial data: MS MARCO (non-commercial research only), the original non-commercial S2ORC release and Flickr30k. It also includes share-alike sets (Stack Exchange, PAQ, SNLI, Natural Questions, SQuAD 2.0) and scraped content with no licence (Reddit, 62% of pairs; Yahoo Answers, Quora, WikiAnswers, wikiHow). Non-commercial training data: 2b."
+tier = "2a"
+reason = "The card fully discloses a 1.17B-pair fine-tuning mixture that includes non-commercial data: MS MARCO (non-commercial research only), the original non-commercial S2ORC release and Flickr30k. It also includes share-alike sets (Stack Exchange, PAQ, SNLI, Natural Questions, SQuAD 2.0) and scraped content with no licence (Reddit, 62% of pairs; Yahoo Answers, Quora, WikiAnswers, wikiHow). Non-commercial training data: 2a, with its terms stated on the card."
 unverified = [
   "Quora Question Pairs licence: the Quora release page returned 403.",
   "COCO caption terms: the terms page did not render.",
@@ -184,7 +187,7 @@ base_model_licence_sources = [
 training_disclosure = "partial"
 training_data = [
   { name = "CCPairs (Reddit post-comment, Stack Exchange question-answer, Wikipedia, scientific papers, Common Crawl, news)", licence = "unknown", terms = "unknown", source = "https://arxiv.org/abs/2212.03533v2", stage = "contrastive pre-training", note = "Card: 'Please refer to our paper'. Paper (read via ar5iv HTML): 'Our dataset includes (post, comment) pairs from Reddit, (question, upvoted answer) pairs from Stackexchange' plus Wikipedia, scientific papers, Common Crawl and news. CCPairs itself is not released and has no licence; its components include Reddit content and CC BY-SA Stack Exchange and Wikipedia text." },
-  { name = "MS MARCO", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "supervised fine-tune", note = "Paper: fine-tuned on 'a combination of 3 datasets: NLI', MS-MARCO and NQ." },
+  { name = "MS MARCO", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", hub = ["microsoft/ms_marco"], source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "supervised fine-tune", note = "Paper: fine-tuned on 'a combination of 3 datasets: NLI', MS-MARCO and NQ." },
   { name = "Natural Questions", licence = "CC-BY-SA-3.0", terms = "share-alike", source = "https://huggingface.co/datasets/google-research-datasets/natural_questions/blob/e8103d566bef4154c2c12b17c6095ec5275840cc/README.md", stage = "supervised fine-tune", note = "Copyleft." },
   { name = "NLI (SNLI + MultiNLI, per the paper)", licence = "CC-BY-SA-4.0 (SNLI); OANC/CC-BY-3.0/CC-BY-SA-3.0 (MultiNLI)", terms = "share-alike", source = "https://huggingface.co/datasets/stanfordnlp/snli/blob/cdb5c3d5eed6ead6e5a341c8e56e669bb666725b/README.md", stage = "supervised fine-tune", note = "MultiNLI licence: https://huggingface.co/datasets/nyu-mll/multi_nli/blob/da70db2af9d09693783c3320c4249840212ee221/README.md. Exactly which NLI sets were used is from a summarised read of the paper." },
 ]
@@ -197,8 +200,8 @@ concerns = [
   "unlicensed-data",
   "undisclosed-data",
 ]
-tier = "2b"
-reason = "Fine-tuned on MS MARCO (non-commercial research only), with Natural Questions and SNLI (CC BY-SA). Its contrastive pre-training set, CCPairs, is unreleased and built from Reddit, Stack Exchange, Wikipedia, Common Crawl and news. Non-commercial training data: 2b."
+tier = "2a"
+reason = "Fine-tuned on MS MARCO (non-commercial research only), with Natural Questions and SNLI (CC BY-SA). Its contrastive pre-training set, CCPairs, is unreleased and built from Reddit, Stack Exchange, Wikipedia, Common Crawl and news. Non-commercial training data: 2a, with its terms stated on the card."
 unverified = [
   "The paper describes the v1 E5 models; the card for v2 only says 'refer to our paper', and what changed in v2's training data is not documented.",
   "Base checkpoint identity (paper says only 'MiniLM'; microsoft/MiniLM-L12-H384-uncased is inferred from shape).",
@@ -220,12 +223,12 @@ base_model_licence_sources = [
 training_disclosure = "partial"
 training_data = [
   { name = "mGTE weakly supervised contrastive pairs (English: Reddit title-body, Amazon reviews/QA, Stack Exchange, Stack Overflow, Quora, Wikipedia, Common Crawl title-content, MS MARCO, S2ORC, arXiv/bioRxiv/medRxiv)", licence = "unknown", terms = "unknown", source = "https://arxiv.org/abs/2407.19669v2", stage = "contrastive pre-training", note = "Card: follows 'the training scheme of the previous GTE models' with ModernBERT as the base, and refers to the mGTE paper. Sources per the paper's English data table (read through a summarising fetch); per-source sizes and licences are not given, and the data is not released." },
-  { name = "MS MARCO", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "supervised fine-tune", note = "One of seven English fine-tuning sets named in the mGTE paper, Appendix B.2." },
+  { name = "MS MARCO", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", hub = ["microsoft/ms_marco"], source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "supervised fine-tune", note = "One of seven English fine-tuning sets named in the mGTE paper, Appendix B.2." },
   { name = "Natural Questions", licence = "CC-BY-SA-3.0", terms = "share-alike", source = "https://huggingface.co/datasets/google-research-datasets/natural_questions/blob/e8103d566bef4154c2c12b17c6095ec5275840cc/README.md", stage = "supervised fine-tune", note = "Copyleft." },
   { name = "SQuAD", licence = "CC-BY-SA-4.0", terms = "share-alike", source = "https://huggingface.co/datasets/rajpurkar/squad_v2/blob/3ffb306f725f7d2ce8394bc1873b24868140c412/README.md", stage = "supervised fine-tune", note = "Licence read from the SQuAD 2.0 card; which SQuAD version mGTE used is not stated in what was read." },
   { name = "TriviaQA", licence = "unknown", terms = "unknown", source = "https://huggingface.co/datasets/mandarjoshi/trivia_qa/blob/0f7faf33a3908546c6fd5b73a660e0f8ff173c2f/README.md", stage = "supervised fine-tune", note = "Card: UW does not own the copyright of the questions and documents." },
-  { name = "HotpotQA", licence = "unverified", terms = "unknown", source = "https://arxiv.org/abs/2407.19669v2", stage = "supervised fine-tune", note = "Dataset card not read." },
-  { name = "FEVER", licence = "unverified", terms = "unknown", source = "https://arxiv.org/abs/2407.19669v2", stage = "supervised fine-tune", note = "Dataset card not read." },
+  { name = "HotpotQA", licence = "unverified", terms = "unknown", hub = ["hotpotqa/hotpot_qa"], source = "https://arxiv.org/abs/2407.19669v2", stage = "supervised fine-tune", note = "Dataset card not read." },
+  { name = "FEVER", licence = "unverified", terms = "unknown", hub = ["fever/fever"], source = "https://arxiv.org/abs/2407.19669v2", stage = "supervised fine-tune", note = "Dataset card not read." },
   { name = "AllNLI from SimCSE (SNLI + MultiNLI)", licence = "CC-BY-SA-4.0 (SNLI); OANC/CC-BY-3.0/CC-BY-SA-3.0 (MultiNLI)", terms = "share-alike", source = "https://huggingface.co/datasets/stanfordnlp/snli/blob/cdb5c3d5eed6ead6e5a341c8e56e669bb666725b/README.md", stage = "supervised fine-tune", note = "MultiNLI: https://huggingface.co/datasets/nyu-mll/multi_nli/blob/da70db2af9d09693783c3320c4249840212ee221/README.md" },
 ]
 base_pretraining = "ModernBERT-base card: '2 trillion tokens of English text and code'; sources not itemised on the card (undisclosed at the card level)."
@@ -237,8 +240,8 @@ concerns = [
   "unlicensed-data",
   "undisclosed-data",
 ]
-tier = "2b"
-reason = "The card defers its training data to the mGTE paper, whose fine-tuning sets include MS MARCO (non-commercial research only), Natural Questions and SQuAD (CC BY-SA), and whose contrastive pairs are unreleased and partly scraped. Non-commercial training data: 2b."
+tier = "2a"
+reason = "The card defers its training data to the mGTE paper, whose fine-tuning sets include MS MARCO (non-commercial research only), Natural Questions and SQuAD (CC BY-SA), and whose contrastive pairs are unreleased and partly scraped. Non-commercial training data: 2a, with its terms stated on the card."
 unverified = [
   "That gte-modernbert-base used exactly the mGTE data (card says it 'follows the training scheme'; the data itself is not listed for this model).",
   "HotpotQA and FEVER licences (cards not read).",
@@ -309,7 +312,7 @@ concerns = [
   "undisclosed-data",
 ]
 tier = "2b"
-reason = "Apache-2.0, but the card says deployments must follow the Gemma Prohibited Use Policy, a use restriction that travels with the weights: 2b, like EmbeddingGemma. The training data is described by category only."
+reason = "Apache-2.0, but the card says deployments must follow the Gemma Prohibited Use Policy, a use restriction to pass on with the weights, and whether the Gemma Terms of Use (whose appendix lists 'EmbeddingGemma') also cover it is unconfirmed: 2b, like EmbeddingGemma, until Google says otherwise. The training data is described by category only."
 unverified = [
   "The Gemma ToU Appendix lists 'EmbeddingGemma' without a version. Whether Google considers EmbeddingGemma 2 covered by the ToU (as an 'EmbeddingGemma' model) rather than solely by Apache-2.0 is ambiguous; the card and the Gemma 4 licence page say Apache-2.0, and the ToU page points Gemma 4 terms elsewhere. Not confirmed with Google.",
   "Whether the card's Prohibited Use Policy sentence is intended as a binding condition on Apache-2.0-licensed weights is not stated.",
@@ -334,7 +337,7 @@ training_disclosure = "full"
 training_data = [
   { name = "codefuse-ai/F2LLM-v2 (composite of ~300 public datasets, 60M samples)", licence = "Apache-2.0 (compiler's label; constituents carry their own terms)", terms = "unknown", source = "https://huggingface.co/datasets/codefuse-ai/F2LLM-v2/blob/d520b8ad02c86d5e5611441c6196ff65d8888927/README.md", stage = "contrastive training / distillation", note = "Released. The card labels the compilation Apache-2.0 but does not discuss constituent licences; the paper (arXiv 2603.19223) says data comes 'solely from publicly available resources' and does not discuss licences. Files include anli, msmarco, mmarco_*, snli, squad, natural_questions, stackexchange*, eli5, reddit_clustering*, yahoo_answers, qqp, paq, s2orc_*, wildchat*, openorca*, imdb, amazon_*, among others." },
   { name = "ANLI (anli.parquet)", licence = "CC-BY-NC-4.0", terms = "non-commercial", source = "https://huggingface.co/datasets/facebook/anli/blob/8e4813d81f46d313dac7892e1c28076917cfcdf9/README.md", stage = "contrastive training", note = "Listed in the paper's training-data Table 8 (NLI, 18,801 samples); present as anli.parquet in the dataset repo." },
-  { name = "MS MARCO (msmarco.parquet) and mMARCO translations (mmarco_*.parquet)", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "contrastive training", note = "mMARCO (https://huggingface.co/datasets/unicamp-dl/mmarco/blob/6d039c4638c0ba3e46a9cb7b498b145e7edc6230/README.md) is a translation of MS MARCO; its own card says Apache-2.0 and its LICENSE file is CC BY 4.0, but it derives from MS MARCO." },
+  { name = "MS MARCO (msmarco.parquet) and mMARCO translations (mmarco_*.parquet)", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", hub = ["microsoft/ms_marco", "unicamp-dl/mmarco"], source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "contrastive training", note = "mMARCO (https://huggingface.co/datasets/unicamp-dl/mmarco/blob/6d039c4638c0ba3e46a9cb7b498b145e7edc6230/README.md) is a translation of MS MARCO; its own card says Apache-2.0 and its LICENSE file is CC BY 4.0, but it derives from MS MARCO." },
   { name = "SNLI, SQuAD, Natural Questions, Stack Exchange, PAQ", licence = "CC-BY-SA (3.0/4.0)", terms = "share-alike", source = "https://huggingface.co/datasets/stanfordnlp/snli/blob/cdb5c3d5eed6ead6e5a341c8e56e669bb666725b/README.md", stage = "contrastive training", note = "Copyleft. Others: https://huggingface.co/datasets/rajpurkar/squad_v2/blob/3ffb306f725f7d2ce8394bc1873b24868140c412/README.md, https://huggingface.co/datasets/google-research-datasets/natural_questions/blob/e8103d566bef4154c2c12b17c6095ec5275840cc/README.md, https://huggingface.co/datasets/flax-sentence-embeddings/stackexchange_xml/blob/0bea7f6680d8ce12e1bfa6d8762d62ac3d44fd1c/README.md, https://github.com/facebookresearch/PAQ/blob/2bfd2c85e58eaac626d8d5082299a676662f51d3/README.md" },
   { name = "ELI5, Reddit, Yahoo Answers, QQP", licence = "unknown", terms = "unknown", source = "https://huggingface.co/datasets/eli5/blob/3e8e3c29ce51a77b35eaa45965474c4b35850430/README.md", stage = "contrastive training", note = "Scraped user content with unclear licensing (see all-minilm-l6-v2 entry)." },
 ]
@@ -346,8 +349,8 @@ concerns = [
   "copyleft-data",
   "unlicensed-data",
 ]
-tier = "2b"
-reason = "Its released training compilation labels itself Apache-2.0, but by its constituents' own terms it contains ANLI (CC BY-NC 4.0) and MS MARCO and mMARCO (non-commercial research only), besides share-alike sets and Reddit. Non-commercial training data: 2b."
+tier = "2a"
+reason = "Its released training compilation labels itself Apache-2.0, but by its constituents' own terms it contains ANLI (CC BY-NC 4.0) and MS MARCO and mMARCO (non-commercial research only), besides share-alike sets and Reddit. Non-commercial training data: 2a, with its terms stated on the card."
 unverified = [
   "Which subset of the F2LLM-v2 data the pruned 160M model was trained or distilled on: the paper says the small models are pruned from the 0.6B model after stage 1 and then distilled, but doesn't say on which data. Every candidate (the 60M corpus, the 18M stage-2 mixture, the 0.6B's stage-1 data) is drawn from the same compilation; whether ANLI is in the subset used is not confirmed.",
   "Paper content read through a summarising fetch of the arXiv HTML.",
@@ -405,7 +408,7 @@ training_disclosure = "partial"
 training_data = [
   { name = "Synthetic weakly supervised pairs (~150M) generated by Qwen3-32B from the Qwen3 pre-training corpus", licence = "unknown", terms = "unknown", source = "https://arxiv.org/abs/2506.05176v3", stage = "weakly supervised pre-training", note = "Paper: Qwen3-32B as 'the foundational model for data synthesis'; documents from 'the multilingual pre-training corpus from Qwen3', which is undisclosed. Qwen3-32B is Apache-2.0 (https://huggingface.co/Qwen/Qwen3-32B/blob/9216db5781bf21249d130ec9da846c4624c16137/LICENSE), so the generator's terms don't restrict use; the source documents are undisclosed." },
   { name = "Synthetic high-quality pairs (~12M, filtered)", licence = "unknown", terms = "unknown", source = "https://arxiv.org/abs/2506.05176v3", stage = "supervised fine-tune", note = "Same generator and source corpus." },
-  { name = "MS MARCO", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "supervised fine-tune", note = "Paper Table 6 lists MS MARCO among ~7M labelled examples." },
+  { name = "MS MARCO", licence = "MS MARCO terms (non-commercial research only)", terms = "non-commercial", hub = ["microsoft/ms_marco"], source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "supervised fine-tune", note = "Paper Table 6 lists MS MARCO among ~7M labelled examples." },
   { name = "Natural Questions", licence = "CC-BY-SA-3.0", terms = "share-alike", source = "https://huggingface.co/datasets/google-research-datasets/natural_questions/blob/e8103d566bef4154c2c12b17c6095ec5275840cc/README.md", stage = "supervised fine-tune", note = "Copyleft." },
   { name = "Other labelled sets (HotpotQA, NLI, DuReader, T2-Ranking, SimCLUE, MIRACL, MLDR, Mr.TyDi, Multi-CPR, CodeSearchNet, 'and others')", licence = "unverified", terms = "unknown", source = "https://arxiv.org/abs/2506.05176v3", stage = "supervised fine-tune", note = "List is not exhaustive per the paper; licences not checked individually." },
 ]
@@ -417,8 +420,8 @@ concerns = [
   "copyleft-data",
   "undisclosed-data",
 ]
-tier = "2b"
-reason = "Mostly trained on about 150M synthetic pairs generated by Qwen3-32B from an undisclosed corpus, and fine-tuned on labelled sets that include MS MARCO (non-commercial research only) and Natural Questions (CC BY-SA). Non-commercial training data: 2b."
+tier = "2a"
+reason = "Mostly trained on about 150M synthetic pairs generated by Qwen3-32B from an undisclosed corpus, and fine-tuned on labelled sets that include MS MARCO (non-commercial research only) and Natural Questions (CC BY-SA). Non-commercial training data: 2a, with its terms stated on the card."
 unverified = [
   "Full list of labelled datasets (paper says 'and others').",
   "Paper content read through a summarising fetch of the arXiv HTML.",
@@ -649,14 +652,14 @@ base_model_licence_sources = [
 ]
 training_disclosure = "full"
 training_data = [
-  { name = "MS MARCO Passage Ranking (via sentence-transformers/msmarco)", licence = "MS MARCO Terms and Conditions (non-commercial research only)", terms = "non-commercial", source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "fine-tune", note = "Microsoft's terms: the datasets 'are intended for non-commercial research purposes only' and are provided 'without extending any license or other intellectual property rights'; Microsoft 'may not own the underlying rights in the documents'. The sentence-transformers/msmarco card (https://huggingface.co/datasets/sentence-transformers/msmarco/blob/2a16a97b87802876f28636ca673e872248336951/README.md) declares no licence; microsoft/ms_marco on HF (a47ee7aa) says 'More Information Needed'." },
+  { name = "MS MARCO Passage Ranking (via sentence-transformers/msmarco)", licence = "MS MARCO Terms and Conditions (non-commercial research only)", terms = "non-commercial", hub = ["microsoft/ms_marco"], source = "https://github.com/microsoft/msmarco/blob/21b4ece9f4fc10fa4cec2028bb74287629945df6/README.md", stage = "fine-tune", note = "Microsoft's terms: the datasets 'are intended for non-commercial research purposes only' and are provided 'without extending any license or other intellectual property rights'; Microsoft 'may not own the underlying rights in the documents'. The sentence-transformers/msmarco card (https://huggingface.co/datasets/sentence-transformers/msmarco/blob/2a16a97b87802876f28636ca673e872248336951/README.md) declares no licence; microsoft/ms_marco on HF (a47ee7aa) says 'More Information Needed'." },
 ]
 base_pretraining = "Declared base cross-encoder/ms-marco-MiniLM-L12-v2 is itself MS MARCO-trained, from microsoft/MiniLM-L12-H384-uncased (MIT, rev 44acabbe), distilled from an in-house UniLMv2 teacher trained on 'English Wikipedia, BookCorpus, OpenWebText, CC-News, and Stories' (MiniLM paper, arXiv 2002.10957, section 5.1). Wikipedia is CC BY-SA; BookCorpus and the web corpora carry no licence of their own."
 custom_terms = []
 licence_text = "apache-2.0.txt"
 concerns = ["non-commercial-data"]
-tier = "2b"
-reason = "Trained on MS MARCO passage ranking, whose terms limit it to non-commercial research. Non-commercial training data: 2b."
+tier = "2a"
+reason = "Trained on MS MARCO passage ranking, whose terms limit it to non-commercial research. Non-commercial training data: 2a, with its terms stated on the card."
 unverified = [
   "How the 6-layer model was initialised: the card's base_model metadata names ms-marco-MiniLM-L12-v2, but neither card nor the SBERT docs (sentence-transformers 072b4abf, docs/cross_encoder/pretrained_models.md) state the initialisation or whether the v2 models used the bert-ensemble distillation scores in sentence-transformers/msmarco.",
 ]
@@ -846,7 +849,7 @@ base_model_licence_sources = [
 training_disclosure = "full"
 training_data = [
   { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_written_texts_for_tasks_v4)", licence = "Apache-2.0", terms = "permissive", source = "https://huggingface.co/datasets/MoritzLaurer/synthetic_zeroshot_mixtral_v0.1/blob/73e6a19617b6ce5010bd4bc59134e2476452befa/README.md", stage = "fine-tune", note = "Card metadata declares apache-2.0 (no prose). Texts generated with mistralai/Mixtral-8x7B-Instruct-v0.1 (Apache-2.0, https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1/blob/eba92302a2861cdc0098cc54bc9f17cb2c47eb61/README.md), which places no restriction on outputs. Seed list of 500+ tasks was drafted 'in conversations with Mistral-large' (proprietary API; its output terms not checked) and manually curated." },
-  { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_refinedweb_nli) - possibly", licence = "Apache-2.0 (dataset); source texts from tiiuae/falcon-refinedweb, ODC-By-1.0", terms = "permissive", source = "https://github.com/MoritzLaurer/zeroshot-classifier/blob/e680edcb6d92d8ca09f3d39b70358ccac8ccbd2f/v2_synthetic_data/synth_train_eval.ipynb", stage = "fine-tune", note = "The training notebook at the repo's HEAD loads this subset as well as tasks_v4; the model cards name only tasks_v4. RefinedWeb card (https://huggingface.co/datasets/tiiuae/falcon-refinedweb/blob/c735840575b629292b41da8dde11dcd523d4f91c/README.md) is ODC-By 1.0 and says use is also subject to CommonCrawl's terms. Whether this subset was in the published runs is not confirmed." },
+  { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_refinedweb_nli) - possibly", licence = "Apache-2.0 (dataset); source texts from tiiuae/falcon-refinedweb, ODC-By-1.0", terms = "permissive", hub = ["MoritzLaurer/synthetic_zeroshot_mixtral_v0.1"], source = "https://github.com/MoritzLaurer/zeroshot-classifier/blob/e680edcb6d92d8ca09f3d39b70358ccac8ccbd2f/v2_synthetic_data/synth_train_eval.ipynb", stage = "fine-tune", note = "The training notebook at the repo's HEAD loads this subset as well as tasks_v4; the model cards name only tasks_v4. RefinedWeb card (https://huggingface.co/datasets/tiiuae/falcon-refinedweb/blob/c735840575b629292b41da8dde11dcd523d4f91c/README.md) is ODC-By 1.0 and says use is also subject to CommonCrawl's terms. Whether this subset was in the published runs is not confirmed." },
   { name = "MultiNLI", licence = "OANC + CC-BY-SA-3.0 + CC-BY-3.0 + public domain (mixed)", terms = "share-alike", source = "https://huggingface.co/datasets/nyu-mll/multi_nli/blob/da70db2af9d09693783c3320c4249840212ee221/README.md", stage = "fine-tune", note = "Card metadata lists cc-by-3.0, cc-by-sa-3.0, mit, other. 'Licensing Information': most text is under the OANC licence (permissive); in the FICTION genre, Seven Swords is CC BY-SA 3.0 (copyleft), Living History and Password Incorrect are CC BY 3.0, the rest public domain in the US." },
   { name = "FEVER-NLI (FEVER claims with Wikipedia evidence)", licence = "CC-BY-SA-3.0 (Wikipedia licence terms)", terms = "share-alike", source = "https://huggingface.co/datasets/fever/fever/blob/2a74f2909caf2b8656343aeb8203e50bf84dcb56/README.md", stage = "fine-tune", note = "FEVER card 'Licensing Information': annotations incorporate Wikipedia material and are available under the applicable Wikipedia article terms, else CC BY-SA 3.0; card metadata also lists gpl-3.0. Copyleft. The NLI reformatting (easonnie/combine-FEVER-NSMN) and the author's own overview CSV also give cc-by-sa-3.0. The training copy is MoritzLaurer/mnli_fever_clean (sha a18648092389b1529f7a85040977f786522b1bab), whose card declares no licence." },
 ]
@@ -878,7 +881,7 @@ base_model_licence_sources = [
 training_disclosure = "full"
 training_data = [
   { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_written_texts_for_tasks_v4)", licence = "Apache-2.0", terms = "permissive", source = "https://huggingface.co/datasets/MoritzLaurer/synthetic_zeroshot_mixtral_v0.1/blob/73e6a19617b6ce5010bd4bc59134e2476452befa/README.md", stage = "fine-tune", note = "Card metadata declares apache-2.0 (no prose). Texts generated with mistralai/Mixtral-8x7B-Instruct-v0.1 (Apache-2.0, https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1/blob/eba92302a2861cdc0098cc54bc9f17cb2c47eb61/README.md), which places no restriction on outputs. Seed list of 500+ tasks was drafted 'in conversations with Mistral-large' (proprietary API; its output terms not checked) and manually curated." },
-  { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_refinedweb_nli) - possibly", licence = "Apache-2.0 (dataset); source texts from tiiuae/falcon-refinedweb, ODC-By-1.0", terms = "permissive", source = "https://github.com/MoritzLaurer/zeroshot-classifier/blob/e680edcb6d92d8ca09f3d39b70358ccac8ccbd2f/v2_synthetic_data/synth_train_eval.ipynb", stage = "fine-tune", note = "The training notebook at the repo's HEAD loads this subset as well as tasks_v4; the model cards name only tasks_v4. RefinedWeb card (https://huggingface.co/datasets/tiiuae/falcon-refinedweb/blob/c735840575b629292b41da8dde11dcd523d4f91c/README.md) is ODC-By 1.0 and says use is also subject to CommonCrawl's terms. Whether this subset was in the published runs is not confirmed." },
+  { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_refinedweb_nli) - possibly", licence = "Apache-2.0 (dataset); source texts from tiiuae/falcon-refinedweb, ODC-By-1.0", terms = "permissive", hub = ["MoritzLaurer/synthetic_zeroshot_mixtral_v0.1"], source = "https://github.com/MoritzLaurer/zeroshot-classifier/blob/e680edcb6d92d8ca09f3d39b70358ccac8ccbd2f/v2_synthetic_data/synth_train_eval.ipynb", stage = "fine-tune", note = "The training notebook at the repo's HEAD loads this subset as well as tasks_v4; the model cards name only tasks_v4. RefinedWeb card (https://huggingface.co/datasets/tiiuae/falcon-refinedweb/blob/c735840575b629292b41da8dde11dcd523d4f91c/README.md) is ODC-By 1.0 and says use is also subject to CommonCrawl's terms. Whether this subset was in the published runs is not confirmed." },
   { name = "MultiNLI", licence = "OANC + CC-BY-SA-3.0 + CC-BY-3.0 + public domain (mixed)", terms = "share-alike", source = "https://huggingface.co/datasets/nyu-mll/multi_nli/blob/da70db2af9d09693783c3320c4249840212ee221/README.md", stage = "fine-tune", note = "Card metadata lists cc-by-3.0, cc-by-sa-3.0, mit, other. 'Licensing Information': most text is under the OANC licence (permissive); in the FICTION genre, Seven Swords is CC BY-SA 3.0 (copyleft), Living History and Password Incorrect are CC BY 3.0, the rest public domain in the US." },
   { name = "FEVER-NLI (FEVER claims with Wikipedia evidence)", licence = "CC-BY-SA-3.0 (Wikipedia licence terms)", terms = "share-alike", source = "https://huggingface.co/datasets/fever/fever/blob/2a74f2909caf2b8656343aeb8203e50bf84dcb56/README.md", stage = "fine-tune", note = "FEVER card 'Licensing Information': annotations incorporate Wikipedia material and are available under the applicable Wikipedia article terms, else CC BY-SA 3.0; card metadata also lists gpl-3.0. Copyleft. The NLI reformatting (easonnie/combine-FEVER-NSMN) and the author's own overview CSV also give cc-by-sa-3.0. The training copy is MoritzLaurer/mnli_fever_clean (sha a18648092389b1529f7a85040977f786522b1bab), whose card declares no licence." },
 ]
@@ -911,7 +914,7 @@ base_model_licence_sources = [
 training_disclosure = "full"
 training_data = [
   { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_written_texts_for_tasks_v4)", licence = "Apache-2.0", terms = "permissive", source = "https://huggingface.co/datasets/MoritzLaurer/synthetic_zeroshot_mixtral_v0.1/blob/73e6a19617b6ce5010bd4bc59134e2476452befa/README.md", stage = "fine-tune", note = "Card metadata declares apache-2.0 (no prose). Texts generated with mistralai/Mixtral-8x7B-Instruct-v0.1 (Apache-2.0, https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1/blob/eba92302a2861cdc0098cc54bc9f17cb2c47eb61/README.md), which places no restriction on outputs. Seed list of 500+ tasks was drafted 'in conversations with Mistral-large' (proprietary API; its output terms not checked) and manually curated." },
-  { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_refinedweb_nli) - possibly", licence = "Apache-2.0 (dataset); source texts from tiiuae/falcon-refinedweb, ODC-By-1.0", terms = "permissive", source = "https://github.com/MoritzLaurer/zeroshot-classifier/blob/e680edcb6d92d8ca09f3d39b70358ccac8ccbd2f/v2_synthetic_data/synth_train_eval.ipynb", stage = "fine-tune", note = "The training notebook at the repo's HEAD loads this subset as well as tasks_v4; the model cards name only tasks_v4. RefinedWeb card (https://huggingface.co/datasets/tiiuae/falcon-refinedweb/blob/c735840575b629292b41da8dde11dcd523d4f91c/README.md) is ODC-By 1.0 and says use is also subject to CommonCrawl's terms. Whether this subset was in the published runs is not confirmed." },
+  { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_refinedweb_nli) - possibly", licence = "Apache-2.0 (dataset); source texts from tiiuae/falcon-refinedweb, ODC-By-1.0", terms = "permissive", hub = ["MoritzLaurer/synthetic_zeroshot_mixtral_v0.1"], source = "https://github.com/MoritzLaurer/zeroshot-classifier/blob/e680edcb6d92d8ca09f3d39b70358ccac8ccbd2f/v2_synthetic_data/synth_train_eval.ipynb", stage = "fine-tune", note = "The training notebook at the repo's HEAD loads this subset as well as tasks_v4; the model cards name only tasks_v4. RefinedWeb card (https://huggingface.co/datasets/tiiuae/falcon-refinedweb/blob/c735840575b629292b41da8dde11dcd523d4f91c/README.md) is ODC-By 1.0 and says use is also subject to CommonCrawl's terms. Whether this subset was in the published runs is not confirmed." },
   { name = "MultiNLI", licence = "OANC + CC-BY-SA-3.0 + CC-BY-3.0 + public domain (mixed)", terms = "share-alike", source = "https://huggingface.co/datasets/nyu-mll/multi_nli/blob/da70db2af9d09693783c3320c4249840212ee221/README.md", stage = "fine-tune", note = "Card metadata lists cc-by-3.0, cc-by-sa-3.0, mit, other. 'Licensing Information': most text is under the OANC licence (permissive); in the FICTION genre, Seven Swords is CC BY-SA 3.0 (copyleft), Living History and Password Incorrect are CC BY 3.0, the rest public domain in the US." },
   { name = "FEVER-NLI (FEVER claims with Wikipedia evidence)", licence = "CC-BY-SA-3.0 (Wikipedia licence terms)", terms = "share-alike", source = "https://huggingface.co/datasets/fever/fever/blob/2a74f2909caf2b8656343aeb8203e50bf84dcb56/README.md", stage = "fine-tune", note = "FEVER card 'Licensing Information': annotations incorporate Wikipedia material and are available under the applicable Wikipedia article terms, else CC BY-SA 3.0; card metadata also lists gpl-3.0. Copyleft. The NLI reformatting (easonnie/combine-FEVER-NSMN) and the author's own overview CSV also give cc-by-sa-3.0. The training copy is MoritzLaurer/mnli_fever_clean (sha a18648092389b1529f7a85040977f786522b1bab), whose card declares no licence." },
 ]
@@ -943,7 +946,7 @@ base_model_licence_sources = [
 training_disclosure = "full"
 training_data = [
   { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_written_texts_for_tasks_v4)", licence = "Apache-2.0", terms = "permissive", source = "https://huggingface.co/datasets/MoritzLaurer/synthetic_zeroshot_mixtral_v0.1/blob/73e6a19617b6ce5010bd4bc59134e2476452befa/README.md", stage = "fine-tune", note = "Card metadata declares apache-2.0 (no prose). Texts generated with mistralai/Mixtral-8x7B-Instruct-v0.1 (Apache-2.0, https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1/blob/eba92302a2861cdc0098cc54bc9f17cb2c47eb61/README.md), which places no restriction on outputs. Seed list of 500+ tasks was drafted 'in conversations with Mistral-large' (proprietary API; its output terms not checked) and manually curated." },
-  { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_refinedweb_nli) - possibly", licence = "Apache-2.0 (dataset); source texts from tiiuae/falcon-refinedweb, ODC-By-1.0", terms = "permissive", source = "https://github.com/MoritzLaurer/zeroshot-classifier/blob/e680edcb6d92d8ca09f3d39b70358ccac8ccbd2f/v2_synthetic_data/synth_train_eval.ipynb", stage = "fine-tune", note = "The training notebook at the repo's HEAD loads this subset as well as tasks_v4; the model cards name only tasks_v4. RefinedWeb card (https://huggingface.co/datasets/tiiuae/falcon-refinedweb/blob/c735840575b629292b41da8dde11dcd523d4f91c/README.md) is ODC-By 1.0 and says use is also subject to CommonCrawl's terms. Whether this subset was in the published runs is not confirmed." },
+  { name = "MoritzLaurer/synthetic_zeroshot_mixtral_v0.1 (subset mixtral_refinedweb_nli) - possibly", licence = "Apache-2.0 (dataset); source texts from tiiuae/falcon-refinedweb, ODC-By-1.0", terms = "permissive", hub = ["MoritzLaurer/synthetic_zeroshot_mixtral_v0.1"], source = "https://github.com/MoritzLaurer/zeroshot-classifier/blob/e680edcb6d92d8ca09f3d39b70358ccac8ccbd2f/v2_synthetic_data/synth_train_eval.ipynb", stage = "fine-tune", note = "The training notebook at the repo's HEAD loads this subset as well as tasks_v4; the model cards name only tasks_v4. RefinedWeb card (https://huggingface.co/datasets/tiiuae/falcon-refinedweb/blob/c735840575b629292b41da8dde11dcd523d4f91c/README.md) is ODC-By 1.0 and says use is also subject to CommonCrawl's terms. Whether this subset was in the published runs is not confirmed." },
   { name = "MultiNLI", licence = "OANC + CC-BY-SA-3.0 + CC-BY-3.0 + public domain (mixed)", terms = "share-alike", source = "https://huggingface.co/datasets/nyu-mll/multi_nli/blob/da70db2af9d09693783c3320c4249840212ee221/README.md", stage = "fine-tune", note = "Card metadata lists cc-by-3.0, cc-by-sa-3.0, mit, other. 'Licensing Information': most text is under the OANC licence (permissive); in the FICTION genre, Seven Swords is CC BY-SA 3.0 (copyleft), Living History and Password Incorrect are CC BY 3.0, the rest public domain in the US." },
   { name = "FEVER-NLI (FEVER claims with Wikipedia evidence)", licence = "CC-BY-SA-3.0 (Wikipedia licence terms)", terms = "share-alike", source = "https://huggingface.co/datasets/fever/fever/blob/2a74f2909caf2b8656343aeb8203e50bf84dcb56/README.md", stage = "fine-tune", note = "FEVER card 'Licensing Information': annotations incorporate Wikipedia material and are available under the applicable Wikipedia article terms, else CC BY-SA 3.0; card metadata also lists gpl-3.0. Copyleft. The NLI reformatting (easonnie/combine-FEVER-NSMN) and the author's own overview CSV also give cc-by-sa-3.0. The training copy is MoritzLaurer/mnli_fever_clean (sha a18648092389b1529f7a85040977f786522b1bab), whose card declares no licence." },
 ]
@@ -998,8 +1001,8 @@ concerns = [
   "copyleft-data",
   "unlicensed-data",
 ]
-tier = "2b"
-reason = "Trained partly on ANLI, empathetic_dialogues and trueteacher (CC BY-NC 4.0), financial_phrasebank (CC BY-NC-SA 3.0), and Yelp and IMDb data under non-commercial terms. Non-commercial training data: 2b."
+tier = "2a"
+reason = "Trained partly on ANLI, empathetic_dialogues and trueteacher (CC BY-NC 4.0), financial_phrasebank (CC BY-NC-SA 3.0), and Yelp and IMDb data under non-commercial terms. Non-commercial training data: 2a, with its terms stated on the card."
 unverified = [
   "The card does not list datasets itself; the mix is inferred from its statement 'same dataset mix as the zeroshot-v2.0 models' and the -c cards' description of that mix, which points to the overview CSV at commit 7f82e4a.",
   "Licences for the 'remaining' datasets are the author's CSV entries, not verified against each dataset card.",

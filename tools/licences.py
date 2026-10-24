@@ -7,7 +7,10 @@ Usage:
 
 A tier is reviewable because it follows from the recorded data: `problems()`
 recomputes the lowest tier each entry's training data, disclosure and
-concerns allow, and refuses an entry whose stated tier differs. Tier 3 is
+concerns allow, and refuses an entry whose stated tier differs. Only terms
+that must travel with the files (custom-terms, use-policy) reach tier 2b,
+a gated repository; every training-data concern, non-commercial terms
+included, is tier 2a, a notice on the card. Tier 3 is
 the one judgement it can't recompute (a licence that forbids
 redistribution or commercial use, or makes commercial use depend on the
 user's circumstances), so a tier-3 entry must say why in `reason`.
@@ -92,6 +95,7 @@ PINNED = [
 ]
 HF_REPO = re.compile(r"^https://huggingface\.co/(?!datasets/)([^/]+/[^/]+)/")
 HF_DATASET = re.compile(r"^https://huggingface\.co/datasets/([^/]+/[^/]+)/")
+HUB_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # Hugging Face's licence identifiers (model-card `license:`), by our names.
 HF_LICENSE = {"Apache-2.0": "apache-2.0", "MIT": "mit", "Gemma Terms of Use": "gemma"}
@@ -106,13 +110,17 @@ def load_models():
 
 
 def floor_tier(entry):
-    """The lowest tier the recorded data allows. Tier 3 is never implied:
-    it is a judgement about the licence, which `reason` must give."""
+    """The lowest tier the recorded data allows. Tier 2b, a gated
+    repository, is only for terms that must be passed on to every recipient
+    (custom-terms, use-policy). Non-commercial, share-alike, unlicensed or
+    undisclosed training data, or an unnamed generator, is 2a: disclosed on
+    the card, without a gate. Tier 3 is never implied: it is a judgement
+    about the licence, which `reason` must give."""
     terms = {d.get("terms") for d in entry.get("training_data", [])}
     concerns = set(entry.get("concerns", []))
-    if "non-commercial" in terms or concerns & set(TRAVELLING):
+    if concerns & set(TRAVELLING):
         return "2b"
-    if (terms & {"share-alike", "unknown"} or entry.get("training_disclosure") != "full"
+    if (terms & {"non-commercial", "share-alike", "unknown"} or entry.get("training_disclosure") != "full"
             or "unnamed-synthetic-generator" in concerns or not entry.get("training_data")):
         return "2a"
     return "1"
@@ -126,12 +134,14 @@ def pinned(url):
 
 
 def hf_datasets(entry):
-    """Hugging Face dataset ids named by the entry's training-data sources."""
+    """Hugging Face dataset ids of the entry's training data: each source
+    that is a Hub dataset page, and each dataset's `hub` ids, in order."""
     out = []
     for d in entry.get("training_data", []):
         m = HF_DATASET.match(d.get("source", ""))
-        if m and m.group(1) not in out:
-            out.append(m.group(1))
+        for ds in ([m.group(1)] if m else []) + list(d.get("hub", [])):
+            if ds not in out:
+                out.append(ds)
     return out
 
 
@@ -185,6 +195,9 @@ def problems(data=None, models=None):
                 continue
             if d["terms"] not in TERMS:
                 out.append(f"{w}: {d['name']}: terms {d['terms']!r} isn't one of {', '.join(TERMS)}")
+            hub = d.get("hub", [])
+            if not isinstance(hub, list) or not all(isinstance(h, str) and HUB_ID.match(h) for h in hub):
+                out.append(f"{w}: {d['name']}: hub must be a list of Hugging Face dataset ids (org/name)")
             urls.append(d["source"])
         for t in e["custom_terms"]:
             if not isinstance(t, dict) or not all(isinstance(t.get(k), str) and t[k] for k in ("name", "url", "requires")):

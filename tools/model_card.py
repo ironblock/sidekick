@@ -260,16 +260,30 @@ def result_rows(results, model, backend):
                                        BACKEND_PATHS[backend].index(r["path"]), r["precision"]))
 
 
+def with_terms(d):
+    """"MS MARCO (non-commercial research only)" from a dataset whose
+    licence reads "MS MARCO terms (non-commercial research only)", and
+    "ANLI (CC-BY-NC-4.0)" from a plain one: the dataset's name once."""
+    lic = d["licence"]
+    m = re.match(r"^([^()]*?)\s*\(([^()]*)\)$", lic)
+    if m and ("terms" in m.group(1).lower() or m.group(1).lower() == "other"):
+        lic = m.group(2)
+    return f"{d['name']} ({lic})" if "(" not in lic else f"{d['name']}: {lic}"
+
+
+def non_commercial(lic):
+    return [d for d in lic["training_data"] if d["terms"] == "non-commercial"]
+
+
 def consent_terms(m, lic):
     """The terms a user accepts to download a tier-2b build: built from the
     audit's concerns and the datasets behind them. Plain Markdown, used
     as the gate's prompt, on the card, and as TERMS.md."""
     repo, rev = split_source(m["source"])
     items = []
-    nc = [d for d in lic["training_data"] if d["terms"] == "non-commercial"]
+    nc = non_commercial(lic)
     if nc:
-        names = "; ".join(f"{d['name']}: {d['licence']}" if "(" in d["licence"] else f"{d['name']} ({d['licence']})"
-                          for d in nc)
+        names = "; ".join(with_terms(d) for d in nc)
         items.append(
             f"The original model was trained on data whose terms restrict it to non-commercial use: {names}. "
             "Whether such terms bind a model trained on the data is legally unsettled. You decide whether your "
@@ -308,6 +322,18 @@ def notice(m, lic, link):
     if tier == "1":
         body = [f"> {head} The licence and all of the declared training data are permissive. "
                 + link("tiers", "How sidekick decides what it publishes") + "."]
+    elif tier == "2a" and non_commercial(lic):
+        # As prominent as a gate's terms, and the same substance, but nothing
+        # to accept: no account, no click, no email address shared.
+        body = [f"> {head} **Training data with non-commercial terms.** Nothing to accept, but read this "
+                "before you use the model:", ">"]
+        body += [f"> - **The data:** {'; '.join(with_terms(d) for d in non_commercial(lic))}."]
+        body += ["> - **Whether such terms bind a model trained on the data is legally unsettled.** You decide "
+                 "whether your use is permitted, and the publisher of this repository gives no assurance that it is.",
+                 f"> - **The model's own licence is unchanged:** these files are distributed under "
+                 f"{lic['licence']}, as the original model is.", ">",
+                 f"> Why: {lic['reason']} The [training data](#training-data) below gives every source's licence. "
+                 + link("tiers", "How sidekick decides what it publishes") + "."]
     elif tier == "2a":
         body = [f"> {head} {lic['reason']} Whether a dataset's terms reach a model trained on it is legally "
                 "unsettled; the [training data](#training-data) below gives each source's licence. "
