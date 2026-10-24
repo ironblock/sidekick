@@ -82,7 +82,7 @@ label.chip:has(input:checked) { background: var(--accent-soft); border-color: va
 button.reset { font: inherit; font-size: 13px; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 4px 2px; text-decoration: underline; text-underline-offset: 3px; }
 
 .table-box { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
-table { border-collapse: collapse; width: 100%; min-width: 1140px; font-size: 14px; }
+table { border-collapse: collapse; width: 100%; min-width: 1420px; font-size: 14px; }
 thead th { position: sticky; top: 0; background: var(--surface); text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
 thead th button { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
 thead th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -104,8 +104,17 @@ td.model small { display: block; font-weight: 400; color: var(--muted); font-siz
 .nines { display: grid; grid-template-columns: 112px auto; gap: 8px; align-items: center; }
 .bar { height: 8px; border-radius: 4px; background: var(--bar-track); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--bar); border-radius: 4px; }
-.served, .licence { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
-.licence { color: var(--g-d); border-color: var(--g-d); cursor: help; }
+.served { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
+td.lic { white-space: nowrap; }
+td.lic a { color: var(--accent); text-decoration-color: var(--rule); text-underline-offset: 3px; }
+td.lic a:hover { text-decoration-color: currentColor; }
+td.lic .flag { margin-left: 6px; }
+td.data { min-width: 170px; }
+.flags { display: flex; flex-wrap: wrap; gap: 4px; }
+.flag { display: inline-block; font-size: 12px; line-height: 1.5; padding: 0 6px; border-radius: 3px; background: var(--bar-track); color: var(--ink); white-space: nowrap; cursor: help; }
+.flag.warn { color: var(--g-d); background: var(--g-d-bg); }
+.flag.gate { color: var(--g-c); background: var(--g-c-bg); }
+.facet.out label.chip:has(input:checked) { background: var(--g-d-bg); border-color: var(--g-d); color: var(--g-d); }
 .prov { border-bottom: 1px dotted var(--muted); cursor: help; }
 td.note { color: var(--muted); font-size: 13px; min-width: 220px; }
 td.score .self { font-style: italic; }
@@ -156,6 +165,10 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
       <h2>Reading a score</h2>
       <p>A benchmark may have run on longer inputs than a build takes: each score's tooltip gives the run's context, and each row its build's max tokens. MTEB prompts many models per task, and sidekick adds each model's own query or document prompt by default. To reproduce a run's prompts on any task, send them in the text with <code>input_type: "none"</code>, which adds nothing (for e5-small-v2 outside retrieval and reranking, send no prompt at all), or choose a model's own task prompt by name with <code>prompt_name</code>, such as EmbeddingGemma's <code>"Classification"</code>. Without the run's prompts, expect lower classification, clustering and STS. A grade-A path reproduces the model closely enough for its score to carry over (embedders: worst cosine ≥ 0.9999; classifiers: worst Δp ≤ 0.001 or within 1.25× the fp16 ceiling); C, D or int8 may not. A few hundred labelled examples from your own data decide. More in <a href="https://github.com/ironblock/sidekick/blob/main/docs/MODELS.md#benchmark-scores">docs/MODELS.md</a>.</p>
     </div>
+    <div>
+      <h2>Licence and training data</h2>
+      <p>The licence is the model's own, linked to its text or to the model card that states it. Training data has terms of its own, and whether they reach the trained weights is legally unsettled, so the training data column shows what sidekick's licence audit found. That decides how sidekick publishes a build: openly, with a notice on the model card, when training data is non-commercial, copyleft or undisclosed; gated, with terms you accept first, when the terms must be passed on to everyone who gets the files (Gemma); or not at all when the licence limits commercial use. Hover or tap a licence or a flag for details, and use <b>Leave out</b> to hide what doesn't suit your use. The audit records terms, not legal conclusions. More in <a href="https://github.com/ironblock/sidekick/blob/main/docs/PUBLISHING.md#what-is-published-licence-tiers">docs/PUBLISHING.md</a> and <a href="https://github.com/ironblock/sidekick/blob/main/docs/MODELS.md#licences-and-training-data">docs/MODELS.md</a>.</p>
+    </div>
   </section>
 
   <section class="controls" aria-label="Filters">
@@ -197,7 +210,7 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
 
   <footer>
     <div id="sources"></div>
-    <div>Generated by <code>tools/models_table.py</code> into <code>docs/data/models.json</code> from the parity suite's reports, the benchmarks, and the Core ML tables in <code>docs/MODELS.md</code>; benchmark scores from <code>docs/data/benchmarks.mteb.json</code> (collected by <code>tools/fetch_benchmarks.py</code>) and <code>docs/data/benchmarks.toml</code>. A value nobody measured is blank.</div>
+    <div>Generated by <code>tools/models_table.py</code> into <code>docs/data/models.json</code> from the parity suite's reports, the benchmarks, and the Core ML tables in <code>docs/MODELS.md</code>; benchmark scores from <code>docs/data/benchmarks.mteb.json</code> (collected by <code>tools/fetch_benchmarks.py</code>) and <code>docs/data/benchmarks.toml</code>; licences from the licence audit, <code>docs/data/licences.toml</code>. A value nobody measured is blank.</div>
   </footer>
 </div>
 <script>
@@ -220,6 +233,8 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     { key:"ms", label:"ms / input" },
     { key:"mem", label:"Memory" },
     { key:"disk", label:"On disk" },
+    { key:"lic", label:"Licence" },
+    { key:"dataRank", label:"Training data" },
     { key:"note", label:"Notes", nosort:true }
   ];
   var facetDefs = [
@@ -227,9 +242,33 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     { key:"path", label:"Path" },
     { key:"precision", label:"Precision" },
     { key:"chip", label:"Chip" },
-    { key:"grade", label:"Grade" }
+    { key:"grade", label:"Grade" },
+    { key:"lic", label:"Licence" }
   ];
-  var state = { q:"", served:false, best:"", offGpu:false, bench:"", sort:{ key:"nines", dir:-1 }, facets:{} };
+  // What the licence audit flags (models.json's `licences`), as the page
+  // names it. Training-data flags come from a model's concerns; the
+  // publishing ones from its tier (docs/PUBLISHING.md), which a concern
+  // about travelling terms (custom-terms, use-policy) always sets to 2b or 3.
+  var FLAGS = [
+    { id:"non-commercial-data", label:"Non-commercial training data (notice)", short:"Non-commercial", cls:"warn",
+      tip:"Some training data is licensed for non-commercial use only. The model card states it; whether it reaches the weights is unsettled." },
+    { id:"copyleft-data", label:"Copyleft training data", short:"Copyleft",
+      tip:"Some training data is share-alike, such as CC BY-SA." },
+    { id:"unlicensed-data", label:"Training data without a stated licence", short:"No stated licence",
+      tip:"Some training data has no licence a primary source states, such as scraped web content." },
+    { id:"undisclosed-data", label:"Training data undisclosed", short:"Undisclosed",
+      tip:"The authors don't disclose all of the training data." },
+    { id:"unnamed-synthetic-generator", label:"Synthetic training data from an unnamed model", short:"Unnamed generator",
+      tip:"Some training data is synthetic, generated by a model the authors don't name." },
+    { id:"gated", label:"Gated: terms must be accepted", short:"Gated", cls:"gate", tier:"2b",
+      tip:"Terms travel with the files, so a published build asks you to accept them first." },
+    { id:"unpublished", label:"Not published (licence)", short:"Not published", cls:"warn", tier:"3",
+      tip:"sidekick doesn't publish builds of this model: its licence limits commercial use. Converting it yourself stays documented." }
+  ];
+  var TIERS = { "1":"published", "2a":"published, with a notice about its training data on the model card",
+    "2b":"published gated: you accept the terms that travel with the files first", "3":"not published; you can convert it yourself" };
+  var TIER_RANK = { "1":0, "2a":1, "2b":2, "3":3 };
+  var state = { q:"", served:false, best:"", offGpu:false, bench:"", sort:{ key:"nines", dir:-1 }, facets:{}, hide:{} };
   // Benchmark scores (models.json's `benchmarks`): each (benchmark, version,
   // category, metric) with at least one score is a choice.
   var combos = [], comboByKey = {}, scoreBy = {};
@@ -243,11 +282,21 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
   function uniq(key) {
     var seen = {}, out = [];
     rows.forEach(function (r) { if (r[key] != null && !seen[r[key]]) { seen[r[key]] = 1; out.push(r[key]); } });
+    if (key === "lic") {
+      // SPDX licences first, then custom ones.
+      var spdx = {};
+      rows.forEach(function (r) { spdx[r.lic] = r.licSpdx; });
+      return out.sort(function (a, b) { return (spdx[b] - spdx[a]) || a.localeCompare(b); });
+    }
     return key === "grade" ? out.sort() : out;
   }
 
   // One record of docs/data/models.json, shaped for the table.
   function toRow(r) {
+    var lic = (data.licences || {})[r.model] || {}, flags = [];
+    FLAGS.forEach(function (f) {
+      if (f.tier ? lic.tier === f.tier : (lic.concerns || []).indexOf(f.id) >= 0) flags.push(f);
+    });
     var notes = [];
     if (r.worst_case) notes.push("Worst case: " + r.worst_case);
     if (r.note) notes.push(r.note);
@@ -255,10 +304,13 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
       model:r.model, name:r.name, family:r.family, task:r.task, path:r.path, precision:r.precision, chip:r.chip,
       runtime:[r.runtime, r.os].filter(Boolean).join(" · "), grade:r.grade, err:r.error, errText:r.error_text, errKind:r.error_kind,
       flips:r.rank_flips, ms:r.ms, prov:r.ms != null && r.ms_idle !== true, msIdle:r.ms_idle, msSource:r.ms_source, latency:r.latency || [],
-      served:r.served, licence:r.license_note, note:notes.join(". "), nines:r.error == null ? null : -Math.log10(Math.max(r.error, 1e-15)),
+      served:r.served, licNote:r.license_note, note:notes.join(". "), nines:r.error == null ? null : -Math.log10(Math.max(r.error, 1e-15)),
       mem:r.footprint_mb, memWhy:r.footprint_measured, peak:r.peak_mb, peakWhy:r.peak_measured,
       machine:r.machine_mb, machineWhy:r.machine_measured, disk:r.disk_mb, diskWhy:r.disk_measured,
-      date:r.date, source:r.source, matryoshka:r.matryoshka, threads:r.threads, sidekick:r.sidekick, cap:r.max_seq_len
+      date:r.date, source:r.source, matryoshka:r.matryoshka, threads:r.threads, sidekick:r.sidekick, cap:r.max_seq_len,
+      lic:lic.licence, licName:lic.licence_name, licSpdx:!!lic.licence_spdx, licUrl:lic.licence_url, tier:lic.tier,
+      disclosure:lic.training_disclosure, terms:(lic.custom_terms || []).map(function (t) { return t.name; }), flags:flags,
+      dataRank:lic.tier == null ? null : TIER_RANK[lic.tier] * 10 + flags.length
     };
   }
 
@@ -273,12 +325,32 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
         var lab = el("label", { "class":"chip", "for":id });
         var cb = el("input", { type:"checkbox", id:id });
         cb.addEventListener("change", function () { state.facets[f.key][v] = cb.checked; render(); });
+        if (f.key === "lic") {
+          var r0 = rows.filter(function (r) { return r.lic === v; })[0];
+          if (r0.licName !== v) lab.title = r0.licName;
+        }
         lab.appendChild(cb);
         lab.appendChild(document.createTextNode(v));
         wrap.appendChild(lab);
       });
       facetsBox.appendChild(wrap);
     });
+    // Leave out: the opposite of the facets above. A checked flag hides
+    // every model the audit gives it, so "Apache-2.0 or MIT, without
+    // non-commercial training data" is three clicks.
+    var out = el("div", { "class":"facet out", role:"group", "aria-label":"Leave out models with" });
+    out.appendChild(el("span", null, "Leave out"));
+    FLAGS.forEach(function (f, i) {
+      if (!rows.some(function (r) { return r.flags.indexOf(f) >= 0; })) return;
+      var id = "f-hide-" + i;
+      var lab = el("label", { "class":"chip", "for":id, title:f.tip });
+      var cb = el("input", { type:"checkbox", id:id });
+      cb.addEventListener("change", function () { state.hide[f.id] = cb.checked; render(); });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(f.label));
+      out.appendChild(lab);
+    });
+    facetsBox.appendChild(out);
     var head = document.getElementById("head");
     cols.forEach(function (c) {
       var th = el("th", { scope:"col", "data-key":c.key });
@@ -313,6 +385,7 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
       state.q = ""; state.served = false; state.best = ""; state.offGpu = false; state.bench = "";
       if (state.sort.key === "score") state.sort = { key:"nines", dir:-1 };
       Object.keys(state.facets).forEach(function (k) { state.facets[k] = {}; });
+      state.hide = {};
       render();
     });
   }
@@ -354,12 +427,14 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     if (state.served && !r.served) return false;
     if (state.bench && r.score == null) return false;
     if (state.offGpu && r.path === "coreml-gpu") return false;
+    if (r.flags.some(function (f) { return state.hide[f.id]; })) return false;
     for (var k in state.facets) {
       var on = Object.keys(state.facets[k]).filter(function (v) { return state.facets[k][v]; });
       if (on.length && on.indexOf(String(r[k])) < 0) return false;
     }
     if (state.q) {
-      var hay = [r.name, r.model, r.family, r.task, r.path, r.precision, r.chip, r.runtime, r.note, r.licence].join(" ").toLowerCase();
+      var hay = [r.name, r.model, r.family, r.task, r.path, r.precision, r.chip, r.runtime, r.note, r.licNote, r.lic, r.licName]
+        .concat(r.flags.map(function (f) { return f.label; })).join(" ").toLowerCase();
       if (hay.indexOf(state.q) < 0) return false;
     }
     return true;
@@ -480,6 +555,36 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
     });
   }
 
+  function flagEl(f, title) {
+    return el("span", { "class":"flag" + (f.cls ? " " + f.cls : ""), title:title || f.tip }, f.short);
+  }
+  // The licence, linked to its text, with the publishing flags its tier sets.
+  function licCell(r) {
+    var td = el("td", { "class":"lic" });
+    if (!r.lic) { td.textContent = "–"; td.className = "dim"; return td; }
+    var title = (r.licName !== r.lic ? r.licName + ". " : "") + "Publishing tier " + r.tier + ": " + TIERS[r.tier] + ".";
+    td.appendChild(r.licUrl ? el("a", { href:r.licUrl, title:title, rel:"noopener" }, r.lic) : el("span", { title:title }, r.lic));
+    r.flags.forEach(function (f) {
+      if (f.tier) td.appendChild(flagEl(f, f.tip + (r.terms.length ? " " + r.terms.join("; ") + "." : "")));
+    });
+    return td;
+  }
+  // The training-data flags.
+  function dataCell(r) {
+    var td = el("td", { "class":"data" }), box = el("div", { "class":"flags" });
+    r.flags.forEach(function (f) {
+      if (f.tier) return;
+      var tip = f.tip;
+      if (f.id === "undisclosed-data") tip = r.disclosure === "partial" ? "The authors disclose only part of the training data." :
+        "The authors don't disclose the training data.";
+      if (f.id === "non-commercial-data" && r.licNote) tip += " This model: " + r.licNote + ".";
+      box.appendChild(flagEl(f, tip));
+    });
+    if (box.childNodes.length) td.appendChild(box);
+    else { td.textContent = r.tier ? "Permissive, fully disclosed" : "–"; td.classList.add("dim"); }
+    return td;
+  }
+
   var body = document.getElementById("body"), empty = document.getElementById("empty"), count = document.getElementById("count");
   function render() {
     document.querySelectorAll("#head th").forEach(function (th) {
@@ -516,8 +621,6 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
       var tr = el("tr");
       var tdm = el("td", { "class":"model" }, r.name);
       if (r.served) tdm.appendChild(el("span", { "class":"served", title:"The path this build is served on by default" }, "served"));
-      // A model whose training data carries a non-commercial licence.
-      if (r.licence) tdm.appendChild(el("span", { "class":"licence", title:"Licence: " + r.licence }, "non-commercial?"));
       tdm.appendChild(el("small", null, r.family));
       tr.appendChild(tdm);
       tr.appendChild(el("td", null, r.task));
@@ -549,6 +652,8 @@ footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-widt
       tr.appendChild(tdms);
       tr.appendChild(numCell(r.mem == null ? null : fmtMB(r.mem), memTitle(r)));
       tr.appendChild(numCell(r.disk == null ? null : fmtMB(r.disk), r.diskWhy));
+      tr.appendChild(licCell(r));
+      tr.appendChild(dataCell(r));
       tr.appendChild(el("td", { "class":"note" }, r.note));
       body.appendChild(tr);
     });

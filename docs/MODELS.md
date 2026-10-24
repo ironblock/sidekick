@@ -2187,7 +2187,11 @@ tier that follows ([PUBLISHING.md](PUBLISHING.md)):
   agent-jev.
 
 The audit records terms, not legal conclusions: check them against your
-own use.
+own use. The [comparison page](https://ironblock.github.io/sidekick/)
+shows each model's licence, tier and these flags, which
+`tools/models_table.py` copies from the audit into
+[docs/data/models.json](data/models.json)'s `licences`, and filters by
+them.
 
 ## Published builds
 
