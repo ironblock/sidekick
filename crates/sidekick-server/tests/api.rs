@@ -213,6 +213,18 @@ async fn models_and_health_report_state() {
         .collect();
     assert!(ids.contains(&"apple-fm"));
     assert!(ids.contains(&"test-static"));
+    // Core ML models list each bucket's compile-cache state (D52); nothing
+    // has loaded them, and without a ledger nothing records them warm.
+    let model = |id: &str| body["data"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+    assert!(model("test-static").get("compile_cache").is_none(), "a static model has no compile cache");
+    let sentiment = model("sentiment");
+    if sidekick_embed::CLASSIFIERS_SUPPORTED {
+        let buckets = sentiment["compile_cache"].as_object().expect("a Core ML classifier's buckets");
+        assert!(!buckets.is_empty());
+        assert!(buckets.values().all(|s| s == "cold"), "{buckets:?}");
+    } else {
+        assert!(sentiment.get("compile_cache").is_none(), "a build without Core ML can't say");
+    }
 
     let (status, body) = call(
         test_state(false, None),
@@ -224,6 +236,8 @@ async fn models_and_health_report_state() {
     assert_eq!(body["chat"]["context_limit"], 4096);
     assert!(body["chat"]["variant"].is_null(), "no model info while unavailable");
     assert_eq!(body["chat"]["fm_sdk"], sidekick_fm::FM_SDK);
+    // No startup warm-up in a state built for tests.
+    assert_eq!(body["warmup"]["state"], "off");
 
     let (_, body) = call(
         test_state(true, None),

@@ -44,6 +44,14 @@ struct Args {
     /// and can fail predictions (D48)
     #[arg(long)]
     ignore_ane_seq_cap: bool,
+    /// Don't warm Core ML's compile cache at startup (overrides config's
+    /// `warm_on_start`, D52)
+    #[arg(long)]
+    no_warm: bool,
+    /// Seconds the startup warm-up may run; 0 for no limit (overrides
+    /// config's `warm_budget_secs`)
+    #[arg(long, value_name = "SECS")]
+    warm_budget_secs: Option<u64>,
 }
 
 /// With no command, sidekickd serves.
@@ -54,6 +62,15 @@ enum Command {
     /// CLI when it is installed, else downloads into the same Hugging Face
     /// cache itself.
     Fetch(sidekick_server::fetch::FetchArgs),
+    /// Load Core ML models' buckets once, so that Core ML's compile cache
+    /// holds them and no request waits on a compile (D52). Run it with the
+    /// sidekickd binary the daemon runs, as the same user: Core ML's cache
+    /// is per user, executable name and, on the ANE, code-signing
+    /// identifier, so warming helps only a build signed the same way
+    /// (release archives are; a source build after
+    /// tools/sign_sidekickd.sh). The daemon also warms at startup, in the
+    /// background
+    Warm(sidekick_server::warm::WarmArgs),
 }
 
 /// `sidekickd --version`: the crate version plus the SDK the Foundation
@@ -79,14 +96,31 @@ fn version() -> &'static str {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args = Args::from_arg_matches(&Args::command().version(version()).get_matches())?;
+    // The daemon's warm-up process reports on stdout, so it logs to stderr,
+    // which is the daemon's.
+    let child = matches!(&args.command, Some(Command::Warm(w)) if w.child);
+    let writer = if child {
+        tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr)
+    } else {
+        tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stdout)
+    };
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "sidekick=info,sidekickd=info,sidekick_server=info".into()),
         )
+        .with_writer(writer)
         .init();
+    if let Some(Command::Warm(warm)) = &args.command {
+        if warm.child {
+            // The daemon hands it every bucket and its compute units: no
+            // config or scan of its own.
+            let budget = warm.budget_secs.filter(|&s| s > 0).map(std::time::Duration::from_secs);
+            return sidekick_server::warm::run_child(budget);
+        }
+    }
 
-    let args = Args::from_arg_matches(&Args::command().version(version()).get_matches())?;
     let config_file = Config::resolve_path(args.config.as_ref());
     let mut config = Config::load(args.config.as_ref())?;
     if let Some(addr) = args.addr {
@@ -94,9 +128,6 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(dir) = args.models_dir {
         config.models_dir = Some(dir);
-    }
-    if let Some(Command::Fetch(fetch)) = &args.command {
-        return sidekick_server::fetch::run(fetch, &config.models_dir());
     }
     if args.api_key.is_some() {
         config.api_key = args.api_key;
@@ -112,6 +143,27 @@ async fn main() -> anyhow::Result<()> {
     }
     if args.ignore_ane_seq_cap {
         config.ignore_ane_seq_cap = true;
+    }
+    if args.no_warm {
+        config.warm_on_start = false;
+    }
+    if let Some(secs) = args.warm_budget_secs {
+        config.warm_budget_secs = secs;
+    }
+    match &args.command {
+        Some(Command::Fetch(fetch)) => {
+            let installed = sidekick_server::fetch::run(fetch, &config.models_dir())?;
+            // Warm what the daemon will serve: scanned as it scans, with the
+            // config's compute units and caps.
+            if let (Some(id), false) = (installed, fetch.no_warm) {
+                sidekick_server::warm::after_fetch(&sidekick_server::scan(&config)?, &id, &config.warm_skipped());
+            }
+            return Ok(());
+        }
+        Some(Command::Warm(warm)) => {
+            return sidekick_server::warm::run(&sidekick_server::scan(&config)?, warm, &config.warm_skipped());
+        }
+        None => {}
     }
 
     let state = build_state(&config)?;
@@ -137,12 +189,23 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let listener = tokio::net::TcpListener::bind(config.addr).await?;
-    axum::serve(listener, build_router(state))
+    let mut state = state;
+    // Keep the warm-up ledger whether or not the daemon warms at startup, so
+    // /health and /v1/models report what earlier loads left warm (D52).
+    sidekick_embed::warm::enable();
+    if config.warm_on_start {
+        state.warmup =
+            sidekick_server::warm::Warmup::start(&state.registry, &config.warm_skipped(), config.warm_budget());
+    }
+    let warmup = state.warmup.clone();
+    let served = axum::serve(listener, build_router(state))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
             tracing::info!("shutting down");
         })
-        .await?;
+        .await;
+    warmup.stop();
+    served?;
     Ok(())
 }
 
@@ -170,7 +233,28 @@ mod tests {
         let Some(Command::Fetch(f)) = args.command else { panic!("fetch") };
         assert_eq!((f.model.as_str(), f.repo.as_deref(), f.buckets.as_slice()), ("bge-small-en-v1.5", Some("o/n"), &[128, 512][..]));
         assert_eq!(args.models_dir, Some(PathBuf::from("/m")), "--models-dir is shared with serving");
+        assert!(!f.no_warm, "fetch warms by default");
         let onnx = Args::try_parse_from(["sidekickd", "fetch", "m", "--backend", "onnx"]).unwrap();
         assert!(matches!(onnx.command, Some(Command::Fetch(sidekick_server::fetch::FetchArgs { backend: sidekick_server::fetch::Backend::Onnx, .. }))));
+        let Some(Command::Fetch(f)) = Args::try_parse_from(["sidekickd", "fetch", "m", "--no-warm"]).unwrap().command else {
+            panic!("fetch")
+        };
+        assert!(f.no_warm);
+    }
+
+    #[test]
+    fn warm_is_a_subcommand_and_startup_warming_has_flags() {
+        let args = Args::try_parse_from(["sidekickd", "warm", "bge-small-en-v1.5", "nli", "--buckets", "128,256", "--budget-secs", "60"])
+            .unwrap();
+        let Some(Command::Warm(w)) = args.command else { panic!("warm") };
+        assert_eq!(w.models, ["bge-small-en-v1.5", "nli"]);
+        assert_eq!((w.buckets.as_slice(), w.budget_secs, w.list), (&[128, 256][..], Some(60), false));
+        assert!(Args::try_parse_from(["sidekickd", "warm", "--list"]).is_ok());
+        // The caps apply to what `warm` loads, as to what the daemon serves.
+        assert!(Args::try_parse_from(["sidekickd", "--ignore-ane-seq-cap", "warm"]).unwrap().ignore_ane_seq_cap);
+        let serve = Args::try_parse_from(["sidekickd", "--no-warm", "--warm-budget-secs", "0"]).unwrap();
+        assert!(serve.no_warm);
+        assert_eq!(serve.warm_budget_secs, Some(0));
+        assert!(!Args::try_parse_from(["sidekickd"]).unwrap().no_warm);
     }
 }

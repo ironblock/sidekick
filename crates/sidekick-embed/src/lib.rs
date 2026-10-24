@@ -26,6 +26,7 @@ mod pooling;
 mod shared;
 mod static_embedder;
 pub mod tokenize;
+pub mod warm;
 
 pub use classify_input::InputBuilder;
 pub use pooling::{degenerate, mean_pool, normalize_in_place, pool};

@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 type Slot = Arc<Mutex<Option<Arc<CoremlChain>>>>;
 
 pub(crate) struct BucketModels {
+    /// The model's id, for the warm-up ledger and logs.
+    id: String,
     dir: PathBuf,
     artifact: String,
     chunks: usize,
@@ -23,8 +25,9 @@ pub(crate) struct BucketModels {
 }
 
 impl BucketModels {
-    pub fn new(dir: &Path, artifact: &str, chunks: usize, units: ComputeUnits) -> Self {
+    pub fn new(id: &str, dir: &Path, artifact: &str, chunks: usize, units: ComputeUnits) -> Self {
         Self {
+            id: id.to_string(),
             dir: dir.to_path_buf(),
             artifact: artifact.to_string(),
             chunks,
@@ -105,7 +108,12 @@ impl BucketModels {
         if let Some(model) = slot.as_ref() {
             return Ok((model.clone(), waited));
         }
-        let model = Arc::new(CoremlChain::load(&paths, self.units)?);
+        // Through the process's loads (D52): a load of this bucket already
+        // running, here or in the daemon's warm-up process, is waited for,
+        // and this one then finds its compile in the cache.
+        let key = crate::warm::Key { paths, units: self.units };
+        let model = crate::warm::load_chain(&key, crate::warm::Label { model: &self.id, bucket })?;
+        let paths = key.paths;
         *slot = Some(model.clone());
         for path in &paths {
             crate::placement::loaded(path, self.units);

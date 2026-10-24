@@ -66,7 +66,7 @@ impl CoremlEmbedder {
             id: m.id.clone(),
             dims: m.dims,
             matryoshka: m.matryoshka.clone(),
-            models: BucketModels::new(&model.dir, &m.artifact, m.chunks(), units),
+            models: BucketModels::new(&m.id, &model.dir, &m.artifact, m.chunks(), units),
             input: EmbedInput::shared(model)?,
             buckets: m.buckets.clone(),
             pooling: m.pooling,

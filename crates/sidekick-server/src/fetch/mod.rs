@@ -69,6 +69,11 @@ pub struct FetchArgs {
     /// Replace a model directory that `sidekickd fetch` didn't install
     #[arg(long)]
     pub force: bool,
+    /// Don't load a Core ML build's buckets once installed. By default fetch
+    /// loads each one, so that Core ML compiles it now rather than on the
+    /// first request that needs it (D52)
+    #[arg(long)]
+    pub no_warm: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -118,8 +123,9 @@ fn gated_hint(repo_id: &str, model: &str) -> String {
     )
 }
 
-/// Run `sidekickd fetch`.
-pub fn run(args: &FetchArgs, models_dir: &Path) -> anyhow::Result<()> {
+/// Run `sidekickd fetch`. Returns the installed model's id when sidekickd
+/// would serve it as installed.
+pub fn run(args: &FetchArgs, models_dir: &Path) -> anyhow::Result<Option<String>> {
     let backend = args.backend.name();
     let ledger_source = match &args.ledger {
         Some(path) => verify::LedgerSource::File(path.clone()),
@@ -255,11 +261,11 @@ pub fn run(args: &FetchArgs, models_dir: &Path) -> anyhow::Result<()> {
         Some(id) => println!("  verified against sidekick's checksum ledger: build {id}"),
         None => println!("  verified against the Hub's hashes only: sidekick's checksum ledger has no build of it"),
     }
-    match done.skipped {
+    match &done.skipped {
         Some(reason) => println!("  warning: sidekickd won't serve it as installed: {reason}"),
         None => println!("  sidekickd serves it from its next start"),
     }
-    Ok(())
+    Ok(done.skipped.is_none().then(|| build.id.clone()))
 }
 
 /// The variant to fetch, from the directories that hold a manifest (`""`

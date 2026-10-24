@@ -18,6 +18,8 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSDictionary",
     "NSEnumerator",
     "NSError",
+    # NSHomeDirectory: the home Core ML caches compiled programs under.
+    "NSPathUtilities",
     "NSRange",
     "NSString",
     "NSURL",

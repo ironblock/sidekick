@@ -675,6 +675,13 @@ pub struct ModelObject {
     /// `{"state": "error"}` (the reason is in /health).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Extension, Core ML models: each bucket's state in Core ML's compile
+    /// cache, by bucket (D52): `warm` (loaded by this daemon, or recorded
+    /// as loaded by this executable under this macOS build), `warming`
+    /// (loading now), `cold` (its first load compiles it) or `failed` (the
+    /// last load failed; /health has the reason).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_cache: Option<std::collections::BTreeMap<String, &'static str>>,
     /// Extension, classifiers: the temperatures `calibration: "model"`
     /// applies, keyed `"<question_type>:<label count bucket>"`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -705,6 +712,7 @@ impl ModelObject {
             compute_units: None,
             compute_units_source: None,
             placement: None,
+            compile_cache: None,
             calibration: None,
         }
     }

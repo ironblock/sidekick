@@ -37,6 +37,8 @@ pub struct AppState {
     pub placements: Option<Arc<Placements>>,
     /// Each `onnx` model's inference threads (D40), for /health.
     pub onnx_threads: OnnxThreads,
+    /// The startup warm-up of Core ML's compile cache (D52), for /health.
+    pub warmup: Arc<crate::warm::Warmup>,
 }
 
 /// How long a known Foundation Models variant id is reused before a
