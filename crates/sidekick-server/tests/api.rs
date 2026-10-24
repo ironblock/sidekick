@@ -218,7 +218,7 @@ async fn models_and_health_report_state() {
     let model = |id: &str| body["data"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
     assert!(model("test-static").get("compile_cache").is_none(), "a static model has no compile cache");
     let sentiment = model("sentiment");
-    if cfg!(all(target_os = "macos", feature = "coreml")) {
+    if sidekick_embed::CLASSIFIERS_SUPPORTED {
         let buckets = sentiment["compile_cache"].as_object().expect("a Core ML classifier's buckets");
         assert!(!buckets.is_empty());
         assert!(buckets.values().all(|s| s == "cold"), "{buckets:?}");

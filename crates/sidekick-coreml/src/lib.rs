@@ -18,7 +18,7 @@ pub use model::{input_shapes, interface, load_verdict, CoremlChain, CoremlModel,
 #[cfg(target_os = "macos")]
 pub use plan::{compute_plan, has_neural_engine};
 #[cfg(target_os = "macos")]
-pub use model::cache_home;
+pub use model::{cache_home, signing_identifier};
 
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;

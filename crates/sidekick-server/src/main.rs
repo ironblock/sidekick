@@ -64,9 +64,9 @@ enum Command {
     Fetch(sidekick_server::fetch::FetchArgs),
     /// Load Core ML models' buckets once, so that Core ML's compile cache
     /// holds them and no request waits on a compile (D52). Run it with the
-    /// sidekickd the daemon runs, as the same user: Core ML's cache is per
-    /// executable name and user. The daemon also warms at startup, in the
-    /// background
+    /// sidekickd binary the daemon runs, as the same user: Core ML's cache
+    /// is per executable name and user, and on the ANE per code-signing
+    /// identifier. The daemon also warms at startup, in the background
     Warm(sidekick_server::warm::WarmArgs),
 }
 

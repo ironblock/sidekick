@@ -4,11 +4,13 @@
 //! The first time a process loads a Core ML program on a compute path, Core
 //! ML specializes it for the device: on the ANE a full compile, seconds for
 //! a small model and minutes for a long bucket of a large one. It caches the
-//! result on disk, under the process's home (`~/Library/Caches/<executable>`)
-//! per program path and macOS build, and the ANE's compiler keeps its own
-//! cache per program path; later loads take cache-hit time. A process can
-//! only count on its own key, so warming happens in sidekickd itself: in a
-//! child process of the daemon, in `sidekickd warm` and in `sidekickd fetch`.
+//! result per executable name, home (`~/Library/Caches/<executable>`),
+//! macOS build, compute units and program (its path and its weights file),
+//! and on the ANE also per code-signing identifier, the compiled program
+//! itself living in the ANE compiler's system cache; later loads take
+//! cache-hit time. Only the same executable can count on the same key, so
+//! warming happens in sidekickd itself: in a child process of the daemon,
+//! in `sidekickd warm` and in `sidekickd fetch`.
 //!
 //! This module:
 //! - routes every bucket load in the process through one place ([`Loads`]),
@@ -286,10 +288,11 @@ fn lock_file(path: &Path) -> std::io::Result<std::fs::File> {
 ///
 /// An entry's key is a hash of what Core ML's cache was measured to depend
 /// on (D52): the executable's file name (a copy of sidekickd at another
-/// path hits the same cache; one under another name doesn't), the home
-/// directory Core ML caches under, the macOS build, the compute units, and
-/// each program's path, with the lengths and modification times of its
-/// files so that a bucket fetched or converted again counts as cold. A key
+/// path hits the same cache; one under another name doesn't) and its
+/// code-signing identifier, the home directory Core ML caches under, the
+/// macOS build, the compute units, and each program's path, with the
+/// lengths, inodes and birth times of its files, so that a bucket fetched
+/// or converted again counts as cold. A key
 /// that over-counts only makes a warm bucket look cold, which a warm-up's
 /// load then corrects at cache-hit cost; one that under-counted would
 /// report a cold bucket warm.
@@ -325,6 +328,16 @@ impl Ledger {
         };
         ledger.refresh();
         ledger
+    }
+
+    /// Key entries also by the executable's code-signing identifier, which
+    /// Core ML's ANE entries depend on: an executable re-signed under
+    /// another identifier (any rebuild, unless it signs with a fixed one)
+    /// finds its ANE buckets cold.
+    pub fn signed_as(mut self, identifier: Option<&str>) -> Self {
+        self.context.push_str(identifier.unwrap_or(""));
+        self.context.push('\0');
+        self
     }
 
     fn modified(&self) -> Option<SystemTime> {
@@ -426,7 +439,7 @@ impl Ledger {
 }
 
 /// Each file of a program (a directory) or file, in path order: relative
-/// path, length and modification time.
+/// path, length, inode and birth time.
 fn fingerprint(program: &Path) -> std::io::Result<String> {
     fn walk(root: &Path, at: &Path, out: &mut Vec<String>) -> std::io::Result<()> {
         let meta = std::fs::metadata(at)?;
@@ -436,9 +449,12 @@ fn fingerprint(program: &Path) -> std::io::Result<String> {
             }
             return Ok(());
         }
-        let modified = meta.modified()?.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+        use std::os::unix::fs::MetadataExt;
+        // Core ML's ANE entries know a weights file by its inode and birth
+        // time, not its content or modification time (D52).
+        let born = meta.created().ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).unwrap_or_default();
         let rel = at.strip_prefix(root).unwrap_or(at);
-        out.push(format!("{}\0{}\0{}", rel.display(), meta.len(), modified.as_nanos()));
+        out.push(format!("{}\0{}\0{}\0{}", rel.display(), meta.len(), meta.ino(), born.as_nanos()));
         Ok(())
     }
     let mut files = Vec::new();
@@ -476,7 +492,8 @@ mod coreml {
         if !loads.has_ledger() {
             let exe = std::env::current_exe().ok()?;
             let build = crate::placement::this_machine().macos_build.clone();
-            loads.set_ledger(Ledger::open(&dir, &exe, &home, &build));
+            let ledger = Ledger::open(&dir, &exe, &home, &build);
+            loads.set_ledger(ledger.signed_as(sidekick_coreml::signing_identifier().as_deref()));
         }
         Some(dir)
     }
@@ -672,6 +689,10 @@ mod tests {
             loads.set_ledger(Ledger::open(&cache, exe, home, build));
             assert_eq!(loads.status(&key).state, State::Cold, "{exe:?} {home:?} {build}");
         }
+        // Another signing identifier (a rebuilt sidekickd): cold.
+        let resigned: Loads<String> = Loads::default();
+        resigned.set_ledger(Ledger::open(&cache, exe, home, "26A1").signed_as(Some("sidekickd-0123")));
+        assert_eq!(resigned.status(&key).state, State::Cold);
         // A program replaced in place (fetched again): cold.
         std::thread::sleep(Duration::from_millis(5));
         std::fs::write(key.paths[0].join("model.mil"), "rebuilt").unwrap();

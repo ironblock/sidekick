@@ -372,6 +372,30 @@ pub fn cache_home() -> std::path::PathBuf {
     std::path::PathBuf::from(objc2_foundation::NSHomeDirectory().to_string())
 }
 
+/// This process's code-signing identifier (`codesign -dv` shows it), which
+/// Core ML's ANE cache entries depend on: the same executable under another
+/// identifier recompiles every ANE program. A plain `cargo build` signs ad
+/// hoc with an identifier that changes with every build. `None` when the
+/// kernel doesn't report one.
+pub fn signing_identifier() -> Option<String> {
+    extern "C" {
+        // <sys/codesign.h>; in libSystem since macOS 10.5.
+        fn csops(pid: i32, ops: u32, useraddr: *mut std::ffi::c_void, usersize: usize) -> i32;
+    }
+    const CS_OPS_IDENTITY: u32 = 11;
+    // A blob: big-endian magic and length, then the NUL-terminated identifier.
+    let mut buf = vec![0u8; 1024];
+    let rc = unsafe { csops(std::process::id() as i32, CS_OPS_IDENTITY, buf.as_mut_ptr().cast(), buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let len = (u32::from_be_bytes(buf[4..8].try_into().ok()?) as usize).min(buf.len());
+    let text = buf.get(8..len)?;
+    let end = text.iter().position(|&b| b == 0).unwrap_or(text.len());
+    let id = String::from_utf8_lossy(&text[..end]).into_owned();
+    (!id.is_empty()).then_some(id)
+}
+
 /// Compile if needed, then load with the given compute units.
 fn open(path: &Path, units: ComputeUnits) -> Result<Retained<MLModel>> {
     let is_compiled = path
@@ -487,6 +511,16 @@ fn half_to_f32(h: u16) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::half_to_f32;
+
+    #[test]
+    fn the_signing_identifier_is_read() {
+        // Apple silicon runs only signed code: a test binary is signed ad
+        // hoc by the linker, as `<name>-<hash>`.
+        if cfg!(target_arch = "aarch64") {
+            let id = super::signing_identifier().expect("an identifier");
+            assert!(id.starts_with("sidekick_coreml"), "{id}");
+        }
+    }
 
     /// Independent reference straight from the IEEE-754 binary16 definition,
     /// via f64 arithmetic (exact: every binary16 value fits in f64).

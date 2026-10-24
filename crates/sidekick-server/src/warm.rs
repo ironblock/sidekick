@@ -3,17 +3,20 @@
 //! `sidekickd fetch`.
 //!
 //! A bucket's first load in a process compiles it for its compute path,
-//! unless Core ML's on-disk cache already holds it for this executable,
-//! home, program path and macOS build. Warming loads each bucket once, in
+//! unless Core ML's cache already holds it for this executable (its name,
+//! and on the ANE its code-signing identifier), home, program and macOS
+//! build. Warming loads each bucket once, in
 //! sidekickd and through the same loader requests use
 //! (`sidekick_embed::warm`), then releases it: what's left is the cache
 //! entry, which every later load of the bucket hits.
 //!
-//! The daemon warms in a child process: the same executable, home and
-//! environment, so the same cache. In one process, a Core ML load waits for
-//! an ANE compile in progress, so a warm-up in the daemon's own process
-//! held up requests' loads of other, already cached buckets; across
-//! processes they don't wait (D52 has the measurements).
+//! The daemon warms in a child process: its own executable file (so the
+//! same name and signing identifier), home and environment, so the same
+//! cache. In one process, a Core ML load waits for an ANE compile in
+//! progress, so a warm-up in the daemon's own process held up requests'
+//! cache-hit loads of other buckets; in another process they don't wait.
+//! Compiles themselves run one at a time across the machine (D52 has the
+//! measurements).
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
