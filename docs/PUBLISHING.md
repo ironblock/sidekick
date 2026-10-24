@@ -55,13 +55,16 @@ summarizes them.
 
 ## Repositories and their layout
 
-One repository per model per backend, under the maintainer's own Hugging
-Face account: `<owner>/<model id>-coreml` and `<owner>/<model id>-onnx`. The
-model id is sidekick's (models.toml), so a client finds the repository from
-the id it already uses.
+One repository per model per backend, under the
+[`sidekickd`](https://huggingface.co/sidekickd) Hugging Face organization:
+`sidekickd/<model id>-coreml` and `sidekickd/<model id>-onnx`
+([data/publishing.toml](data/publishing.toml)'s `owner`). The model id is
+sidekick's (models.toml), so a client finds the repository from the id it
+already uses. Uploads use the maintainer's own token, which needs write
+access to the organization.
 
 ```
-<owner>/bge-m3-zeroshot-v2.0-c-coreml
+sidekickd/bge-m3-zeroshot-v2.0-c-coreml
   README.md              the model card (tools/model_card.py)
   fp16/                  one build: exactly the directory sidekick installs
     classifier.toml        (or manifest.toml)
@@ -149,7 +152,7 @@ python3 tools/ledger.py add --sums <archive>/item.SHA256SUMS --sums-prefix <dir>
 python3 tools/ledger.py verify <model dir> [--id BUILD] [--partial]
 python3 tools/ledger.py check
 python3 tools/ledger.py list [MODEL]
-python3 tools/ledger.py published BUILD --repo OWNER/NAME --revision SHA --sidekick X.Y.Z
+python3 tools/ledger.py published BUILD --repo sidekickd/NAME --revision SHA --sidekick X.Y.Z
 ```
 
 - `verify` exits non-zero on any difference and names the layer: weights,
@@ -187,7 +190,7 @@ runs are tied to recorded files.
 only (standard library):
 
 ```sh
-python3 tools/model_card.py MODEL [--backend onnx] [--build ID ...] --owner ACCOUNT [--ref vX.Y.Z] --out DIR
+python3 tools/model_card.py MODEL [--backend onnx] [--build ID ...] [--ref vX.Y.Z] --out DIR
 python3 tools/model_card.py --check    # every card the ledger allows renders, every link resolves (CI)
 ```
 
@@ -412,15 +415,15 @@ Not automated yet; for the first uploads:
 2. `ledger.py add <build> --reports <reports>`: the build is in the ledger
    with its grades, and `ledger.py verify` passes on the directory to be
    uploaded.
-3. `model_card.py MODEL --build ID --owner ACCOUNT --ref vX.Y.Z --out
-   <staging>`, with the release that publishes it (its links point at that
+3. `model_card.py MODEL --build ID --ref vX.Y.Z --out <staging>`, with the release that publishes it (its links point at that
    tag). It writes the card, the checksum files, `LICENSE` and any
    `NOTICE` ([Licence files](#licence-files)); then add the documents
    `ship_copies` names and the files `ship_files` names (from the source
    repository at its pinned revision).
    Cut the sidekick release before the repository is made public.
 4. Upload `<staging>` and the build directory (as `<variant>/`) with the
-   Hugging Face CLI under the maintainer's account; for tier 2b, set the
+   Hugging Face CLI, into the `sidekickd` organization with a token that
+   has write access to it; for tier 2b, set the
    repository to gated, automatic approval, before the first upload of
    weights.
 5. **First upload only:** confirm the Hub stored a shared weights file once

@@ -376,6 +376,11 @@ class ModelCardTest(unittest.TestCase):
         self.assertIn("| Licence file | `LICENSE`: the upstream licence text, with its copyright line, from "
                       "[FlagOpen/FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding/blob/", card)
 
+    def test_owner(self):
+        self.assertEqual(model_card.owner(), "sidekickd")
+        self.assertEqual(model_card.repo_id(model_card.owner(), "bge-small-en-v1.5", "coreml"),
+                         "sidekickd/bge-small-en-v1.5-coreml")
+
     def test_tier_three_is_refused(self):
         with self.assertRaises(SystemExit):
             model_card.render("lfm2.5-embedding-350m")

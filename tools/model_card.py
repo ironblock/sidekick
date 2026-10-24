@@ -32,7 +32,7 @@ The card is generated from committed data, never written by hand:
 
 Usage:
     python3 tools/model_card.py MODEL [--backend coreml|onnx] [--build ID ...]
-        [--owner HF_ACCOUNT] [--ref vX.Y.Z] [--out DIR]
+        [--ref vX.Y.Z] [--out DIR]
     python3 tools/model_card.py --check
 
 Without --out the card is printed. With --out, DIR receives the README.md,
@@ -66,7 +66,6 @@ import licences as licences_mod  # noqa: E402
 REPO = Path(__file__).resolve().parent.parent
 DATA = REPO / "docs" / "data"
 GITHUB = "https://github.com/ironblock/sidekick"
-OWNER = "<owner>"
 
 PATH_NAME = {"coreml-ane": "Neural Engine", "coreml-gpu": "GPU", "coreml-cpu": "CPU", "onnx-cpu": "CPU"}
 BACKEND_NAME = {"coreml": "Core ML", "onnx": "ONNX"}
@@ -110,6 +109,11 @@ DOCS = {
 
 
 # --- inputs ------------------------------------------------------------------
+
+def owner():
+    """The Hugging Face organization the repositories belong to."""
+    return tomllib.loads((DATA / "publishing.toml").read_text())["owner"]
+
 
 def load_inputs():
     models = tomllib.loads((DATA / "models.toml").read_text())["models"]
@@ -687,7 +691,7 @@ def select_builds(model, backend, ids=None):
     return builds
 
 
-def render(model, backend="coreml", build_ids=None, owner=OWNER, ref=None, links=None):
+def render(model, backend="coreml", build_ids=None, owner=None, ref=None, links=None):
     """The card, its builds and the licence entry. `links` collects which
     docs links the card makes, for --check."""
     if not INPUTS:
@@ -761,6 +765,11 @@ def check():
     link = Links(default_ref())
     seen = sorted({(b["model"], b["backend"]) for b in INPUTS["ledger"]["builds"]})
     n = 0
+    org = owner()
+    for b in INPUTS["ledger"]["builds"]:
+        for pub in b["published"]:
+            if pub["repo"] != repo_id(org, b["model"], b["backend"]):
+                problems.append(f"{b['id']} is published at {pub['repo']}, not {repo_id(org, b['model'], b['backend'])}")
     for model, backend in seen:
         lic = INPUTS["licences"].get(model)
         if lic and lic["tier"] == "3":
@@ -785,7 +794,7 @@ def main():
     p.add_argument("model", nargs="?")
     p.add_argument("--backend", choices=("coreml", "onnx"), default="coreml")
     p.add_argument("--build", action="append", help="a ledger build id to include (default: every build)")
-    p.add_argument("--owner", default=OWNER, help="the Hugging Face account the repository belongs to")
+    p.add_argument("--owner", help="the Hugging Face organization (default: docs/data/publishing.toml's owner)")
     p.add_argument("--ref", help="the sidekick release tag the card's doc links are pinned to "
                                  "(default: v<workspace version>)")
     p.add_argument("--out", help="write README.md, checksum files and any NOTICE here")

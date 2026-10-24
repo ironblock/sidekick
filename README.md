@@ -540,12 +540,12 @@ repository or revision (a build not published yet needs `--repo`).
 ### Installing a published build by hand
 
 Without `sidekickd fetch`, download one build's directory from its
-repository (`<owner>/<model>-coreml` or `-onnx`; the model card names its
+repository (`sidekickd/<model>-coreml` or `-onnx` on Hugging Face; the model card names its
 builds), check it against its `<build>.sha256`, and move it into the models
 directory under the model's id:
 
 ```sh
-hf download <owner>/bge-small-en-v1.5-coreml --include 'fp16/*' --include 'fp16.sha256' \
+hf download sidekickd/bge-small-en-v1.5-coreml --include 'fp16/*' --include 'fp16.sha256' \
     --local-dir ./bge-small-download
 (cd ./bge-small-download/fp16 && shasum -a 256 -c ../fp16.sha256)
 mv ./bge-small-download/fp16 "$HOME/Library/Application Support/sidekick/models/bge-small-en-v1.5"
