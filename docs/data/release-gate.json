@@ -1,5 +1,5 @@
 {
- "about": "The release gate's baseline: each published model's task sample, run through sidekickd over HTTP, on the paths listed. Written by tools/release_gate.py --update-baseline; do not edit by hand. A change to it is deliberate, and its PR says why.",
+ "about": "The release gate's baseline: each published model's task sample, run through sidekickd over HTTP, on the paths and build variants listed. Written by tools/release_gate.py --update-baseline; do not edit by hand. A change to it is deliberate, and its PR says why.",
  "tolerances": {
   "accuracy": {
    "abs": 0.01,
@@ -39,22 +39,145 @@
   "AskUbuntuDupQuestions"
  ],
  "updated": {
-  "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+  "commit": "3d5b2b09dc4ab539dd02dd96d478716fbb078388",
   "dirty": false,
   "sidekick": "0.15.0",
   "chip": "Apple M1 Max",
   "os": "macOS 27.0",
   "os_build": "26A428",
-  "date": "2026-10-23"
+  "date": "2026-10-24"
  },
  "entries": [
   {
-   "model": "bge-small-en-v1.5",
+   "model": "all-minilm-l6-v2",
    "path": "coreml-ane",
+   "variant": "fp16",
    "kind": "embed",
    "default": true,
    "build": {
-    "fingerprint": "9aa8faa7678f2289fadda5d50272447a557750cd81e062702b8d72c3dbd7a761"
+    "ledger": "all-minilm-l6-v2/coreml/fp16/50718062cc05",
+    "digest": "50718062cc05f82cef494db9838d99b72289c13cd7e4bb4efad76128bac2112c",
+    "fingerprint": "1d8a8325a8bc200aa679c666082856db2aee4da79c8ba0ae2736d4536a13bb0e",
+    "variant": "fp16",
+    "max_seq_len": 256
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "8bdf9460c1e5fa70ebdb5ca890589883d7494a91ca918a6f2ac5f844f5008fd3",
+    "reference_sha256": "f322b6ec3f1c5303ed2ca27fb5ae41cdd244e6fafbf50adbe6f103d1c5df0e5c"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999169976470106,
+    "mean_cosine_fp32": 0.9999748518024258,
+    "cosine_error_fp32": 8.300235298941416e-05,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999589523668111,
+    "stress_error_fp32": 4.1047633188906474e-05,
+    "mteb:STSBenchmark": 0.820387,
+    "mteb:AskUbuntuDupQuestions": 0.63505
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.820387,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 4.6
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.63505,
+      "inputs": 7066,
+      "over_cap": 0,
+      "seconds": 12.5
+     }
+    }
+   },
+   "seconds": 31.5,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "all-minilm-l6-v2",
+   "path": "onnx-cpu",
+   "variant": "fp32",
+   "kind": "embed",
+   "default": false,
+   "build": {
+    "ledger": "all-minilm-l6-v2/onnx/fp32/485ad19c1cee",
+    "digest": "485ad19c1cee6fc0c9cfeb0cc9ca7fed60b8d90b19f9749616bb8628521af0ed",
+    "fingerprint": "9c30f0331d11cba55de823ac87dcf1795ed62e17550e047f9f8aae9beaf9391f",
+    "variant": "fp32",
+    "max_seq_len": 256
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "8bdf9460c1e5fa70ebdb5ca890589883d7494a91ca918a6f2ac5f844f5008fd3",
+    "reference_sha256": "f322b6ec3f1c5303ed2ca27fb5ae41cdd244e6fafbf50adbe6f103d1c5df0e5c"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999999999980289,
+    "mean_cosine_fp32": 0.9999999999994117,
+    "cosine_error_fp32": 1.971089957919503e-12,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999999999994043,
+    "stress_error_fp32": 5.95745675013859e-13,
+    "mteb:STSBenchmark": 0.820325,
+    "mteb:AskUbuntuDupQuestions": 0.63477
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.820325,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 6.2
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.63477,
+      "inputs": 7066,
+      "over_cap": 0,
+      "seconds": 18.8
+     }
+    }
+   },
+   "seconds": 38.0,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "bge-small-en-v1.5",
+   "path": "coreml-ane",
+   "variant": "fp16",
+   "kind": "embed",
+   "default": true,
+   "build": {
+    "ledger": "bge-small-en-v1.5/coreml/fp16/f1b85f22e0b4",
+    "digest": "f1b85f22e0b4a67788fa2bad3749d38e6e26d9da6c1cd1a6bfa93b36a0e68b68",
+    "fingerprint": "65cff06425eac139c5fab7a351b37af67f61f5037554414a409727784518d779",
+    "variant": "fp16",
+    "max_seq_len": 512
    },
    "sample": {
     "name": "parity corpus",
@@ -68,6 +191,8 @@
     "mean_cosine_fp32": 0.9999855061969789,
     "cosine_error_fp32": 3.392696595028166e-05,
     "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999760276798201,
+    "stress_error_fp32": 2.3972320179921347e-05,
     "mteb:STSBenchmark": 0.85867,
     "mteb:STSBenchmark:minus_fp32": 4.0000000000040004e-05,
     "mteb:AskUbuntuDupQuestions": 0.6182,
@@ -87,13 +212,192 @@
       "score": 0.6182,
       "inputs": 7103,
       "over_cap": 0,
-      "seconds": 21.1
+      "seconds": 21.0
      }
     }
    },
-   "seconds": 56.2,
+   "seconds": 47.9,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "bge-small-en-v1.5",
+   "path": "onnx-cpu",
+   "variant": "fp32",
+   "kind": "embed",
+   "default": false,
+   "build": {
+    "ledger": "bge-small-en-v1.5/onnx/fp32/fef2c0953bad",
+    "digest": "fef2c0953badc97a0bf92707fa1d75d1e8541a777bfe53d04ce57c0cc4784501",
+    "fingerprint": "2fbdbacf1bda7aff14b353a4f5a4ebe860eea62b1624b0ba5b86734e41ad17e8",
+    "variant": "fp32",
+    "max_seq_len": 512
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "b1cfa03b50b7002a3e853aaf920872a508e0f0faddd3092ae959a7b85368b902",
+    "reference_sha256": "56a625ea180c8d64ef173160c812b20f2aef992da956ae352113149d3828e5b3"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999999999980821,
+    "mean_cosine_fp32": 0.9999999999994148,
+    "cosine_error_fp32": 1.917910275039958e-12,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999999999993157,
+    "stress_error_fp32": 6.843414723789465e-13,
+    "mteb:STSBenchmark": 0.858629,
+    "mteb:STSBenchmark:minus_fp32": -1.0000000000287557e-06,
+    "mteb:AskUbuntuDupQuestions": 0.61816,
+    "mteb:AskUbuntuDupQuestions:minus_fp32": 0.0
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.858629,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 12.5
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.61816,
+      "inputs": 7103,
+      "over_cap": 0,
+      "seconds": 32.4
+     }
+    }
+   },
+   "seconds": 58.2,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "gte-modernbert-base",
+   "path": "coreml-ane",
+   "variant": "fp16",
+   "kind": "embed",
+   "default": true,
+   "build": {
+    "ledger": "gte-modernbert-base/coreml/fp16/362b9ff0ba18",
+    "digest": "362b9ff0ba18fe7300e73628297e3076de0fc4348a99c4e6b73aa3fea48da5f3",
+    "fingerprint": "67dc6e05d5820e20ea6c1bb569222e3e694cc9f14eba80ef128199704f696b09",
+    "variant": "fp16",
+    "max_seq_len": 512
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "02ac46c3735a937dcc38b482393c102d5bcd9d90a98648e92459de69525a94e2",
+    "reference_sha256": "825444e27d5c2cf0955a53388a4e6c52f95206a622936b946f8ff7ff0f781fd7"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999151022826412,
+    "mean_cosine_fp32": 0.9999797582629673,
+    "cosine_error_fp32": 8.489771735875618e-05,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9998333445860194,
+    "stress_error_fp32": 0.0001666554139806431,
+    "mteb:STSBenchmark": 0.854104,
+    "mteb:AskUbuntuDupQuestions": 0.63296
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.854104,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 20.1
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.63296,
+      "inputs": 7066,
+      "over_cap": 0,
+      "seconds": 55.0
+     }
+    }
+   },
+   "seconds": 93.4,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "gte-modernbert-base",
+   "path": "onnx-cpu",
+   "variant": "fp32",
+   "kind": "embed",
+   "default": false,
+   "build": {
+    "ledger": "gte-modernbert-base/onnx/fp32/bdd40d45318d",
+    "digest": "bdd40d45318d05b2ac59ac315bd143042b1cf02ea8af7f19fa0abddfca7e0cc1",
+    "fingerprint": "7bbe921c81cf635ec045e11bf71626ccde922aed124633243829df2d35d9bdc8",
+    "variant": "fp32",
+    "max_seq_len": 512
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "02ac46c3735a937dcc38b482393c102d5bcd9d90a98648e92459de69525a94e2",
+    "reference_sha256": "825444e27d5c2cf0955a53388a4e6c52f95206a622936b946f8ff7ff0f781fd7"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999999999806155,
+    "mean_cosine_fp32": 0.9999999999972309,
+    "cosine_error_fp32": 1.9384494009955233e-11,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999999999598361,
+    "stress_error_fp32": 4.016387222804951e-11,
+    "mteb:STSBenchmark": 0.854052,
+    "mteb:AskUbuntuDupQuestions": 0.63328
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.854052,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 34.8
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.63328,
+      "inputs": 7066,
+      "over_cap": 0,
+      "seconds": 95.5
+     }
+    }
+   },
+   "seconds": 146.6,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
@@ -105,10 +409,15 @@
   {
    "model": "embeddinggemma-300m",
    "path": "coreml-ane",
+   "variant": "fp16",
    "kind": "embed",
    "default": true,
    "build": {
-    "fingerprint": "e8212e6d2a4c974fa43b87bfd167b25aec08a59761390bf16cad497b5f71f401"
+    "ledger": "embeddinggemma-300m/coreml/fp16/ce5e791524dc",
+    "digest": "ce5e791524dc26c3f1814a93f29c17e953de762fd280f379a19042c039733f93",
+    "fingerprint": "e8212e6d2a4c974fa43b87bfd167b25aec08a59761390bf16cad497b5f71f401",
+    "variant": "fp16",
+    "max_seq_len": 512
    },
    "sample": {
     "name": "parity corpus",
@@ -118,10 +427,12 @@
    },
    "metrics": {
     "n": 51,
-    "worst_cosine_fp32": 0.9999723248815018,
+    "worst_cosine_fp32": 0.9999871171503374,
     "mean_cosine_fp32": 0.9999944812037881,
-    "cosine_error_fp32": 2.7675118498216023e-05,
+    "cosine_error_fp32": 1.2882849662609885e-05,
     "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999723248815018,
+    "stress_error_fp32": 2.7675118498216023e-05,
     "mteb:STSBenchmark": 0.881716,
     "mteb:STSBenchmark:minus_fp32": -5.699999999997374e-05,
     "mteb:AskUbuntuDupQuestions": 0.62524,
@@ -135,24 +446,203 @@
       "score": 0.881716,
       "inputs": 2552,
       "over_cap": 0,
-      "seconds": 21.8
+      "seconds": 22.3
      },
      "AskUbuntuDupQuestions": {
       "score": 0.62524,
       "inputs": 7066,
       "over_cap": 0,
-      "seconds": 69.1
+      "seconds": 61.0
      }
     }
    },
-   "seconds": 143.1,
+   "seconds": 106.0,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
     "os_build": "26A428",
     "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "embeddinggemma-300m",
+   "path": "onnx-cpu",
+   "variant": "fp32",
+   "kind": "embed",
+   "default": false,
+   "build": {
+    "ledger": "embeddinggemma-300m/onnx/fp32/1660ddd66e01",
+    "digest": "1660ddd66e010dbeba5620c043cad0326d7aa38149338e986f3074d443e80cb8",
+    "fingerprint": "a4d409f4dbac398675a68d24c84eb5ab5f8f479c2d35bd715d506d2455fa766b",
+    "variant": "fp32",
+    "max_seq_len": 512
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "599c8e69e111d889afdfe7bb8a59ee5f697010b4cc9b595a32cf9776164d4b9a",
+    "reference_sha256": "361bbef332ad080ffbc03ef9dd620168178fab0ef59ef05c131bf2a0286872c9"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999999999971365,
+    "mean_cosine_fp32": 0.999999999999085,
+    "cosine_error_fp32": 2.8634872251132037e-12,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999999999986824,
+    "stress_error_fp32": 1.3176126856251358e-12,
+    "mteb:STSBenchmark": 0.881773,
+    "mteb:STSBenchmark:minus_fp32": 0.0,
+    "mteb:AskUbuntuDupQuestions": 0.6246,
+    "mteb:AskUbuntuDupQuestions:minus_fp32": 0.0
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.881773,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 44.9
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.6246,
+      "inputs": 7066,
+      "over_cap": 0,
+      "seconds": 125.0
+     }
+    }
+   },
+   "seconds": 188.1,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "embeddinggemma-2",
+   "path": "coreml-ane",
+   "variant": "fp16",
+   "kind": "embed",
+   "default": true,
+   "build": {
+    "ledger": "embeddinggemma-2/coreml/fp16/2d739ba90677",
+    "digest": "2d739ba906778f571e6aecb97c889f33bec72aeaa2d3b3e6424a4a0ea31f6d23",
+    "fingerprint": "b52373957494e573af83f310f9f6a94b7dc884dfd57367d8aa9bf1830ecae785",
+    "variant": "fp16",
+    "max_seq_len": 2048
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "e2d2c2209c7d15a13650ceb5af6660cc957278ae11655cde31b8ecf7dc124869",
+    "reference_sha256": "b657a3c598f5cd05b747f7f4aa58723ae4c9024747e1af7fb23befca112ce0b6"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.999995295993459,
+    "mean_cosine_fp32": 0.9999974665316645,
+    "cosine_error_fp32": 4.704006540956485e-06,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999973642041419,
+    "stress_error_fp32": 2.63579585813023e-06,
+    "mteb:STSBenchmark": 0.875039,
+    "mteb:AskUbuntuDupQuestions": 0.60525
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.875039,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 35.9
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.60525,
+      "inputs": 7066,
+      "over_cap": 0,
+      "seconds": 81.9
+     }
+    }
+   },
+   "seconds": 151.5,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-24",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "embeddinggemma-2",
+   "path": "onnx-cpu",
+   "variant": "fp32",
+   "kind": "embed",
+   "default": false,
+   "build": {
+    "ledger": "embeddinggemma-2/onnx/fp32/5d7edcb25f63",
+    "digest": "5d7edcb25f63bc4d47f7de3aaf293fbe5917fa24e83483ea5dcf504ab8763a18",
+    "fingerprint": "7c26afa3e18e7655828a5efc0f7bad5ff527f9e5dcb57925a266fdb00a40f373",
+    "variant": "fp32",
+    "max_seq_len": 2048
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "e2d2c2209c7d15a13650ceb5af6660cc957278ae11655cde31b8ecf7dc124869",
+    "reference_sha256": "b657a3c598f5cd05b747f7f4aa58723ae4c9024747e1af7fb23befca112ce0b6"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999999999983382,
+    "mean_cosine_fp32": 0.9999999999993945,
+    "cosine_error_fp32": 1.6617818232589343e-12,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999999999993174,
+    "stress_error_fp32": 6.825651155395462e-13,
+    "mteb:STSBenchmark": 0.874952,
+    "mteb:AskUbuntuDupQuestions": 0.6056
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.874952,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 63.4
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.6056,
+      "inputs": 7066,
+      "over_cap": 0,
+      "seconds": 175.7
+     }
+    }
+   },
+   "seconds": 265.0,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-24",
     "sidekick": "0.15.0"
    }
   },
@@ -209,12 +699,76 @@
    }
   },
   {
+   "model": "f2llm-v2-160m",
+   "path": "onnx-cpu",
+   "variant": "fp32",
+   "kind": "embed",
+   "default": false,
+   "build": {
+    "ledger": "f2llm-v2-160m/onnx/fp32/8a2a464958b6",
+    "digest": "8a2a464958b6f9f2bee3e34db6ecf5dc95935a54addd0b7d4309767e007d1fa1",
+    "fingerprint": "d2c0126726d1cc04d38b55de6a1cf4eb7d7d0bfb2b826c8ada36026577100ffa",
+    "variant": "fp32",
+    "max_seq_len": 512
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "a899018b1f03a5db13a3612fb5a761de54686dfb4350e2e7eb921e374210a9f3",
+    "reference_sha256": "8f652950b195f2854e023b8c0462204324290bf058f15c32ae606c4942c843cd"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.999999999995477,
+    "mean_cosine_fp32": 0.9999999999980893,
+    "cosine_error_fp32": 4.523048602322888e-12,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.999999999998908,
+    "stress_error_fp32": 1.092015367021304e-12,
+    "mteb:STSBenchmark": 0.846387,
+    "mteb:AskUbuntuDupQuestions": 0.60582
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.846387,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 27.0
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.60582,
+      "inputs": 7103,
+      "over_cap": 0,
+      "seconds": 56.3
+     }
+    }
+   },
+   "seconds": 99.6,
+   "provenance": {
+    "commit": "3d5b2b09dc4ab539dd02dd96d478716fbb078388",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-24",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
    "model": "lfm2.5-embedding-350m",
    "path": "coreml-ane",
+   "variant": "fp16",
    "kind": "embed",
    "default": true,
    "build": {
-    "fingerprint": "3a84d2df843235fb8bab328f43b43e9ebd441425dddd970f3adc65dc148e8198"
+    "ledger": "lfm2.5-embedding-350m/coreml/fp16/3e8d6c5dc276",
+    "digest": "3e8d6c5dc2769d6101f2207a970b137da16e297235c3efb4eeeab4d522ecc1bf",
+    "fingerprint": "3a84d2df843235fb8bab328f43b43e9ebd441425dddd970f3adc65dc148e8198",
+    "variant": "fp16",
+    "max_seq_len": 512
    },
    "sample": {
     "name": "parity corpus",
@@ -228,6 +782,8 @@
     "mean_cosine_fp32": 0.9999943680474157,
     "cosine_error_fp32": 1.1645311255525925e-05,
     "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999883669119828,
+    "stress_error_fp32": 1.163308801721552e-05,
     "mteb:STSBenchmark": 0.799789,
     "mteb:AskUbuntuDupQuestions": 0.59543
    },
@@ -239,19 +795,302 @@
       "score": 0.799789,
       "inputs": 2552,
       "over_cap": 0,
-      "seconds": 48.9
+      "seconds": 42.9
      },
      "AskUbuntuDupQuestions": {
       "score": 0.59543,
       "inputs": 7103,
       "over_cap": 0,
-      "seconds": 117.7
+      "seconds": 123.3
      }
     }
    },
-   "seconds": 200.9,
+   "seconds": 189.1,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "qwen3-embedding-0.6b",
+   "path": "coreml-ane",
+   "variant": "fp16",
+   "kind": "embed",
+   "default": true,
+   "build": {
+    "ledger": "qwen3-embedding-0.6b/coreml/fp16/2c652898a8f8",
+    "digest": "2c652898a8f8630dda59effb32dd4a4fbd375f61ab223b04da6f4ca58fa287df",
+    "fingerprint": "6242da5bdfd32b3d48d562dd0d8862d74d1a9edffc8b820ad9556ea33ad8b2f7",
+    "variant": "fp16",
+    "max_seq_len": 2048
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "ab700dc61b3f3e5e7a8d2d4245118ea16fc1bf5586159cf0414b8f91ca3baf3e",
+    "reference_sha256": "b5fd3a37e317cfe03a0942df51dfc31d629fbe1b6e682c64270cca8495a8b72d"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999859390287613,
+    "mean_cosine_fp32": 0.9999929817240596,
+    "cosine_error_fp32": 1.4060971238682995e-05,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999842401000806,
+    "stress_error_fp32": 1.575989991942084e-05,
+    "mteb:STSBenchmark": 0.912129,
+    "mteb:STSBenchmark:minus_fp32": -6.0000000000060005e-05,
+    "mteb:AskUbuntuDupQuestions": 0.63319,
+    "mteb:AskUbuntuDupQuestions:minus_fp32": -0.0009500000000000064
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.912129,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 86.9
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.63319,
+      "inputs": 7103,
+      "over_cap": 0,
+      "seconds": 251.7
+     }
+    }
+   },
+   "seconds": 380.7,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-24",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "qwen3-embedding-0.6b",
+   "path": "onnx-cpu",
+   "variant": "fp32",
+   "kind": "embed",
+   "default": false,
+   "build": {
+    "ledger": "qwen3-embedding-0.6b/onnx/fp32/6891a986e257",
+    "digest": "6891a986e2579fec23c6b8dd30aeee64863dbfde51f7c513ce4542d07d63ca59",
+    "fingerprint": "f885ec3dd82fae26d543b913e3a931f90df5280cfb01809340b29c7e542a2265",
+    "variant": "fp32",
+    "max_seq_len": 4096
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "ab700dc61b3f3e5e7a8d2d4245118ea16fc1bf5586159cf0414b8f91ca3baf3e",
+    "reference_sha256": "1fc1204b723272e12be3536c50966f86b7eede7677d7173dd488fb33716aa904"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999999999829393,
+    "mean_cosine_fp32": 0.9999999999931859,
+    "cosine_error_fp32": 1.7060686197112318e-11,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999999999895783,
+    "stress_error_fp32": 1.0421663532156344e-11,
+    "mteb:STSBenchmark": 0.912189,
+    "mteb:STSBenchmark:minus_fp32": 0.0,
+    "mteb:AskUbuntuDupQuestions": 0.63414,
+    "mteb:AskUbuntuDupQuestions:minus_fp32": 0.0
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.912189,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 139.4
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.63414,
+      "inputs": 7103,
+      "over_cap": 0,
+      "seconds": 283.9
+     }
+    }
+   },
+   "seconds": 461.8,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-24",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "qwen3-embedding-0.6b",
+   "path": "onnx-cpu",
+   "variant": "fp16-weights",
+   "kind": "embed",
+   "default": false,
+   "build": {
+    "ledger": "qwen3-embedding-0.6b/onnx/fp16-weights/9cedf879856f",
+    "digest": "9cedf879856fd3ed48a998138d89ec599060b9968a780658d77cf6159b3dbd4c",
+    "fingerprint": "de821b900bb2b041b5a7184d97b9f3358a9984b1e7cfac85d50d53d1a3d5efeb",
+    "variant": "fp16-weights",
+    "max_seq_len": 4096
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "ab700dc61b3f3e5e7a8d2d4245118ea16fc1bf5586159cf0414b8f91ca3baf3e",
+    "reference_sha256": "1fc1204b723272e12be3536c50966f86b7eede7677d7173dd488fb33716aa904"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.9999999999785724,
+    "mean_cosine_fp32": 0.99999999999305,
+    "cosine_error_fp32": 2.142763744217291e-11,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.9999999999912405,
+    "stress_error_fp32": 8.759548641990023e-12,
+    "mteb:STSBenchmark": 0.912189,
+    "mteb:STSBenchmark:minus_fp32": 0.0,
+    "mteb:AskUbuntuDupQuestions": 0.63414,
+    "mteb:AskUbuntuDupQuestions:minus_fp32": 0.0
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.912189,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 138.5
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.63414,
+      "inputs": 7103,
+      "over_cap": 0,
+      "seconds": 281.5
+     }
+    }
+   },
+   "seconds": 458.0,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-24",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "qwen3-embedding-0.6b",
+   "path": "onnx-cpu",
+   "variant": "int8",
+   "kind": "embed",
+   "default": false,
+   "build": {
+    "ledger": "qwen3-embedding-0.6b/onnx/int8/1d77ff2e7eca",
+    "digest": "1d77ff2e7ecaa75e7358901c1153ff8af95455cb52a333d218566086e29d462e",
+    "fingerprint": "6fa9531062dbcd47516c4fe7f65d5323a9ef50b07e47d266430271485877c852",
+    "variant": "int8",
+    "max_seq_len": 4096
+   },
+   "sample": {
+    "name": "parity corpus",
+    "n": 51,
+    "sha256": "ab700dc61b3f3e5e7a8d2d4245118ea16fc1bf5586159cf0414b8f91ca3baf3e",
+    "reference_sha256": "1fc1204b723272e12be3536c50966f86b7eede7677d7173dd488fb33716aa904"
+   },
+   "metrics": {
+    "n": 51,
+    "worst_cosine_fp32": 0.40637323169583767,
+    "mean_cosine_fp32": 0.841450599924464,
+    "cosine_error_fp32": 0.5936267683041623,
+    "token_count_mismatches": 0,
+    "stress_cosine_fp32": 0.7652422384480247,
+    "stress_error_fp32": 0.23475776155197525,
+    "mteb:STSBenchmark": 0.872859,
+    "mteb:STSBenchmark:minus_fp32": -0.039329999999999976,
+    "mteb:AskUbuntuDupQuestions": 0.6202,
+    "mteb:AskUbuntuDupQuestions:minus_fp32": -0.013940000000000063
+   },
+   "mteb": {
+    "version": "2.26.14",
+    "benchmark": "MTEB(eng, v2)",
+    "tasks": {
+     "STSBenchmark": {
+      "score": 0.872859,
+      "inputs": 2552,
+      "over_cap": 0,
+      "seconds": 64.1
+     },
+     "AskUbuntuDupQuestions": {
+      "score": 0.6202,
+      "inputs": 7103,
+      "over_cap": 0,
+      "seconds": 129.9
+     }
+    }
+   },
+   "seconds": 221.1,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-24",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "nlptown-sentiment",
+   "path": "coreml-ane",
+   "variant": "fp16",
+   "kind": "classify",
+   "default": true,
+   "build": {
+    "ledger": "nlptown-sentiment/coreml/fp16/6a3b7e86f4f5",
+    "digest": "6a3b7e86f4f55b674d385f272e5ff0d33f62f2712fd7b905f3278b9f27ec8982",
+    "fingerprint": "37339e673a5318530c7b0d9e13085bc41f4b4feacf65245232b6112a6ccf55e9",
+    "variant": "fp16",
+    "max_seq_len": 512
+   },
+   "sample": {
+    "name": "parity corpus, every case",
+    "n": 51,
+    "sha256": "a6e723a86228f7eba3240ab65b88e3352aed26ea35d17021de6de659fb4188a8",
+    "reference_sha256": "c43ed492e3eaaaf12f0b8241856e472d8f8767467bf996b7db0efbc4b9dd781b"
+   },
+   "metrics": {
+    "n": 51,
+    "refused": 2,
+    "agree_fp32": 1.0,
+    "mean_prob": 0.3720033436734694
+   },
+   "predictions": {
+    "label": "0221204044044033244200022003002002244334333333333--"
+   },
+   "seconds": 3.8,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
@@ -263,10 +1102,15 @@
   {
    "model": "laya-typed-decisions",
    "path": "coreml-ane",
+   "variant": "fp16",
    "kind": "classify",
    "default": true,
    "build": {
-    "fingerprint": "03dbd3912095ae903a7e1b42f3a0ff7af3ae881812efc00723a700a327e2627d"
+    "ledger": "laya-typed-decisions/coreml/fp16/7618876e7c10",
+    "digest": "7618876e7c10015252eae1dc5202b32ee9115d98cc506d50fa79b299e3548c1a",
+    "fingerprint": "03dbd3912095ae903a7e1b42f3a0ff7af3ae881812efc00723a700a327e2627d",
+    "variant": "fp16",
+    "max_seq_len": 1024
    },
    "sample": {
     "name": "parity corpus, labelled cases",
@@ -284,9 +1128,129 @@
    "predictions": {
     "label": "111111111011111111111111111111110101011111111011011101011111111111101111111101011111110111111000111140a254b33593e92da3db84cb5534545b599864927dc4c95a8446945505e4344a9d56455554c642ab60adad85b55819e974a601617111303171516141014131012121200101115131110151010141015131414000512140416110303171214141303121207170516070215171018121215101412021610171015161515121514131016101513101706150713150014151210131413161009050908100003030410000017011301000200010813180302020200070712050107000203010210020202050302020201130210070001031002060703030913071004090204000013000400000003000007021102000309070200030504031201030503108956541890b4423603656155189618448b1ab71bb0205255b8256001921a650152a19b24b04452825818596bb136626b9511000105100711031103200311041007310731051101110511041104110511051105210431013106110331041107310611001105010511051106110010071104310411051104110011051100200431071100110711051107100031051101310711041103100230062103110431011005110531011100310001003005100301031101110711062004010511041001110520071100310111023105110731050105310431050107310011073001110431031100100111041101310011053103110011061103110131083963344135928201614681134292943243532441562442243921319978492468135136329149363951923485963919915912772747671172721577217223714621777716147247771113747724616677777142771766787727711817181571187647767000301002030032000100000031030030010003010002030300000010000000101003000300003000000030030001100000312012212121111012211012120100122111112121011201111111211020111112022220201212111122211001022010122201122000222011100122102202110112211000211010120021012111222221120101020100102100000110010211001002102101011111011100110111101011000111101011101101111010101110110010111101111111111111101100110100111101162041112022032031010032030031142031142112003003130011162052050131132001110062030132031030041120020002010032023051133051112010130020001132061123042102002051122022042023000021132063040051143030023031030052130110000010050061131110000021132030001103162052052002151152032013032010031011111023021140123132006eje1k0l00100d280je39jlm8d1395l59030ehl6000ajj04200k3060j098003233d0ejm3i3jg6jm3j60i035kod15i414kek13320770000280a30003073a6070370317630382903063308323003332000a700368232033032a3332772483030009037032a20421931e10520520520720320521530d20110531921820a21a20220031920121020530020520020010531120120520520120121310320520821520020521c20821520720520421030520220510120820111820021710520120510231521520021830931620721921910d20110920a10a20520720d21d20020531130020321520120020220520210030520520120c20a21331520320604a970aa8563316a90908a9607133704774779380607433604000a571609595469666791a6040459a61641295936539666a010030"
    },
-   "seconds": 189.8,
+   "seconds": 274.9,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-24",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "lumma-fev-0.1b",
+   "path": "coreml-ane",
+   "variant": "fp16",
+   "kind": "classify",
+   "default": true,
+   "build": {
+    "ledger": "lumma-fev-0.1b/coreml/fp16/dc7b22606d68",
+    "digest": "dc7b22606d6856187cbebec2ce36ded7bec12a808ccd5aefb4333dc4f3180a80",
+    "fingerprint": "aa441e9bac0b026af139dd759999e7cbc213506cfaafd3b5d814726de0ab1e2e",
+    "variant": "fp16",
+    "max_seq_len": 2048
+   },
+   "sample": {
+    "name": "parity corpus, labelled cases",
+    "n": 2610,
+    "sha256": "143950fea6ee10bf7fc5d4c982dd591f52c83747fc7308dee66aeabfd5b2961e",
+    "reference_sha256": "513baf4d110370593d7f79a7c15aeca6a5b7fd4e41389894fc94be9f4217513b"
+   },
+   "metrics": {
+    "n": 2610,
+    "refused": 0,
+    "gold_accuracy": 0.30689655172413793,
+    "agree_fp32": 0.9977011494252873,
+    "mean_prob": 0.5074473107049808
+   },
+   "predictions": {
+    "label": "00000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000004f4ff190f4f3fffdfffbf4c0450f444f5ff444fff0f44f4fff4ff40504fff4f0fd0ff04ff0400ff0f0ff4f0f0440f0ff440400608010808080808180804080808080808080008080100011808080800080408080808040800010808080808080808080808080808080208080808020808080408020800080808080808080808080008000808000808080808100008080808080808080a0a0a1a0a0a0a1a0a1a0a1a1a0a1a1a1a0a0a08010a1a1a1a0a0a0a1a0a0a0a0a110a1a1a1a11120a0a1a0a0a0a0a1a1a1a1a1a0a0a0a11110a1a1a1a0a0a1a0a1a0a0a1a0a0a1a0a0a0a1a1a0a0a0a0a0a0a1a0a1a0a0a0a0a0a0a1a0a0a0a011a0a0a19151999509b90b420990a91989588991115589a85133898955902559081991a990150a99b14b5445083559859931229999993300400070007100331051003300430071004000330003105100310070005300511151004100100010003300410071004300630053005300410020004111730033004300500031007100231073007000430071007110531071004300700043104000411033001100630033007100310033105100710073003111430050003310311011004300700053007300431041101110230013004300500050107300530031004100410011004310711021107000410033114310731000004300510043003000411033101300749833413373333333333821323333333435234417733433431323137734333382351383331133533153334337733139339399497444999499994499949449444294494944499449494929499924449494999499994442993499999944994999992497442222222210220121222222222202222222222022222212222222220220222222232302220220222213220222221222222222111111111111111111112111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111211111111121111121011111111111101110111011111101110110111011111111101011101101111111111111111111111110111101111111011730700700700700730701700700730700700730700700730700700730730700700700710731730700700700700700700700700700700730701730700730700730700701700730731701730731730700730730700700000731701700700701700700700700731700700731700730000701700700700730700700730730701700700700700700700701730700700700700700700701700r1rre10rr301rrd2rrr0r0rrrr30r9rr52rrre3r003rrr005r0rr3r0rr09rrrer03dr3r30rrr00r033rrar35krrrrrr1rr0rbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb3bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb3bbbbbbbbbbbbbbbbbbbbb311311101321301301311711311311311311101311311311a113113113119011113113113113103113113111111113103111113101111113111113113113113113113117113114115113013113111113101013013117113013113113113113113113119313117019119113111119103113103018113118101113111113113103101013113113113013103113103113113113113103013bbbbbbbbbbb3bbbbbbbbbbbbbbb3bbbbbbbbbbbbbbbbb33bbb3b2bbbbbbbbbbbbbbbbbb2bbbbbbbbbbbbbb23bb3bb3b2bbb2100301024"
+   },
+   "seconds": 478.6,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-24",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "agent-jev",
+   "path": "coreml-gpu",
+   "variant": "fp16",
+   "kind": "classify",
+   "default": true,
+   "build": {
+    "ledger": "agent-jev/coreml/fp16/8746a6ab7b54",
+    "digest": "8746a6ab7b54e16e16e73826942af1f6b0a44a6b6c3f43f6cda7243aa2a93a46",
+    "fingerprint": "6aa57c1279a13d794a5b4a5a928e20bd78ecfea94325ef58aa687cd9b208bb80",
+    "variant": "fp16",
+    "max_seq_len": 2048
+   },
+   "sample": {
+    "name": "parity corpus, labelled cases",
+    "n": 2600,
+    "sha256": "de376468497318d219d66206e504570e7275c0fccd30119aa9626658ca964792",
+    "reference_sha256": "800549c0e123dc60906d66a5d8ebd39b5116f061e87360c50f8b9a23d32516f7"
+   },
+   "metrics": {
+    "n": 2600,
+    "refused": 0,
+    "gold_accuracy": 0.5507692307692308,
+    "agree_fp32": 0.9969230769230769,
+    "mean_prob": 0.5027642287880769
+   },
+   "predictions": {
+    "label": "00010100101010110111010000001111010010001001101010010000000011001001001000000111101100010000001101004ca351121493e92da37bb4c0950b445b9b9413934bc4c95a8c469414b0e334b39156b355b4cb42ab60aead95b45819ed74b400607010303070506040004030202020200040105030100050403040005030404080502040406010303070204130303020207070306070205070003020205080402020600070005060505020506030406000513100706050703050007050200030603060909090308190003000410090913161301090218090813180302020207090903020109000203010219010909050312020201130714170206011009060703030311061004090902090003000408030209030003021109020319030902030204030209030708108996541890b4429609846125189618448b5ab71bb027521548556001951aa50152a19b54b044028ab8985964b136639b9100001001010330031005100311051001300100051003200410041004000510051001000420051006000300041007310610001005100510051001100010021004000410051004100010031000200510011001100110051001100100051005300120041003100130060003100431001005100530010000000020003005100321033001100130062004100510041001200110011000310310050005100730041005300430050001100010011001100100012000300510031001000010053103100010011003100100063963344280478227114661132132170777542441562672241121824908491768175198428040343957927405463316915912645644444444434446466046644641476464444444646064664344444664406146466646644642314664441611680646664021302122121122200121211021121231121213211122222310202210120211122122111212003212211131032011122111202001212021000002010002020000021020002022000001101001200020201102020220000222010021110000022010202200000000222010000022202202000212201000200010020020002000222212120001020000002200000000000220000002002100000010000000000001000000000000101000000000100000000000110010010000001010000001000000000000101001162041012042101031040033050041042001072012003001031031062052050101052101010062030162131040041021050062010012023051033051112010100020031002061123043002003051122023042063000021032063040051143060023053040051030110000010051061101010100021102000011011063152052063031052062041072012132051031023021040150032011eje1k16h6100c28ljdc9jc48d1695l596hnehl908q0jcq411khd770g09100c243ddejhfd1jg6ja3jdnif35kod15f414kek44a20754414264a3090301a36043310116131356073343118a03606321610a44136a132234333a3072162481030819887032a20420931e20630720820031300030531b00100b31930030030330d30a31930130030530020530830b20731930130500b30130130100100630320030031010c30230020720000b01030520320300300030100b30120700030130800b30b20020021b31930e30000931920d31120900b10a20030720d30b30330830130020331000a30930231030220030020020131d30a30331720a208842971a4126331611690811a400111677741201866074386648001211046061403096311a6101450666642202138436606a"
+   },
+   "seconds": 246.4,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "ms-marco-minilm-l6-v2",
+   "path": "coreml-ane",
+   "variant": "fp16",
+   "kind": "rerank",
+   "default": true,
+   "build": {
+    "ledger": "ms-marco-minilm-l6-v2/coreml/fp16/8fa2a339cd21",
+    "digest": "8fa2a339cd2161658d2d66e2b45f9915495d870d1ec9764086050a4c20b81462",
+    "fingerprint": "557665f3c1512fe082f97111d0e384793f95c9f95361e0ddbb6830bb513dea21",
+    "variant": "fp16",
+    "max_seq_len": 512
+   },
+   "sample": {
+    "name": "rerank corpus",
+    "n": 13,
+    "sha256": "c38a470ff4aa6ae72fd636a520789ff44f8d304f962216ab8c96ad39785a7081",
+    "reference_sha256": "98997dfc6ffe189faddc00a30ab8309dae1d6d118a4b1f4d2a6e1a6028144209"
+   },
+   "metrics": {
+    "n": 13,
+    "top1_relevant": 1.0,
+    "agree_fp32_top1": 1.0,
+    "max_abs_diff_fp32": 0.024129867553710938,
+    "max_abs_dp_fp32": 0.0034003529336978366
+   },
+   "predictions": {
+    "top": "0203300010100"
+   },
+   "seconds": 1.9,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
@@ -298,10 +1262,15 @@
   {
    "model": "nli-minilm2-l6-h768",
    "path": "coreml-gpu",
+   "variant": "fp16",
    "kind": "nli",
    "default": true,
    "build": {
+    "ledger": "nli-minilm2-l6-h768/coreml/fp16/6aceb970649e",
+    "digest": "6aceb970649e3d1126c3c443c914db20163d42c6a94e53c93f17663ade50cbf1",
     "fingerprint": "d77e5dc86e3b6152351ca0695cad3b5f40e5ee4e3ee00a7eda7c381491939eac",
+    "variant": "fp16",
+    "max_seq_len": 512,
     "served_manifest": "served with `classes = [\"contradiction\", \"entailment\", \"neutral\"]` added under [classify.nli], from examples/classifiers/nli-minilm2-l6-h768/classifier.toml (D47); the build is unchanged"
    },
    "sample": {
@@ -364,9 +1333,103 @@
      }
     ]
    },
-   "seconds": 2.8,
+   "seconds": 4.4,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "nli-deberta-v3-xsmall",
+   "path": "coreml-gpu",
+   "variant": "fp16",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "ledger": "nli-deberta-v3-xsmall/coreml/fp16/8836cd60bc41",
+    "digest": "8836cd60bc41a091ad0c9d0cd9ee68a592bfd2ab18952d292b23efb20b09271e",
+    "fingerprint": "1ca31293f01409d83ed4668df1f24f845bbc821076c2da11167bba733f42abaf",
+    "variant": "fp16",
+    "max_seq_len": 512,
+    "served_manifest": "served with `classes = [\"contradiction\", \"entailment\", \"neutral\"]` added under [classify.nli], from examples/classifiers/nli-deberta-v3-xsmall/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "295d7d2d2b770f40dbff8d07669cc31d77f1f2a6e880e08bfab453551b27d08e"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.827922077922078,
+    "mnli2_matched": 0.8311688311688312,
+    "mnli2_mismatched": 0.8246753246753247,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.9494569485714285,
+    "mnli3_accuracy": 0.8474025974025974,
+    "mnli3_matched": 0.8441558441558441,
+    "mnli3_mismatched": 0.8506493506493507,
+    "agree_fp32_3": 1.0
+   },
+   "predictions": {
+    "probs": "exexxxxxxxxxeeeeeeeeeeexxexexxeeexxexxxxxeeeeeeexxexxxeexexexxxeexexexxeeeeexexeeeexeexxxxeeeexeeexexexeeeeexexeeeexeeeexxxeexexeexexeexexxexxeeeexexeeexexeexxexexxeeexexxxexxxexxxeeeeexexxxxeexxxexxeeexxxexxexxeeeexxexxxeeeeexeeexxxxexeeexeeexxxexeexxxexxeexxxxxxeexeexeeexeexexexexxxexxxexxxxxeeeexeeexxeee",
+    "nli_probs": "ncennccccnncneeneeeenenncennccnenccncccnceeneeeencecncnecncnncnencncnccennneceneneecnecccneeeecnnncecnceeeeececeeenneeeecnnnececnececeecencnnneeeecnneeeneceencececcneecncncncccecccneeenneccncnecccecneeecccencecnneeeccennceeeeeceencccnecenecenencnecnncncnnceecnccccencenceencencecececcnenccenncnceneeceeecneen"
+   },
+   "seconds": 6.0,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "nli-deberta-v3-small",
+   "path": "coreml-gpu",
+   "variant": "fp16",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "ledger": "nli-deberta-v3-small/coreml/fp16/519cb3a96d36",
+    "digest": "519cb3a96d368b49a42dd461c1bbd4502438634bb4dbe81bf6d60ff0fb684b59",
+    "fingerprint": "439edd1e26c3e81bf1109a3ef60ee072842c6668e4c7567a4710749f7e8508b7",
+    "variant": "fp16",
+    "max_seq_len": 512,
+    "served_manifest": "served with `classes = [\"contradiction\", \"entailment\", \"neutral\"]` added under [classify.nli], from examples/classifiers/nli-deberta-v3-small/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "4f53d0c515667ca8fe2b6188828bed7dbceebc6022ce35802067d2a31e25464b"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.8116883116883117,
+    "mnli2_matched": 0.7987012987012987,
+    "mnli2_mismatched": 0.8246753246753247,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.9707410842207792,
+    "mnli3_accuracy": 0.8571428571428571,
+    "mnli3_matched": 0.8571428571428571,
+    "mnli3_mismatched": 0.8571428571428571,
+    "agree_fp32_3": 1.0
+   },
+   "predictions": {
+    "probs": "exxxxxxxxxexeeexxeeeeeeexeeexxeexxxeexxxxeexeeeexxexeeeexexexxxeexexxxxexeeexexeeeexeexxxxexeexeeexexexeeeeexexeeeeeeeeexxexexexxexexeexexxexxeeeexexeeeeexeexxexexxeeexexxxexxxexxxeeeeexexxexeexxxexeeeexxxexxexxeeeexxeexxexeeexeexxxxeexeeexeeexxxexeexxxxxxeexxxxxxeexeexeeexeexexexexxxexxxexxxxxexeexeeexxeee",
+    "nli_probs": "nccnncnccnnceeenceeenennceneccnenccenccnceeneeenncecnnnecncnncnencnccccenneeceneneecnecccneneecnencececeeeeececeeenneeeeccncececnececeecencnnneeeecnceeeneceencececcneecncnceccceccceeeenneccncnecccecneeecccencncnneeecnnnnceceeecenccccnecenecenencnecencccnncnncnccccencenceencencececnccnenccecccnceneeceeecneen"
+   },
+   "seconds": 5.6,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
@@ -378,10 +1441,15 @@
   {
    "model": "nli-deberta-v3-base",
    "path": "coreml-gpu",
+   "variant": "fp16",
    "kind": "nli",
    "default": true,
    "build": {
+    "ledger": "nli-deberta-v3-base/coreml/fp16/e9e431b23a5d",
+    "digest": "e9e431b23a5dacf9fe56e89e4b2dc24a5e654053bbcc51d7b28a5cc944ec4a9e",
     "fingerprint": "382ccf567aa5cfa82d1c6164a6bb2e281f9595fd2e6c43c3cabd0234e5619491",
+    "variant": "fp16",
+    "max_seq_len": 512,
     "served_manifest": "served with `classes = [\"contradiction\", \"entailment\", \"neutral\"]` added under [classify.nli], from examples/classifiers/nli-deberta-v3-base/classifier.toml (D47); the build is unchanged"
    },
    "sample": {
@@ -444,9 +1512,9 @@
      }
     ]
    },
-   "seconds": 5.2,
+   "seconds": 7.9,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
@@ -458,10 +1526,15 @@
   {
    "model": "roberta-large-mnli",
    "path": "coreml-gpu",
+   "variant": "fp16",
    "kind": "nli",
    "default": true,
    "build": {
+    "ledger": "roberta-large-mnli/coreml/fp16/3a4c41fbe27e",
+    "digest": "3a4c41fbe27e7f52ac77ffa0edd875ace8e55a056adac7f57b118e23d820bbaa",
     "fingerprint": "15fd2f18eb546eff02e22cab5a5d7dee4026347e0e24f4a2e0aac5b020f020e8",
+    "variant": "fp16",
+    "max_seq_len": 512,
     "served_manifest": "served with `classes = [\"contradiction\", \"neutral\", \"entailment\"]` added under [classify.nli], from examples/classifiers/roberta-large-mnli/classifier.toml (D47); the build is unchanged"
    },
    "sample": {
@@ -524,9 +1597,9 @@
      }
     ]
    },
-   "seconds": 9.1,
+   "seconds": 15.4,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
@@ -538,10 +1611,15 @@
   {
    "model": "nli-minilm2-l6-h768-ane",
    "path": "coreml-ane",
+   "variant": "fp16",
    "kind": "nli",
    "default": true,
    "build": {
+    "ledger": "nli-minilm2-l6-h768-ane/coreml/fp16/eaddcfd7f732",
+    "digest": "eaddcfd7f732fcf9bbe54f71a7a44634b35baa3bb7f5e1a93825d824dc78309a",
     "fingerprint": "f5de11d8f0c4784a4193f92c24c1247230191efb345080033d2217b05fe3edfc",
+    "variant": "fp16",
+    "max_seq_len": 512,
     "served_manifest": "served with `classes = [\"contradiction\", \"entailment\", \"neutral\"]` added under [classify.nli], from examples/classifiers/nli-minilm2-l6-h768-ane/classifier.toml (D47); the build is unchanged"
    },
    "sample": {
@@ -604,9 +1682,52 @@
      }
     ]
    },
-   "seconds": 3.7,
+   "seconds": 3.5,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "deberta-v3-base-zeroshot-v2.0-c",
+   "path": "coreml-gpu",
+   "variant": "fp16",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "ledger": "deberta-v3-base-zeroshot-v2.0-c/coreml/fp16/b66aba0819db",
+    "digest": "b66aba0819dbcb28ecaa008adf4f9b293325b250d4cf1871ea488e6ee41db181",
+    "fingerprint": "8b89f02ca958c2aff2ee06c2024b6b7b1f7125ce42224dc3fc66a572969259e7",
+    "variant": "fp16",
+    "max_seq_len": 512,
+    "served_manifest": "served with `classes = [\"entailment\", \"not_entailment\"]` added under [classify.nli], from examples/classifiers/deberta-v3-base-zeroshot-v2.0-c/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "a05337c63e62cae7b07b1fd3e1a9fb7c166268699a01e87342aff0e420be17e5"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.9285714285714286,
+    "mnli2_matched": 0.9415584415584416,
+    "mnli2_mismatched": 0.9155844155844156,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.9624934152885747,
+    "probs_vs_nli_probs_disagreements": 0
+   },
+   "predictions": {
+    "probs": "xxexxxxxexxxexexeeeexexxxexexxxexxxexxxxxeexeeeexxexxxeexxxxxxxexxxxxxxexeeexexexeexeexxxxexeexxxxxexxxeeeeexexeeexxeeeexxxeexexxexexeexexxxxxeeeexxxeeexexeexxexexxxeexxxxxxxxxexxxxeeeexexxxxxexxxexxeeexxxexxexxxeeexxexxxexeeexeeexxxxxxexexexexxxexexxxxxxxxxxxxxxxexxexxeeexexxexexxxxxexxxexxxxxexxexeeexxxex"
+   },
+   "seconds": 7.7,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
@@ -618,10 +1739,15 @@
   {
    "model": "deberta-v3-large-zeroshot-v2.0-c",
    "path": "coreml-gpu",
+   "variant": "fp16",
    "kind": "nli",
    "default": true,
    "build": {
+    "ledger": "deberta-v3-large-zeroshot-v2.0-c/coreml/fp16/168a23f0f23e",
+    "digest": "168a23f0f23e79bccf2a06f5924bafb94d5ee965f71cdb6480f2f661edd06a96",
     "fingerprint": "eebe0d73a0f0bc79c9483dc2be3a69e8c9fc5e6da1d039ad39fb83791270c5f9",
+    "variant": "fp16",
+    "max_seq_len": 512,
     "served_manifest": "served with `classes = [\"entailment\", \"not_entailment\"]` added under [classify.nli], from examples/classifiers/deberta-v3-large-zeroshot-v2.0-c/classifier.toml (D47); the build is unchanged"
    },
    "sample": {
@@ -674,9 +1800,52 @@
      }
     ]
    },
-   "seconds": 10.9,
+   "seconds": 19.4,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "roberta-large-zeroshot-v2.0-c",
+   "path": "coreml-gpu",
+   "variant": "fp16",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "ledger": "roberta-large-zeroshot-v2.0-c/coreml/fp16/fd9fc8d72a25",
+    "digest": "fd9fc8d72a25562e967040578a435b497377cfad3d2c557d5bd5a9bc603aef05",
+    "fingerprint": "704635cd9337e37029c3ccf68151b0485e80187fc32e1c6b3a566cb36699a787",
+    "variant": "fp16",
+    "max_seq_len": 512,
+    "served_manifest": "served with `classes = [\"entailment\", \"not_entailment\"]` added under [classify.nli], from examples/classifiers/roberta-large-zeroshot-v2.0-c/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "6c7cdb0a2d46f5d0654c35cacc305f56e45a759e92fe18ff34116abe77af0184"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.9415584415584416,
+    "mnli2_matched": 0.9415584415584416,
+    "mnli2_mismatched": 0.9415584415584416,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.961293845875552,
+    "probs_vs_nli_probs_disagreements": 0
+   },
+   "predictions": {
+    "probs": "xxexxxxxexxxeeexeeeexexexexexxxexxxexxxxxeexeeexxxexxxxexxxxxxxexxxxxxxexeeexexexeexeexxxxexeexxxxxexexeeeeexexeeeexeeeexxxeexexxexexeexexxxxxeeeexxxeeexexeexxexexxxeexxxxxxxxxexxxxeeexxexxxxxexxxexxeeexxxexxexxxeeexxexxxexeeexeexxxxxxxexexexexxxexexxxxxxxxexxxxxxexxexxeeexexxexexxxxxexxxexxxxxexexxeeexxeex"
+   },
+   "seconds": 12.8,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
@@ -688,10 +1857,15 @@
   {
    "model": "bge-m3-zeroshot-v2.0-c",
    "path": "coreml-gpu",
+   "variant": "fp16",
    "kind": "nli",
    "default": true,
    "build": {
+    "ledger": "bge-m3-zeroshot-v2.0-c/coreml/fp16/ed115f932671",
+    "digest": "ed115f932671eae1d2f11f7a43a0df9c53c9833a914b7e2e8487b5c72ce1e0d4",
     "fingerprint": "d7d216d2e9012238a3bee2445e3513b20a5a3de9ab3064ef4327b122d6f52379",
+    "variant": "fp16",
+    "max_seq_len": 2048,
     "served_manifest": "served with `classes = [\"entailment\", \"not_entailment\"]` added under [classify.nli], from examples/classifiers/bge-m3-zeroshot-v2.0-c/classifier.toml (D47); the build is unchanged"
    },
    "sample": {
@@ -744,9 +1918,52 @@
      }
     ]
    },
-   "seconds": 16.2,
+   "seconds": 42.9,
    "provenance": {
-    "commit": "c3cb257302c4f54a80f637e345d9ebd0708c06d2",
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-23",
+    "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "modernbert-large-zeroshot-v2.0",
+   "path": "coreml-gpu",
+   "variant": "fp16",
+   "kind": "nli",
+   "default": true,
+   "build": {
+    "ledger": "modernbert-large-zeroshot-v2.0/coreml/fp16/f08c241503c0",
+    "digest": "f08c241503c0a727a4f04952cdcf535fe1065edb5ecdf7a1d1b77a52538d0d8b",
+    "fingerprint": "47875163d6535e93f4595d61a1d9d0cf7cedd5743443111c430488b23bc14390",
+    "variant": "fp16",
+    "max_seq_len": 2048,
+    "served_manifest": "served with `classes = [\"entailment\", \"not_entailment\"]` added under [classify.nli], from examples/classifiers/modernbert-large-zeroshot-v2.0/classifier.toml (D47); the build is unchanged"
+   },
+   "sample": {
+    "name": "nli parity corpus, MultiNLI pairs",
+    "n": 308,
+    "sha256": "ab970e8a897a49080d59367488c4fd50d677d4d0342557f39692683f8400574a",
+    "reference_sha256": "bf6cc3984f8d083fe32002c71c4ddcd75811c9dfbe46c5f31dbc0565fe23feff"
+   },
+   "metrics": {
+    "n": 308,
+    "mnli2_accuracy": 0.9577922077922078,
+    "mnli2_matched": 0.961038961038961,
+    "mnli2_mismatched": 0.9545454545454546,
+    "agree_fp32_2": 1.0,
+    "mean_prob": 0.973622409808013,
+    "probs_vs_nli_probs_disagreements": 0
+   },
+   "predictions": {
+    "probs": "xxexxxxxexxxexexeeeeeexxxexexxxexxxexxxxxeexeeeexxexxxxexxxxxxxexxxxxxxexeeexexexeexeexxxxexeexxxxxexxxexeeexexeeexxeeeexxxeexexxexexeexexxxxxeeeexxxeeexexexxxexexxxeexxxxxexxxexxxeeeexxexxxxxxxxxexxeeexxxexxexxxeeexxxxxxexeeexeexxxxxxxexxxexexxxexxxxxxxxxxxxxxxxxexxexxeeexexxexexxxxxexxxexxxxxexexxeexxxxex"
+   },
+   "seconds": 23.9,
+   "provenance": {
+    "commit": "5b22dca234fd2a9b83746f25090bd6427a1fa684",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
@@ -757,22 +1974,9 @@
   }
  ],
  "not_gated": [
-  "all-minilm-l6-v2",
   "e5-small-v2",
-  "gte-modernbert-base",
-  "embeddinggemma-2",
-  "qwen3-embedding-0.6b",
-  "nlptown-sentiment",
   "laya-en",
   "julia-1",
-  "gliner2.5-decide",
-  "lumma-fev-0.1b",
-  "agent-jev",
-  "ms-marco-minilm-l6-v2",
-  "nli-deberta-v3-xsmall",
-  "nli-deberta-v3-small",
-  "deberta-v3-base-zeroshot-v2.0-c",
-  "roberta-large-zeroshot-v2.0-c",
-  "modernbert-large-zeroshot-v2.0"
+  "gliner2.5-decide"
  ]
 }
