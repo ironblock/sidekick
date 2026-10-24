@@ -2145,14 +2145,16 @@ weights is legally unsettled. sidekick's licence audit,
 licence, base model and training datasets with each dataset's licence as
 its original source states it, pinned to a revision, and the publishing
 tier that follows ([PUBLISHING.md](PUBLISHING.md)):
-- **Non-commercial training data:** MS MARCO (non-commercial research
+- **Non-commercial training data** (tier 2a: the card states it, with no
+  gate): MS MARCO (non-commercial research
   only) trained all-MiniLM-L6-v2, e5-small-v2, gte-modernbert-base,
   Qwen3-Embedding-0.6B, F2LLM-v2-160M and ms-marco-MiniLM-L6-v2. F2LLM's
   released training set also contains ANLI (CC BY-NC 4.0), as does
   ModernBERT-large-zeroshot-v2.0's, with other non-commercial sets.
   all-MiniLM-L6-v2's mixture also includes Flickr30k and the original,
   non-commercial S2ORC release.
-- **Terms that travel with the weights:** EmbeddingGemma-300m is under the
+- **Terms that travel with the weights** (tier 2b, gated, the only models
+  that are): EmbeddingGemma-300m is under the
   Gemma Terms of Use, including the Gemma Prohibited Use Policy.
   EmbeddingGemma 2 is Apache-2.0, but its card says deployments must
   follow that policy.

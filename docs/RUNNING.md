@@ -96,7 +96,7 @@ fetches the builds in [the published list](MODELS.md#published-builds):
 sidekickd fetch bge-small-en-v1.5                     # its Core ML build on macOS; its ONNX build on Linux
 sidekickd fetch bge-small-en-v1.5 --buckets 128,256   # only the buckets for inputs up to 256 tokens
 sidekickd fetch bge-small-en-v1.5 --backend onnx      # its ONNX build, on any OS (an Intel Mac included)
-sidekickd fetch <model> --accept-terms <model>        # a build whose repository publishes terms
+sidekickd fetch <model> --accept-terms <model>        # a gated build (the Gemma models): accept its terms
 ```
 
 The ledger records where and at which revision each build was published,

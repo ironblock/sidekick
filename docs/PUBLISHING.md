@@ -29,8 +29,8 @@ travel with the weights, and a tier.
 | tier | what happens | when |
 |---|---|---|
 | 1 | published | the licence and every training dataset are permissive, and the data is fully disclosed |
-| 2a | published, with a plain notice on the card | training data that is share-alike but nothing non-commercial; or undisclosed, unlicensed, or synthetic from an unnamed generator |
-| 2b | published behind explicit consent (a gated repository) | training data with non-commercial terms, or terms that must travel with the weights (Gemma) |
+| 2a | published, with a notice on the card | training data with non-commercial terms (stated as prominently as a gate would state them), or share-alike, undisclosed or unlicensed data, or synthetic data from an unnamed generator |
+| 2b | published behind explicit consent (a gated repository) | terms that must be passed on to everyone who receives the files: today, the Gemma Terms of Use and Prohibited Use Policy |
 | 3 | not published; converting it locally stays documented | a licence that forbids redistribution or commercial use, or makes commercial use depend on the user's circumstances |
 
 Two rules decide what counts. A base model's own pretraining data doesn't:
@@ -40,11 +40,27 @@ its original source's terms when someone re-hosts it under another label.
 
 `tools/licences.py` validates the file, and CI runs it through
 `tools/models_table.py --docs --check`. It recomputes the lowest tier each
-entry's recorded data allows (non-commercial data or travelling terms: 2b;
+entry's recorded data allows (travelling terms: 2b; non-commercial,
 share-alike, unknown or undisclosed data, or an unnamed generator: 2a;
 otherwise 1) and refuses a stated tier that differs, so a verdict can't
 drift from its evidence. Tier 3 is the one judgement it can't recompute, so
 a tier-3 entry must record the licence terms that put it there.
+
+**Why a gate only for travelling terms.** A gated repository costs every
+user something: a Hugging Face account, a click through the terms, and
+their username and email address shared with the publisher. That cost is
+worth paying when the terms legally must reach every recipient of the
+files, as the Gemma Terms of Use require of anyone who redistributes the
+model. Training data with non-commercial terms is different: no licence
+requires a redistributor to collect anyone's consent, and whether such
+terms bind a trained model at all is unsettled. A gate there would buy no
+legal protection and cost every user their privacy, so those models are
+2a: the card states the datasets and their terms at the top, as
+prominently as a gate's terms, says that their reach is unsettled, that
+the user decides whether their use is permitted with no assurance from
+the publisher, and that the model's own licence is unchanged. (The first
+version of this policy gated them as 2b; D50's amendment records the
+change.)
 
 No model is tier 1 today: MS MARCO, Natural Questions, SNLI, MultiNLI and
 undisclosed corpora are in nearly every model's training data.
@@ -328,20 +344,22 @@ on install.**
 
 ## Consent for tier 2b: gated repositories
 
-**Decision: a tier-2b repository is a Hugging Face gated repository with
+**Decision: a tier-2b repository, one whose terms must be passed on to
+every recipient (the Gemma models), is a Hugging Face gated repository with
 automatic approval.** Access is granted as soon as a signed-in user accepts
 the terms; nobody reviews requests, because a reviewer would have nothing
 to check. The upload sets `gated="auto"` on the repository; the card's front
 matter words the request:
 
 ```yaml
-extra_gated_heading: "Accept the terms to download Qwen3-Embedding-0.6B"
+extra_gated_heading: "Accept the terms to download embeddinggemma-300m"
 extra_gated_prompt: |-
   By requesting access you agree that:
 
-  1. The original model was trained on data whose terms restrict it to non-commercial use: ...
-  2. These files are a conversion of [Qwen/Qwen3-Embedding-0.6B](...), licensed to you under its licence (Apache-2.0), and are provided as is, without warranty of any kind.
-  3. Hugging Face shares your account's username and email address with this repository's owner when you accept, and records that you accepted.
+  1. You receive and use these files under the [Gemma Terms of Use](https://ai.google.dev/gemma/terms), and you will give a copy of it to anyone you give them to.
+  2. You won't use these files for anything the [Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy) prohibits, and you will pass it on to anyone you give them to.
+  3. These files are a conversion of [google/embeddinggemma-300m](...), licensed to you under its licence (Gemma Terms of Use), and are provided as is, without warranty of any kind.
+  4. Hugging Face shares your account's username and email address with this repository's owner when you accept, and records that you accepted.
 extra_gated_fields:
   "I have read the terms above and accept them": checkbox
 extra_gated_button_content: "Accept and request access"
@@ -349,10 +367,11 @@ extra_gated_button_content: "Accept and request access"
 
 **What the user agrees to** is generated from the audit, one item per
 concern, so it says exactly what applies to that model and nothing else:
-- **Non-commercial training data:** which datasets, under which terms; that
-  whether such terms bind a trained model is unsettled; and that the user
-  decides whether their use is permitted, with no assurance from the
-  publisher.
+- **Non-commercial training data, where a gated model has it too:** which
+  datasets, under which terms; that whether such terms bind a trained model
+  is unsettled; and that the user decides whether their use is permitted,
+  with no assurance from the publisher. (On a tier-2a card the same four
+  points are a notice, with nothing to accept.)
 - **Terms that travel with the weights** (the Gemma Terms of Use): that
   the user receives the files under those terms and gives a copy to
   anyone they pass the files to; and for a use policy (the Gemma

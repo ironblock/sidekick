@@ -4004,6 +4004,35 @@ documentation but couldn't run it (it needs the Metal
 Toolchain). #163 evaluates Core AI as a backend beside Core ML, which
 would stay for macOS 26 and Intel Macs.
 
+**Amendment (October 2026): a gate only for terms that must travel.**
+Tier 2b, the gated repository, is now only for terms that must be passed
+on to every recipient of the files: today the Gemma Terms of Use and
+Prohibited Use Policy (EmbeddingGemma-300m, and EmbeddingGemma 2, whose
+card requires the policy and whose coverage by the Gemma terms is
+unconfirmed). Training data with non-commercial terms moves to 2a, a notice
+without a gate. The seven models it affects (all-MiniLM-L6-v2,
+e5-small-v2, gte-modernbert-base, F2LLM-v2-160M, Qwen3-Embedding-0.6B,
+ms-marco-MiniLM-L6-v2, ModernBERT-large-zeroshot-v2.0) are now 2a: 25 at
+2a, 2 at 2b, LFM2.5-Embedding-350M at 3.
+- **Why.** A gate costs every user a Hugging Face account, a click through
+  the terms, and their username and email address shared with the
+  publisher. That is worth it when the terms legally must reach every
+  recipient, as the Gemma terms require of a redistributor. No licence asks
+  a redistributor to collect consent to a training set's non-commercial
+  terms, and whether such terms bind a trained model at all is unsettled,
+  so a gate bought no legal protection for that cost.
+- **What replaces it.** The card's notice keeps the gate's substance and
+  its prominence, at the top of the card: which datasets, with their
+  terms; that whether such terms bind a model trained on the data is
+  legally unsettled; that the user decides whether their use is permitted,
+  with no assurance from the publisher; and that the model's own licence
+  is unchanged. Nothing is accepted, nothing is shared, no TERMS.md ships
+  and fetch asks for no `--accept-terms`.
+- `tools/licences.py` recomputes the tiers by the new rule, and the cards'
+  `datasets` front matter now lists every training set with a Hub id
+  (MS MARCO as `microsoft/ms_marco`), not only those whose cited source is
+  a Hub page.
+
 ## D51 — `sidekickd fetch`: the Hugging Face cache, verified, installed as hard links
 Publishing graded builds on Hugging Face (#137) needs a client: download a
 build, check it is the build sidekick published, and install it where the
