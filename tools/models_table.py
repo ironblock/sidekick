@@ -49,6 +49,10 @@ Inputs:
   source on a run's revision (or the reverse), and a score without a run,
   its task's metric, or a count of inputs over the cap that its longest
   input agrees with.
+- docs/data/licences.toml (the licence audit, validated by
+  tools/licences.py): each model's licence, publishing tier and the
+  audit's concerns, published beside the rows as the results file's
+  `licences`, keyed by model id (see licence_records()).
 
 It also writes the data tables in docs/MODELS.md from the results file
 (those between `<!-- generated: NAME -->` markers), and checks the
@@ -65,7 +69,8 @@ Usage:
     --check: write nothing; fail if the output would differ from --out
              or from docs/MODELS.md
     --docs:  regenerate docs/MODELS.md's tables, and the results file's
-             benchmark scores, from in-repo inputs, reading no reports
+             benchmark scores and licences, from in-repo inputs, reading
+             no reports
              (what CI checks). It also validates the publishing data:
              the licence audit (docs/data/licences.toml, tools/licences.py)
              and the checksum ledger (docs/data/ledger.json,
@@ -1098,6 +1103,44 @@ def benchmark_scores(models):
     }
 
 
+def licence_records(models):
+    """The results file's `licences`: each model's licence and publishing
+    tier from docs/data/licences.toml, after checking it (tools/licences.py),
+    keyed by model id in models.toml's order.
+
+    licence           the short id: the SPDX id where the licence has one
+                      ("Apache-2.0", "MIT"), else a short name ("Gemma")
+    licence_name      the licence as the audit records it
+    licence_spdx      whether `licence` is an SPDX id
+    licence_url       the licence's text, or the model card that states it
+    tier              the publishing tier: 1, 2a, 2b or 3 (docs/PUBLISHING.md)
+    concerns          what the audit flags, as licences.toml names them:
+                      non-commercial-data, copyleft-data, unlicensed-data,
+                      undisclosed-data, unnamed-synthetic-generator,
+                      custom-terms, use-policy
+    training_disclosure  full, partial or undisclosed
+    custom_terms      terms that travel with the files: each one's name and url
+    """
+    audit = licences.load()
+    problems = licences.problems(audit, models)
+    if problems:
+        raise SystemExit("the licence audit (docs/data/licences.toml) has problems:\n  " + "\n  ".join(problems))
+    out = {}
+    for mid in models:
+        e = audit["models"][mid]
+        out[mid] = {
+            "licence": licences.short_id(e),
+            "licence_name": e["licence"],
+            "licence_spdx": e["licence"] in licences.SPDX,
+            "licence_url": licences.licence_url(e),
+            "tier": e["tier"],
+            "concerns": [c for c in licences.CONCERNS if c in e["concerns"]],
+            "training_disclosure": e["training_disclosure"],
+            "custom_terms": [{"name": t["name"], "url": t["url"]} for t in e["custom_terms"]],
+        }
+    return out
+
+
 # --- docs/MODELS.md tables ---------------------------------------------------
 #
 # The data tables in docs/MODELS.md are generated from the results file. Each
@@ -1825,12 +1868,18 @@ def docs(results, models, check):
     data = json.loads(text_json)
     rows = data["rows"]
     bench = benchmark_scores(models)
-    if data.get("benchmarks") != bench:
+    lic = licence_records(models)
+    stale = [what for what, key, new in (("benchmark scores", "benchmarks", bench), ("licences", "licences", lic))
+             if data.get(key) != new]
+    if stale:
         if check:
-            raise SystemExit(f"{results}'s benchmark scores are out of date: rerun tools/models_table.py --docs")
+            raise SystemExit(f"{results}'s {' and '.join(stale)} are out of date: rerun tools/models_table.py --docs")
         data["benchmarks"] = bench
+        data["licences"] = lic
         results.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
-        print(f"rewrote the benchmark scores in {results}")
+        print(f"rewrote the {' and '.join(stale)} in {results}")
+    if missing := sorted({r["model"] for r in rows} - set(lic)):
+        raise SystemExit(f"{results}: no licence for {', '.join(missing)}")
     text = MODELS_MD.read_text()
     new = render_docs(text, rows, models, bench)
     problems = check_grades(data, rows) + check_hand_written(new, rows) + check_caps(rows, build_caps(models))
@@ -1895,7 +1944,8 @@ def main():
     dates = sorted(d for d in (r["date"] for r in rows) if d)
     cargo = tomllib.loads((REPO / "Cargo.toml").read_text())
     out = {"sidekick": cargo["workspace"]["package"]["version"], "as_of": dates[-1] if dates else None,
-           "grades": grades, "fields": FIELDS, "rows": rows, "benchmarks": benchmark_scores(models)}
+           "grades": grades, "fields": FIELDS, "rows": rows, "benchmarks": benchmark_scores(models),
+           "licences": licence_records(models)}
     text = json.dumps(out, indent=1, ensure_ascii=False) + "\n"
     if args.check:
         if not args.out.exists() or args.out.read_text() != text:

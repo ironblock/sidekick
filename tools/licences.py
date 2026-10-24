@@ -100,6 +100,26 @@ HUB_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Hugging Face's licence identifiers (model-card `license:`), by our names.
 HF_LICENSE = {"Apache-2.0": "apache-2.0", "MIT": "mit", "Gemma Terms of Use": "gemma"}
 
+# The comparison page's short licence id (docs/site/, through models.json's
+# `licences`): a licence recorded by its SPDX id keeps it; a custom licence,
+# which has none, gets a short name here. An id must be one word.
+SHORT_ID = {"Gemma Terms of Use": "Gemma", "LFM Open License v1.0": "LFM-1.0"}
+SPDX = ("Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "CC-BY-4.0", "CC0-1.0")
+
+
+def short_id(entry):
+    return SHORT_ID.get(entry["licence"], entry["licence"])
+
+
+def licence_url(entry):
+    """The licence's own text where the audit cites one (a LICENSE file or
+    a terms page), else the first source, the model card."""
+    sources = entry["licence_sources"]
+    for u in sources:
+        if not u.rsplit("/", 1)[-1].upper().startswith(("README", "NOTICE")):
+            return u
+    return sources[0] if sources else None
+
 
 def load(path=LICENCES):
     return tomllib.loads(Path(path).read_text())
@@ -178,6 +198,11 @@ def problems(data=None, models=None):
             continue
         if mid in models and e["source"] != models[mid]["source"]:
             out.append(f"{w}: source {e['source']} isn't models.toml's {models[mid]['source']}")
+        if not re.match(r"^\S+$", short_id(e)):
+            out.append(f"{w}: licence {e['licence']!r} has no short id for the comparison page: "
+                       f"add one to SHORT_ID in tools/licences.py")
+        if not e["licence_sources"]:
+            out.append(f"{w}: licence_sources is empty")
         if e["tier"] not in TIERS:
             out.append(f"{w}: tier {e['tier']!r} isn't one of {', '.join(TIERS)}")
         if e["training_disclosure"] not in DISCLOSURE:

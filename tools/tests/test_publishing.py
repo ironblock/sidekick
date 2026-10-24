@@ -303,6 +303,21 @@ class LicencesTest(unittest.TestCase):
         self.assertTrue(any("isn't in docs/data/licence-texts/index.toml" in p for p in found), found)
         self.assertEqual(licences.text_problems(), [])
 
+    def test_page_licence_id(self):
+        # the comparison page's short id: SPDX ids as they are, custom licences by a one-word name
+        self.assertEqual(licences.short_id(entry()), "MIT")
+        self.assertEqual(licences.short_id(entry(licence="Gemma Terms of Use")), "Gemma")
+        found = self.check(entry(tier="3", licence="Some Custom Licence", licence_text=None,
+                                 custom_terms=[{"name": "L", "url": "https://e.org/l", "requires": "x"}],
+                                 concerns=["custom-terms"]))
+        self.assertTrue(any("no short id" in p for p in found), found)
+
+    def test_licence_url_prefers_the_licence_text(self):
+        card = "https://huggingface.co/a/b/blob/" + "0" * 40 + "/README.md"
+        text = "https://huggingface.co/a/b/blob/" + "0" * 40 + "/LICENSE"
+        self.assertEqual(licences.licence_url(entry(licence_sources=[card, text])), text)
+        self.assertEqual(licences.licence_url(entry(licence_sources=[card])), card)
+
     def test_links_must_be_pinned(self):
         found = self.check(entry(licence_sources=["https://huggingface.co/a/b/blob/main/README.md"]))
         self.assertTrue(any("isn't pinned" in p for p in found), found)
