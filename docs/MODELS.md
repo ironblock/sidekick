@@ -77,6 +77,7 @@ Method, for every validated entry:
 | [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | 768 | CLS | [convert_gte_modernbert.py](../tools/convert_gte_modernbert.py) | 0.99992 | 0.99998 | 794/805 (98.6%) | validated on macOS 27 (below) |
 | [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | 384 | mean | [convert_bert_embedder.py](../tools/convert_bert_embedder.py) | 0.999982 | 0.999971 | 146/168 (86.9%) | not measured yet (buckets 64/128/256) |
 | [intfloat/e5-small-v2](https://huggingface.co/intfloat/e5-small-v2) | 384 | mean | [convert_bert_embedder.py](../tools/convert_bert_embedder.py) | 0.999974 | 0.999963 | 290/312 (92.9%) | not measured yet |
+| [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) | 1024 | last-token | [convert_qwen3_embedding.py](../tools/convert_qwen3_embedding.py), chunked (D37) | not recorded (graded below) | not recorded (graded below) | 2129/2135 (99.7%) | not measured yet (two chained programs per bucket) |
 
 ANE ops are identical at every bucket. On every model, the operations off
 the ANE are mask and cast plumbing plus the embedding `gather` (e.g. bge:
@@ -528,7 +529,8 @@ column. The Core ML columns are the Apple paths from the table above.
   flips on any model or machine, and similarity drift at most 2.3e-6
   (Qwen3-Embedding; at most 1.3e-6 for the others) in the native grades. It
   is the most accurate CPU path on Apple Silicon, where Core ML's CPU path
-  computes in fp16 and grades B for three of these five models.
+  computes in fp16 and grades below A on most of these models (the Core
+  ML CPU column).
 - At a given thread count results are bit-identical run to run. Across 1,
   2, 4 and 8 threads they are bit-identical for four of the five models
   measured; EmbeddingGemma moves by at most 1.4e-7 per component at 4 and
@@ -545,9 +547,9 @@ column. The Core ML columns are the Apple paths from the table above.
   fail the batch and pad gates, because an input's vector depends on what it
   is batched with. The same holds on x86-64 (0.404 on the Xeon). The backend
   runs any quantized graph one input at a time.
-- **Qwen3-Embedding-0.6B's ONNX build takes 4,096 tokens** (its Core ML
-  build stops at 512: each bucket is a program with its own 1.1 GiB of
-  weights). On the M1 Max it grades A on the long-input corpus
+- **Qwen3-Embedding-0.6B's ONNX build takes 4,096 tokens.** Its committed
+  Core ML recipe stops at 512; see [Long inputs](#long-inputs) for the
+  longer Core ML builds. On the M1 Max the ONNX build grades A on the long-input corpus
   (`fixtures/parity/corpus_long.toml`), every case at 1 − cosine 1.2e-11
   or better: 7.6e-12 at 600 tokens, 9.2e-12 at 1,500 (1.1e-11 for the
   query), 1.1e-11 at 2,400, 1.2e-11 at 4,096, and 1.1e-11 for a
@@ -754,8 +756,10 @@ range.
 
 ### Long inputs
 
-Qwen3-Embedding-0.6B's ONNX build takes 4,096 tokens (its Core ML build,
-512). It grades A at every length on the long-input corpus (see Accuracy).
+Qwen3-Embedding-0.6B's ONNX build takes 4,096 tokens. Its committed Core
+ML recipe (`convert_qwen3_embedding.py` with its manifest's buckets, 128,
+256 and 512) stops at 512; the longer Core ML builds are below. The ONNX
+build grades A at every length on the long-input corpus (see Accuracy).
 What a long input costs:
 
 - **Time.** One input at a time, warm, median per input on the M1 Max at
@@ -801,7 +805,7 @@ What a long input costs:
   `request_timeout_secs`.
 - **Vectors change.** Up to 0.12.0 this build cut inputs at 512 tokens, so
   an input longer than that now gets a different vector: one of its whole
-  text. The model's Core ML build still stops at 512: it refuses a longer
+  text. A 512-token Core ML build of the model refuses a longer
   input (the default on `/v1/embeddings`), or embeds only its first 512
   tokens (with `truncate: "END"`, and by default on `/v2/embed`). So for
   any text past 512 tokens the two builds of this model id don't agree.
@@ -812,9 +816,14 @@ What a long input costs:
   `/v1/embeddings`) or cut, and at which end (`END`, the default on
   `/v2/embed`, or `START`); `max_tokens` on `/v2/embed` cuts at a lower
   limit of the client's choosing (512, say, for vectors that match the
-  earlier releases' and the Core ML build's).
-- **Core ML past 512, measured but not yet published.** The same chunked
-  recipe converts buckets of 1,024, 2,048 and 4,096 tokens (D46). On the
+  earlier releases' and a 512-token Core ML build's).
+- **Core ML past 512, recorded but not yet published.** The same chunked
+  recipe converts buckets of 1,024, 2,048 and 4,096 tokens (D46). Two such
+  release candidates are in the checksum ledger, sharing their weights
+  across buckets (D49): `fp16-max2048` (buckets 1,024 and 2,048, graded A
+  on the ANE and the GPU) and `fp16-max4096` (1,024, 2,048 and 4,096,
+  graded A on the GPU). Neither is published, so converting the model
+  yourself gives the committed recipe's 512. On the
   GPU they grade A on both corpora (worst cosine 0.999997) at 152,
   349–350 and 938–943 ms per input, about 14–15× faster than onnx-cpu's
   figure at 4,096 (measured another way). On the ANE they take 377–384
@@ -828,8 +837,8 @@ What a long input costs:
   and `/v1/models` shows the cap under `seq_cap`. The GPU path is
   uncapped, so a 4,096-token bucket can serve the GPU from the same
   artifact; to send a model's long inputs there, serve it on the GPU
-  (`[models."<id>"] compute_units = "cpu_and_gpu"`, D38). The published
-  Core ML build stays at 512 for now; D46 gives the plan for each model.
+  (`[models."<id>"] compute_units = "cpu_and_gpu"`, D38). D46 gives the
+  plan for each model.
 
 ### Recommendations
 
@@ -909,7 +918,9 @@ What a long input costs:
   `tools/bench_threads.py`.
 - **Qwen3-Embedding-0.6B on onnx-cpu:** serve fp32 (or fp16 weights to
   halve the disk). Don't use int8 on ONNX Runtime. On Apple silicon its
-  chunked Core ML build (D37) serves on the ANE instead, up to 512 tokens.
+  chunked Core ML build (D37) serves on the ANE instead, up to the longest
+  bucket installed: 512 from the committed recipe, 2,048 on the ANE from a
+  longer build (see [Long inputs](#long-inputs)).
   The ONNX build takes up to 4,096 (graded A there), at seconds per input
   and a footprint of +4.1 GB at 4,096 tokens (+1.8 GB loaded); see
   [Long inputs](#long-inputs) for timeouts and for long texts' vectors

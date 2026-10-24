@@ -137,6 +137,15 @@ compute plans (D35) and chunked models (D37); and, for ONNX Runtime
 detected cores, and which models are quantized. It still carries no
 credentials.
 
+**Amendment (October 2026): the key guards every route but `/health`.**
+"`/v1/*` only" stopped being exact when routes outside `/v1/` arrived:
+`/rerank` and Cohere's `/v2/rerank` and `/v2/embed` (D29), and vLLM's
+`/tokenize` and `/detokenize` (D44). Each of them serves a model as the
+`/v1/` routes do, so the key guards them too: with an `api_key` set,
+every route needs `Authorization: Bearer <key>` except `/health`, which
+stays open for probes. A missing or wrong key is a 401 with code
+`invalid_api_key`. A client that probes `/v1/models` must send the key.
+
 ## D14 — Compute units default to `.cpuAndNeuralEngine`
 Not `.all`: keeping background work off the GPU is the project's thesis. The
 wrapper exposes the choice; measurement can override. (D31 lets a manifest

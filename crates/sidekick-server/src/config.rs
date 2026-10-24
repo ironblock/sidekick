@@ -15,7 +15,8 @@ pub struct Config {
     /// Directory scanned for `<model>/manifest.toml` (embedders) and
     /// `<model>/classifier.toml` (classifiers) entries.
     pub models_dir: Option<PathBuf>,
-    /// Require `Authorization: Bearer <key>` on /v1 routes when set.
+    /// Require `Authorization: Bearer <key>` on every route but /health
+    /// when set (D13).
     pub api_key: Option<String>,
     /// How long a Foundation Models session is kept for conversation
     /// follow-ups before being dropped. Shorter than `model_idle_ttl_secs`

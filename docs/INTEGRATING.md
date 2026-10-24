@@ -92,6 +92,12 @@ without running them (docs/MODELS.md, D27).
 
 ## Path 1: the daemon
 
+**Authentication.** A daemon configured with an `api_key` requires
+`Authorization: Bearer <key>` on every route except `/health` (D13), so a
+probe that reads `/v1/models` without the key gets a 401 with code
+`invalid_api_key`. `/health` stays open: probe it first, and treat a 401
+from the routes after it as "configured, but not for this client".
+
 `POST /v1/chat/completions`-style OpenAI compatibility, documented in the
 README. Embeddings: `POST /v1/embeddings` with optional `input_type:
 "query"` or `"none"` (or `prompt_name`), `dimensions` (matryoshka models), `encoding_format:

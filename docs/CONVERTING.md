@@ -376,6 +376,10 @@ committed one over it, which would drop its `[placement]` table.
 | `convert_embeddinggemma2.py` | EmbeddingGemma 2 (Gemma 4 text tower, per-layer inputs), RMSNorm pre-scales, TanhGelu | mean pool, scaled per bucket | needs transformers 5.19; see below |
 | `convert_lfm25_embedding.py` | LFM2 (short convolutions with pad zeroing, attention), per-layer precision scales | CLS pool, L2 in graph | `--no-pad-zeroing` builds the negative control |
 | `convert_nli.py` | BERT/RoBERTa/XLM-R (explicit), DeBERTa-v3 (relative shift) or ModernBERT (residual K), by model_type | the checkpoint's sequence-classification head, one (premise, hypothesis) pair per prediction | zero-shot `format = "nli"`; gates the manifest's served path, reports the others |
+| `convert_julia.py` | mmBERT-small (ModernBERT), explicit | laya's marker head, Julia-1's option rendering | Julia-1's own code, pinned by sha256, is the fp32 reference; laya's interface |
+| `convert_gliner2.py` | DeBERTa-v3, relative shift | GLiNER2's per-token classifier, read at the label markers | zero-shot `format = "gliner2"`; needs the gliner2 package for the gate inputs |
+| `convert_fev.py` | Nandi causal decoder | fev's pointer head | zero-shot `format = "fev"`; the checkpoint's own code is the fp32 reference |
+| `convert_agentjev.py` | Qwen3 decoder, tree mask, bucket-invariant softmax | AgentJev's set transformer and scorer | zero-shot `format = "agentjev"`; chunked by default (D37) |
 
 Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
 `--time` and its own flags; the embedder converters also take `--format
