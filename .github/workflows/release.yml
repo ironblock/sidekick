@@ -13,6 +13,10 @@
 # its pinned runtime from beside it and embed; with no onnx model, it must
 # not load the runtime at all.
 #
+# Each macOS sidekickd is signed ad hoc with a fixed identifier,
+# io.github.ironblock.sidekickd (tools/sign_sidekickd.sh), so an upgrade
+# keeps Core ML's compiled ANE programs instead of recompiling every bucket.
+#
 # Release notes are written before tagging, in docs/releases/vX.Y.Z.md, in
 # the same change that bumps [workspace.package] version (AGENTS.md):
 #
@@ -103,6 +107,16 @@ jobs:
           # The C ABI dylib doesn't link FoundationModels; default floor.
           cargo build --release -p sidekick-embed-ffi
 
+      - name: Sign sidekickd with a stable identifier
+        # Core ML keys each compiled ANE program to the loading process's
+        # code-signing identifier. The linker's is cargo's hashed name
+        # (sidekickd-<hash>), which changes with every version, so without
+        # this every upgrade recompiles every ANE bucket. Ad hoc, as the
+        # linker's signature was. libsidekick.dylib keeps the linker's
+        # signature: its identifier is already its file name, and Core ML
+        # keys a host's loads to the host process, not to the dylib.
+        run: tools/sign_sidekickd.sh target/release/sidekickd
+
       - name: Verify artifacts are the real thing
         run: |
           # Chat: the FM shim must be linked, not the stub, built with SDK 27.
@@ -110,6 +124,7 @@ jobs:
           ./target/release/sidekickd --version | grep -q 'macOS SDK 27'
           vtool -show-build target/release/sidekickd | grep -E 'minos 26\.0'
           otool -l target/release/sidekickd | grep -q LC_DYLD_CHAINED_FIXUPS
+          codesign -dv target/release/sidekickd 2>&1 | grep -qx 'Identifier=io.github.ironblock.sidekickd'
           # C ABI: the exported surface must be present.
           for sym in _sk_abi_version _sk_pool_open _sk_embed _sk_embed_named _sk_model_info; do
             nm -gU target/release/libsidekick.dylib | grep -q " $sym\$"
@@ -242,6 +257,11 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET=13.4 \
             cargo build --release -p sidekick-server --features coreml,onnx --bin sidekickd
           otool -l target/release/sidekickd | grep -A4 LC_BUILD_VERSION | grep -q 'minos 13.4'
+      - name: Sign sidekickd with a stable identifier
+        # As on Apple silicon. An Intel Mac has no ANE, and its GPU and CPU
+        # cache entries don't depend on the identifier, so this only keeps
+        # the macOS archives' signatures alike.
+        run: tools/sign_sidekickd.sh target/release/sidekickd
       - name: ONNX Runtime (pinned 1.23.2, sha256-checked)
         run: echo "ORT_LIB=$(tools/fetch_onnxruntime.sh "$RUNNER_TEMP/onnxruntime" osx-x86_64)" >> "$GITHUB_ENV"
       - name: Package
