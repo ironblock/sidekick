@@ -96,8 +96,10 @@ curl -s localhost:8790/v1/embeddings -H 'content-type: application/json' \
   -d '{"model": "bge-small-en-v1.5", "input": ["How do I reset my password?"]}'
 ```
 
-The first request to each sequence-length bucket can take a few seconds
-while Core ML compiles it for this Mac; later ones take milliseconds.
+Core ML compiles a model for this Mac before serving it: fetch compiles it
+when it installs it, and the daemon compiles anything not yet compiled (after
+a macOS update, say) in the background when it starts. A request whose
+bucket is still compiling waits for it; the rest take milliseconds.
 
 **5. Chat** (needs Apple Intelligence turned on):
 

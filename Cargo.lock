@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "sidekick-core"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "sidekick-coreml"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "block2",
  "objc2",
@@ -1383,7 +1383,7 @@ dependencies = [
 
 [[package]]
 name = "sidekick-embed"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "half",
  "regex",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "sidekick-embed-ffi"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "dirs",
  "safetensors",
@@ -1412,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "sidekick-fm"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "sidekick-onnx"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "libloading",
  "ort",
@@ -1435,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "sidekick-server"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "async-trait",

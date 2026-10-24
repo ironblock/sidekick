@@ -2203,7 +2203,13 @@ can't be under its licence ([PUBLISHING.md](PUBLISHING.md#what-is-published-lice
 convert it instead ([CONVERTING.md](CONVERTING.md)).
 
 <!-- generated: published-builds -->
-None yet: no build in the checksum ledger has a published record.
+| model | backend | variant | buckets | repository | revision | sidekick release |
+|---|---|---|---|---|---|---|
+| `bge-small-en-v1.5` | coreml | `fp16` | 128, 256, 512 | [sidekickd/bge-small-en-v1.5-coreml](https://huggingface.co/sidekickd/bge-small-en-v1.5-coreml) | `1c487fc03546` | 0.16.0 |
+| `bge-small-en-v1.5` | onnx | `fp32` | | [sidekickd/bge-small-en-v1.5-onnx](https://huggingface.co/sidekickd/bge-small-en-v1.5-onnx) | `a94adfe28bdb` | 0.16.0 |
+| `qwen3-embedding-0.6b` | coreml | `fp16` | 128, 256, 512, 1,024, 2,048 | [sidekickd/qwen3-embedding-0.6b-coreml](https://huggingface.co/sidekickd/qwen3-embedding-0.6b-coreml) | `ef4a1aeeacc0` | 0.16.0 |
+| `qwen3-embedding-0.6b` | onnx | `fp16-weights` | | [sidekickd/qwen3-embedding-0.6b-onnx](https://huggingface.co/sidekickd/qwen3-embedding-0.6b-onnx) | `5a1cebe1c312` | 0.16.0 |
+| `qwen3-embedding-0.6b` | onnx | `fp32` | | [sidekickd/qwen3-embedding-0.6b-onnx](https://huggingface.co/sidekickd/qwen3-embedding-0.6b-onnx) | `5a1cebe1c312` | 0.16.0 |
 <!-- /generated -->
 
 ## Incompatible / not integrated
