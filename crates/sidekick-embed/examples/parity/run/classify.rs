@@ -4,8 +4,8 @@
 //! `classify_grade`.
 
 use super::{
-    ane_path_cap, bitwise_eq, check_plans, paths_for, same_cases, spawn_worker, units, BucketInfo, BucketInvariance,
-    Options, Runtime, XorShift, DETERMINISM_CASES,
+    bitwise_eq, cap_name, check_plans, paths_for, same_cases, spawn_worker, units, BucketInfo, BucketInvariance,
+    Options, PathCaps, Runtime, XorShift, DETERMINISM_CASES,
 };
 use crate::classify_grade::{
     delta_p, fmt, grade, BucketPair, ClassifyCaseResult, ClassifyGrade, ClassifyWorkerResult, Delta,
@@ -27,11 +27,11 @@ pub fn reference_dir(model: &ResolvedClassifier, refs: Option<&Path>) -> PathBuf
 }
 
 /// One classifier on one compute path: every reference case through the
-/// product path (`prepare` + `run`), plus the invariance checks. With
-/// `ane_cap` (the ane path of a model capped on the ANE, D48), only the
-/// buckets up to it load, and only the cases whose sequences fit it run;
-/// the manifest's `max_seq_len` stays, so each case prepares exactly as the
-/// reference did.
+/// product path (`prepare` + `run`), plus the invariance checks. With `cap`
+/// (a path capped where the runtime caps it: the cpu path by D33, the ane
+/// path by D48), only the buckets up to it load, and only the cases whose
+/// sequences fit it run; the manifest's `max_seq_len` stays, so each case
+/// prepares exactly as the reference did.
 pub fn worker(
     model: &ResolvedClassifier,
     refs: Option<&Path>,
@@ -39,7 +39,7 @@ pub fn worker(
     out: &str,
     limit: Option<usize>,
     bucket_mode: BucketInvariance,
-    ane_cap: Option<usize>,
+    cap: Option<usize>,
 ) -> Result<(), String> {
     let reference = ClassifyReference::load(&reference_dir(model, refs))?;
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
@@ -47,12 +47,12 @@ pub fn worker(
         .get_vocab_size(true) as u64;
 
     let capped;
-    let model = match ane_cap {
+    let model = match cap {
         Some(cap) => {
             let mut m = model.clone();
             m.manifest.buckets.retain(|&b| b <= cap);
             if m.manifest.buckets.is_empty() {
-                return Err(format!("every bucket is past the ANE cap of {cap} tokens (D48)"));
+                return Err(format!("every bucket is past {}", cap_name(path, cap)));
             }
             capped = m;
             &capped
@@ -65,7 +65,7 @@ pub fn worker(
     let buckets = clf.buckets().to_vec();
     let within: Vec<ClassifyCase> = reference.cases[..limit.unwrap_or(reference.cases.len()).min(reference.cases.len())]
         .iter()
-        .filter(|c| ane_cap.is_none_or(|cap| c.tokens() <= cap))
+        .filter(|c| cap.is_none_or(|cap| c.tokens() <= cap))
         .cloned()
         .collect();
     let cases = &within[..];
@@ -372,15 +372,17 @@ pub fn grade_model(
         version("transformers"),
     );
 
-    // The ANE length cap (D48): the ane path runs the buckets and cases
-    // within it, or nothing when no bucket or case is.
-    let ane_cap = ane_path_cap(o.ignore_ane_cap, m.max_seq_len, m.ane_max_seq_len);
-    let ane_reference = ane_cap.map(|cap| (cap, reference.within(cap)));
+    // The length caps (D33 on the cpu path, D48 on the ane path): a capped
+    // path runs the buckets and cases within its cap, or nothing when no
+    // bucket or case is.
+    let caps = PathCaps::new(o, m.max_seq_len, m.cpu_seq_limit, m.ane_max_seq_len);
+    let capped_refs: Vec<(Path3, usize, (ClassifyReference, Vec<String>))> =
+        caps.iter().map(|(path, cap)| (path, cap, reference.within(cap))).collect();
     let mut worker_paths = worker_paths;
-    if let Some((cap, (sub, _))) = &ane_reference {
-        if worker_paths.contains(&Path3::Ane) && (sub.cases.is_empty() || !m.buckets.iter().any(|b| b <= cap)) {
-            println!("  ane: skipped (no bucket or case within the ANE cap of {cap} tokens, D48)");
-            worker_paths.retain(|&p| p != Path3::Ane);
+    for (path, cap, (sub, _)) in &capped_refs {
+        if worker_paths.contains(path) && (sub.cases.is_empty() || !m.buckets.iter().any(|b| b <= cap)) {
+            println!("  {}: skipped (no bucket or case within {})", path.name(), cap_name(*path, *cap));
+            worker_paths.retain(|p| p != path);
         }
     }
 
@@ -389,7 +391,7 @@ pub fn grade_model(
         &m.buckets,
         |b| model.artifact_paths_for_bucket(b),
         m.compute_units,
-        ane_cap,
+        caps.ane,
         o,
         scratch,
         &mut report.failures,
@@ -421,8 +423,8 @@ pub fn grade_model(
 
     // Determinism across processes: a second, independent ANE load, over
     // the cases the ane path runs.
-    let ane_cases = match &ane_reference {
-        Some((_, (sub, _))) => &sub.cases,
+    let ane_cases = match capped_refs.iter().find(|(p, _, _)| *p == Path3::Ane) {
+        Some((_, _, (sub, _))) => &sub.cases,
         None => &reference.cases,
     };
     if let Some((_, first)) = results.iter().find(|(p, _)| *p == Path3::Ane) {
@@ -455,13 +457,13 @@ pub fn grade_model(
 
     let mut grades: Vec<ClassifyGrade> = results
         .iter()
-        .map(|(p, r)| match &ane_reference {
-            Some((_, (sub, capped))) if *p == Path3::Ane => {
+        .map(|(p, r)| match capped_refs.iter().find(|(path, _, _)| path == p) {
+            Some((_, _, (sub, capped))) => {
                 let mut g = grade(sub, r, *p, gates, &expectations.grades, m);
                 g.capped = capped.clone();
                 g
             }
-            _ => grade(&reference, r, *p, gates, &expectations.grades, m),
+            None => grade(&reference, r, *p, gates, &expectations.grades, m),
         })
         .collect();
     if let Some(why) = &ane_refused {
@@ -471,8 +473,8 @@ pub fn grade_model(
     }
 
     // As for embedders: a bucket graded without a compute plan must show it
-    // ran somewhere other than the CPU. Paired by case: a capped ane path
-    // (D48) runs fewer cases.
+    // ran somewhere other than the CPU. Paired by case: a capped path (D33,
+    // D48) runs fewer cases.
     let cpu = results.iter().find(|(p, _)| *p == Path3::Cpu).map(|(_, r)| r);
     let ane = results.iter().find(|(p, _)| *p == Path3::Ane).map(|(_, r)| r);
     let both = |c: &'_ ClassifyWorkerResult, a: &'_ ClassifyWorkerResult| {
@@ -510,16 +512,18 @@ pub fn grade_model(
     let (capped, full): (Vec<ClassifyGrade>, Vec<ClassifyGrade>) =
         grades.iter().cloned().partition(|g| !g.capped.is_empty());
     print_grades(&reference, &full, Some(&report));
-    if let (Some((cap, (sub, _))), false) = (&ane_reference, capped.is_empty()) {
-        for g in &capped {
+    for (path, cap, (sub, _)) in &capped_refs {
+        let mine: Vec<ClassifyGrade> = capped.iter().filter(|g| g.path == path.name()).cloned().collect();
+        for g in &mine {
             println!(
-                "  {}: capped at {cap} tokens on the ANE (D48); {} case(s) past it not run: {}",
+                "  {}: capped at {}; {} case(s) past it not run: {}",
                 g.path,
+                cap_name(*path, *cap),
                 g.capped.len(),
                 g.capped.join(", ")
             );
         }
-        print_grades(sub, &capped, None);
+        print_grades(sub, &mine, None);
     }
     for g in &grades {
         report.failures.extend(g.failures.iter().map(|f| format!("{}: {f}", g.path)));
@@ -546,7 +550,7 @@ fn accuracy(x: Option<(usize, usize)>) -> String {
 }
 
 /// The grades' table and notes; `report`'s determinism and bucket coverage
-/// too, when given (not for a capped ane path's own table, D48).
+/// too, when given (not for a capped path's own table, D33, D48).
 fn print_grades(reference: &ClassifyReference, grades: &[ClassifyGrade], report: Option<&ClassifierReport>) {
     if grades.is_empty() {
         return;

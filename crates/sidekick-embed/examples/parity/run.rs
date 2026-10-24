@@ -15,7 +15,7 @@ use crate::reference::{corpus_sha256, corpus_sha256_of, long_corpus_reaches, sha
 #[cfg(all(target_os = "macos", feature = "coreml"))]
 use crate::reference::Case;
 use serde::Serialize;
-use sidekick_core::manifest::{ModelRegistry, ResolvedClassifier, ResolvedModel};
+use sidekick_core::manifest::{CpuSeqLimit, ModelRegistry, ResolvedClassifier, ResolvedModel};
 use sidekick_core::{EmbedPurpose, Embedder, EmbeddingBackendKind};
 #[cfg(all(target_os = "macos", feature = "coreml"))]
 use sidekick_coreml::{compute_plan, ComputeUnits, PlanSummary};
@@ -53,6 +53,13 @@ usage: parity [options]
                        D48). By default the ane path loads no bucket past
                        it, reads no compute plan for one, and reports the
                        cases longer than it as capped, not graded
+  --ignore-cpu-seq-cap grade a model's cpu path past the CPU length cap
+                       (1,024 tokens, D33), for measurement. By default the
+                       cpu path loads no bucket past it, as the runtime
+                       serves a cpu_only model, and reports the cases
+                       longer than it as capped, not graded; a manifest's
+                       cpu_seq_limit = \"ignore\" lifts it, as it does for
+                       the runtime
   --onnx-threads N     intra-op threads for onnx-cpu workers (default:
                        sidekick's default for the machine, D40)
   --external FILE      grade results written outside the suite, a worker's
@@ -68,10 +75,10 @@ usage: parity [options]
                        is over 512 tokens, else full";
 
 /// The suite measures every compute path itself (its ANE plan check reports
-/// a model Core ML won't place on the ANE, and its CPU path reports the
-/// CPU's variation past 1,024 tokens, D33), so it loads models past the ANE
-/// weight cap and the CPU sequence cap too. It applies the ANE's length cap
-/// (D48) to its ane path itself ([`ane_path_cap`]), so the scan doesn't.
+/// a model Core ML won't place on the ANE), so it loads models past the ANE
+/// weight cap too. It applies the length caps itself, each to its own path
+/// ([`PathCaps`]): the CPU's (D33) to the cpu path and the ANE's (D48) to
+/// the ane path, so the scan doesn't.
 const MEASURE_ALL: sidekick_core::ScanOptions = sidekick_core::ScanOptions {
     compute_units: std::collections::BTreeMap::new(),
     ignore_ane_weight_cap: true,
@@ -90,8 +97,62 @@ pub fn ane_path_cap(ignore: bool, max_seq_len: usize, ane_max_seq_len: Option<us
     (!ignore && max_seq_len > cap).then_some(cap)
 }
 
+/// The CPU length cap the cpu path runs under (D33), as the runtime serves
+/// a model with `cpu_only`: [`sidekick_core::MAX_CPU_INVARIANT_SEQ`], past
+/// which Core ML's CPU sums attention in a length-dependent order, so a
+/// model's buckets differ slightly. Its worker loads no bucket past it, and
+/// the cases longer than it are reported as capped rather than graded.
+/// `None` when the model is within it, when its manifest sets
+/// `cpu_seq_limit = "ignore"` (the runtime serves every bucket then), or
+/// under `--ignore-cpu-seq-cap` (`ignore`).
+pub fn cpu_path_cap(ignore: bool, max_seq_len: usize, limit: CpuSeqLimit) -> Option<usize> {
+    let cap = sidekick_core::MAX_CPU_INVARIANT_SEQ;
+    (!ignore && limit == CpuSeqLimit::Enforce && max_seq_len > cap).then_some(cap)
+}
+
+/// The length cap each compute path runs under, as the runtime serves a
+/// model there: the cpu path D33's ([`cpu_path_cap`]), the ane path D48's
+/// ([`ane_path_cap`]); the gpu and onnx-cpu paths none. The suite grades
+/// what sidekick serves on each path.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PathCaps {
+    pub cpu: Option<usize>,
+    pub ane: Option<usize>,
+}
+
+impl PathCaps {
+    fn new(o: &Options, max_seq_len: usize, cpu_seq_limit: CpuSeqLimit, ane_max_seq_len: Option<usize>) -> Self {
+        Self {
+            cpu: cpu_path_cap(o.ignore_cpu_cap, max_seq_len, cpu_seq_limit),
+            ane: ane_path_cap(o.ignore_ane_cap, max_seq_len, ane_max_seq_len),
+        }
+    }
+
+    /// The cap `path` runs under, if any.
+    pub fn of(&self, path: Path3) -> Option<usize> {
+        match path {
+            Path3::Cpu => self.cpu,
+            Path3::Ane => self.ane,
+            _ => None,
+        }
+    }
+
+    /// Each capped path with its cap.
+    pub fn iter(&self) -> impl Iterator<Item = (Path3, usize)> {
+        [(Path3::Cpu, self.cpu), (Path3::Ane, self.ane)].into_iter().filter_map(|(p, c)| c.map(|c| (p, c)))
+    }
+}
+
+/// A path's cap as the report names it: "the CPU cap of 1024 tokens (D33)".
+pub fn cap_name(path: Path3, cap: usize) -> String {
+    match path {
+        Path3::Cpu => format!("the CPU cap of {cap} tokens (D33)"),
+        _ => format!("the ANE cap of {cap} tokens (D48)"),
+    }
+}
+
 /// Pairs of `a`'s cases and `b`'s with the same id, in `b`'s order: the
-/// cases two paths both ran, when a capped ane path (D48) ran fewer.
+/// cases two paths both ran, when a capped path (D33, D48) ran fewer.
 pub fn same_cases<'a, T>(a: &'a [T], b: &'a [T], id: impl Fn(&T) -> &str) -> Vec<(&'a T, &'a T)> {
     let by_id: std::collections::HashMap<&str, &T> = a.iter().map(|c| (id(c), c)).collect();
     b.iter().filter_map(|y| by_id.get(id(y)).map(|x| (*x, y))).collect()
@@ -420,15 +481,18 @@ fn worker(args: &[String]) -> Result<(), String> {
     };
     // The optional rest: a case limit, `--bucket-invariance=MODE`,
     // `--corpus=long` (an embedder's long-input reference),
-    // `--onnx-threads=N` and `--ignore-ane-seq-cap`.
+    // `--onnx-threads=N`, `--ignore-ane-seq-cap` and `--ignore-cpu-seq-cap`.
     let mut limit: Option<usize> = None;
     let mut bucket_mode = BucketInvariance::Auto;
     let mut corpus = Corpus::Main;
     let mut onnx_threads: Option<usize> = None;
     let mut ignore_ane_cap = false;
+    let mut ignore_cpu_cap = false;
     for a in rest {
         if a == "--ignore-ane-seq-cap" {
             ignore_ane_cap = true;
+        } else if a == "--ignore-cpu-seq-cap" {
+            ignore_cpu_cap = true;
         } else if let Some(m) = a.strip_prefix("--bucket-invariance=") {
             bucket_mode = BucketInvariance::parse(m).ok_or("bad bucket-invariance mode")?;
         } else if let Some(c) = a.strip_prefix("--corpus=") {
@@ -446,7 +510,11 @@ fn worker(args: &[String]) -> Result<(), String> {
         #[cfg(all(target_os = "macos", feature = "coreml"))]
         {
             let m = &model.manifest;
-            let cap = ane_path_cap(ignore_ane_cap, m.max_seq_len, m.ane_max_seq_len).filter(|_| path == Path3::Ane);
+            let cap = match path {
+                Path3::Cpu => cpu_path_cap(ignore_cpu_cap, m.max_seq_len, m.cpu_seq_limit),
+                Path3::Ane => ane_path_cap(ignore_ane_cap, m.max_seq_len, m.ane_max_seq_len),
+                _ => None,
+            };
             return classify::worker(model, refs.as_deref(), path, out, limit, bucket_mode, cap);
         }
         #[cfg(not(all(target_os = "macos", feature = "coreml")))]
@@ -461,7 +529,11 @@ fn worker(args: &[String]) -> Result<(), String> {
         return onnx_worker(&model, &reference, id, out, limit, onnx_threads);
     }
     let m = &model.manifest;
-    let cap = ane_path_cap(ignore_ane_cap, m.max_seq_len, m.ane_max_seq_len).filter(|_| path == Path3::Ane);
+    let cap = match path {
+        Path3::Cpu => cpu_path_cap(ignore_cpu_cap, m.max_seq_len, m.cpu_seq_limit.unwrap_or_default()),
+        Path3::Ane => ane_path_cap(ignore_ane_cap, m.max_seq_len, m.ane_max_seq_len),
+        _ => None,
+    };
     coreml_worker(&model, &reference, id, path, out, limit, cap)
 }
 
@@ -478,21 +550,21 @@ fn coreml_worker(
     Err(format!("{} is a Core ML model: {CORE_ML_BUILD}", model.manifest.id))
 }
 
-/// `model` as the runtime serves it on the ANE under a length cap of `cap`
-/// tokens (D48): the buckets past it dropped, and the largest kept one its
-/// `max_seq_len`.
+/// `model` as the runtime serves it on `path` under a length cap of `cap`
+/// tokens (D33 on the CPU, D48 on the ANE): the buckets past it dropped,
+/// and the largest kept one its `max_seq_len`.
 #[cfg(all(target_os = "macos", feature = "coreml"))]
-fn ane_capped(model: &ResolvedModel, cap: usize) -> Result<ResolvedModel, String> {
+fn capped_model(model: &ResolvedModel, path: Path3, cap: usize) -> Result<ResolvedModel, String> {
     let mut capped = model.clone();
     capped.manifest.buckets.retain(|&b| b <= cap);
     capped.manifest.max_seq_len =
-        *capped.manifest.buckets.last().ok_or(format!("every bucket is past the ANE cap of {cap} tokens (D48)"))?;
+        *capped.manifest.buckets.last().ok_or(format!("every bucket is past {}", cap_name(path, cap)))?;
     Ok(capped)
 }
 
-/// A Core ML embedder on one compute path. With `ane_cap` (the ane path
-/// of a model capped on the ANE, D48), only the buckets up to it load, and
-/// only the cases whose reference ids fit it run.
+/// A Core ML embedder on one compute path. With `cap` (a path capped where
+/// the runtime caps it: the cpu path by D33, the ane path by D48), only the
+/// buckets up to it load, and only the cases whose reference ids fit it run.
 #[cfg(all(target_os = "macos", feature = "coreml"))]
 fn coreml_worker(
     model: &ResolvedModel,
@@ -501,16 +573,16 @@ fn coreml_worker(
     path: Path3,
     out: &str,
     limit: Option<usize>,
-    ane_cap: Option<usize>,
+    cap: Option<usize>,
 ) -> Result<(), String> {
     let vocab = tokenizers::Tokenizer::from_file(model.tokenizer_path())
         .map_err(|e| e.to_string())?
         .get_vocab_size(true) as u64;
 
     let capped;
-    let model = match ane_cap {
+    let model = match cap {
         Some(cap) => {
-            capped = ane_capped(model, cap)?;
+            capped = capped_model(model, path, cap)?;
             &capped
         }
         None => model,
@@ -523,7 +595,7 @@ fn coreml_worker(
         .unwrap_or(reference.cases.len())
         .min(reference.cases.len())]
         .iter()
-        .filter(|c| ane_cap.is_none_or(|cap| c.ids.len() <= cap))
+        .filter(|c| cap.is_none_or(|cap| c.ids.len() <= cap))
         .collect();
     let full = limit.is_none();
     let mut rng = XorShift(0x5eed_1234_abcd_0001);
@@ -642,6 +714,9 @@ struct Options {
     /// `--ignore-ane-seq-cap`: grade the ane path past the ANE length cap
     /// (D48).
     pub ignore_ane_cap: bool,
+    /// `--ignore-cpu-seq-cap`: grade the cpu path past the CPU length cap
+    /// (D33).
+    pub ignore_cpu_cap: bool,
 }
 
 /// Which larger buckets a classifier case re-runs in for bucket invariance
@@ -684,6 +759,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         externals: Vec::new(),
         onnx_threads: None,
         ignore_ane_cap: false,
+        ignore_cpu_cap: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -722,6 +798,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--suggest-floors" => o.suggest = true,
             "--allow-unverified-plans" => o.allow_unverified = true,
             "--ignore-ane-seq-cap" => o.ignore_ane_cap = true,
+            "--ignore-cpu-seq-cap" => o.ignore_cpu_cap = true,
             "--timeout" => {
                 o.timeout = Duration::from_secs(val()?.parse().map_err(|_| "bad --timeout")?)
             }
@@ -1212,6 +1289,9 @@ fn spawn_corpus_worker<T: serde::de::DeserializeOwned>(
     if o.ignore_ane_cap {
         args.push("--ignore-ane-seq-cap".into());
     }
+    if o.ignore_cpu_cap {
+        args.push("--ignore-cpu-seq-cap".into());
+    }
     run_child(&args, &out, &log, timeout)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
@@ -1315,14 +1395,19 @@ fn parent(args: &[String]) -> Result<bool, String> {
             continue;
         }
         let mut worker_paths = paths_for(&o, if onnx { Runtime::Onnx { native: native_onnx } } else { Runtime::CoreMl { ane: has_ane() } });
-        // The ANE length cap (D48): the ane path runs the buckets and cases
-        // within it, or nothing when no bucket is.
+        // The length caps (D33 on the cpu path, D48 on the ane path): a
+        // capped path runs the buckets and cases within its cap, or nothing
+        // when no bucket is. An onnx model runs on neither path.
         let m = &model.manifest;
-        let ane_cap = ane_path_cap(o.ignore_ane_cap || onnx, m.max_seq_len, m.ane_max_seq_len);
-        if let Some(cap) = ane_cap.filter(|&cap| !m.buckets.iter().any(|&b| b <= cap)) {
-            if worker_paths.contains(&Path3::Ane) {
-                println!("  ane: skipped (every bucket is past the ANE cap of {cap} tokens, D48)");
-                worker_paths.retain(|&p| p != Path3::Ane);
+        let caps = if onnx {
+            PathCaps::default()
+        } else {
+            PathCaps::new(&o, m.max_seq_len, m.cpu_seq_limit.unwrap_or_default(), m.ane_max_seq_len)
+        };
+        for (path, cap) in caps.iter() {
+            if !m.buckets.iter().any(|&b| b <= cap) && worker_paths.contains(&path) {
+                println!("  {}: skipped (every bucket is past {})", path.name(), cap_name(path, cap));
+                worker_paths.retain(|&p| p != path);
             }
         }
         if worker_paths.is_empty() && external.is_empty() {
@@ -1400,7 +1485,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
                 &model.manifest.buckets,
                 |b| model.artifact_paths_for_bucket(b),
                 model.manifest.compute_units.unwrap_or_default(),
-                ane_cap,
+                caps.ane,
                 &o,
                 &scratch,
                 &mut mr.failures,
@@ -1430,12 +1515,12 @@ fn parent(args: &[String]) -> Result<bool, String> {
             continue;
         }
 
-        // What a capped ane path is graded against: the cases within its cap.
-        let ane_reference = ane_cap.map(|cap| (cap, reference.within(cap)));
-        if let Some((cap, (sub, _))) = &ane_reference {
-            if !sub.has_core_case() && worker_paths.contains(&Path3::Ane) {
-                println!("  ane: skipped (no case within the ANE cap of {cap} tokens, D48)");
-                worker_paths.retain(|&p| p != Path3::Ane);
+        // What a capped path is graded against: the cases within its cap.
+        let capped_refs = capped_references(&caps, &reference);
+        for (path, cap, (sub, _)) in &capped_refs {
+            if !sub.has_core_case() && worker_paths.contains(path) {
+                println!("  {}: skipped (no case within {})", path.name(), cap_name(*path, *cap));
+                worker_paths.retain(|p| p != path);
             }
         }
 
@@ -1491,7 +1576,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             .iter()
             .map(|(p, r)| {
                 let floor = expectations.floor(&chip, id, *p);
-                let (graded_on, capped) = path_reference(*p, &reference, ane_reference.as_ref());
+                let (graded_on, capped) = path_reference(*p, &reference, &capped_refs);
                 let mut g = grade(
                     graded_on,
                     r,
@@ -1517,7 +1602,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
         // A bucket graded without a compute plan must show it ran somewhere
         // other than the CPU: bit-identical ANE and CPU_ONLY output means
         // the "ANE" path fell back to the CPU.
-        // Paired by case: a capped ane path (D48) runs fewer cases.
+        // Paired by case: a capped path (D33, D48) runs fewer cases.
         let cpu = results.iter().find(|(p, _)| *p == Path3::Cpu);
         let ane = results.iter().find(|(p, _)| *p == Path3::Ane);
         let both = |c: &WorkerResult, a: &WorkerResult| -> Vec<(CaseResult, CaseResult)> {
@@ -1570,7 +1655,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             }
         }
 
-        print_grades(&reference, &grades, ane_reference.as_ref(), mr.determinism.as_ref());
+        print_grades(&reference, &grades, &capped_refs, mr.determinism.as_ref());
         for g in &grades {
             mr.failures
                 .extend(g.failures.iter().map(|f| format!("{}: {f}", g.path)));
@@ -1583,7 +1668,7 @@ fn parent(args: &[String]) -> Result<bool, String> {
             }
         }
         let main_longest = reference.cases.iter().map(|c| c.ids.len()).max().unwrap_or(0);
-        mr.long = grade_long(model, models_dir, &worker_paths, ane_cap, main_longest, &tok_sha, &expectations, &o, &scratch, &mut mr);
+        mr.long = grade_long(model, models_dir, &worker_paths, caps, main_longest, &tok_sha, &expectations, &o, &scratch, &mut mr);
         for f in &mr.failures {
             println!("  FAIL: {f}");
         }
@@ -1663,7 +1748,7 @@ fn grade_long(
     model: &ResolvedModel,
     models_dir: &Path,
     paths: &[Path3],
-    ane_cap: Option<usize>,
+    caps: PathCaps,
     main_longest: usize,
     tok_sha: &str,
     expectations: &Expectations,
@@ -1735,13 +1820,12 @@ fn grade_long(
         }
     );
     let id = &model.manifest.id;
-    let ane_reference = ane_cap.map(|cap| (cap, reference.within(cap)));
+    let capped_refs = capped_references(&caps, &reference);
     let mut grades = Vec::new();
     for &path in paths {
-        let (graded_on, capped) = path_reference(path, &reference, ane_reference.as_ref());
-        if path == Path3::Ane && !graded_on.has_core_case() {
-            let cap = ane_cap.unwrap_or_default();
-            println!("  ane: skipped (no case within the ANE cap of {cap} tokens, D48)");
+        let (graded_on, capped) = path_reference(path, &reference, &capped_refs);
+        if let Some(cap) = caps.of(path).filter(|_| !graded_on.has_core_case()) {
+            println!("  {}: skipped (no case within {})", path.name(), cap_name(path, cap));
             continue;
         }
         match spawn_corpus_worker::<WorkerResult>(id, models_dir, path, None, corpus, scratch, o) {
@@ -1764,7 +1848,7 @@ fn grade_long(
             }
         }
     }
-    print_grades(&reference, &grades, ane_reference.as_ref(), None);
+    print_grades(&reference, &grades, &capped_refs, None);
     for g in &grades {
         mr.failures.extend(g.failures.iter().map(|f| format!("long corpus: {}: {f}", g.path)));
     }
@@ -1776,40 +1860,47 @@ fn grade_long(
     })
 }
 
+/// A capped path, its cap, and what it is graded against: the reference's
+/// cases within the cap, and the ids of the rest.
+type CappedReference = (Path3, usize, (Reference, Vec<String>));
+
+/// The reference each capped path is graded against (D33, D48).
+fn capped_references(caps: &PathCaps, reference: &Reference) -> Vec<CappedReference> {
+    caps.iter().map(|(path, cap)| (path, cap, reference.within(cap))).collect()
+}
+
 /// The reference a path is graded against, and the cases it leaves out:
-/// for the ane path under an ANE cap (D48), only the cases within it.
+/// for a capped path (the cpu path by D33, the ane path by D48), only the
+/// cases within its cap.
 fn path_reference<'a>(
     path: Path3,
     reference: &'a Reference,
-    ane: Option<&'a (usize, (Reference, Vec<String>))>,
+    capped: &'a [CappedReference],
 ) -> (&'a Reference, Vec<String>) {
-    match ane {
-        Some((_, (sub, capped))) if path == Path3::Ane => (sub, capped.clone()),
-        _ => (reference, Vec::new()),
+    match capped.iter().find(|(p, _, _)| *p == path) {
+        Some((_, _, (sub, left_out))) => (sub, left_out.clone()),
+        None => (reference, Vec::new()),
     }
 }
 
-/// Print the grades: those over the whole reference in one table, and a
-/// capped ane path (D48) in its own, over the cases it ran, after a line
-/// naming the cases it didn't.
-fn print_grades(
-    reference: &Reference,
-    grades: &[PathGrade],
-    ane: Option<&(usize, (Reference, Vec<String>))>,
-    determinism: Option<&Check>,
-) {
+/// Print the grades: those over the whole reference in one table, and
+/// each capped path (D33, D48) in its own, over the cases it ran, after a
+/// line naming the cases it didn't.
+fn print_grades(reference: &Reference, grades: &[PathGrade], capped_refs: &[CappedReference], determinism: Option<&Check>) {
     let (capped, full): (Vec<PathGrade>, Vec<PathGrade>) = grades.iter().cloned().partition(|g| !g.capped.is_empty());
     print_model(reference, &full, determinism);
-    if let (Some((cap, (sub, _))), false) = (ane, capped.is_empty()) {
-        for g in &capped {
+    for (path, cap, (sub, _)) in capped_refs {
+        let mine: Vec<PathGrade> = capped.iter().filter(|g| g.path == path.name()).cloned().collect();
+        for g in &mine {
             println!(
-                "  {}: capped at {cap} tokens on the ANE (D48); {} case(s) past it not run: {}",
+                "  {}: capped at {}; {} case(s) past it not run: {}",
                 g.path,
+                cap_name(*path, *cap),
                 g.capped.len(),
                 g.capped.join(", ")
             );
         }
-        print_model(sub, &capped, None);
+        print_model(sub, &mine, None);
     }
 }
 
@@ -2029,6 +2120,39 @@ mod tests {
         assert_eq!(ane_path_cap(false, 4096, Some(4096)), None);
         // --ignore-ane-seq-cap grades every bucket.
         assert_eq!(ane_path_cap(true, 4096, None), None);
+    }
+
+    #[test]
+    fn the_cpu_path_runs_under_the_cpu_cap() {
+        use sidekick_core::MAX_CPU_INVARIANT_SEQ;
+        // Past 1,024 tokens: capped there, as the runtime serves cpu_only.
+        assert_eq!(cpu_path_cap(false, 2048, CpuSeqLimit::Enforce), Some(MAX_CPU_INVARIANT_SEQ));
+        // Within it, or at it: nothing to cap.
+        assert_eq!(cpu_path_cap(false, 1024, CpuSeqLimit::Enforce), None);
+        assert_eq!(cpu_path_cap(false, 512, CpuSeqLimit::Enforce), None);
+        // A manifest that lifts the cap is served, and graded, uncapped.
+        assert_eq!(cpu_path_cap(false, 2048, CpuSeqLimit::Ignore), None);
+        // --ignore-cpu-seq-cap grades every bucket, for measurement.
+        assert_eq!(cpu_path_cap(true, 2048, CpuSeqLimit::Enforce), None);
+    }
+
+    #[test]
+    fn each_path_has_its_own_cap() {
+        let o = parse(&["--models-dir".into(), "unused".into()]).unwrap();
+        // Qwen3-Embedding-0.6B's Core ML build, 2,048 tokens: the cpu path
+        // capped at 1,024, the ane path within its cap.
+        let caps = PathCaps::new(&o, 2048, CpuSeqLimit::Enforce, None);
+        assert_eq!((caps.of(Path3::Cpu), caps.of(Path3::Gpu), caps.of(Path3::Ane)), (Some(1024), None, None));
+        assert_eq!(caps.iter().collect::<Vec<_>>(), [(Path3::Cpu, 1024)]);
+        // 4,096 tokens: both capped; the gpu path never is.
+        let caps = PathCaps::new(&o, 4096, CpuSeqLimit::Enforce, None);
+        assert_eq!(caps.iter().collect::<Vec<_>>(), [(Path3::Cpu, 1024), (Path3::Ane, 2048)]);
+        assert_eq!(caps.of(Path3::OnnxCpu), None);
+        // Each flag lifts its own path's cap only.
+        let o = parse(&["--models-dir".into(), "unused".into(), "--ignore-cpu-seq-cap".into()]).unwrap();
+        assert_eq!(PathCaps::new(&o, 4096, CpuSeqLimit::Enforce, None).iter().collect::<Vec<_>>(), [(Path3::Ane, 2048)]);
+        assert_eq!(cap_name(Path3::Cpu, 1024), "the CPU cap of 1024 tokens (D33)");
+        assert_eq!(cap_name(Path3::Ane, 2048), "the ANE cap of 2048 tokens (D48)");
     }
 
     /// D48: a bucket past the ANE cap of a model served on the ANE has no

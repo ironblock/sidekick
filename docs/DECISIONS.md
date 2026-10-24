@@ -1848,6 +1848,40 @@ served on the ANE (`cpu_and_ne`, and `all`) are now capped at 2,048
 tokens, or their manifest's `ane_max_seq_len`, for the ANE's own reasons.
 This record's cap is unchanged, and the GPU is still uncapped.
 
+**Amendment (October 2026): the parity suite grades the cpu path under
+this cap.** The suite grades what sidekick serves on each path. It already
+applied D48's cap to its ane path; it now applies this record's cap to
+its cpu path in the same way, by default. For a Core ML model whose
+`max_seq_len` passes 1,024 and whose manifest doesn't set `cpu_seq_limit =
+"ignore"`, the cpu worker loads only the buckets up to 1,024, as the
+runtime serves a `cpu_only` model. It runs only the cases whose reference
+ids fit, and lists the longer ones as `capped` in the cpu path's grade, not
+failed. The grade covers the rest and is printed in a table of its own.
+`--ignore-cpu-seq-cap` grades the cpu path past the cap, for measurement, as
+the daemon's `ignore_cpu_seq_cap` serves it.
+- **Why.** The bullet above, reporting the CPU's bucket check past 1,024
+  rather than failing it, was implemented for classifiers only. An
+  embedder's cpu path still gated every bucket pair and graded every case.
+  So Qwen3-Embedding-0.6B's 2,048-token build graded F on the CPU for
+  bucket invariance of 0.999894 against the 0.999999 gate (D49). That
+  difference comes from buckets the runtime never serves on the CPU.
+  Grading past the cap also mixed two questions into one letter: how
+  accurate the CPU path is, and how much Core ML's CPU varies past 1,024.
+  The second is this record's measurement, and `--ignore-cpu-seq-cap`
+  still takes it.
+- **Other models' CPU grades may change at their next regrade.** The cap
+  affects every Core ML model with buckets past 1,024 that is graded on the
+  cpu path: today Lumma-fev-0.1b, agent-jev, bge-m3-zeroshot-v2.0-c,
+  ModernBERT-large-zeroshot-v2.0 and EmbeddingGemma 2, each at 2,048
+  tokens. Their published CPU grades (D or F, with the D33 limit noted)
+  came from runs that graded every bucket, and they stand until those
+  models are graded again. A regrade under the cap leaves out the cases
+  longer than 1,024 tokens and the bucket checks into 2,048. Where those
+  decided the letter (bucket invariance past 1,024; Δp on long inputs), it
+  may rise. Where the shorter cases decide it, it won't: EmbeddingGemma 2's
+  CPU softmax already varies between buckets past 512 keys. Such a change
+  reflects what the cpu path serves, not a change to the model.
+
 ## D34 — The fev format: Lumma-fev decision models
 Lumma-fev (FrontiersMind/Lumma-fev, Apache-2.0) is a family of decision
 models on a causal decoder backbone. Lumma-fev-0.1b (154M parameters) reads
@@ -3743,7 +3777,8 @@ Core ML model served on the ANE:
   compiles the bucket for the ANE, which timed out the plan read at 4,096
   tokens (D46). The cpu and gpu paths still run every bucket.
   `--ignore-ane-seq-cap` grades the ane path past the cap, as D46's
-  measurement did.
+  measurement did. *(The cpu path now runs under D33's cap the same way:
+  see D33's amendment.)*
 
 With the cap in place, Qwen3-Embedding's Core ML build can add a
 4,096-token bucket for the GPU (D46).

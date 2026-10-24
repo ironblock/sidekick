@@ -224,7 +224,8 @@ pub struct ClassifyGrade {
     pub bucket_invariance: Delta,
     /// CPU path only: comparisons into a bucket past
     /// [`MAX_CPU_INVARIANT_SEQ`], reported as the documented hardware limit
-    /// (D33), not gated.
+    /// (D33), not gated. Empty unless the cpu path runs past its cap
+    /// (`--ignore-cpu-seq-cap`, or a manifest's `cpu_seq_limit = "ignore"`).
     pub bucket_past_cpu_cap: Delta,
     pub pad_invariance: Delta,
     pub by_tag: BTreeMap<String, Option<f64>>,
@@ -241,9 +242,9 @@ pub struct ClassifyGrade {
     /// reported, not graded. Its gate failures move to `reported`.
     pub not_served: Option<String>,
     pub reported: Vec<String>,
-    /// The ane path of a model capped on the ANE (D48): the cases longer
-    /// than its cap, which it doesn't run, left out of every figure above
-    /// (and of `per_case`).
+    /// A path capped where the runtime caps it (the cpu path by D33, the
+    /// ane path by D48): the cases longer than its cap, which it doesn't
+    /// run, left out of every figure above (and of `per_case`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub capped: Vec<String>,
 }
