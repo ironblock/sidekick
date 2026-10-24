@@ -3342,7 +3342,8 @@ generated for each bucket list.
   per bucket on the ANE (3.4 GiB on the CPU, 4.5–4.6 GiB on the GPU),
   3–4 times the bucket's weights. Adding the 1,024 and 2,048 buckets to
   an ANE-served install costs about 2.2 GiB of artifacts and 7.4 GiB of
-  cache.
+  cache. *(Not reproduced, and the ANE's programs are elsewhere: see the
+  amendment below.)*
 - **Memory.** After a bucket's predictions, the process's resident size
   was 1.30–1.72 GiB on the GPU, which maps the weights into the process
   (its `phys_footprint`, which leaves out clean mapped pages, 0.31–0.89
@@ -3471,6 +3472,61 @@ model served on the ANE at 2,048 tokens, or its manifest's
 `ane_max_seq_len`, and the parity suite grades the ane path under the
 same cap without reading a compute plan past it. Publishing a 4,096-token
 bucket for Qwen3-Embedding's GPU path remains its own change.
+
+**Amendment (October 2026, M1 Max, macOS 27.0): the cache sizes, the
+compile and the failures, revisited.** An audit of Core ML's compile
+cache (docs/design/coreml-cache.md, which has the method and the data),
+on synthetic MIL encoders and copies of bge-small-en-v1.5's
+programs, each run under its own `CFFIXED_USER_HOME`, read hits and misses
+from Core ML's own cache-lookup log lines and the ANE compiler's runs
+rather than from timing. It corrects four points above. The decisions
+stand.
+- **Disk beyond the artifacts.** "3–4 times the bucket's weights" and
+  "3.7 GiB per bucket on the ANE" were not reproduced. On the GPU and the
+  CPU, an entry per bucket and compute path holds about 1.0× the weights
+  (a `.mpsgraphpackage` or a `bnns_program.bnnsir`), and a compute-plan
+  read, an entry of its own, adds another 1.0×. An ANE compile leaves
+  about 12 kB in the user's cache; its program, about 1.0× the weights,
+  goes to the system's ANE cache, kept by Apple's `aned` service on the
+  system volume, which deleting the user's cache doesn't free. The
+  figures above came from the user's cache, so the ANE's describes the
+  wrong place. They are to be re-measured with a breakdown that includes
+  the system volume; until then, the 7.4 GiB of cache quoted for adding
+  the 1,024 and 2,048 buckets is not a reliable estimate ("Transplanting a
+  cache", "GPU and CPU specialization").
+- **The 4,096 bucket's compile.** Its slope comes from masked attention
+  at 4,096 tokens in one program, not from length alone. On synthetic
+  encoders at Qwen3's width, with a mask, one program compiled in:
+
+  | layers per program | compile |
+  |---|---|
+  | 1 | 7.4 s |
+  | 2 | 16.9 s |
+  | 4 | 42.6 s |
+  | 8 | 126 s |
+
+  That is superlinear in layers per program. A mask passed as an input
+  costs the same as a constant one; with no mask, eight layers compile in
+  28 s but predict 2.5× slower. Eight one-layer programs compiled in
+  about 59 s, against 126 s for one eight-layer program, and predicted in
+  1,290 ms against 1,228 ms. More, smaller chunks (D37) are therefore a
+  candidate fix for the 29-minute compile; #164 measures Qwen3 at 4,096
+  tokens in more chunks. At bge-small's shape and 2,048 tokens, splitting
+  the queries into blocks (26.0–27.2 s) and the fused SDPA op (34.1 s)
+  compiled slower than plain attention (13.8 s). ("Compile time against
+  length".)
+- **The 4,096 bucket's failures.** In the audit, one ANE prediction (of a
+  synthetic program, not a sidekick build) hung for about 100 s, failed
+  with "Request cancelled", and left every ANE prediction on the machine
+  failing or hanging, probably until a reboot. The intermittent failures
+  above may have been that 100 s request timeout; that is inferred, not
+  shown ("A hung ANE request").
+- **The parity suite's recompiles** of the 4,096 bucket in each worker
+  (#145) have two candidate causes: ANE compiles are serialized across
+  the whole system, every process's queued behind any other's (a 2.2 s
+  compile took 41.9 s behind a 43 s one), and a compute-plan read, which
+  the suite makes before predicting, is a cache entry of its own with a
+  full compile ("Serialization", "The cache key").
 
 ## D47 — An NLI model's class probabilities, on request (`nli_probs`)
 D41 scores an NLI model's labels as Hugging Face's zero-shot pipeline
@@ -3674,6 +3730,22 @@ Core ML model served on the ANE:
 With the cap in place, Qwen3-Embedding's Core ML build can add a
 4,096-token bucket for the GPU (D46).
 
+**Amendment (October 2026, M1 Max, macOS 27.0): 2,048 is a measured
+length, not a limit of the ANE.** The cap and its default stay. Its
+rationale is narrower than "the ANE's own limit": an audit of Core ML's
+compiles (docs/design/coreml-cache.md, "Compile time against length")
+found that the 4,096 bucket's steep compile
+comes from masked attention at 4,096 tokens in one program, and grows
+superlinearly with the number of layers in that program (7.4 s for one
+layer at Qwen3's width, 126 s for eight), while eight one-layer programs
+compiled in about 59 s and predicted within 5% of one eight-layer
+program. D46's build split the model into two chunks. More chunks are a
+candidate fix, and #164 measures Qwen3 at 4,096 tokens in more of them,
+with a timeout on every prediction, since a hung ANE request in the audit
+probably needed a reboot to clear. A build measured to compile and grade
+there lifts the cap for itself with `ane_max_seq_len`, as above; the
+default stays 2,048 until such a measurement.
+
 ## D49 — One weights file per chunk, shared by every bucket
 D15 makes each bucket its own static-shape program, and D37 splits a
 large bucket into chunks, each its own program. Every program carried its
@@ -3734,7 +3806,9 @@ chunk's weights once, in one file every bucket's program shares
   still a complete program.
 - **What isn't shared.** Core ML's compile cache keeps a specialized copy
   of the weights per bucket, per compute path, per executable and per path
-  (Qwen3: about 3.6 GB on the GPU or CPU for three buckets). Each loaded
+  (Qwen3: about 3.6 GB on the GPU or CPU for three buckets). *(On the GPU
+  and the CPU; the ANE's copy is in a system cache, and the key has more
+  parts: see the amendment below.)* Each loaded
   bucket maps its own copy from it, so memory doesn't shrink, and every
   bucket still compiles on its first load. Pre-warming that cache is
   separate work (#145).
@@ -3779,7 +3853,8 @@ No fetch command exists yet, so its code is #137's.
 *Amended by D51:* fetch downloads into the Hugging Face cache, which holds
 each distinct file once as a blob, verifies each before it is placed, and
 installs every path as a hard link to its blob; a symlink wouldn't do, as
-Core ML runs a program with a symlinked file off the ANE.
+Core ML can run a program whose files are symlinks out of its directory
+off the ANE (D51, as amended).
 
 **The checksum ledger (#136)** records each distinct file once: its sha256,
 its size, and the list of installed paths that hold it, for example
@@ -3807,6 +3882,47 @@ With two buckets the files halve, and with three they fall to a third.
 Qwen3's separate build is the 2,048-token release candidate (D46, D48).
 Its CPU F is that build's own: bucket invariance of 0.999894 against a
 0.999999 gate, which D33's CPU cap covers.
+
+**Amendment (October 2026, M1 Max, macOS 27.0): what Core ML's cache is
+keyed by, and where the ANE's programs are.** The spike's (#142) account
+of the cache was partly wrong. An audit measured it from Core ML's own
+cache-lookup log lines and the ANE compiler's runs
+(docs/design/coreml-cache.md, "The cache key" and "Transplanting a
+cache"). The decision is unaffected: each bucket is still its own
+program at its own path, so sharing a weights file changes none of this.
+- **The key.** The cache directory is named for the process as invoked
+  (or for the bundle identifier of an Info.plist embedded in the binary),
+  under the user's home, then for the macOS build. An entry is keyed by
+  the program's path, its parsed MIL, the identity of its `weight.bin`
+  (inode and birth time, not its contents or modification time), the
+  compute units and, on the ANE, the loading binary's code-signing
+  identifier. A copy of the program at another path misses, hard-linked
+  or cloned ones included, as does another executable name and, on the
+  ANE, another signing identifier. A binary moved to another directory,
+  or rebuilt, with the same name and identifier hits: the spike's "the
+  same one after a move recompiled" doesn't hold. A compute-plan read is
+  an entry of its own, with a full compile and another copy of the
+  weights.
+- **A copy per bucket per path holds for the GPU and the CPU only.** Their
+  entries hold about 1.0× the weights in the user's cache. An ANE entry
+  there is about 12 kB; the program, about 1.0× the weights, is in the
+  system's ANE cache, kept by Apple's `aned` service on the system
+  volume. It survives deleting the user's cache, can't be deleted by the
+  user (System Integrity Protection), and each recompile adds another
+  copy.
+- **Upgrades recompiled every ANE bucket.** sidekickd's signing
+  identifier was the linker's, cargo's name for the build
+  (`sidekickd-<hash>`), and the hash changes with the package version.
+  Release archives now sign sidekickd ad hoc with a fixed identifier,
+  `io.github.ironblock.sidekickd` (`tools/sign_sidekickd.sh`, which
+  source builds run too). Measured with bge-small-en-v1.5's 128-token
+  bucket on the ANE, two builds a version apart, the second loading at
+  the same model path and home as the first: with both signed that way,
+  the second's first request took 0.87 s, and the ANE compiler ran only
+  for the failed attempt every bge-small load makes (D25's fused
+  attention, about 0.17 s); with the linker's signatures it took 3.76 s,
+  and the ANE compiler ran again for 2.4 s, as on the first load (4.3 s).
+  The outputs were identical.
 
 ## D50 — Publishing: compiled programs, a checksum ledger, and gated consent
 
@@ -3853,6 +3969,21 @@ detail.
 - **Repositories:** `<owner>/<model id>-coreml` and `-onnx`, one directory
   per variant holding the install tree as is; cards generated by
   `tools/model_card.py` from committed data only.
+
+**Amendment (October 2026, macOS 27.0): Core AI's ahead-of-time path.**
+Shipping `.mlmodelc` stays right for Core ML, which offers nothing that
+would remove the first-load compile: `compileModel` produces the same
+device-independent program, the specialized program can't be exported,
+and an ANE cache copied to another home or executable recompiles (D49's
+amendment). macOS 27's Core AI framework does support ahead-of-time
+compilation: `xcrun coreai-build compile` builds one `.aimodelc` per
+device architecture from a Core AI model (`.aimodel`, converted with
+Apple's coreai-torch tools), and `AIModel.specialize` and `AIModelCache`
+manage the specialized form. An audit of Core ML's cache
+(docs/design/coreml-cache.md, "Supported APIs") found this in Core AI's
+documentation but couldn't run it (it needs the Metal
+Toolchain). #163 evaluates Core AI as a backend beside Core ML, which
+would stay for macOS 26 and Intel Macs.
 
 ## D51 — `sidekickd fetch`: the Hugging Face cache, verified, installed as hard links
 Publishing graded builds on Hugging Face (#137) needs a client: download a
@@ -3938,6 +4069,31 @@ unchanged, which refuses weights that resolve outside the graph's
 directory. The weight-limit check (D32) sums each program's own files by
 their metadata, which reads a link's target, so it sees the same sizes
 either way (unit-tested).
+
+**Amendment (October 2026, M1 Max, macOS 27.0): which symlinks leave the
+ANE.** Hard links and the registry's refusal stay; their reason is
+narrower than "any symlinked file". An audit of Core ML's cache repeated
+the measurement (docs/design/coreml-cache.md, "Symlinks and the fallback
+loader"):
+- **Synthetic programs,** which Core ML's current loader compiles for the
+  ANE, stayed on the ANE, bit-identical, under every symlink variant.
+- **bge-small-en-v1.5 leaves the ANE because it falls back.** Its ANE
+  compile on the current loader fails (D25's fused attention), and Core
+  ML falls back to its older loader. The ANE service then can't open a
+  link whose target is outside the program directory (`Code=2`), so the
+  program runs on the CPU: 28.8 ms against 3.2 ms, with different
+  outputs. A relative link inside the program directory stays on the
+  ANE, as does a link for `coremldata.bin` pointing outside. The likely
+  mechanism, the scope of the ANE service's sandbox extension, is
+  inferred.
+
+So the failure is Core ML's fallback loader with links that leave the
+program directory, which every link of a Hugging Face snapshot does. Any
+program that falls back would leave the ANE silently, so installs stay
+hard links and the refusal stays. That programs the current loader takes
+are unaffected is to be confirmed on a sidekick build with explicit
+attention. Reconverting bge-small without the fused attention would also
+remove a failed ANE compile attempt, about 0.17 s, from every load.
 
 **Measured end to end** (a local stand-in for the Hub serving
 bge-small-en-v1.5's installed build in the published layout, through both

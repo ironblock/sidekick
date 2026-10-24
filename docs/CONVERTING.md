@@ -559,9 +559,12 @@ converter stores them once per chunk (`shared_weights.py`):
   program's own files.
 - **What isn't:**
   - **Core ML's compile cache** keeps a specialized copy of the weights
-    per bucket, per compute path, per executable and per path, as it did
-    (for Qwen3-Embedding-0.6B, about 3.6 GB on the GPU or CPU for three
-    buckets).
+    per bucket and per compute path, as it did (for Qwen3-Embedding-0.6B,
+    about 3.6 GB on the GPU or CPU for three buckets). On the GPU and the
+    CPU that copy is in the loading process's cache under its home; an
+    ANE compile leaves only about 12 kB there and its program, about the
+    weights' size, in the system's ANE cache (see "Core ML's cache"
+    below).
   - **Memory.** Each loaded bucket maps its own copy from that cache, so
     two loaded buckets map the weights twice, as before.
   - **Compile time.** Every bucket is compiled for each compute path on
@@ -805,20 +808,63 @@ refine two points there:
   moves it, so every cache entry it would leave behind is orphaned (about
   11 GB for agent-jev). The conversion also empties that cache as it goes,
   once each compute path's gate is done with a program
-  (`core.purge_coreml_cache`): it never loads the same path again, and an
-  entry holds a few times the program's weights, so the cache otherwise
+  (`core.purge_coreml_cache`): it never loads the same path again, and
+  each compute path's entry holds about the program's weights again (a
+  compute-plan read adds an entry of its own), so the cache otherwise
   peaked at 3.9 GB for F2LLM-v2-160M's three buckets and would not have fit
   a chunked 0.6B model on a nearly full disk. Set `CFFIXED_USER_HOME`
-  yourself to keep a cache; it is then never emptied.
+  yourself to keep a cache; it is then never emptied. Neither step frees
+  what the gates' ANE compiles leave in the system's ANE cache (below):
+  each one adds about the program's weights to the system volume, from a
+  throwaway home as from any other.
 - **An empty compute plan can come from a stale cache.** Core ML's cache of
   compiled bundles (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`)
   can hold a broken entry for an artifact's path; plans for that path then
   come back with every op unassigned, or fail with "internal failure", until
   the entry is gone. A copy at a new path (`cp -c -R`) reads normally.
-- **The cache grows fast**, by tens of GB a day during conversion work, and is
-  per executable name. Setting `CFFIXED_USER_HOME` to a private directory
-  gives a process a private cache. Clear a cache only when no process is
-  using it: rename it, then delete it.
+- **Core ML's cache: what a load reuses.** Measured on an M1 Max, macOS
+  27.0, from Core ML's own cache-lookup log lines and the ANE compiler's
+  runs (docs/design/coreml-cache.md has the method and the data):
+  - **The directory** is
+    `~/Library/Caches/<name>/com.apple.e5rt.e5bundlecache/<macOS build>/`,
+    where `<name>` is the process's name as invoked, or the bundle
+    identifier of an Info.plist embedded in the binary. Setting
+    `CFFIXED_USER_HOME` to a private directory gives a process a private
+    cache.
+  - **An entry** is keyed by the program's path, its parsed MIL, the
+    identity of its `weight.bin` (inode and birth time, not its contents
+    or modification time), the compute units and, on the ANE, the loading
+    binary's code-signing identifier.
+  - **So a load misses** for a copy of the program at another path (a
+    copy, a hard-linked tree, an APFS clone, a rename), for new files at
+    the same path (new inodes: measured with new weights on every path,
+    and on the ANE with the original bytes copied back), under another
+    executable name (a copy, symlink or hard link to the binary) and, on
+    the ANE, under another code-signing identifier. It hits for a binary
+    moved to another directory, or rebuilt, with the same name and
+    identifier, and for a program directory moved away and back.
+  - **A compute-plan read** (`MLComputePlan`, as `ane_check`, the
+    converters' gates and the parity suite use) is its own entry: a full
+    compile, and another copy of the weights.
+  - **Rewriting `weight.bin` in place serves stale output on the GPU and
+    the CPU.** New weights written into the same file (same inode and
+    birth time) still hit there, and the program runs with the old
+    compiled weights; the ANE recompiles. Replace a program's files with
+    new ones (a new directory, then a move), as the converters do, never
+    by writing into them.
+- **Where compiled programs live.** On the GPU and the CPU, in that
+  directory, about the program's weights per entry (a `.mpsgraphpackage`
+  or `bnns_program.bnnsir`). An ANE entry there is about 12 kB; the
+  program itself, about the weights' size per compile, goes to the
+  system's ANE cache kept by `aned` on the system volume, which System
+  Integrity Protection keeps users from deleting. A copied home or cache
+  directory hits on the GPU and the CPU, but the ANE always recompiles.
+- **The cache grows fast**, by tens of GB a day during conversion work.
+  Deleting a cache frees its GPU and CPU programs only: ANE compiles
+  accumulate in the system's ANE cache, from throwaway conversion homes
+  too (an audit of this cache left about 5–8 GB there). Clear a cache only
+  when no process is using it: rename it, then delete it. Directories
+  named for an older macOS build are orphans, safe to delete.
 - **The mean-pooling tail runs on the CPU** (reduce_sum, real_div, clip):
   one extra hand-off after the encoder, well within the compute-plan gate.
 - **Core ML's diagnostics go to the unified log, not to stderr.** An

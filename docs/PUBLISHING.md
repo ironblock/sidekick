@@ -259,6 +259,15 @@ on install.**
   doubles the disk while it runs; and it doesn't remove the expensive part,
   the per-device compile on each bucket's first load (D49, #142: 14 s to
   141 s per Qwen3 bucket on the ANE), which happens either way.
+- **Core ML can't ship that compile either.** `compileModel` produces the
+  same device-independent `.mlmodelc`, and the device-specialized program
+  isn't exportable: on the ANE it lives in the system's ANE cache, and a
+  cache copied to another home or another executable recompiles there
+  (docs/design/coreml-cache.md, "Transplanting a cache"). macOS 27's Core AI framework does
+  offer ahead-of-time compilation (`xcrun coreai-build compile`, one
+  `.aimodelc` per device architecture), from its own `.aimodel` format;
+  #163 evaluates it as a backend beside Core ML. Until then, `.mlmodelc`
+  is the right form for Core ML.
 - **The risk, and its guard.** Should a future macOS refuse an older
   compiled program, the release gate's regrade on that macOS would show it,
   and the model is reconverted and republished as a new build, or its
@@ -345,15 +354,20 @@ enforce use, and a copy made after download isn't gated.
 - **The model directory is hard links to the cached blobs,** every path of
   it, with the manifest rewritten for exactly the buckets fetched and a
   `fetch.toml` recording the repository, commit and every file's sha256.
-  Not symlinks into the snapshot: measured on an M1 Max under macOS 27.0,
-  a compiled `.mlmodelc` with any symlinked file in it (the weights alone,
-  the other files alone, or all of them) is planned entirely off the ANE
-  without an error (0 of 245 operations on the ANE instead of 229, 28 ms
-  per prediction instead of 2, outputs off by up to 0.016), and every file
-  in a Hugging Face snapshot is a symlink. Hard links and copies stay on
-  the ANE, bit-identical, and the registry now refuses an ANE-served
-  program with a symlinked file. Where the filesystem refuses a link (the
-  cache on another volume), fetch copies.
+  Not symlinks into the snapshot, every file of which is a symlink into
+  `blobs/`: measured on an M1 Max under macOS 27.0, bge-small-en-v1.5's
+  compiled programs with their files symlinked there are planned entirely
+  off the ANE without an error (0 of 245 operations on the ANE instead of
+  229, 28 ms per prediction instead of 2, outputs off by up to 0.016).
+  That happens when Core ML's current loader can't compile a program for
+  the ANE (bge-small's fused attention, D25) and falls back to its older
+  one, which can't read a link that leaves the program directory. Programs
+  the current loader takes stayed on the ANE through symlinks, measured on
+  synthetic programs and yet to be confirmed on a sidekick build (D51's
+  amendment). Hard links and copies stay on the ANE, bit-identical, in
+  either case, and the registry refuses an ANE-served program with a
+  symlinked file. Where the filesystem refuses a link (the cache on
+  another volume), fetch copies.
 - **The tier:** a repository with TERMS.md (tier 2b) needs `--accept-terms
   <model>` first; tier 3 is never published, so there's nothing to fetch.
 

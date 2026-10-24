@@ -94,9 +94,23 @@ same model the same way on every platform.
 
 ```sh
 cargo build --release -p sidekick-server --features coreml,onnx   # on a Mac
+tools/sign_sidekickd.sh                                           # on a Mac; see below
 ./target/release/sidekickd --models-dir ~/Library/Application\ Support/sidekick/models
 curl -s localhost:8790/health | jq
 ```
+
+`tools/sign_sidekickd.sh` re-signs the binary ad hoc with a fixed
+code-signing identifier, `io.github.ironblock.sidekickd`, as the release
+archives' sidekickd is signed. Core ML keys each model it compiles for the
+Neural Engine to the identifier of the process that loads it, and the one
+the linker gives a Rust binary is cargo's name for the build
+(`sidekickd-<hash>`), which changes with the version, features and
+toolchain. Without the step, a rebuild that changes it compiles every ANE
+bucket again on its first load. Measured on an M1 Max, macOS 27.0, with
+bge-small-en-v1.5's 128-token bucket on the ANE: after a version bump, the
+first request took 0.87 s with both builds signed this way, and 3.76 s with
+the linker's signatures (4.3 s with no cache at all), because the ANE
+compiler ran again.
 
 On Linux, build with `--features onnx` only. A source build serving ONNX
 models needs the pinned ONNX Runtime: `tools/fetch_onnxruntime.sh <dir>`
@@ -529,9 +543,10 @@ repository or revision (a build not published yet needs `--repo`).
   matches neither is refused.
 - **The model directory is hard links to the cached files,** so the model
   takes no more disk than the cache does, and deleting either one leaves
-  the other whole. Core ML runs a program with symlinked files off the ANE
-  without an error, so a symlinked install wouldn't do; where the cache is
-  on another volume, the files are copied.
+  the other whole. A program whose files are symlinks out of its own
+  directory, as a Hugging Face snapshot's are, can run off the ANE without
+  an error (bge-small-en-v1.5 does, D51), so a symlinked install wouldn't
+  do; where the cache is on another volume, the files are copied.
 - **`--buckets` fetches part of a Core ML build,** and writes the manifest
   for exactly those buckets; `--variant` picks a build (`fp16`,
   `fp16-max2048`) when a repository has several. `fetch.toml` in the model
@@ -553,8 +568,9 @@ mv ./bge-small-download/fp16 "$HOME/Library/Application Support/sidekick/models/
 
 - **Use `--local-dir`.** Don't point the models directory at a Hugging
   Face cache snapshot (`hf download` without it): every file there is a
-  symlink, and Core ML runs a program with a symlinked file off the Neural
-  Engine without an error (D51), so sidekick refuses to serve it there.
+  symlink out of its program's directory, and Core ML can run such a
+  program off the Neural Engine without an error (D51), so sidekick
+  refuses to serve it there.
   `--local-dir` writes real files.
 - **Shared weights arrive as copies.** A build whose buckets share one
   weights file (D49) is downloaded this way as one copy per bucket, so it
@@ -623,10 +639,9 @@ everything else the machine runs):
   three (1 GB of weights), about 200 MB with laya-typed-decisions' four
   (3.2 GB) or Lumma-fev's five (2.3 GB). The rest shows up elsewhere in
   Activity Monitor, in two parts:
-  - most of it under **Cached Files**: Core ML compiles each bucket into a
-    bundle about the size of its weights, and the ANE reads it through
-    macOS's file cache, which macOS can reclaim when another app needs
-    the memory;
+  - most of it under **Cached Files**: the ANE reads its compiled program,
+    about the size of the bucket's weights, through macOS's file cache,
+    which macOS can reclaim when another app needs the memory;
   - a smaller share under **Wired Memory**, which the ANE pins while the
     model is resident and macOS can't reclaim: about 0.8 GB with
     laya-typed-decisions' four buckets. It is released when the model
@@ -637,10 +652,29 @@ everything else the machine runs):
   its three 320 MB buckets load, about 0.2 GB of it counted as footprint.
 - **The first load of a bucket costs more, once.** It compiles the bucket:
   Apple's ANE compiler service grew to 1.3 GB, for four minutes, compiling
-  Lumma-fev's 2,048-token bucket. The compiled bundles stay on disk, about
-  the weights' size again (3.5 GB for laya-typed-decisions), so later
-  loads take seconds. A request that has to wait for a compile doesn't
-  count it against `request_timeout_secs` (default 60): its deadline
+  Lumma-fev's 2,048-token bucket. The compiled programs stay on disk, about
+  the weights' size again per bucket and compute path (3.5 GB for
+  laya-typed-decisions), so later loads take seconds. Where they're kept
+  depends on the path:
+  - **GPU and CPU:** in sidekickd's own cache,
+    `~/Library/Caches/sidekickd/com.apple.e5rt.e5bundlecache/<macOS build>/`.
+  - **ANE:** in the system's ANE cache, kept by Apple's `aned` service on
+    the system volume. A user can't delete it (System Integrity Protection
+    protects it), and deleting `~/Library/Caches/sidekickd` doesn't free
+    it: that holds only about 12 kB per ANE bucket.
+
+  Core ML reuses a compiled program for the same model files at the same
+  path (a copy of the model elsewhere compiles again), loaded by a process
+  of the same name and, on the ANE, with the same code-signing
+  identifier, which is why release archives sign sidekickd with a fixed
+  one (see Quickstart). The cache directory is named for the macOS build,
+  and Apple's Core AI documentation says an OS update invalidates
+  specialized models, so every bucket is expected to compile again after
+  one (not yet measured across an update; docs/design/coreml-cache.md has
+  the measurements).
+
+  A request that has to wait for a compile doesn't count it against
+  `request_timeout_secs` (default 60): its deadline
   starts once its buckets are loaded. Loading is bounded instead by
   `load_timeout_secs` (default 900, well past the four minutes measured);
   a load that outlasts it is a 504 with code `load_timeout`, the load
