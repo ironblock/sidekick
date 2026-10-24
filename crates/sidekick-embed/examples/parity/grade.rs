@@ -103,9 +103,9 @@ pub struct PathGrade {
     pub failures: Vec<String>,
     /// This chip's floors failed: less accurate than when last measured.
     pub regressions: Vec<String>,
-    /// The ane path of a model capped on the ANE (D48): the cases longer
-    /// than its cap, which it doesn't run, left out of every figure above
-    /// (and of `per_case`).
+    /// A path capped where the runtime caps it (the cpu path by D33, the
+    /// ane path by D48): the cases longer than its cap, which it doesn't
+    /// run, left out of every figure above (and of `per_case`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub capped: Vec<String>,
 }

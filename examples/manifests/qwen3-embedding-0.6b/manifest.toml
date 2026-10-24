@@ -14,13 +14,17 @@
 # on an M1 Max, the chunked build is A on the ANE and the GPU and B on the
 # CPU (docs/MODELS.md; D37's amendment).
 #
-# max_seq_len 512 is the largest Core ML bucket. Each bucket is a program
+# The converter converts the buckets listed below unless given others.
+# max_seq_len 2,048 is the largest Core ML bucket, the target D46 sets for
+# this build: it is the ANE's length cap (D48), which the 1,024 and 2,048
+# buckets were measured to compile and serve within (D46). The CPU path is
+# capped lower, at 512 (cpu_max_seq_len below). Each bucket is a program
 # that maps its own copy of the weights when loaded (about 1.1 GiB in fp16;
-# on disk, chunk k of every bucket shares one file, D49), and attention at
-# 4,096 tokens would hold about 0.5 GiB of fp16 scores per layer, so the
-# Core ML buckets stop at 512. The ONNX build, one dynamic-shape graph, has
-# its own limit of 4,096 (onnx.toml beside this file). The model itself
-# takes up to 32k tokens.
+# on disk, chunk k of every bucket shares one file, D49). A 4,096-token
+# bucket, which only the GPU serves well, is left out: on the ANE it
+# compiles for about half an hour and fails some predictions (D46). The
+# ONNX build, one dynamic-shape graph, has its own limit of 4,096 (onnx.toml
+# beside this file). The model itself takes up to 32k tokens.
 #
 # Matryoshka: the model card documents output dimensions from 32 to 1024.
 #
@@ -34,8 +38,15 @@ tokenizer = "tokenizer.json"
 dims = 1024
 matryoshka = [1024, 512, 256, 128]
 pooling = "none"          # last-token pooling lives inside the model
-buckets = [128, 256, 512]
-max_seq_len = 512
+buckets = [128, 256, 512, 1024, 2048]
+max_seq_len = 2048
+# On Core ML's CPU this model's buckets agree exactly up to 512 tokens and
+# differ past it: graded on an M1 Max (macOS 27.0), inputs of 511 and 512
+# tokens run in the 512 and the 1,024 bucket gave cosines of 0.999914 and
+# 0.999917 between the two, against the CPU's exact bucket gate (0.999999).
+# So the CPU serves buckets up to 512, below D33's 1,024 (D33's amendment);
+# the ANE and the GPU serve all five.
+cpu_max_seq_len = 512
 source = { repo = "Qwen/Qwen3-Embedding-0.6B", revision = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3" }
 
 [io]

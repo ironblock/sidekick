@@ -11,6 +11,8 @@ Usage:
 
     install-dir:  model directory the daemon scans. Its name is the model id:
                   the manifest is copied from examples/manifests/<name>/manifest.toml
+    buckets:      default: the manifest's buckets, so the installed programs are
+                  exactly the ones the installed manifest lists
 
 Requires: torch, transformers >= 4.51 (Qwen3), tokenizers, coremltools, numpy
 (arm64-native Python), plus Xcode for `xcrun coremlcompiler`.
@@ -46,7 +48,7 @@ NaN as a failure.
 
 import json
 
-from sidekick_convert import cli, core, recipes, tokenizer
+from sidekick_convert import cli, core, manifest, recipes, tokenizer
 from sidekick_convert.backbones import qwen3
 from sidekick_convert.techniques import activations
 from sidekick_convert.heads.pool import Pool
@@ -84,8 +86,9 @@ def load_prompts(src):
 
 
 def main():
-    args = cli.parse(__doc__.split("\n\n")[0])
+    args = cli.parse(__doc__.split("\n\n")[0], default_buckets=None)
     model_id = args.install_dir.name
+    buckets = args.buckets or manifest.load(manifest.embedder_path(model_id))["buckets"]
     tok = tokenizer.load(tokenizer.prepare(args.src, args.install_dir / "tokenizer.json", mode="verbatim"))
     qprefix, dprefix = load_prompts(args.src)
     full = lambda text, is_query: (qprefix if is_query else dprefix) + text
@@ -93,12 +96,12 @@ def main():
     print(f"dims={backbone.hidden_size} qprefix={qprefix[:40]!r} dprefix={dprefix!r}")
     calibration = core.Calibration.without_graded([full(t, q) for t, q in CALIBRATION_TEXTS])
     job = recipes.embedder(
-        model_id=model_id, src=args.src, buckets=args.buckets, backbone=backbone, head=Pool("last_token"),
+        model_id=model_id, src=args.src, buckets=buckets, backbone=backbone, head=Pool("last_token"),
         tok=tok, texts=[full(s, q) for s, q in zip(PARITY_SENTENCES, QUERY_FLAGS)], calibration=calibration,
         rewrites=[qwen3.precision_rewrite(calibration, tok, silu=activations.StableSilu, mlp_down=True)], strict_max_seq_len=False,
-        # the long text is 520 tokens: the Core ML build gates the server's
-        # truncation at 512, which keeps the EOS; the ONNX build (max_seq_len
-        # 4,096, onnx.toml) takes it whole
+        # the long text is 520 tokens: a Core ML build whose largest bucket
+        # is 512 (F2LLM-v2-160M's) gates the server's truncation at 512,
+        # which keeps the EOS; a longer build takes it whole
         truncate=True,
         timing=args.time, **cli.job_options(args))
     core.run(job, args.install_dir)

@@ -573,7 +573,9 @@ def fidelity(model, m, manifest, backend, builds, rows, link):
            "", table(header, trows), "",
            "*This build*: the grading report's file hashes match this repository's files. *Unconfirmed*: "
            "graded on a build of the same model that can't be matched to these files by hash."]
-    notes = [f"- **{PATH_NAME[r['path']]}, {chip(r['chip'])}:** {r['note']}" for r in rows if r.get("note")]
+    notes = [f"- **{PATH_NAME[r['path']]}, {chip(r['chip'])}"
+             + (f", {WEIGHTS_NAME.get(r['precision'], r['precision'])}" if weights else "")
+             + f":** {r['note']}" for r in rows if r.get("note")]
     if notes:
         out += ["", *notes]
     return "\n".join(out)
@@ -681,13 +683,16 @@ INPUTS = {}
 
 
 def select_builds(model, backend, ids=None):
+    """The card's builds: those named (`--build`), in the order named, the
+    first being the one the card's fetch command names when there are
+    several; else every build the ledger holds for the model and backend."""
     builds = [b for b in INPUTS["ledger"]["builds"] if b["model"] == model and b["backend"] == backend]
     if ids:
-        known = {b["id"] for b in builds}
-        missing = [i for i in ids if i not in known]
+        by_id = {b["id"]: b for b in builds}
+        missing = [i for i in ids if i not in by_id]
         if missing:
             raise SystemExit(f"not in the ledger for {model} ({backend}): {', '.join(missing)}")
-        builds = [b for b in builds if b["id"] in ids]
+        builds = [by_id[i] for i in dict.fromkeys(ids)]
     return builds
 
 
@@ -708,6 +713,10 @@ def render(model, backend="coreml", build_ids=None, owner=None, ref=None, links=
     manifest, manifest_text = committed_manifest(model, backend)
     builds = select_builds(model, backend, build_ids)
     rows = result_rows(INPUTS["results"], model, backend)
+    if builds:
+        # Grades of weights this repository doesn't hold (a quantization
+        # left unpublished) aren't the card's.
+        rows = [r for r in rows if r["precision"] in {b["quantization"] for b in builds}]
     parts = [
         front_matter(model, m, manifest, lic, backend, builds), "",
         f"# {m['name']} for sidekick ({BACKEND_NAME[backend]})", "",

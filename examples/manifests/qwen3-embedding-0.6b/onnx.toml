@@ -2,7 +2,7 @@
 # installs (tools/sidekick_convert/onnx_export.py); the committed manifest
 # beside this file is the Core ML one, where an [onnx] table is refused.
 
-# max_seq_len 4096 for the ONNX build, against the Core ML build's 512. The
+# max_seq_len 4096 for the ONNX build, against the Core ML build's 2,048. The
 # graph's sequence axis is dynamic and each input runs alone, unpadded, so
 # compute and memory follow the input actually sent, not this cap. 4,096 is
 # graded on the long-input parity corpus (fixtures/parity/corpus_long.toml);

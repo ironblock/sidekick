@@ -4704,6 +4704,382 @@
    "note": "Converted before the ledger existed: the converter's commit, Python version, OS and machine weren't recorded."
   },
   {
+   "id": "qwen3-embedding-0.6b/coreml/fp16/2c652898a8f8",
+   "model": "qwen3-embedding-0.6b",
+   "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+   "backend": "coreml",
+   "variant": "fp16",
+   "quantization": "fp16",
+   "buckets": [
+    128,
+    256,
+    512,
+    1024,
+    2048
+   ],
+   "chunks": 2,
+   "max_seq_len": 2048,
+   "layout": "shared",
+   "digest": "2c652898a8f8630dda59effb32dd4a4fbd375f61ab223b04da6f4ca58fa287df",
+   "fingerprint": "9cf10c0b7d4c",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": "cf8cd3dc1d1182b23d8da79bea935971abd4257b",
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": "3.12.13",
+    "os": "macOS 27.0 (26A428)",
+    "xcode": "27.1 (27A9275)",
+    "chip": "Apple M1 Max",
+    "date": "2026-10-23"
+   },
+   "files": [
+    {
+     "sha256": "475c70ed6609f077bdb6be750311bcb0e853dbe9f26f707c85933124fe15807c",
+     "size": 12497,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "f62be9e6741f4566a0a5e999227112a622726ac84548991ebf38695bfba620bd",
+     "size": 243,
+     "paths": [
+      "model_1024.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "e5e09f9652fc8ab7a029882d2b5fbe084d971b044313a868c1cc28d97eb1edd7",
+     "size": 412,
+     "paths": [
+      "model_1024.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "1afdb042e265f41e181340a546db33b81c2a9c250e83b10c80bd2ac2910f70c0",
+     "size": 2468,
+     "paths": [
+      "model_1024.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "8cc3020ab920b841c62eb4d13a9a9791a9f6d9085f80802d3ac20269be39a422",
+     "size": 207574,
+     "paths": [
+      "model_1024.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "47e408fb5ffceb898899e904f7ccafc137b553c0ec35933dedc82648ece4e536",
+     "size": 607000512,
+     "paths": [
+      "model_1024.0.mlmodelc/weights/weight.bin",
+      "model_128.0.mlmodelc/weights/weight.bin",
+      "model_2048.0.mlmodelc/weights/weight.bin",
+      "model_256.0.mlmodelc/weights/weight.bin",
+      "model_512.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "9e2e20167facd344104f3beaa81463ce997242fce04e867cfb21eee6f1359b2b",
+     "size": 243,
+     "paths": [
+      "model_1024.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "cc292084d1f55d49d038f2bb6d89b63a161bcdec4517c234d7ad181c8f1c13ed",
+     "size": 411,
+     "paths": [
+      "model_1024.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "de4c1df5b424e07b219db205d1d1c3698fdc7cd5038e73ed88f28923ad6c57bf",
+     "size": 2478,
+     "paths": [
+      "model_1024.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "c76fde59899c2b23fb014ee1b7178d3eb5dbb3342d917b82c0deb65766abbef8",
+     "size": 433080,
+     "paths": [
+      "model_1024.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "14564d436401146248ccf5a2cb6e6a0e4ebddac679b55d995d296fe71f21671a",
+     "size": 611010368,
+     "paths": [
+      "model_1024.1.mlmodelc/weights/weight.bin",
+      "model_128.1.mlmodelc/weights/weight.bin",
+      "model_2048.1.mlmodelc/weights/weight.bin",
+      "model_256.1.mlmodelc/weights/weight.bin",
+      "model_512.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "d205570b02f16ac2b09bf8b6ad71362cb586c7f3b6cc1a356af668e4c40bbaab",
+     "size": 243,
+     "paths": [
+      "model_128.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "e6c8c25b30a898852cadaa4e5854fc0cf4463b691bbc5c81467a4a54ce600cf1",
+     "size": 412,
+     "paths": [
+      "model_128.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "f917311e02a7a5eb012322b6bca07e8889b9aed59d68a40439493c9d3e40e5ce",
+     "size": 2461,
+     "paths": [
+      "model_128.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "21db2146acbf737c641d1e24a5976a865a9d46b54a0284df11621d83ac8fc81f",
+     "size": 206768,
+     "paths": [
+      "model_128.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "ff6b4e44fc8f6b678ecc648b263a4a00ac398936a352d566daaafe1a4711ff5c",
+     "size": 243,
+     "paths": [
+      "model_128.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ab9f9eeb614aff718905455b0804242bead2662f6e3dae29975464a7b55af143",
+     "size": 411,
+     "paths": [
+      "model_128.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "62d0e330aedec6f317db723b860c8f21d36ee7956b5cbf6e8b1cd39e93c5c661",
+     "size": 2473,
+     "paths": [
+      "model_128.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "b98d74ad1644f9fbd1aeb606ba0dcb6c686ec9d2068d7160080baaf110cb7674",
+     "size": 431404,
+     "paths": [
+      "model_128.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "9fd1f76254863763d52fb335d8b1705f6c9206129c33c7fccc4ae7eb2fe729eb",
+     "size": 243,
+     "paths": [
+      "model_2048.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "6087936a73582c99921102f45203bb8a68e21d91901bed71945fe0eb95f9f7ed",
+     "size": 412,
+     "paths": [
+      "model_2048.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d2f14f76116852ae6bacbd7a2f970330fa94ae4682b99d2c760b1ae601bef08a",
+     "size": 2468,
+     "paths": [
+      "model_2048.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "5b65e6c2fead703bd63185b9435cbc36a82448be2ced13cb26ec176d91a3c05e",
+     "size": 207574,
+     "paths": [
+      "model_2048.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "a10ebfac8abd5397b05b9bb024eb9d0ee2e6577706a6e2bbc5b304ba45b973df",
+     "size": 243,
+     "paths": [
+      "model_2048.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "0d5bb237177d9b961b06890081f862e508cfaa3322d04aea51a5c33edbaac0e3",
+     "size": 411,
+     "paths": [
+      "model_2048.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "36eccef2e8ac4381a50a0e1424386b149776b4e3ef52c2ff5de00b930c696499",
+     "size": 2478,
+     "paths": [
+      "model_2048.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "f65593c08705f331ddf6d62b515c31c0ba5e1449cf73f784591da15e61326b19",
+     "size": 433080,
+     "paths": [
+      "model_2048.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "64277ca26265778717d29c110dacdbda09546ae86144e6db55cf83fc62c97ac4",
+     "size": 243,
+     "paths": [
+      "model_256.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d851c4d55c49dbaca5e4bfcc92faebc3a7dce8b38fec30acd65eb08429347c44",
+     "size": 412,
+     "paths": [
+      "model_256.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "eae51638073f5880f70cd450854ef881f3103e8265f249d1174d487147075734",
+     "size": 2461,
+     "paths": [
+      "model_256.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "c1555252b6c1f37851552fd87b01005fc8481ee335a66f9a0b5f6c5e46df796b",
+     "size": 206768,
+     "paths": [
+      "model_256.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "54fedbd8bd9e353ca50f48787445245eca0811ecb2f9eba0e734b58228483cca",
+     "size": 243,
+     "paths": [
+      "model_256.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "a559c85ec1d68562e6a3a0dc0b11d56dad34d834ce935ecc8dc592d5a5e8e39b",
+     "size": 411,
+     "paths": [
+      "model_256.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "d112052d29dd921bc9ce0e3a5131c2aff60d4c6372c8212d4cf79c85f14398e7",
+     "size": 2473,
+     "paths": [
+      "model_256.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "920f577589c78f6de0871542dee7b1f05021ec8649eab9a960a7dc2ce4128087",
+     "size": 431415,
+     "paths": [
+      "model_256.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "31e2d30b9876a243438a994506b4db829faa4a6f8e0ad1bdaa658d4b8ca264fd",
+     "size": 243,
+     "paths": [
+      "model_512.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "dcfcf2ed63865c7257df3ed5329de1642e5e372da433b0fc86a3c43e1fc80f04",
+     "size": 412,
+     "paths": [
+      "model_512.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "1aff4a43ffa0a190b454d10409ee2c36e6a96afcbdd0c46263c852df69f18467",
+     "size": 2461,
+     "paths": [
+      "model_512.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "18850c69ccc910b0095ef7736ca92ba8e720fc96d4b680029011631b9092e12c",
+     "size": 206768,
+     "paths": [
+      "model_512.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "8f0568892ed099d3ba6fd1046eeb6dfeccf6bc7fd9e3aeb76cf14f35c9d23b84",
+     "size": 243,
+     "paths": [
+      "model_512.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "33b548cf5be06c7460978c66186369c18708c7611c5f185cf9a0e3c64f1b920d",
+     "size": 411,
+     "paths": [
+      "model_512.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "e853e90d6785f088d6a77598b8c286e35a5d00a3a71aff417962d9160d1780de",
+     "size": 2473,
+     "paths": [
+      "model_512.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "97c006a023471d6aa146689e234a2800b76aeba6f848ced2d09972a1d985a1ea",
+     "size": 431415,
+     "paths": [
+      "model_512.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+     "size": 11423705,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-qwen3-embedding-0.6b-2048.json"
+    },
+    {
+     "path": "coreml-gpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "coreml-arm64-qwen3-embedding-0.6b-2048.json"
+    },
+    {
+     "path": "coreml-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "B",
+     "report": "coreml-arm64-qwen3-embedding-0.6b-2048.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Shared weights (D49): each chunk's weights file is held by all five buckets. The converter's gates all passed, the shared-weights gates included: every compiled weights file byte-identical to its chunk's union file, and every program's outputs bit-identical to the separate build on CPU, GPU and ANE. The .mlpackage sources were kept (--keep-packages). Converted at the commit before this change was rebased onto main; the converter's code is the same at the commit recorded. The manifest was installed again after the conversion for a manifest-only change, cpu_max_seq_len = 512 (D33's amendment): the committed manifest with the converter's [chunking] and [placement] tables. The programs are the conversion's."
+  },
+  {
    "id": "qwen3-embedding-0.6b/coreml/fp16-max2048/3fa955de07dd",
    "model": "qwen3-embedding-0.6b",
    "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
@@ -5236,6 +5612,74 @@
    "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
   },
   {
+   "id": "qwen3-embedding-0.6b/onnx/fp16-weights/9cedf879856f",
+   "model": "qwen3-embedding-0.6b",
+   "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+   "backend": "onnx",
+   "variant": "fp16-weights",
+   "quantization": "fp16 weights",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": 4096,
+   "layout": "separate",
+   "digest": "9cedf879856fd3ed48a998138d89ec599060b9968a780658d77cf6159b3dbd4c",
+   "fingerprint": "9cedf879856f",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-10"
+   },
+   "files": [
+    {
+     "sha256": "44ad5829a611a4a155136d5c368cf61983b39cbe529a2498ea414b689fc9bedb",
+     "size": 1757,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "581dce28242aa376d37c91c1cd17eac70274fb192ddd3fb99d366b9e5be3cf1f",
+     "size": 1139629,
+     "paths": [
+      "model_fp16w.onnx"
+     ]
+    },
+    {
+     "sha256": "67212c12b714e0dae0bd63050bc98a93e36e0e109660232dbe8155fe1244a339",
+     "size": 1191655424,
+     "paths": [
+      "model_fp16w.onnx_data"
+     ]
+    },
+    {
+     "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+     "size": 11423705,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "onnx-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "native-arm64-qwen3-embedding-0.6b-fp16w-hashed.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Exported with tools/convert_qwen3_embedding.py --format onnx before the ledger existed, and restored from its verified archive. The fp32 export with every float weight of two or more dimensions stored in fp16 behind a cast, as --onnx-weights fp16 now does; ONNX Runtime computes in fp32. The graph is model_fp16w.onnx, since its external weights file is named inside it. Graph, weights and tokenizer are byte-identical to ledger build qwen3-embedding-0.6b/onnx/fp16-weights/0134c8bf6715. The archived manifest.toml was stale (max_seq_len 512, no named prompts), so this build's was regenerated with the exporter's own manifest_text from the committed manifest.toml and onnx.toml. Graded from these exact files (file hashes in the parity report)."
+  },
+  {
    "id": "qwen3-embedding-0.6b/onnx/fp32/3d8d301ded40",
    "model": "qwen3-embedding-0.6b",
    "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
@@ -5301,6 +5745,149 @@
    "recorded": "2026-10-23",
    "evidence": "sha256sums",
    "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded. The archived directory also held the fp16-weights and int8 graphs, byte-identical to the fp16-weights and int8 builds recorded separately; they are left out of this fp32 build."
+  },
+  {
+   "id": "qwen3-embedding-0.6b/onnx/fp32/6891a986e257",
+   "model": "qwen3-embedding-0.6b",
+   "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+   "backend": "onnx",
+   "variant": "fp32",
+   "quantization": "fp32",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": 4096,
+   "layout": "separate",
+   "digest": "6891a986e2579fec23c6b8dd30aeee64863dbfde51f7c513ce4542d07d63ca59",
+   "fingerprint": "d64de9f61a8d",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": "2.13.0",
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-10"
+   },
+   "files": [
+    {
+     "sha256": "5f45f572a06716328252eacb5a5b48e39a5098c00425b5852e54d835d23c54bf",
+     "size": 1751,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "e39cb6a3a56ea8fa4341c799898790c0918629027169d41d183eb45878ba8dff",
+     "size": 1125282,
+     "paths": [
+      "model.onnx"
+     ]
+    },
+    {
+     "sha256": "7c7569e58783ee0ad8c5fb797d7944aa4f5928af53fb4c1f626f71885af22969",
+     "size": 2383077376,
+     "paths": [
+      "model.onnx_data"
+     ]
+    },
+    {
+     "sha256": "362cbd7e6915256f6189fde6dfecfea933483a2e4b9b3c19a6619057217a7598",
+     "size": 161,
+     "paths": [
+      "onnx_gates.json"
+     ]
+    },
+    {
+     "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+     "size": 11423705,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "onnx-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "A",
+     "report": "native-arm64-qwen3-embedding-0.6b-4096-hashed.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Exported with tools/convert_qwen3_embedding.py --format onnx before the ledger existed, and restored from its verified archive. The graph, its external weights, the tokenizer and onnx_gates.json are byte-identical to ledger build qwen3-embedding-0.6b/onnx/fp32/3d8d301ded40. The graph's producer_version records PyTorch 2.13.0, and the files' modification time the export date. The archived manifest.toml was stale (max_seq_len 512, no named prompts), so this build's was regenerated with the exporter's own manifest_text from the committed manifest.toml and onnx.toml. Graded from these exact files (file hashes in the parity report)."
+  },
+  {
+   "id": "qwen3-embedding-0.6b/onnx/int8/1d77ff2e7eca",
+   "model": "qwen3-embedding-0.6b",
+   "source": "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+   "backend": "onnx",
+   "variant": "int8",
+   "quantization": "int8",
+   "buckets": [],
+   "chunks": 1,
+   "max_seq_len": 4096,
+   "layout": "separate",
+   "digest": "1d77ff2e7ecaa75e7358901c1153ff8af95455cb52a333d218566086e29d462e",
+   "fingerprint": "1d77ff2e7eca",
+   "produced": {
+    "converter": "tools/convert_qwen3_embedding.py",
+    "converter_commit": null,
+    "coremltools": null,
+    "torch": null,
+    "python": null,
+    "os": null,
+    "xcode": null,
+    "chip": null,
+    "date": "2026-10-10"
+   },
+   "files": [
+    {
+     "sha256": "c76248ab062b6701e81cb3c7ed3db4bb655b1a3762e37ffea3f712506e357558",
+     "size": 1756,
+     "paths": [
+      "manifest.toml"
+     ]
+    },
+    {
+     "sha256": "53a9b996cf7b799d4199c5b649020f284413d3bc44c5d012bc74ec85974c7dd1",
+     "size": 1774215,
+     "paths": [
+      "model_int8.onnx"
+     ]
+    },
+    {
+     "sha256": "cec273eac5d1320ac48dd016b2f020be7271320ee224b4a661a67743cbe24db5",
+     "size": 595944448,
+     "paths": [
+      "model_int8.onnx.data"
+     ]
+    },
+    {
+     "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+     "size": 11423705,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "onnx-cpu",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "D",
+     "report": "native-arm64-qwen3-embedding-0.6b-int8-hashed.json"
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-23",
+   "evidence": "hashed",
+   "note": "Exported with tools/convert_qwen3_embedding.py --format onnx before the ledger existed, and restored from its verified archive. ONNX Runtime's dynamic int8 quantization of the fp32 export (producer onnx.quantize 0.1.0), whose kernels scale activations per tensor across the batch. Graded D; not published. Graph, weights and tokenizer are byte-identical to ledger build qwen3-embedding-0.6b/onnx/int8/87138d286e84. The archived manifest.toml was stale (max_seq_len 512, no named prompts), so this build's was regenerated with the exporter's own manifest_text from the committed manifest.toml and onnx.toml. Graded from these exact files (file hashes in the parity report)."
   },
   {
    "id": "qwen3-embedding-0.6b/onnx/int8/87138d286e84",

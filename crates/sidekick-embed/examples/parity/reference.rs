@@ -182,8 +182,9 @@ impl Reference {
     }
 
     /// The cases of at most `max_tokens` reference ids, with their vectors,
-    /// and the ids of the cases left out: what an ane path capped at
-    /// `max_tokens` (D48) is graded against, since it doesn't run the rest.
+    /// and the ids of the cases left out: what a path capped at
+    /// `max_tokens` (the cpu path by D33, the ane path by D48) is graded
+    /// against, since it doesn't run the rest.
     pub fn within(&self, max_tokens: usize) -> (Reference, Vec<String>) {
         let keep: Vec<bool> = self.cases.iter().map(|c| c.ids.len() <= max_tokens).collect();
         let mut sub = self.clone();

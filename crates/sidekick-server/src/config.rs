@@ -43,8 +43,9 @@ pub struct Config {
     /// For experimentation; a manifest's `ane_weight_limit = "ignore"` does
     /// the same for one model.
     pub ignore_ane_weight_cap: bool,
-    /// Serve models on `cpu_only` past 1,024 tokens, accepting Core ML's
-    /// slightly bucket-dependent CPU results there (D33). A manifest's
+    /// Serve models on `cpu_only` past 1,024 tokens, or past a manifest's
+    /// lower `cpu_max_seq_len`, accepting Core ML's slightly
+    /// bucket-dependent CPU results there (D33). A manifest's
     /// `cpu_seq_limit = "ignore"` does the same for one model.
     pub ignore_cpu_seq_cap: bool,
     /// Serve models on the ANE (`cpu_and_ne` or `all`) past their ANE cap:

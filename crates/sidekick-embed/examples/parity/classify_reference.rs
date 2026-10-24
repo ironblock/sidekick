@@ -206,9 +206,9 @@ pub fn corpus_sha256(manifest: &ClassifierManifest) -> Result<String, String> {
 
 impl ClassifyReference {
     /// The cases whose sequences are at most `max_tokens` long, with their
-    /// logits, and the ids of the cases left out: what an ane path capped
-    /// at `max_tokens` (D48) is graded against, since it doesn't run the
-    /// rest.
+    /// logits, and the ids of the cases left out: what a path capped at
+    /// `max_tokens` (the cpu path by D33, the ane path by D48) is graded
+    /// against, since it doesn't run the rest.
     pub fn within(&self, max_tokens: usize) -> (ClassifyReference, Vec<String>) {
         let keep: Vec<bool> = self.cases.iter().map(|c| c.tokens() <= max_tokens).collect();
         let mut sub = self.clone();

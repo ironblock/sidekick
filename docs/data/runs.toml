@@ -142,13 +142,18 @@ precision = "fp16"
 date = "2026-10-12"
 idle = false
 sidekick = "0.8.0+ (commit 46e6e91)"
-[runs."coreml-arm64-qwen3-embedding-0.6b.json"]
+# Qwen3-Embedding-0.6B's five-bucket Core ML build (128 to 2,048 tokens,
+# chunked, shared weights), graded on the main and the long-input corpus,
+# the cpu path under the manifest's cpu_max_seq_len of 512 (D33's
+# amendment). It replaces the 512-token build's report,
+# coreml-arm64-qwen3-embedding-0.6b.json.
+[runs."coreml-arm64-qwen3-embedding-0.6b-2048.json"]
 runtime = "Core ML"
 os = "macOS 27.0"
 precision = "fp16"
-date = "2026-10-16"
-idle = false
-sidekick = "0.11.0+ with chunked embedders (commit 71ef17c)"
+date = "2026-10-23"
+idle = true
+sidekick = "0.15.0+ with the CPU caps and cpu_max_seq_len (commit f3e571d)"
 [runs."coreml-arm64-bge-small-en-v1.5.json"]
 runtime = "Core ML"
 os = "macOS 27.0"
@@ -172,36 +177,38 @@ date = "2026-10-10"
 idle = false
 sidekick = "0.8.0 pre-release (commit 571c7d3)"
 threads = 4
-# Qwen3-Embedding-0.6B's ONNX build at max_seq_len 4,096, graded on the
+# Qwen3-Embedding-0.6B's ONNX builds at max_seq_len 4,096, graded on the
 # main corpus and the long-input corpus (fixtures/parity/corpus_long.toml,
-# the report's `long` section). It replaces the 512-token build's report,
-# native-arm64-qwen3-embedding-0.6b.json (same graph; A at 1 - 1.7e-11),
-# whose over-length cases were truncated at 512. Graded at 4 threads
-# (--onnx-threads 4), as the other M1 Max rows, with no other heavy job
-# running (load average 4.2 before, 6.8 after: the system's indexing).
-[runs."native-arm64-qwen3-embedding-0.6b-4096.json"]
+# the report's `long` section), from reports that record their files'
+# hashes. The graphs are the ones graded before (fp32 on 2026-10-19,
+# fp16 weights and int8 on 2026-10-10), byte for byte, now installed with
+# the manifest the current exporter writes (max_seq_len 4,096 and the
+# named prompts). These reports replace native-arm64-qwen3-embedding-0.6b-4096.json,
+# -fp16w.json and -int8.json. Graded at 4 threads (--onnx-threads 4), as
+# the other M1 Max rows.
+[runs."native-arm64-qwen3-embedding-0.6b-4096-hashed.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp32"
-date = "2026-10-19"
-idle = false
-sidekick = "0.12.0+ with the long-input corpus (commit 2330e92)"
+date = "2026-10-23"
+idle = true
+sidekick = "0.15.0+ with the parity suite's CPU cap (commit cf8cd3d)"
 threads = 4
-[runs."native-arm64-qwen3-embedding-0.6b-fp16w.json"]
+[runs."native-arm64-qwen3-embedding-0.6b-fp16w-hashed.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "fp16 weights"
-date = "2026-10-10"
-idle = false
-sidekick = "0.8.0 pre-release (commit 571c7d3)"
+date = "2026-10-23"
+idle = true
+sidekick = "0.15.0+ with the parity suite's CPU cap (commit cf8cd3d)"
 threads = 4
-[runs."native-arm64-qwen3-embedding-0.6b-int8.json"]
+[runs."native-arm64-qwen3-embedding-0.6b-int8-hashed.json"]
 runtime = "ONNX Runtime 1.28.3"
 os = "macOS 27.0"
 precision = "int8"
-date = "2026-10-10"
-idle = false
-sidekick = "0.8.0 pre-release (commit 571c7d3)"
+date = "2026-10-23"
+idle = true
+sidekick = "0.15.0+ with the parity suite's CPU cap (commit cf8cd3d)"
 threads = 4
 
 # onnx-cpu on an Apple M4 Max (12 performance and 4 efficiency cores),
