@@ -3289,6 +3289,12 @@ do, and the prompts are copied from the checkpoint into the manifest.
   instruction models arrive, an `instruction` field can be added beside
   `prompt_name` without changing it.
 
+  The same holds for the model's own document prompt. Measured on a
+  900-word text, that prompt typed into the text under `none` against the
+  default request, both truncated the same way: under `START`, cosine
+  0.877 for EmbeddingGemma and 0.893 for LFM2.5-Embedding-350M; under
+  `END`, identical vectors.
+
 ## D46 — How far each build goes toward its model's context
 Most builds stop short of their model's trained context, because the
 converters' default bucket list stops at 512, not because anyone chose

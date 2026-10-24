@@ -68,16 +68,27 @@ Every error, malformed JSON included, is OpenAI's shape:
 
 ## Provenance headers
 
-Inference responses (every route above) carry provenance headers:
-`sidekick-version`, `sidekick-model` (`<id>@<revision>` when the manifest
-records the source revision; for chat, the Foundation Models variant) and
-`sidekick-compute-units` (a Core ML model's configured compute units,
-`cpu_and_ne` by default; `cpu` for static and ONNX models). Core ML
-responses also
-carry `sidekick-buckets`: the sequence-length bucket, so the compiled
-program, each input ran in, in input order (`256,256,512`; a rerank pair
-is one input). Each bucket's placement on the ANE, GPU and CPU is in the
-model's `/v1/models` entry once the bucket has loaded.
+Every inference response carries provenance headers. They follow OpenAI's
+`openai-model` / `openai-version` style:
+- `sidekick-version`.
+- `sidekick-model`: `<id>@<revision>` when the manifest has a `source`,
+  otherwise `<id>`. For chat it's the Foundation Models variant id, read
+  in the background and cached; until it's known, the chat model's id.
+- `sidekick-compute-units`: the configuration the serving instance was
+  loaded with: a Core ML model's `compute_units` (`cpu_and_ne` unless its
+  manifest says otherwise; see [Compute units](BACKENDS.md#compute-units)), `cpu` for static and ONNX
+  models (D40).
+  Chat omits it. It reports configuration, not the executing device, which
+  Core ML doesn't expose.
+- `sidekick-buckets`: the sequence-length bucket each input ran in, in
+  input order and comma-separated (`256,256,512`; one input gives `256`).
+  ONNX models have no buckets and don't send it.
+  Each bucket is its own compiled program (D15), so this names the
+  program that answered each input, the one whose placement `/v1/models`
+  reports per bucket (see [Where Core ML places operations](BACKENDS.md#where-core-ml-places-operations)). On
+  `/v1/classify`, `/v1/embeddings`, `/v1/rerank`, `/rerank`, `/v2/rerank`
+  and `/v2/embed`. A rerank pair is one input, in request order rather
+  than the sorted results' order. Chat and static embedders omit it.
 
 ## Chat
 
@@ -121,6 +132,8 @@ prompts are a proper 400 (D21).
 up to 256), `dimensions` for Matryoshka models, and `encoding_format:
 "base64"`.
 
+### Prompts
+
 Most embedders were trained with a prompt before each input, so sidekick
 puts the model's own prompt before every input, chosen by `input_type`:
 - **No `input_type`, `"document"` or `"passage"`:** the model's document
@@ -131,7 +144,8 @@ puts the model's own prompt before every input, chosen by `input_type`:
 - **`"none"`:** no prompt. The text is embedded exactly as sent, with the
   tokenizer's special tokens. Send it when your text already carries a
   prompt, such as an MTEB task prompt or a Qwen3 or F2LLM instruction for
-  a symmetric task. Otherwise sidekick's prompt goes before yours, and the
+  a symmetric task, or for no prompt where a model's evaluation used none
+  (e5-small-v2 outside retrieval). Otherwise sidekick's prompt goes before yours, and the
   model sees a prompt it was never trained on. Under `truncate: "START"`,
   sidekick keeps its own prompt whole but can't tell yours from the text,
   so it may cut yours: with `none`, use `END`, or keep inputs within the
@@ -139,9 +153,12 @@ puts the model's own prompt before every input, chosen by `input_type`:
 
 Some models have no prompt for one side or both, and then that
 `input_type` is the same as `"none"`. Each model's prompts are in
-[docs/MODELS.md](docs/MODELS.md#prompts-input_type), and `/v1/models`
+[MODELS.md](MODELS.md#prompts-input_type), and `/v1/models`
 lists each installed model's as `prompts` (`{"query": "…", "document":
-"…"}`, `""` for none). D9 records the choice.
+"…"}`, `""` for none). D9 records the choice, and D45 measures
+what `START` costs a prompt typed into the text.
+
+### Named prompts
 
 Some models also name prompts for other tasks, such as EmbeddingGemma's
 `Classification`, `Clustering` and `STS`. Send `prompt_name` instead of
@@ -166,9 +183,11 @@ does the same, so a `/v2/embed` request's fields count as it embeds.
 sidekick's, so `truncate: "START"` keeps it whole.
 Qwen3-Embedding and F2LLM take a free-text instruction per task instead:
 send it with `input_type: "none"`, in the model's format
-([docs/MODELS.md](docs/MODELS.md#named-prompts-prompt_name)), and
+([MODELS.md](MODELS.md#named-prompts-prompt_name)), and
 truncate with `END`, since `START` would cut an instruction it can't
 tell from the text. D45 records the choice.
+
+### Input length and truncation
 
 An input longer than the model's limit is a 400 `invalid_request_error`.
 OpenAI's `/v1/embeddings` refuses it too, and Hugging Face TEI returns an
@@ -241,6 +260,8 @@ The text is never truncated, so a text over the limit is counted in full.
 `/v1/models`, or lower when the model's own `tokenizer.json` truncates
 sooner (D44). `max_tokens`, `/v2/embed`'s, makes `fits` measure against
 it instead, as `/v2/embed` with `truncate: "NONE"` does.
+At most 4 MiB of text is tokenized at once, across requests; a request
+waits for room within the request timeout.
 `add_special_tokens: false` leaves the special tokens out of `count` and
 `tokens` (not out of `fits`), and `return_token_strs: true` adds each
 token's vocabulary entry as `token_strs`. `/detokenize` takes `{model,
@@ -328,7 +349,7 @@ manifest.
 question type and label count; `/v1/models` lists each classifier's
 temperatures, labels or `max_labels`, `max_batch`, and the extension fields
 it accepts. The full contract is in
-[docs/design/classify.md](docs/design/classify.md).
+[design/classify.md](design/classify.md).
 
 ## Rerank
 
@@ -364,7 +385,7 @@ shape: `input_type` (`search_query` / `search_document`, or `none`) or
 `prompt_name`,
 `embedding_types` (`float`, `base64`, `binary`, `ubinary`),
 `output_dimension`, and `truncate`. The full contract is in
-[docs/design/rerank.md](docs/design/rerank.md).
+[design/rerank.md](design/rerank.md).
 
 ## Listing models and health
 

@@ -47,7 +47,7 @@ otherwise (D14): the ANE keeps background work off the GPU. Some models run
 badly there. GLiNER2.5-Decide grades A on the GPU at about 34 ms per input,
 but C on the ANE, where a prediction takes about 0.11, 0.34 and 1.28 s at
 128, 256 and 512 tokens, because its DeBERTa relative-position rewrite is
-slow on the ANE (docs/MODELS.md). Such a model
+slow on the ANE ([MODELS.md](MODELS.md)). Such a model
 names its compute units with an optional top-level key, in
 `classifier.toml` and in an embedder's `manifest.toml` alike:
 
@@ -327,16 +327,25 @@ sidekick pools (`mean`, `cls` or `last_token`); a head that does more than
 pooling, such as EmbeddingGemma's, stays in the graph, and its manifest says
 `pooling = "none"`. An ONNX build keeps the model's id, so clients address
 the same model everywhere. The daemon needs the `onnx` cargo feature and
-ONNX Runtime (1.28.3, or 1.23.2 on Intel macOS). Release archives ship
-`libonnxruntime` beside `sidekickd`. To use an existing install, name
-the library with `onnx_runtime` in the config (the way under launchd),
-or `ORT_DYLIB_PATH`. The daemon checks `onnx_runtime`, then
-`ORT_DYLIB_PATH`, then the library beside itself, and never searches system
-paths. The runtime loads at startup only when there's an
-onnx model. If it's missing, the onnx models are skipped with the reason
-and everything else serves. Each manifest's
-graph is checked against its `[io]` when the directory is scanned.
-`/health`'s `onnx` section reports the runtime and each model's threads.
+ONNX Runtime: which version ([INSTALL.md](INSTALL.md#onnx-runtime)) and
+where the daemon finds it ([CONFIG.md](CONFIG.md#where-onnx-runtime-is-loaded-from)).
+Each manifest's graph is checked against its `[io]` when the directory is
+scanned. `/health`'s `onnx` section reports the runtime and each model's
+threads.
+
+An ONNX model's vectors come from a different runtime than its Core ML
+build's. Both are graded against the same fp32 reference, but don't mix
+vectors stored from the two in one index without checking their agreement
+in [MODELS.md](MODELS.md#onnx-runtime-on-the-cpu-onnx-cpu). How far ONNX
+vectors are reproducible: at a given thread count, re-runs are
+bit-identical, and so were two Linux x86-64 machines with different CPUs on
+the same runtime and thread count. Across runtime versions, architectures
+or thread counts, vectors agree to within rounding but aren't guaranteed
+bit-identical (EmbeddingGemma moved by up to 1.43e-7 per component between
+4 and 8 threads). Padding and batching would move them by up to 2.6e-7,
+which is why sidekick runs each input alone. On an Intel Mac with
+AVX-512, ONNX Runtime runs its AVX-512 kernels (D42);
+`SIDEKICK_ONNX_AVX512=0` in the daemon's environment turns them off.
 
 ```toml
 id = "bge-small-en-v1.5"

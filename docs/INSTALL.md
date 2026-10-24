@@ -111,11 +111,10 @@ Neural Engine to the identifier of the process that loads it, and the one
 the linker gives a Rust binary is cargo's name for the build
 (`sidekickd-<hash>`), which changes with the version, features and
 toolchain. Without the step, a rebuild that changes it compiles every ANE
-bucket again on its first load. Measured on an M1 Max, macOS 27.0, with
-bge-small-en-v1.5's 128-token bucket on the ANE: after a version bump, the
-first request took 0.87 s with both builds signed this way, and 3.76 s with
-the linker's signatures (4.3 s with no cache at all), because the ANE
-compiler ran again.
+bucket again on its first load: after a version bump, bge-small-en-v1.5's
+first request took 3.76 s instead of 0.87 s
+([design/coreml-cache.md](design/coreml-cache.md#the-cache-key) has the
+measurement).
 
 ## Running as a service
 

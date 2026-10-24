@@ -386,11 +386,10 @@ enforce use, and a copy made after download isn't gated.
   first downloads every variant's manifest and TERMS.md; the buckets asked
   for (all by default) become `hf download --include` patterns for that
   variant's manifest, tokenizer and programs.
-- **The files land in the Hugging Face cache,** through the user's `hf` CLI
-  when it is installed (its token, Xet, `HF_HOME` and `HF_HUB_CACHE`), else
-  through sidekickd's own anonymous downloader, which writes the same cache
-  layout. The cache stores each distinct file once as a blob, so a shared
-  weights file (D49) downloads once whatever its paths.
+- **The files land in the Hugging Face cache,** which stores each distinct
+  file once as a blob, so a shared weights file (D49) downloads once
+  whatever its paths. How fetch downloads (the `hf` CLI or its own
+  downloader) is in [RUNNING.md](RUNNING.md#fetching-a-published-build).
 - **Every file is verified** against the Hub's hash for it (the sha256 of
   an LFS or Xet file, the Git blob id of any other) and against the
   ledger: the files must be one of the builds it records for that model,
@@ -403,20 +402,12 @@ enforce use, and a copy made after download isn't gated.
 - **The model directory is hard links to the cached blobs,** every path of
   it, with the manifest rewritten for exactly the buckets fetched and a
   `fetch.toml` recording the repository, commit and every file's sha256.
-  Not symlinks into the snapshot, every file of which is a symlink into
-  `blobs/`: measured on an M1 Max under macOS 27.0, bge-small-en-v1.5's
-  compiled programs with their files symlinked there are planned entirely
-  off the ANE without an error (0 of 245 operations on the ANE instead of
-  229, 28 ms per prediction instead of 2, outputs off by up to 0.016).
-  That happens when Core ML's current loader can't compile a program for
-  the ANE (bge-small's fused attention, D25) and falls back to its older
-  one, which can't read a link that leaves the program directory. Programs
-  the current loader takes stayed on the ANE through symlinks, measured on
-  synthetic programs and yet to be confirmed on a sidekick build (D51's
-  amendment). Hard links and copies stay on the ANE, bit-identical, in
-  either case, and the registry refuses an ANE-served program with a
-  symlinked file. Where the filesystem refuses a link (the cache on
-  another volume), fetch copies.
+  Not symlinks into the snapshot: a program whose files link out of its
+  directory can run off the ANE without an error
+  ([design/coreml-cache.md](design/coreml-cache.md#symlinks-and-the-fallback-loader)),
+  and the registry refuses an ANE-served program with a symlinked file.
+  Where the filesystem refuses a link (the cache on another volume),
+  fetch copies.
 - **The tier:** a repository with TERMS.md (tier 2b) needs `--accept-terms
   <model>` first; tier 3 is never published, so there's nothing to fetch.
 - **Then it compiles:** for a Core ML build the daemon will serve, fetch

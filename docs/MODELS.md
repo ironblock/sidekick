@@ -848,7 +848,7 @@ What a long input costs:
   Core ML CPU's B on gte-modernbert, EmbeddingGemma and F2LLM, at 3–5× its
   latency on long inputs.
 - **On x86-64 macOS and Linux,** onnx-cpu is graded at the same grades as
-  on arm64 (shipped runtime 1.23.2 on Intel macOS, 1.28.3 elsewhere;
+  on arm64, each on its shipped runtime ([INSTALL.md](INSTALL.md#onnx-runtime);
   graded on a Xeon W-3235, a Ryzen 7 5800X and a Threadripper 3970X). On
   Linux it is the only path. On an Intel Mac whose CPU has AVX-512 (a Mac
   Pro or iMac Pro Xeon), sidekick makes ONNX Runtime use its AVX-512
@@ -1516,23 +1516,10 @@ for the document).
 
 ## Prompts (`input_type`)
 
-Most of these embedders were trained with a prompt before each input, one
-for queries and one for documents. An OpenAI client has no field for it,
-so sidekick puts the model's own prompt before every input (D9): the
-query prompt for `input_type: "query"`, and the document prompt otherwise,
-including when a request sends no `input_type`. `input_type: "none"` puts
-nothing: the text is embedded exactly as sent, with the tokenizer's
-special tokens. Send it when the text already carries its prompt, such as
-an MTEB task prompt or a Qwen3 or F2LLM instruction for a symmetric task.
-`/v1/models` lists each installed model's prompts as `prompts`. Under
-`truncate: "START"`, which keeps the end of an over-length text, sidekick
-keeps its own prompt whole but can't tell one inside the text from the
-text, so it may cut it. Measured on a 900-word text, the model's own
-document prompt typed into the text under `none` against the default
-request, both truncated the same way: under `START`, cosine 0.877 for
-EmbeddingGemma and 0.893 for LFM2.5-Embedding-350M; under `END`,
-identical vectors. With `none`, use `END`, or keep inputs within the
-limit.
+Each embedder's prompts, which sidekick puts before every input: the query
+prompt for `input_type: "query"`, the document prompt otherwise. How
+`input_type`, `"none"` and truncation treat them is in
+[API.md](API.md#prompts).
 
 From each build's committed manifest (`[prefixes]`); a code span shows
 the prompt exactly, its trailing space included, and `\n` is a newline:
@@ -1553,15 +1540,8 @@ the prompt exactly, its trailing space included, and `\n` is a newline:
 
 ### Named prompts (`prompt_name`)
 
-Some checkpoints name prompts for tasks besides retrieval in their
-sentence-transformers configuration (`config_sentence_transformers.json`),
-as EmbeddingGemma does for classification, clustering and similarity. A
-request chooses one by `prompt_name`, in place of `input_type`, as Hugging
-Face Text Embeddings Inference and sentence-transformers'
-`encode(prompt_name=…)` do (D45). The name matches exactly, case
-included. A named prompt is sidekick's own, so `truncate: "START"` keeps
-it whole, as it keeps an `input_type` prompt. `/v1/models` lists each
-installed model's as `named_prompts`.
+The prompts each checkpoint names for tasks besides retrieval, which a
+request chooses by `prompt_name` ([API.md](API.md#named-prompts)).
 
 From each build's committed manifest (`[prompts]`, copied from the
 checkpoint at the revision the build pins); a model not listed publishes

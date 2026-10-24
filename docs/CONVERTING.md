@@ -453,9 +453,10 @@ backbone, head and gate texts, gated against the same fp32 references
 - **Gates,** through ONNX Runtime's Python API: every gate case against the
   checkpoint's own output (cosine at least 0.99999), the cases in one
   right-padded batch against their unpadded runs, and random pad ids. The
-  daemon ships ONNX Runtime 1.28.3 (1.23.2 on Intel macOS, the last release
-  built for it), pinned by `tools/fetch_onnxruntime.sh`; the parity suite
-  grades the export on that runtime.
+  daemon ships a pinned ONNX Runtime
+  ([INSTALL.md](INSTALL.md#onnx-runtime)), fetched by
+  `tools/fetch_onnxruntime.sh`; the parity suite grades the export on
+  that runtime.
 - **Manifest.** The installed manifest is derived from the committed Core ML
   one (same id, tokenizer, dims, prefixes, Matryoshka), with backend
   `onnx`, artifact `model.onnx`, the pooling, and every extra graph input
