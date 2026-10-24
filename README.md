@@ -630,23 +630,30 @@ CLI flags override the file: `sidekickd --addr ... --models-dir ... --api-key ..
 
 The first time sidekickd loads a Core ML bucket, Core ML compiles it for
 the device: seconds for a small model on the ANE, minutes for a long
-bucket of a large one. Core ML keeps the result on disk, for this
-executable and user, the model's path and the macOS build, so later loads
-take a fraction of that. sidekickd compiles ahead of requests (D52):
+bucket of a large one. Core ML keeps the result for the executable's name
+(and, on the ANE, its code-signing identifier), the user, the model's
+files at their path, the compute units and the macOS build, so later
+loads take a fraction of that. sidekickd compiles ahead of requests (D52):
 
 - **At startup, in the background,** in a `sidekickd warm` child process,
   every bucket the daemon serves, on the compute units it serves it on,
   cold ones first. After a macOS update, a model move or a fresh install,
   that's where the compiles happen, instead of in the first requests. A
   request for a bucket being compiled waits for that compile and then
-  loads from the cache; requests for other buckets don't wait. Nothing
+  loads from the cache, and requests for cached buckets don't wait. The
+  machine runs one ANE compile at a time, so a request whose bucket needs
+  a compile of its own waits for the one in progress. Nothing
   stays loaded that no request asked for. `--no-warm` or `warm_on_start =
   false` turns it off; `warm_budget_secs` (default 30 minutes) stops it
   starting new loads after that long.
 - **On demand:** `sidekickd warm [<model>…] [--buckets 128,512]
   [--budget-secs N]`, or `--list` to see each bucket's state without
-  loading anything. Run it as the user, and with the `sidekickd`, that the
-  daemon runs as: Core ML's cache is per user and per executable name.
+  loading anything. Run it as the user, and with the `sidekickd` binary,
+  that the daemon runs as: under another name it misses Core ML's cache,
+  and under another code-signing identifier it misses the ANE's. A
+  sidekickd built with `cargo build` gets a new identifier each build, so
+  a rebuilt daemon recompiles its ANE buckets (its startup warm-up does
+  that in the background).
 - **After `sidekickd fetch`,** for the buckets fetched; `--no-warm` skips
   it.
 

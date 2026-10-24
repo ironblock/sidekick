@@ -4115,30 +4115,52 @@ lazily, so the first request that needed a bucket paid its compile, after
 every install, model move or macOS update. No request should wait on a
 compile sidekickd could have done in advance.
 
-**What the cache is keyed by, measured.** On an M1 Max, macOS 27.0, with
+**What the cache is keyed by, measured.** Two sets of measurements on an
+M1 Max, macOS 27.0 (26A428), agree. This decision's timed loads used
 bge-small-en-v1.5 (ANE, 128/256/512), nli-minilm2-l6-h768 (GPU) and its
-ANE build, under a temporary home (`CFFIXED_USER_HOME`) and fresh copies
-of the models at new paths whenever a cold start was needed:
-- **Two caches, not one.** Core ML's bundle cache is under the home
-  (`~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache/<macOS
-  build>/`). The ANE's compiler service also keeps a cache outside any
-  home. With the home emptied, bge-small loaded in 0.85 s (as warm) and
-  nli-minilm's ANE build in 1.77 s (cold: 2.0 s; warm: 0.02 s), so which
-  layer matters differs by model. A copy of a model at a new path compiled
-  from scratch (bge-small 3.47 s), so both layers are per program path.
-- **Per executable name, not path.** The same sidekickd binary copied to
-  another directory hit the cache (nli-minilm ANE 0.02–0.06 s); a copy
-  under another name compiled again (1.83, 2.62 and 3.64 s).
-- **Per process, Core ML loads queue behind an ANE compile; across
-  processes they don't.** With the warm-up in the daemon's own process, a
-  request for an already cached bge-small bucket took 3.2 s to load
-  instead of 0.85 s, because the warm-up was compiling another bucket, and
-  a classifier's model load (its buckets' CPU-only description reads)
-  waited 1.6 s for a compile to finish. In two processes, a cached load
-  took 0.06 s while the other process compiled for 3.7 s.
-- **Two compiles at once barely help.** Two processes each compiling
-  nli-minilm's three cold ANE buckets finished in 14.5 s together, against
-  about 17 s one after the other, each compile 1.5–1.8 times slower.
+ANE build, under a temporary home (`CFFIXED_USER_HOME`), with fresh
+copies of the models at new paths whenever a cold start was needed. A
+separate audit of the cache on the same machine read Core ML's own
+cache-lookup log lines and the ANE compiler's runs rather than timings
+(cited below as "the audit", by section).
+- **Core ML's cache directory is per executable name, home and macOS
+  build:** `<home>/Library/Caches/<executable name>/com.apple.e5rt.e5bundlecache/<build>/`
+  (the audit's §1 and §7). The same sidekickd binary copied to another
+  directory hit it (nli-minilm's ANE build loaded in 0.02–0.06 s); a copy
+  under another name compiled again (1.83, 2.62 and 3.64 s). That the
+  cache is invalidated by a macOS update rests on the directory's name and
+  Apple's documentation, not on an update observed.
+- **On the ANE, the entry also depends on the executable's code-signing
+  identifier** (the audit's §1): the same binary under another identifier
+  recompiles every ANE program, while GPU and CPU entries still hit. A
+  plain `cargo build` signs ad hoc as `sidekickd-<hash>`, which changes
+  with every build, so every rebuilt or upgraded sidekickd finds its ANE
+  buckets cold unless it is signed with a fixed identifier.
+- **An entry is per program path and per weights file:** the audit found
+  the weights file known by its inode and birth time, not its content or
+  modification time, and a copy, clone or hard-link tree at another path a
+  miss (§1). Here a copy of bge-small at a new path compiled from scratch
+  (3.47 s against 0.85 s warm).
+- **The ANE's compiled programs live outside the home,** in the ANE
+  compiler service's system cache; the home holds only a small record per
+  ANE program, and full copies of the weights for GPU and CPU entries
+  (the audit's §2). So emptying the home recompiles an ANE program that
+  goes through Core ML's current loader: nli-minilm's ANE build took 1.77 s
+  (cold 2.0 s, warm 0.02 s). bge-small loaded in 0.85 s even so: its ANE
+  compile on that loader fails over its fused attention (D25) and Core ML
+  falls back to an older loader (the audit's §10), which this didn't
+  depend on.
+- **Compiles run one at a time across the whole machine** (the audit's
+  §4: three compiles took 19.5 s one after another, 19.1 s on threads and
+  18.6 s in separate processes). A long compile delays every process's
+  first ANE load that needs a compile.
+- **Within one process, even a cache hit waits for an ANE compile in
+  progress; in another process it doesn't.** With the warm-up in the
+  daemon's own process, a request for an already cached bge-small bucket
+  took 3.2 s to load instead of 0.85 s, because the warm-up was compiling
+  another bucket, and a classifier's model load (its buckets' CPU-only
+  description reads) waited 1.6 s for a compile to finish. With the
+  compile in another process, a cached load took 0.06 s.
 
 **Decision.**
 - **Warm by loading, in sidekickd.** A warm-up loads a bucket exactly as a
@@ -4149,14 +4171,18 @@ of the models at new paths whenever a cold start was needed:
   buckets resident from startup (#58) is separate.
 - **Three triggers:**
   - **At startup, in the background,** on by default (`warm_on_start`,
-    `--no-warm`). The daemon runs `sidekickd warm` as a child process (the
-    same executable, home and environment, so the same cache) and hands it
+    `--no-warm`). The daemon runs `sidekickd warm` as a child process: its
+    own executable file, so the same name and signing identifier, with the
+    same home and environment, so the same cache. It hands the child
     exactly the buckets and compute units its own requests would load. A
     separate process is what keeps a warm-up compile from holding up
-    requests' loads of other buckets.
+    requests' cache-hit loads of other buckets. A request whose bucket
+    needs a compile still queues behind the one compile running, as it
+    would behind any process's (the audit's §4).
   - **On demand,** `sidekickd warm [<model>…] [--buckets …]
     [--budget-secs N] [--list]`, run as the same user with the same
-    sidekickd the daemon runs.
+    sidekickd binary the daemon runs: another name misses the cache, and
+    another signing identifier misses it on the ANE.
   - **After `sidekickd fetch`** installs a Core ML build the daemon will
     serve, for the buckets fetched (`--no-warm` skips it).
 - **Only what will be served, where it will be served.** The buckets come
@@ -4165,8 +4191,9 @@ of the models at new paths whenever a cold start was needed:
   warmed, and a model moved to the GPU warms on the GPU.
   `[models."<id>"] warm = false` leaves a model out of the automatic
   warm-ups.
-- **One compile at a time,** cold buckets first, then by bucket size,
-  smallest first, since short inputs are the most common. Warm buckets are
+- **One compile at a time,** since the machine runs only one anyway (the
+  audit's §4), cold buckets first, then by bucket size, smallest first,
+  since short inputs are the most common. Warm buckets are
   loaded too, at cache-hit cost, since only a load proves the cache still
   holds them.
 - **A budget.** `warm_budget_secs` (default 1,800; 0 for none) stops the
@@ -4182,8 +4209,10 @@ of the models at new paths whenever a cold start was needed:
   mid-compile.
 - **Cold, warming, warm, failed.** sidekickd keeps a ledger beside Core
   ML's cache (`~/Library/Caches/sidekick/coreml-warm.json`): which buckets
-  this executable name has loaded under this home and macOS build, keyed
-  also by each program's path and its files' sizes and modification times.
+  this executable name and signing identifier has loaded under this home
+  and macOS build, keyed also by each program's path and its files' sizes,
+  inodes and birth times, which is what the audit found the cache to know a
+  weights file by (§1).
   It is sidekick's own record, not Core ML's private layout, which isn't
   read at all. `/v1/models` reports each Core ML model's buckets as
   `compile_cache` (`warm`, `warming`, `cold`, `failed`), and `/health`'s
@@ -4201,8 +4230,11 @@ warm; on the GPU 0.36–0.47 s cold, 0.03–0.04 s warm. During the startup
 warm-up, a request for a cached bucket of another model answered in
 0.34 s, and one for the bucket being compiled waited for that compile
 (about 3.4 s) and loaded it from the cache in 0.87 s, without a second
-compile. The per-OS-build part of the key is from the cache's directory
-name, not from an update.
+compile.
+
+**Not covered.** A compute-plan read (`report_compute_plans`) is its own
+cache entry, a full compile of its own (the audit's §1 and §9), so warming
+doesn't warm it (#145).
 
 ## Hardware verification status
 

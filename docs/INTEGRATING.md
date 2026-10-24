@@ -357,7 +357,9 @@ or SGLang works unchanged. What a host needs to know beyond that:
   the background at startup (D52), so that wait is rare once the startup
   warm-up is done; `/v1/models` shows each model's buckets under
   `compile_cache` (`warm`, `warming`, `cold`, `failed`), and a request
-  for a `warming` bucket waits for that compile. After installing models
+  for a `warming` bucket waits for that compile. The machine runs one ANE
+  compile at a time, so a cold bucket's first request can also wait for
+  another's compile. After installing models
   or a macOS update, `sidekickd warm` compiles them ahead of time. The
   wait doesn't count toward `request_timeout_secs`; the prediction after
   it does. Give the first request a generous client timeout. A 504 with code `timeout` is a
