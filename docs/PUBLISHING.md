@@ -202,10 +202,12 @@ Gemma Terms of Use) are fetched from their source at upload.
 A card holds only what is particular to its model and its builds.
 Everything that is the same for every model lives once in sidekick's docs,
 and the card links there, so a correction is made in one place and no card
-can drift from it: how fetch works and how to install by hand (README),
-what a grade means and the benchmark caveats (docs/MODELS.md), the tier
+can drift from it: how fetch works and how to install by hand
+([RUNNING.md](RUNNING.md#installing-models)), how to call the model
+([API.md](API.md)), what a grade means and the benchmark caveats
+([MODELS.md](MODELS.md)), the tier
 policy and the gate (this document), and how to reproduce a build
-(docs/CONVERTING.md). In order:
+([CONVERTING.md](CONVERTING.md#reproducing-a-published-build)). In order:
 
 | Section | What it holds |
 |---|---|

@@ -87,11 +87,11 @@ SOURCE_KIND = {"mteb": "MTEB results", "mixed": "MTEB results, some tasks self-r
 # Where the card points for everything that isn't particular to it: (file,
 # heading anchor). --check resolves each one against the working tree.
 DOCS = {
-    "fetch": ("README.md", "fetching-a-published-build"),
-    "by-hand": ("README.md", "installing-a-published-build-by-hand"),
-    "embed": ("README.md", "embeddings"),
-    "classify": ("README.md", "classification"),
-    "rerank": ("README.md", "rerank"),
+    "fetch": ("docs/RUNNING.md", "fetching-a-published-build"),
+    "by-hand": ("docs/RUNNING.md", "installing-a-published-build-by-hand"),
+    "embed": ("docs/API.md", "embeddings"),
+    "classify": ("docs/API.md", "classification"),
+    "rerank": ("docs/API.md", "rerank"),
     "onnx": ("docs/MODELS.md", "onnx-runtime-on-the-cpu-onnx-cpu"),
     "grades-embed": ("docs/MODELS.md", "confidence-grades-the-parity-suite"),
     "grades-classify": ("docs/MODELS.md", "classifiers-v1classify"),
