@@ -1,4 +1,5 @@
-"""tools/doclinks.py: pinning a shipped document's links to a release."""
+"""tools/doclinks.py: the repository's link check, and pinning a shipped
+document's links to a release."""
 
 import tempfile
 import unittest
@@ -49,6 +50,36 @@ class PinTest(unittest.TestCase):
             self.pin("[gone](docs/GONE.md)")
         with self.assertRaisesRegex(ValueError, "leaves the repository"):
             self.pin("[out](../elsewhere.md)")
+
+
+class CheckTest(unittest.TestCase):
+    def test_anchors_are_githubs(self):
+        text = (
+            "# Title\n"
+            "## D13 — Default bind `127.0.0.1:8790`, `/health` unauthenticated\n"
+            "## Prompts (`input_type`)\n"
+            "## Prompts (`input_type`)\n"
+            "```sh\n# not a heading\n```\n"
+            '<a name="kept"></a>\n'
+        )
+        self.assertEqual(
+            doclinks.anchors(text),
+            {"title", "d13--default-bind-1270018790-health-unauthenticated", "prompts-input_type",
+             "prompts-input_type-1", "kept"},
+        )
+
+    def test_broken_files_and_anchors_are_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "docs").mkdir()
+            (root / "docs" / "A.md").write_text("# A\n## Here\n")
+            (root / "README.md").write_text(
+                "[ok](docs/A.md#here) [web](https://example.com/#x) [self](#readme)\n"
+                "# README\n[gone](docs/B.md) [bad](docs/A.md#there)\n"
+                "```\n[in code](nowhere.md)\n```\n"
+            )
+            problems = doclinks.check(root)
+        self.assertEqual(problems, ["README.md:3: docs/B.md: no such file", "README.md:3: docs/A.md#there: no such anchor"])
 
 
 if __name__ == "__main__":

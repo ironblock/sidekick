@@ -16,7 +16,8 @@ jobs:
     # check validates the publishing data: the licence audit
     # (docs/data/licences.toml) and the checksum ledger
     # (docs/data/ledger.json). Then the publishing tools' tests, and every
-    # model card the ledger allows must render.
+    # model card the ledger allows must render. Last, every relative link
+    # and anchor in the repository's Markdown must resolve.
     name: MODELS.md matches the results file
     runs-on: ubuntu-24.04
     steps:
@@ -27,6 +28,8 @@ jobs:
         run: |
           python3 -m unittest discover -s tools/tests -t tools -v
           python3 tools/model_card.py --check
+      - name: Links in the docs
+        run: python3 tools/doclinks.py check
 
   task-corpora:
     # The verification corpus (tools/tasks): its committed recipe, claims,
