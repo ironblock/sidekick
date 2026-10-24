@@ -16829,5 +16829,382 @@
     }
    ]
   }
+ },
+ "licences": {
+  "all-minilm-l6-v2": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/blob/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/README.md",
+   "tier": "2a",
+   "concerns": [
+    "non-commercial-data",
+    "copyleft-data",
+    "unlicensed-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "bge-small-en-v1.5": {
+   "licence": "MIT",
+   "licence_name": "MIT",
+   "licence_spdx": true,
+   "licence_url": "https://github.com/FlagOpen/FlagEmbedding/blob/fd1a2bdf69488ffebe0327999d4400d8c8058a0b/LICENSE",
+   "tier": "2a",
+   "concerns": [
+    "undisclosed-data"
+   ],
+   "training_disclosure": "undisclosed",
+   "custom_terms": []
+  },
+  "e5-small-v2": {
+   "licence": "MIT",
+   "licence_name": "MIT",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/intfloat/e5-small-v2/blob/ffb93f3bd4047442299a41ebb6fa998a38507c52/README.md",
+   "tier": "2a",
+   "concerns": [
+    "non-commercial-data",
+    "copyleft-data",
+    "unlicensed-data",
+    "undisclosed-data"
+   ],
+   "training_disclosure": "partial",
+   "custom_terms": []
+  },
+  "gte-modernbert-base": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/Alibaba-NLP/gte-modernbert-base/blob/e7f32e3c00f91d699e8c43b53106206bcc72bb22/README.md",
+   "tier": "2a",
+   "concerns": [
+    "non-commercial-data",
+    "copyleft-data",
+    "unlicensed-data",
+    "undisclosed-data"
+   ],
+   "training_disclosure": "partial",
+   "custom_terms": []
+  },
+  "embeddinggemma-300m": {
+   "licence": "Gemma",
+   "licence_name": "Gemma Terms of Use",
+   "licence_spdx": false,
+   "licence_url": "https://ai.google.dev/gemma/terms",
+   "tier": "2b",
+   "concerns": [
+    "undisclosed-data",
+    "custom-terms",
+    "use-policy"
+   ],
+   "training_disclosure": "undisclosed",
+   "custom_terms": [
+    {
+     "name": "Gemma Terms of Use (last modified 2026-04-01; Appendix lists EmbeddingGemma)",
+     "url": "https://ai.google.dev/gemma/terms"
+    },
+    {
+     "name": "Gemma Prohibited Use Policy (last modified 2024-02-21)",
+     "url": "https://ai.google.dev/gemma/prohibited_use_policy"
+    }
+   ]
+  },
+  "embeddinggemma-2": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://ai.google.dev/gemma/docs/gemma_4_license",
+   "tier": "2b",
+   "concerns": [
+    "undisclosed-data",
+    "use-policy"
+   ],
+   "training_disclosure": "undisclosed",
+   "custom_terms": [
+    {
+     "name": "Gemma Prohibited Use Policy (required by the model card)",
+     "url": "https://ai.google.dev/gemma/prohibited_use_policy"
+    }
+   ]
+  },
+  "f2llm-v2-160m": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/codefuse-ai/F2LLM-v2-160M/blob/4ffe22c31406fc321b65a05b15563d38275ee51f/README.md",
+   "tier": "2a",
+   "concerns": [
+    "non-commercial-data",
+    "copyleft-data",
+    "unlicensed-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "lfm2.5-embedding-350m": {
+   "licence": "LFM-1.0",
+   "licence_name": "LFM Open License v1.0",
+   "licence_spdx": false,
+   "licence_url": "https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M/blob/f35ae2c91d687658dbf1f2b449382f0b019b9808/LICENSE",
+   "tier": "3",
+   "concerns": [
+    "undisclosed-data",
+    "custom-terms"
+   ],
+   "training_disclosure": "undisclosed",
+   "custom_terms": [
+    {
+     "name": "LFM Open License v1.0",
+     "url": "https://huggingface.co/LiquidAI/LFM2.5-Embedding-350M/blob/f35ae2c91d687658dbf1f2b449382f0b019b9808/LICENSE"
+    }
+   ]
+  },
+  "qwen3-embedding-0.6b": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/blob/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/README.md",
+   "tier": "2a",
+   "concerns": [
+    "non-commercial-data",
+    "copyleft-data",
+    "undisclosed-data"
+   ],
+   "training_disclosure": "partial",
+   "custom_terms": []
+  },
+  "nlptown-sentiment": {
+   "licence": "MIT",
+   "licence_name": "MIT",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment/blob/8f6f4e3a8f70be4b65d3a4a8762b6d781cda240d/README.md",
+   "tier": "2a",
+   "concerns": [
+    "undisclosed-data"
+   ],
+   "training_disclosure": "undisclosed",
+   "custom_terms": []
+  },
+  "laya-en": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://github.com/NandhaKishorM/laya/blob/6f0496f797dc7127265d62e1543a62de507d943c/LICENSE",
+   "tier": "2a",
+   "concerns": [
+    "undisclosed-data"
+   ],
+   "training_disclosure": "undisclosed",
+   "custom_terms": []
+  },
+  "laya-typed-decisions": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://github.com/NandhaKishorM/laya/blob/6f0496f797dc7127265d62e1543a62de507d943c/LICENSE",
+   "tier": "2a",
+   "concerns": [
+    "undisclosed-data",
+    "unnamed-synthetic-generator"
+   ],
+   "training_disclosure": "partial",
+   "custom_terms": []
+  },
+  "julia-1": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/SupersonicLabs/Julia-1/blob/a85b127321d580d65176c89ced8273f305745d85/README.md",
+   "tier": "2a",
+   "concerns": [
+    "undisclosed-data"
+   ],
+   "training_disclosure": "undisclosed",
+   "custom_terms": []
+  },
+  "gliner2.5-decide": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/fastino/GLiNER2.5-Decide/blob/5a7adf72a23b4d311abae6ce050d7f0012bb3416/README.md",
+   "tier": "2a",
+   "concerns": [
+    "undisclosed-data"
+   ],
+   "training_disclosure": "undisclosed",
+   "custom_terms": []
+  },
+  "lumma-fev-0.1b": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/FrontiersMind/Lumma-fev-0.1b/blob/085f4705aa860a6404d6cc3ff17de8a2969ac0f4/LICENSE",
+   "tier": "2a",
+   "concerns": [
+    "undisclosed-data",
+    "unnamed-synthetic-generator"
+   ],
+   "training_disclosure": "undisclosed",
+   "custom_terms": []
+  },
+  "agent-jev": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://github.com/malevrigns/agent-jev/blob/ca6723b8b184b3cf380f7765089298dd5f1de8d6/LICENSE",
+   "tier": "2a",
+   "concerns": [
+    "unnamed-synthetic-generator"
+   ],
+   "training_disclosure": "partial",
+   "custom_terms": []
+  },
+  "ms-marco-minilm-l6-v2": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/README.md",
+   "tier": "2a",
+   "concerns": [
+    "non-commercial-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "nli-minilm2-l6-h768": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/cross-encoder/nli-MiniLM2-L6-H768/blob/b95119ce93d3e065de6214e38cd4a97b0f2f2c6d/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "nli-deberta-v3-xsmall": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/cross-encoder/nli-deberta-v3-xsmall/blob/a150876415327c80daeff35ca6f68f5ed8cf5c24/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "nli-deberta-v3-small": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/cross-encoder/nli-deberta-v3-small/blob/fa2804872c3b4bd748f38c0185cc85775361e735/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "nli-deberta-v3-base": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/cross-encoder/nli-deberta-v3-base/blob/6c749ce3425cd33b46d187e45b92bbf96ee12ec7/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "roberta-large-mnli": {
+   "licence": "MIT",
+   "licence_name": "MIT",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/FacebookAI/roberta-large-mnli/blob/2a8f12d27941090092df78e4ba6f0928eb5eac98/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "nli-minilm2-l6-h768-ane": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/cross-encoder/nli-MiniLM2-L6-H768/blob/b95119ce93d3e065de6214e38cd4a97b0f2f2c6d/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "deberta-v3-base-zeroshot-v2.0-c": {
+   "licence": "MIT",
+   "licence_name": "MIT",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/MoritzLaurer/deberta-v3-base-zeroshot-v2.0-c/blob/bddf8c5411c34ac3565e16e04384fd68b2618dda/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "deberta-v3-large-zeroshot-v2.0-c": {
+   "licence": "MIT",
+   "licence_name": "MIT",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/MoritzLaurer/deberta-v3-large-zeroshot-v2.0-c/blob/b2730f16019076bb0009481121efbe4705e0e378/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "roberta-large-zeroshot-v2.0-c": {
+   "licence": "MIT",
+   "licence_name": "MIT",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/MoritzLaurer/roberta-large-zeroshot-v2.0-c/blob/4c24ed4bba5af8d3162604abc2a141b9d2183ecc/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "bge-m3-zeroshot-v2.0-c": {
+   "licence": "MIT",
+   "licence_name": "MIT",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/MoritzLaurer/bge-m3-zeroshot-v2.0-c/blob/705510dfe0f35d223a4bf6f5d2695ec5fd162341/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  },
+  "modernbert-large-zeroshot-v2.0": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/MoritzLaurer/ModernBERT-large-zeroshot-v2.0/blob/a51e07b524299e309dd2b88d48b0cfa2bd9ec598/README.md",
+   "tier": "2a",
+   "concerns": [
+    "non-commercial-data",
+    "copyleft-data",
+    "unlicensed-data"
+   ],
+   "training_disclosure": "full",
+   "custom_terms": []
+  }
  }
 }
