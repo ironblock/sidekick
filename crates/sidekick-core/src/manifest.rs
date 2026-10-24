@@ -65,7 +65,7 @@ pub enum Pooling {
 /// `compute_units`, `cpu_and_ne` unless it says otherwise. The ANE
 /// preference is sidekick's default because it keeps background work off
 /// the GPU (D14); a model the ANE runs badly can ask for another
-/// (docs/design/classify.md, "Compute units").
+/// (docs/BACKENDS.md, "Compute units").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum ComputeUnits {
     /// `.all`: Core ML picks among CPU, GPU and ANE.
@@ -214,7 +214,7 @@ pub struct SeqCap {
 
 /// `[placement]`: where Core ML placed each bucket's operations when the
 /// converter read its compute plan, and on what machine. The daemon reports
-/// it per bucket without reading a plan itself; see docs/design/classify.md,
+/// it per bucket without reading a plan itself; see docs/BACKENDS.md,
 /// "Where Core ML places operations".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedPlacement {

@@ -90,8 +90,8 @@ def onnx_sidecar_text(manifest_path):
     return sidecar.read_text() if sidecar.exists() else ""
 
 
-# A manifest's `compute_units` ("cpu_and_ne" when absent; docs/design/
-# classify.md, "Compute units") and the Core ML compute units it names.
+# A manifest's `compute_units` ("cpu_and_ne" when absent; docs/BACKENDS.md,
+# "Compute units") and the Core ML compute units it names.
 COMPUTE_UNITS = {"cpu_and_ne": "CPU_AND_NE", "cpu_and_gpu": "CPU_AND_GPU", "cpu_only": "CPU_ONLY", "all": "ALL"}
 
 
