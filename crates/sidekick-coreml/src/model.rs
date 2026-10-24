@@ -376,24 +376,58 @@ pub fn cache_home() -> std::path::PathBuf {
 /// Core ML's ANE cache entries depend on: the same executable under another
 /// identifier recompiles every ANE program. A plain `cargo build` signs ad
 /// hoc with an identifier that changes with every build. `None` when the
-/// kernel doesn't report one.
+/// process isn't signed or Security can't say.
+///
+/// Through the Security framework's public code-signing API:
+/// `SecCodeCopySelf`, then `kSecCodeInfoIdentifier` from
+/// `SecCodeCopySigningInformation`. All of it exists since macOS 10.5, so
+/// linking it strongly is safe on every macOS sidekick supports.
 pub fn signing_identifier() -> Option<String> {
+    use std::ffi::{c_char, c_void, CStr};
+    type CFTypeRef = *const c_void;
+    #[link(name = "Security", kind = "framework")]
     extern "C" {
-        // <sys/codesign.h>; in libSystem since macOS 10.5.
-        fn csops(pid: i32, ops: u32, useraddr: *mut std::ffi::c_void, usersize: usize) -> i32;
+        static kSecCodeInfoIdentifier: CFTypeRef;
+        fn SecCodeCopySelf(flags: u32, code: *mut CFTypeRef) -> i32;
+        fn SecCodeCopySigningInformation(code: CFTypeRef, flags: u32, info: *mut CFTypeRef) -> i32;
     }
-    const CS_OPS_IDENTITY: u32 = 11;
-    // A blob: big-endian magic and length, then the NUL-terminated identifier.
-    let mut buf = vec![0u8; 1024];
-    let rc = unsafe { csops(std::process::id() as i32, CS_OPS_IDENTITY, buf.as_mut_ptr().cast(), buf.len()) };
-    if rc != 0 {
-        return None;
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFDictionaryGetValue(dict: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
+        fn CFStringGetCString(string: CFTypeRef, buffer: *mut c_char, size: isize, encoding: u32) -> u8;
+        fn CFGetTypeID(cf: CFTypeRef) -> usize;
+        fn CFStringGetTypeID() -> usize;
+        fn CFRelease(cf: CFTypeRef);
     }
-    let len = (u32::from_be_bytes(buf[4..8].try_into().ok()?) as usize).min(buf.len());
-    let text = buf.get(8..len)?;
-    let end = text.iter().position(|&b| b == 0).unwrap_or(text.len());
-    let id = String::from_utf8_lossy(&text[..end]).into_owned();
-    (!id.is_empty()).then_some(id)
+    const NO_FLAGS: u32 = 0; // kSecCSDefaultFlags
+    const UTF8: u32 = 0x0800_0100; // kCFStringEncodingUTF8
+
+    // SAFETY: each Copy result is owned here and released once; the
+    // dictionary's value is borrowed while the dictionary is alive, and
+    // checked to be a CFString before it is read as one.
+    unsafe {
+        let mut code: CFTypeRef = std::ptr::null();
+        if SecCodeCopySelf(NO_FLAGS, &mut code) != 0 || code.is_null() {
+            return None;
+        }
+        let mut info: CFTypeRef = std::ptr::null();
+        let status = SecCodeCopySigningInformation(code, NO_FLAGS, &mut info);
+        CFRelease(code);
+        if status != 0 || info.is_null() {
+            return None;
+        }
+        let value = CFDictionaryGetValue(info, kSecCodeInfoIdentifier);
+        let mut buf = [0 as c_char; 512];
+        let read = !value.is_null()
+            && CFGetTypeID(value) == CFStringGetTypeID()
+            && CFStringGetCString(value, buf.as_mut_ptr(), buf.len() as isize, UTF8) != 0;
+        CFRelease(info);
+        if !read {
+            return None;
+        }
+        let id = CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned();
+        (!id.is_empty()).then_some(id)
+    }
 }
 
 /// Compile if needed, then load with the given compute units.
@@ -519,6 +553,11 @@ mod tests {
         if cfg!(target_arch = "aarch64") {
             let id = super::signing_identifier().expect("an identifier");
             assert!(id.starts_with("sidekick_coreml"), "{id}");
+            // The same identifier codesign reads from the file.
+            let exe = std::env::current_exe().unwrap();
+            let out = std::process::Command::new("/usr/bin/codesign").arg("-dv").arg(&exe).output().unwrap();
+            let shown = String::from_utf8_lossy(&out.stderr);
+            assert!(shown.lines().any(|l| l == format!("Identifier={id}")), "{shown}");
         }
     }
 
