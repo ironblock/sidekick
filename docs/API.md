@@ -45,7 +45,7 @@ OpenAI client may send any. With one
 ([CONFIG.md](CONFIG.md#the-config-file)), every route except `/health`
 needs `Authorization: Bearer <key>`, `/v1/models` included; a missing or
 wrong key is a 401 with code `invalid_api_key`. `/health` stays open for
-probes and reports nothing beyond availability
+probes, and carries no credentials
 ([D13](DECISIONS.md#d13--default-bind-1270018790-health-unauthenticated)).
 
 ## Errors
