@@ -65,8 +65,11 @@ enum Command {
     /// Load Core ML models' buckets once, so that Core ML's compile cache
     /// holds them and no request waits on a compile (D52). Run it with the
     /// sidekickd binary the daemon runs, as the same user: Core ML's cache
-    /// is per executable name and user, and on the ANE per code-signing
-    /// identifier. The daemon also warms at startup, in the background
+    /// is per user, executable name and, on the ANE, code-signing
+    /// identifier, so warming helps only a build signed the same way
+    /// (release archives are; a source build after
+    /// tools/sign_sidekickd.sh). The daemon also warms at startup, in the
+    /// background
     Warm(sidekick_server::warm::WarmArgs),
 }
 

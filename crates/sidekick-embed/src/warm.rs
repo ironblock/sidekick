@@ -358,7 +358,7 @@ impl Ledger {
         self.read_at = modified;
     }
 
-    /// A program's files' paths, lengths and modification times, read once
+    /// A program's files' paths, lengths, inodes and birth times, read once
     /// per process; `None` when it can't be read.
     fn fingerprint(&mut self, program: &Path) -> Option<String> {
         if let Some(f) = self.fingerprints.get(program) {
@@ -693,12 +693,26 @@ mod tests {
         let resigned: Loads<String> = Loads::default();
         resigned.set_ledger(Ledger::open(&cache, exe, home, "26A1").signed_as(Some("sidekickd-0123")));
         assert_eq!(resigned.status(&key).state, State::Cold);
-        // A program replaced in place (fetched again): cold.
-        std::thread::sleep(Duration::from_millis(5));
-        std::fs::write(key.paths[0].join("model.mil"), "rebuilt").unwrap();
-        let loads: Loads<String> = Loads::default();
-        loads.set_ledger(Ledger::open(&cache, exe, home, "26A1"));
-        assert_eq!(loads.status(&key).state, State::Cold);
+        let reopened = || {
+            let loads: Loads<String> = Loads::default();
+            loads.set_ledger(Ledger::open(&cache, exe, home, "26A1"));
+            loads.status(&key).state
+        };
+        // A new modification time alone: Core ML still hits, so still warm.
+        let file = key.paths[0].join("model.mil");
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(SystemTime::now() + Duration::from_secs(60))
+            .unwrap();
+        assert_eq!(reopened(), State::Warm, "a modification time isn't part of the key");
+        // The same bytes in a new file (a new inode and birth time), as a
+        // fetch or a copy back puts them: cold.
+        let bytes = std::fs::read(&file).unwrap();
+        std::fs::remove_file(&file).unwrap();
+        std::fs::write(&file, bytes).unwrap();
+        assert_eq!(reopened(), State::Cold, "a new inode is a new entry");
 
         // Recording on a new build drops the old build's entries.
         let upgraded: Loads<String> = Loads::default();
