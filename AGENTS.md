@@ -11,6 +11,12 @@ built. Write commit messages, comments, and documentation for that reader.
 Keep the tone professional and each document self-contained: explain what a
 thing is and why, not what it was called while it was being built.
 
+## One home for each fact
+
+Each fact in the docs has one canonical home; every other document links
+to it rather than copying it, so a correction is made once and copies
+can't drift apart.
+
 ## Never commit
 
 - **Local filesystem paths** — home directories, temp/scratch directories, or
