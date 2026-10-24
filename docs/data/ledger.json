@@ -1062,7 +1062,14 @@
      "report": "coreml-arm64-bge-small-en-v1.5.json"
     }
    ],
-   "published": [],
+   "published": [
+    {
+     "repo": "sidekickd/bge-small-en-v1.5-coreml",
+     "revision": "1c487fc03546f7fe4c52f16b6fcf8ee9921609a5",
+     "date": "2026-10-24",
+     "sidekick": "0.16.0"
+    }
+   ],
    "recorded": "2026-10-23",
    "evidence": "hashed",
    "note": "Shared weights (D49): one weights file, held by all three buckets. The converter's gates all passed, the shared-weights gates included: every compiled weights file byte-identical to the union file, every program equal to the separate build's but for weight offsets, and outputs bit-identical to the separate build on CPU, GPU and ANE."
@@ -1130,7 +1137,14 @@
      "report": "native-arm64-bge-small-en-v1.5-hashed.json"
     }
    ],
-   "published": [],
+   "published": [
+    {
+     "repo": "sidekickd/bge-small-en-v1.5-onnx",
+     "revision": "a94adfe28bdbac1909b54a2f42262eb5617b4292",
+     "date": "2026-10-24",
+     "sidekick": "0.16.0"
+    }
+   ],
    "recorded": "2026-10-23",
    "evidence": "hashed",
    "note": "Exported with tools/convert_bge_small.py --format onnx before the ledger existed; restored from its verified archive and hashed. The graph's producer_version records PyTorch 2.13.0, and the files' modification time the export date. The exporting commit, Python version, OS and machine weren't recorded. Graded from these exact files (file hashes in the parity report)."
@@ -5074,7 +5088,14 @@
      "report": "coreml-arm64-qwen3-embedding-0.6b-2048.json"
     }
    ],
-   "published": [],
+   "published": [
+    {
+     "repo": "sidekickd/qwen3-embedding-0.6b-coreml",
+     "revision": "ef4a1aeeacc0f9be830d22cf9b36e29f7dad948e",
+     "date": "2026-10-24",
+     "sidekick": "0.16.0"
+    }
+   ],
    "recorded": "2026-10-23",
    "evidence": "hashed",
    "note": "Shared weights (D49): each chunk's weights file is held by all five buckets. The converter's gates all passed, the shared-weights gates included: every compiled weights file byte-identical to its chunk's union file, and every program's outputs bit-identical to the separate build on CPU, GPU and ANE. The .mlpackage sources were kept (--keep-packages). Converted at the commit before this change was rebased onto main; the converter's code is the same at the commit recorded. The manifest was installed again after the conversion for a manifest-only change, cpu_max_seq_len = 512 (D33's amendment): the committed manifest with the converter's [chunking] and [placement] tables. The programs are the conversion's."
@@ -5674,7 +5695,14 @@
      "report": "native-arm64-qwen3-embedding-0.6b-fp16w-hashed.json"
     }
    ],
-   "published": [],
+   "published": [
+    {
+     "repo": "sidekickd/qwen3-embedding-0.6b-onnx",
+     "revision": "5a1cebe1c312dd69976c41f58be7ae07f157c212",
+     "date": "2026-10-24",
+     "sidekick": "0.16.0"
+    }
+   ],
    "recorded": "2026-10-23",
    "evidence": "hashed",
    "note": "Exported with tools/convert_qwen3_embedding.py --format onnx before the ledger existed, and restored from its verified archive. The fp32 export with every float weight of two or more dimensions stored in fp16 behind a cast, as --onnx-weights fp16 now does; ONNX Runtime computes in fp32. The graph is model_fp16w.onnx, since its external weights file is named inside it. Graph, weights and tokenizer are byte-identical to ledger build qwen3-embedding-0.6b/onnx/fp16-weights/0134c8bf6715. The archived manifest.toml was stale (max_seq_len 512, no named prompts), so this build's was regenerated with the exporter's own manifest_text from the committed manifest.toml and onnx.toml. Graded from these exact files (file hashes in the parity report)."
@@ -5816,7 +5844,14 @@
      "report": "native-arm64-qwen3-embedding-0.6b-4096-hashed.json"
     }
    ],
-   "published": [],
+   "published": [
+    {
+     "repo": "sidekickd/qwen3-embedding-0.6b-onnx",
+     "revision": "5a1cebe1c312dd69976c41f58be7ae07f157c212",
+     "date": "2026-10-24",
+     "sidekick": "0.16.0"
+    }
+   ],
    "recorded": "2026-10-23",
    "evidence": "hashed",
    "note": "Exported with tools/convert_qwen3_embedding.py --format onnx before the ledger existed, and restored from its verified archive. The graph, its external weights, the tokenizer and onnx_gates.json are byte-identical to ledger build qwen3-embedding-0.6b/onnx/fp32/3d8d301ded40. The graph's producer_version records PyTorch 2.13.0, and the files' modification time the export date. The archived manifest.toml was stale (max_seq_len 512, no named prompts), so this build's was regenerated with the exporter's own manifest_text from the committed manifest.toml and onnx.toml. Graded from these exact files (file hashes in the parity report)."
