@@ -66,12 +66,12 @@ process is your host app. So on macOS 27 sidekick refuses to load such a
 model: `sk_embed` returns NULL with an error naming the input, and the
 daemon answers with an error. Other flexible-shape artifacts load with a
 warning and run on the CPU, off the ANE. `ane_check` rejects all of them
-without running them (docs/MODELS.md, D27).
+without running them (docs/MODELS.md, [D27](DECISIONS.md#d27--refuse-multi-shape-core-ml-models-at-load-on-macos-27)).
 
 ## Path 1: the daemon
 
 **Authentication.** A daemon configured with an `api_key` requires
-`Authorization: Bearer <key>` on every route except `/health` (D13), so a
+`Authorization: Bearer <key>` on every route except `/health` ([D13](DECISIONS.md#d13--default-bind-1270018790-health-unauthenticated)), so a
 probe that reads `/v1/models` without the key gets a 401 with code
 `invalid_api_key`. `/health` stays open: probe it first, and treat a 401
 from the routes after it as "configured, but not for this client".
@@ -244,7 +244,7 @@ or SGLang works unchanged. What a host needs to know beyond that:
   answer `true` with a 400 and accept `false`, the default.
 - **NLI models** (those whose `extensions` include `hypothesis_template`)
   are NLI cross-encoders scored as Hugging Face's zero-shot pipeline
-  scores them (D41): each label goes into a hypothesis (the listing's
+  scores them ([D41](DECISIONS.md#d41--the-nli-format-nli-cross-encoders-as-zero-shot-classifiers)): each label goes into a hypothesis (the listing's
   `hypothesis_template`, or your own with one `{}`), and each (text,
   hypothesis) pair is its own prediction, so latency grows with the
   number of labels. One label is a yes/no question, scored against
@@ -257,7 +257,7 @@ or SGLang works unchanged. What a host needs to know beyond that:
   keyed by the listing's `nli_classes`. Three-way models give
   `entailment`, `neutral` and `contradiction`; the two-way zeroshot-v2.0
   models give `entailment` and `not_entailment`, and can't make that
-  distinction (D47). It needs sidekickd 0.15.0 or later, and a manifest
+  distinction ([D47](DECISIONS.md#d47--an-nli-models-class-probabilities-on-request-nli_probs)). It needs sidekickd 0.15.0 or later, and a manifest
   that names the model's classes.
 - **Over-length input.** A text-classification input longer than the
   model's maximum is a 400 unless you send `truncate_prompt_tokens` (`-1`

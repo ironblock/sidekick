@@ -43,7 +43,7 @@ compiles ahead of requests, is in
 ### Compute units
 
 A Core ML model loads with `.cpuAndNeuralEngine` unless its manifest asks
-otherwise (D14): the ANE keeps background work off the GPU. Some models run
+otherwise ([D14](DECISIONS.md#d14--compute-units-default-to-cpuandneuralengine)): the ANE keeps background work off the GPU. Some models run
 badly there. GLiNER2.5-Decide grades A on the GPU at about 34 ms per input,
 but C on the ANE, where a prediction takes about 0.11, 0.34 and 1.28 s at
 128, 256 and 512 tokens, because its DeBERTa relative-position rewrite is
@@ -66,7 +66,7 @@ names its compute units with an optional top-level key, in
   the key on one is a validation error.
 - An unknown value fails validation, so the registry skips the manifest
   with the reason (in `/health`'s `skipped_models`) and loads the rest.
-- D27's shape guard runs for every choice: it reads the model description,
+- [D27](DECISIONS.md#d27--refuse-multi-shape-core-ml-models-at-load-on-macos-27)'s shape guard runs for every choice: it reads the model description,
   which doesn't depend on compute units, so a multi-shape artifact is
   refused on macOS 27 whatever the manifest asks for.
 - The parity suite grades every path regardless. The configured one is the
@@ -82,18 +82,18 @@ with 0.964 GiB of weights ran on the ANE and one with 1.022 GiB didn't, and
 coremltools documents a 1 GB Neural Engine limit. A model served on the
 ANE (`compute_units` `cpu_and_ne` or `all`) whose compiled weights exceed
 `MAX_ANE_PROGRAM_WEIGHT_BYTES` (1 GiB) would look ANE-served and not be,
-so the registry skips it, as D28 skips any bad manifest:
+so the registry skips it, as [D28](DECISIONS.md#d28--classification-post-v1classify-vllms-contract-exactly) skips any bad manifest:
 - Each bucket is its own program, and each is checked. The weights are
   the files under the artifact's `weights/` directory (an `.mlmodelc`, or
   `Data/com.apple.CoreML/weights/` in an `.mlpackage`), measured as the
   converters measure them (`tools/sidekick_convert/plan.py`), from file
   metadata, without reading them.
 - The reason, in `/health`'s `skipped_models` and in `sk_pool_skipped`,
-  names the program (a bucket, or one chunk of a chunked bucket, D37), its
+  names the program (a bucket, or one chunk of a chunked bucket, [D37](DECISIONS.md#d37--chunked-buckets-a-chain-of-programs-under-the-anes-weight-limit)), its
   weights and the fixes: convert it in chunks under the limit (`--chunks
   auto`), serve it on the GPU (`compute_units = "cpu_and_gpu"`), convert a
   quantized variant (`--int8-embedding`), or load it anyway. When the
-  daemon config's `[models."<id>"]` chose the ANE (D38), the reason says
+  daemon config's `[models."<id>"]` chose the ANE ([D38](DECISIONS.md#d38--the-operator-may-choose-a-models-compute-units)), the reason says
   so and names removing that override first.
 - Loading it anyway, for experimentation: `ane_weight_limit = "ignore"`
   in the manifest (top level, either manifest file), or `sidekickd
@@ -111,7 +111,7 @@ but a model then gives slightly different answers for the same input in
 different buckets: up to 0.021 in probability between Lumma-fev's 1,024-
 and 2,048-token buckets, 0.018 for agent-jev. Running the matmul in slices
 restores invariance only at about 13 times the error, so no conversion
-fixes it (D33 records the measurement; `tools/repro_cpu_matmul_accumulation.py`
+fixes it ([D33](DECISIONS.md#d33--cap-cpu-served-models-at-1024-tokens) records the measurement; `tools/repro_cpu_matmul_accumulation.py`
 reproduces it standalone).
 Up to 1,024 tokens the CPU is bucket-invariant, and the GPU and the ANE
 are unaffected by it (the ANE has a cap of its own, below).
@@ -150,13 +150,13 @@ So a model served on the CPU runs no longer than
 ### The ANE sequence cap
 
 Long buckets compile slowly for the ANE, and past some length they fail.
-Measured on Qwen3-Embedding-0.6B (M1 Max, macOS 27.0; D46): its 2,048-token
+Measured on Qwen3-Embedding-0.6B (M1 Max, macOS 27.0; [D46](DECISIONS.md#d46--how-far-each-build-goes-toward-its-models-context)): its 2,048-token
 bucket compiled for the ANE in 151 s and graded A there, while its
 4,096-token bucket took 29 minutes to compile and then failed 7 of 51
 predictions ("Unable to compute the prediction using ML Program"). The GPU
 served the same artifact at 4,096 tokens in under a second, graded A.
 
-So a model served on the ANE runs no longer than its ANE cap (D48):
+So a model served on the ANE runs no longer than its ANE cap ([D48](DECISIONS.md#d48--cap-ane-served-models-at-2048-tokens)):
 `ane_max_seq_len` from its manifest, else `DEFAULT_ANE_MAX_SEQ` (2,048
 tokens):
 - For `compute_units = "cpu_and_ne"` (the default) or `"all"` and a
@@ -167,7 +167,7 @@ tokens):
   capped window, and a model with no bucket within the cap is skipped with
   the fixes as the reason. The buckets past it are never loaded or
   compiled for the ANE.
-- `all` is capped too, by reasoning rather than measurement (D46 measured
+- `all` is capped too, by reasoning rather than measurement ([D46](DECISIONS.md#d46--how-far-each-build-goes-toward-its-models-context) measured
   `cpu_and_ne` only): Core ML compiles a bucket for the ANE whenever it
   places operations there, and the long compile is expected to come with
   it. The CPU cap reasons the other way, leaving `all` alone because Core
@@ -178,7 +178,7 @@ tokens):
   `cpu_and_ne` on the CPU, so it gets the CPU cap instead (1,024 tokens,
   `cpu_seq_limit` honoured, `ane_max_seq_len` ignored), and `all`, which
   runs on the CPU and GPU there, isn't capped.
-- `/v1/models` shows it as `seq_cap`, whose `reason` names D48 and says
+- `/v1/models` shows it as `seq_cap`, whose `reason` names [D48](DECISIONS.md#d48--cap-ane-served-models-at-2048-tokens) and says
   whether the manifest set the cap; `/health` lists it under `seq_caps`,
   and the daemon logs it at startup.
 - `ane_max_seq_len` (top level, either manifest file, coreml backend only,
@@ -187,7 +187,7 @@ tokens):
   serve every bucket on the ANE.
 - To serve a model's long inputs, serve it on the GPU (`compute_units =
   "cpu_and_gpu"` in its manifest, or `[models."<id>"] compute_units` in the
-  daemon config, D38). For measurement, `sidekickd --ignore-ane-seq-cap`
+  daemon config, [D38](DECISIONS.md#d38--the-operator-may-choose-a-models-compute-units)). For measurement, `sidekickd --ignore-ane-seq-cap`
   (`ignore_ane_seq_cap = true` in the config) lifts the cap for every
   model.
 - The parity suite grades the ane path under the same cap: its ane worker
@@ -204,7 +204,7 @@ tokens):
 device runs it, and an operation the ANE can't run moves to the CPU or the
 GPU without an error. The parity suite gates that before a model ships;
 the daemon also reports it, per bucket, for the models it serves. Each
-bucket is its own compiled program (D15), and `sidekick-buckets` names the
+bucket is its own compiled program ([D15](DECISIONS.md#d15--per-bucket-static-artifacts-pooling-baked-into-the-model)), and `sidekick-buckets` names the
 one that answered each input, so a response can be matched to its
 program's placement.
 
@@ -218,7 +218,7 @@ sources:
   operations differently. The converter records a plan for the units the
   manifest serves with and, as an alternative, for the other of
   `cpu_and_ne` and `cpu_and_gpu`; the one for the units the model runs on
-  is reported, so a model the operator moves (D38) keeps its report. A
+  is reported, so a model the operator moves ([D38](DECISIONS.md#d38--the-operator-may-choose-a-models-compute-units)) keeps its report. A
   plan recorded only for other units isn't reported.
 - `live`, with `report_compute_plans = true`: the daemon reads the plan
   itself after a bucket's first load. A live plan takes precedence over a
@@ -228,7 +228,7 @@ sources:
 `/health` adds, under `compute_plans`, each bucket's unassigned operations
 (constants and other bookkeeping), the operators off the ANE, where a
 recorded plan was measured, why a live read failed, and, for a chunked
-bucket (D37), each chunk's recorded counts under `chunks` (the bucket's
+bucket ([D37](DECISIONS.md#d37--chunked-buckets-a-chain-of-programs-under-the-anes-weight-limit)), each chunk's recorded counts under `chunks` (the bucket's
 are their sums).
 
 `/health`'s `chunked_models` lists each chunked model by id: its
@@ -238,7 +238,7 @@ was given explicit cuts), and per bucket each program's `artifact` and
 `weight_bytes`. `compute_unit_overrides` lists the compute units the
 daemon config chose (`applied`, by model id) and overrides naming no Core
 ML model (`unmatched`); `/v1/models` gives every Core ML model's
-`compute_units_source`, `manifest` or `operator` (D38).
+`compute_units_source`, `manifest` or `operator` ([D38](DECISIONS.md#d38--the-operator-may-choose-a-models-compute-units)).
 
 The manifest records the plan in an optional table, written by the
 conversion library:
@@ -313,7 +313,7 @@ bucket) after it returned. With live reads on:
 ## ONNX Runtime on the CPU
 
 An embedder may instead be an ONNX graph run by
-ONNX Runtime on the CPU (`backend = "onnx"`, D40), on any platform sidekick
+ONNX Runtime on the CPU (`backend = "onnx"`, [D40](DECISIONS.md#d40--an-onnx-runtime-cpu-backend-for-embeddings)), on any platform sidekick
 builds for. Whether it's sidekick's own export (`--format onnx`) or a
 published one, the graph outputs token-level `last_hidden_state`, which
 sidekick pools (`mean`, `cls` or `last_token`); a head that does more than
@@ -337,7 +337,7 @@ or thread counts, vectors agree to within rounding but aren't guaranteed
 bit-identical (EmbeddingGemma moved by up to 1.43e-7 per component between
 4 and 8 threads). Padding and batching would move them by up to 2.6e-7,
 which is why sidekick runs each input alone. On an Intel Mac with
-AVX-512, ONNX Runtime runs its AVX-512 kernels (D42);
+AVX-512, ONNX Runtime runs its AVX-512 kernels ([D42](DECISIONS.md#d42--avx-512-for-onnx-runtime-on-intel-macs));
 `SIDEKICK_ONNX_AVX512=0` in the daemon's environment turns them off.
 
 ```toml
@@ -391,7 +391,7 @@ runs as a LaunchAgent rather than a LaunchDaemon
 ([INSTALL.md](INSTALL.md#running-as-a-service)).
 
 A build with Xcode 27's SDK adds the macOS 27 features (real token usage,
-the model's variant and context size, typed errors; D21) and still runs on
+the model's variant and context size, typed errors; [D21](DECISIONS.md#d21--macos-27-real-usage-and-model-facts-typed-errors-the-shim-stays)) and still runs on
 macOS 26 ([DEVELOPMENT.md](DEVELOPMENT.md)).
 
 A conversation's follow-ups reuse its Foundation Models session for

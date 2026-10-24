@@ -77,13 +77,13 @@ Every inference response carries provenance headers. They follow OpenAI's
 - `sidekick-compute-units`: the configuration the serving instance was
   loaded with: a Core ML model's `compute_units` (`cpu_and_ne` unless its
   manifest says otherwise; see [Compute units](BACKENDS.md#compute-units)), `cpu` for static and ONNX
-  models (D40).
+  models ([D40](DECISIONS.md#d40--an-onnx-runtime-cpu-backend-for-embeddings)).
   Chat omits it. It reports configuration, not the executing device, which
   Core ML doesn't expose.
 - `sidekick-buckets`: the sequence-length bucket each input ran in, in
   input order and comma-separated (`256,256,512`; one input gives `256`).
   ONNX models have no buckets and don't send it.
-  Each bucket is its own compiled program (D15), so this names the
+  Each bucket is its own compiled program ([D15](DECISIONS.md#d15--per-bucket-static-artifacts-pooling-baked-into-the-model)), so this names the
   program that answered each input, the one whose placement `/v1/models`
   reports per bucket (see [Where Core ML places operations](BACKENDS.md#where-core-ml-places-operations)). On
   `/v1/classify`, `/v1/embeddings`, `/v1/rerank`, `/rerank`, `/v2/rerank`
@@ -124,7 +124,7 @@ Chat streams for real: `stream: true` sends text as the model generates it
 chat reports real token usage, including
 cached tokens when a follow-up reuses its session. `/health` reports which
 Foundation Models variant the Mac has and its context size. Over-long
-prompts are a proper 400 (D21).
+prompts are a proper 400 ([D21](DECISIONS.md#d21--macos-27-real-usage-and-model-facts-typed-errors-the-shim-stays)).
 
 ## Embeddings
 
@@ -155,7 +155,7 @@ Some models have no prompt for one side or both, and then that
 `input_type` is the same as `"none"`. Each model's prompts are in
 [MODELS.md](MODELS.md#prompts-input_type), and `/v1/models`
 lists each installed model's as `prompts` (`{"query": "…", "document":
-"…"}`, `""` for none). D9 records the choice, and D45 measures
+"…"}`, `""` for none). [D9](DECISIONS.md#d9--embedding-purpose-via-non-standard-input_type-amended-none-turns-the-prompt-off) records the choice, and [D45](DECISIONS.md#d45--named-prompts-chosen-by-prompt_name) measures
 what `START` costs a prompt typed into the text.
 
 ### Named prompts
@@ -185,7 +185,7 @@ Qwen3-Embedding and F2LLM take a free-text instruction per task instead:
 send it with `input_type: "none"`, in the model's format
 ([MODELS.md](MODELS.md#named-prompts-prompt_name)), and
 truncate with `END`, since `START` would cut an instruction it can't
-tell from the text. D45 records the choice.
+tell from the text. [D45](DECISIONS.md#d45--named-prompts-chosen-by-prompt_name) records the choice.
 
 ### Input length and truncation
 
@@ -208,7 +208,7 @@ start of the text, and nothing in the response says it was cut. `truncate`
 takes `/v2/embed`'s values in any case: `NONE` (the default) refuses,
 `END` keeps the start of the text, and `START` keeps its end. Hugging Face
 TEI's boolean works too: `true` is `END`, `false` is `NONE`. Anything
-else is a 400, and `null` is the default (D43). OpenAI's Python SDK sends it through `extra_body`, as in
+else is a 400, and `null` is the default ([D43](DECISIONS.md#d43--over-length-v1embeddings-input-is-refused-by-default)). OpenAI's Python SDK sends it through `extra_body`, as in
 `client.embeddings.create(..., extra_body={"truncate": "END"})`.
 
 `/v2/embed` keeps Cohere's default, `END`, and so do `libsidekick.dylib`'s
@@ -257,7 +257,7 @@ or `none`, no prompt), or `prompt_name` chooses by name.
 The text is never truncated, so a text over the limit is counted in full.
 `max_model_len` is that limit: the model's `max_seq_len` from
 `/v1/models`, or lower when the model's own `tokenizer.json` truncates
-sooner (D44). `max_tokens`, `/v2/embed`'s, makes `fits` measure against
+sooner ([D44](DECISIONS.md#d44--tokenize-and-detokenize-count-as-the-embedding-path-does)). `max_tokens`, `/v2/embed`'s, makes `fits` measure against
 it instead, as `/v2/embed` with `truncate: "NONE"` does.
 At most 4 MiB of text is tokenized at once, across requests; a request
 waits for room within the request timeout.
@@ -273,7 +273,7 @@ their inputs are pairs, or a text laid out with the request's labels, not
 one text on its own. So is `messages`, vLLM's chat form, since these
 models have no chat template. The chat model is a 400 too, because
 Foundation Models reports token counts but not token ids. The routes
-aren't mounted under `/v1/`, as in vLLM and SGLang (D44).
+aren't mounted under `/v1/`, as in vLLM and SGLang ([D44](DECISIONS.md#d44--tokenize-and-detokenize-count-as-the-embedding-path-does)).
 
 ## Classification
 

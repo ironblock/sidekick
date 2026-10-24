@@ -85,7 +85,7 @@ installed by converting it ([CONVERTING.md](CONVERTING.md)).
 
 `sidekickd fetch` downloads a build
 sidekick publishes on Hugging Face ([PUBLISHING.md](PUBLISHING.md)),
-verifies every file, and installs it in the models directory (D51). It
+verifies every file, and installs it in the models directory ([D51](DECISIONS.md#d51--sidekickd-fetch-the-hugging-face-cache-verified-installed-as-hard-links)). It
 fetches the builds in [the published list](MODELS.md#published-builds):
 
 ```sh
@@ -121,7 +121,7 @@ repository or revision (a build not published yet needs `--repo`).
   directory records the repository, the commit and every file's sha256.
 - **A Core ML build is compiled once installed:** fetch loads each bucket
   it installed, on the compute units the daemon will serve it on, so that
-  the first requests don't wait on Core ML's compile (D52). `--no-warm`
+  the first requests don't wait on Core ML's compile ([D52](DECISIONS.md#d52--warm-core-mls-compile-cache-before-requests-need-it)). `--no-warm`
   skips it, and so does `warm = false` under the model's
   `[models."<id>"]` in the config.
 
@@ -145,7 +145,7 @@ mv ./bge-small-download/fp16 "$HOME/Library/Application Support/sidekick/models/
   on the ANE (see the fetch bullets above). `--local-dir` writes real
   files.
 - **Shared weights arrive as copies.** A build whose buckets share one
-  weights file (D49) is downloaded this way as one copy per bucket, so it
+  weights file ([D49](DECISIONS.md#d49--one-weights-file-per-chunk-shared-by-every-bucket)) is downloaded this way as one copy per bucket, so it
   takes more disk than fetch installs. `python3 -m
   sidekick_convert.shared_weights link <model dir>`, run from sidekick's
   `tools/`, turns the copies back into hard links.
@@ -221,7 +221,7 @@ it is a 504 with code `load_timeout`, the load continues, and a retry
 finds the bucket ready.
 
 **Compiling ahead of requests.** sidekickd compiles ahead
-of requests (D52):
+of requests ([D52](DECISIONS.md#d52--warm-core-mls-compile-cache-before-requests-need-it)):
 
 - **At startup, in the background,** in a `sidekickd warm` child process,
   every bucket the daemon serves, on the compute units it serves it on,
