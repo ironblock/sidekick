@@ -448,3 +448,6 @@ Not automated yet; for the first uploads:
    if not, re-upload with each distinct file at its first path only.
 6. Tag the repository commit `sidekick-vX.Y.Z`, and record it:
    `ledger.py published ID --repo ... --revision ... --sidekick X.Y.Z`.
+   Then run `tools/models_table.py --docs`, which lists the build in
+   MODELS.md's [Published builds](MODELS.md#published-builds); CI fails
+   until the list matches the ledger.

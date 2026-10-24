@@ -2183,6 +2183,19 @@ tier that follows ([PUBLISHING.md](PUBLISHING.md)):
 The audit records terms, not legal conclusions: check them against your
 own use.
 
+## Published builds
+
+The builds sidekick publishes on Hugging Face, which `sidekickd fetch
+<model>` installs by id ([RUNNING.md](RUNNING.md#fetching-a-published-build)):
+generated from the checksum ledger's `published` records, the latest
+upload of each build. A model not listed here isn't published yet, or
+can't be under its licence ([PUBLISHING.md](PUBLISHING.md#what-is-published-licence-tiers));
+convert it instead ([CONVERTING.md](CONVERTING.md)).
+
+<!-- generated: published-builds -->
+None yet: no build in the checksum ledger has a published record.
+<!-- /generated -->
+
 ## Incompatible / not integrated
 
 | model | class | why |
