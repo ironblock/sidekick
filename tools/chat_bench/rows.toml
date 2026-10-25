@@ -1,0 +1,135 @@
+# The chat benchmark's rows: one model, served one way (tools/chat_bench/run.py).
+#
+# server   "sidekick"   Foundation Models through a running sidekickd (`--base-url`)
+#          "mlx_lm"     mlx_lm.server over the repository's own weights, started by run.py
+#          "serve_ref"  tools/chat_bench/serve_ref.py (torch or mlx backend), started by run.py
+# json     "guided"     JSON families send response_format json_schema (constrained decoding)
+#          "prompt"     JSON families rely on the prompt alone
+# families the request families to run (default: all)
+# Open-model weights are the repository's bf16 weights, unquantised: the rows
+# measure the model, not a conversion of it.
+
+[[row]]
+id = "afm"
+label = "Foundation Models, guided JSON"
+server = "sidekick"
+json = "guided"
+
+[[row]]
+id = "afm-prompt"
+label = "Foundation Models, prompt-only JSON"
+server = "sidekick"
+json = "prompt"
+families = ["tags_vocab", "extraction"]
+
+# A diagnostic, not a candidate: the guided row with every schema property
+# marked required in response_format (the prompt is unchanged).
+[[row]]
+id = "afm-required"
+label = "Foundation Models, guided JSON, all properties required"
+server = "sidekick"
+json = "guided"
+schema_all_required = true
+families = ["extraction"]
+
+[[row]]
+id = "minicpm5-1b"
+label = "MiniCPM5-1B"
+server = "mlx_lm"
+repo = "openbmb/MiniCPM5-1B"
+revision = "87179e5c1f455ef22e6223592d2d61351b525bfc"
+chat_template_args = { enable_thinking = false }
+json = "prompt"
+
+[[row]]
+id = "minicpm5-1b-guided"
+label = "MiniCPM5-1B, guided JSON (llguidance)"
+server = "serve_ref"
+backend = "mlx"
+constrained = true
+repo = "openbmb/MiniCPM5-1B"
+revision = "87179e5c1f455ef22e6223592d2d61351b525bfc"
+chat_template_args = { enable_thinking = false }
+json = "guided"
+families = ["tags_vocab", "extraction"]
+
+[[row]]
+id = "minicpm5-1b-ref"
+label = "MiniCPM5-1B, prompt-only JSON on serve_ref (control for the guided row)"
+server = "serve_ref"
+backend = "mlx"
+repo = "openbmb/MiniCPM5-1B"
+revision = "87179e5c1f455ef22e6223592d2d61351b525bfc"
+chat_template_args = { enable_thinking = false }
+json = "prompt"
+families = ["tags_vocab", "extraction"]
+
+[[row]]
+id = "minicpm5-2b"
+label = "MiniCPM5-2B"
+server = "mlx_lm"
+repo = "openbmb/MiniCPM5-2B"
+revision = "f97400052a43d642bbc6e9975e2397e3ae6a6b52"
+chat_template_args = { enable_thinking = false }
+json = "prompt"
+
+[[row]]
+id = "smollm3-3b"
+label = "SmolLM3-3B, no-think"
+server = "mlx_lm"
+repo = "HuggingFaceTB/SmolLM3-3B"
+revision = "a07cc9a04f16550a088caea529712d1d335b0ac1"
+chat_template_args = { enable_thinking = false }
+json = "prompt"
+
+[[row]]
+id = "smollm2-360m"
+label = "SmolLM2-360M-Instruct"
+server = "mlx_lm"
+repo = "HuggingFaceTB/SmolLM2-360M-Instruct"
+revision = "a10cc1512eabd3dde888204e902eca88bddb4951"
+json = "prompt"
+
+# K2-Horizon is a reasoning model with no non-thinking mode: its chat template
+# always opens a thinking block. Its architecture is in its repository's own
+# PyTorch code only, so it runs on serve_ref's torch backend (MPS, bf16).
+[[row]]
+id = "k2-horizon-0.9b-nothink"
+label = "K2-Horizon-0.9B, empty thinking block"
+server = "serve_ref"
+backend = "torch"
+repo = "IFM/K2-Horizon-0.9B"
+revision = "7c75f2f49e74ac97c1852e62b4c860091d6a00ea"
+chat_template_args = { reasoning_effort = "low" }
+think_tags = ["<ifm|think_faster>", "</ifm|think_faster>"]
+prefill = "</ifm|think_faster>\\n"
+json = "prompt"
+
+[[row]]
+id = "k2-horizon-0.9b-low"
+label = "K2-Horizon-0.9B, low effort, thinking capped at 256 tokens"
+server = "serve_ref"
+backend = "torch"
+repo = "IFM/K2-Horizon-0.9B"
+revision = "7c75f2f49e74ac97c1852e62b4c860091d6a00ea"
+chat_template_args = { reasoning_effort = "low" }
+think_tags = ["<ifm|think_faster>", "</ifm|think_faster>"]
+reasoning_budget = 256
+# Thinking tokens count toward max_tokens: each family's limit plus the budget
+# and the forced close.
+extra_max_tokens = 264
+json = "prompt"
+
+# The model card's recommended effort, with thinking capped (budget forcing).
+[[row]]
+id = "k2-horizon-0.9b-high"
+label = "K2-Horizon-0.9B, high effort, thinking capped at 512 tokens"
+server = "serve_ref"
+backend = "torch"
+repo = "IFM/K2-Horizon-0.9B"
+revision = "7c75f2f49e74ac97c1852e62b4c860091d6a00ea"
+chat_template_args = { reasoning_effort = "high" }
+think_tags = ["<ifm|think>", "</ifm|think>"]
+reasoning_budget = 512
+extra_max_tokens = 520
+json = "prompt"
