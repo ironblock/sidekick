@@ -124,6 +124,7 @@ func f16(_ shape: [Int]) -> MLMultiArray {
 }
 
 var chunkTimes: [String: [Double]] = [:]
+var traceOut: [[Float]]? = nil      // "trace" task: every chunk's output of the last call, fp32
 
 // Per-prediction timeout (PREDICT_TIMEOUT s, default 60): a watcher thread
 // exits the process (code 4) at the first prediction that runs past it, so a
@@ -175,6 +176,12 @@ func call(_ fn: String, _ S: Int, _ ids: [Int], _ pos: Int, _ st: [MLState], sel
         callLock.lock(); callStarted = nil; callLock.unlock()
         chunkTimes["\(fn).chunk\(ci)", default: []].append(Date().timeIntervalSince(t) * 1000)
         if last { logits = o.featureValue(for: "logits")!.multiArrayValue! } else { h = o.featureValue(for: "hidden_out")!.multiArrayValue! }
+        if traceOut != nil {
+            let a = last ? logits! : h
+            let n = a.count
+            let p = a.dataPointer.bindMemory(to: Float16.self, capacity: n)
+            traceOut![ci] = (0..<n).map { Float(p[$0]) }
+        }
     }
     let L = logits!
     let n = L.shape.last!.intValue
@@ -188,6 +195,12 @@ func call(_ fn: String, _ S: Int, _ ids: [Int], _ pos: Int, _ st: [MLState], sel
 func argmax(_ x: [Float]) -> Int { var b = 0; for i in 1..<x.count where x[i] > x[b] { b = i }; return b }
 
 func prefill(_ ids: [Int], _ st: [MLState], bucket: Int? = nil) -> [Float] {
+    if buckets.isEmpty {
+        // a decode-only build (FUNCS=decode or no prefill function): one token per call
+        var lg: [Float] = []
+        for (i, t) in ids.enumerated() { lg = call("decode", 1, [t], i, st) }
+        return lg
+    }
     let b = bucket ?? (buckets.first { $0 >= ids.count } ?? buckets.last!)
     var pos = 0
     var lg: [Float] = []
@@ -305,6 +318,22 @@ for task in job["tasks"] as! [[String: Any]] {
         }
         r["prefill_ms"] = pre; r["first_decode_ms"] = first; r["steady_decode_median_ms"] = median(steady)
         r["first_decode_chunk_ms"] = firstChunks; r["prefill_chunk_ms"] = preChunks
+    case "trace":
+        // decode the ids one token per call; dump every chunk's output per position
+        let ids = task["ids"] as! [Int]
+        let st = newStates()
+        var dumps = [[Float]](repeating: [], count: nChunks)
+        for (i, t) in ids.enumerated() {
+            traceOut = [[Float]](repeating: [], count: nChunks)
+            _ = call("decode", 1, [t], i, st)
+            for ci in 0..<nChunks { dumps[ci] += traceOut![ci] }
+        }
+        traceOut = nil
+        for ci in 0..<nChunks {
+            let url = URL(fileURLWithPath: "\(outPrefix)_trace\(ci).f32")
+            try! dumps[ci].withUnsafeBufferPointer { Data(buffer: $0) }.write(to: url)
+        }
+        r["rows"] = ids.count
     case "gen":
         let ids = task["ids"] as! [Int], n = task["n"] as! Int
         let st = newStates()

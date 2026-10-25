@@ -44,81 +44,13 @@ ap.add_argument("--layers", default=None)
 ap.add_argument("--local", action="store_true")
 ap.add_argument("--rescale", default=None)
 ap.add_argument("--texts", type=int, default=8)
+ap.add_argument("--sat", type=float, default=0.0,
+                help="simulate an accumulator that saturates at +-SAT in units of the int8 scale (y / scale)")
 ap.add_argument("--qweights", default=None, help="gptq.py output: use its weights (then --quant none)")
 a = ap.parse_args()
 torch.set_grad_enabled(False)
 
-PROJ = ["q", "k", "v", "o", "gate", "up", "down"]
-
-
-def f16(x):
-    return x.half().float()
-
-
-def q_int8pc(w, clip=None):
-    amax = w.abs().amax(1, keepdim=True) if clip is None else clip
-    s = f16(amax / 127.0).clamp(min=1e-12)
-    return f16(torch.clamp(torch.round(w / s), -127, 127) * s)
-
-
-def q_int8pc_mse(w):
-    amax = w.abs().amax(1, keepdim=True)
-    best, err = None, None
-    for r in (1.0, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7):
-        qw = q_int8pc(w, amax * r)
-        e = ((qw - w) ** 2).sum(1, keepdim=True)
-        if best is None:
-            best, err = qw, e
-        else:
-            m = e < err
-            best, err = torch.where(m, qw, best), torch.where(m, e, err)
-    return best
-
-
-def q_int8b(w, n):
-    o, i = w.shape
-    wb = w.view(o, i // n, n)
-    s = f16(wb.abs().amax(2, keepdim=True) / 127.0).clamp(min=1e-12)
-    return f16(torch.clamp(torch.round(wb / s), -127, 127) * s).view(o, i)
-
-
-def q_pal8(w, g):
-    # 1-D k-means (256 centroids) per group of g output channels, Lloyd from quantiles
-    o, i = w.shape
-    out = torch.empty_like(w)
-    for r in range(0, o, g):
-        x = w[r:r + g].reshape(-1)
-        c = torch.quantile(x[torch.randperm(x.numel())[:65536]] if x.numel() > 65536 else x,
-                           torch.linspace(0, 1, 256))
-        for _ in range(12):
-            idx = torch.bucketize(x, (c[1:] + c[:-1]) / 2)
-            sums = torch.zeros(256).index_add_(0, idx, x)
-            cnt = torch.zeros(256).index_add_(0, idx, torch.ones_like(x))
-            c = torch.where(cnt > 0, sums / cnt.clamp(min=1), c)
-            c, _ = torch.sort(c)
-        c = f16(c)
-        idx = torch.bucketize(x, (c[1:] + c[:-1]) / 2)
-        out[r:r + g] = c[idx].view(-1, i)
-    return out
-
-
-def quantizer(name):
-    if name == "int8pc":
-        return q_int8pc
-    if name == "int8pc-mse":
-        return q_int8pc_mse
-    if name.startswith("int8b"):
-        n = int(name[5:])
-        return lambda w: q_int8b(w, n)
-    if name.startswith("pal8g"):
-        g = int(name[5:])
-        return lambda w: q_pal8(w, g)
-    if name == "fp16":
-        return f16
-    if name == "none":
-        return None
-    raise SystemExit(f"unknown quantiser {name}")
-
+from probe_quant_lib import PROJ, f16, quantizer  # noqa: E402
 
 Q = quantizer(a.quant)
 only = set(a.only.split(","))
@@ -154,6 +86,9 @@ class Probe(nn.Module):
         if self.qw is None:
             return y
         yq = torch.nn.functional.conv2d(x, self.qw)
+        if a.sat:
+            inv = (127.0 / self.qw.view(self.qw.shape[0], -1).abs().amax(1).clamp(min=1e-30)).view(1, -1, 1, 1)
+            yq = torch.clamp(yq * inv, -a.sat, a.sat) / inv
         self.rec["rel_err"].append(float((yq - y).norm() / y.norm()))
         return yq if self.propagate else y
 
@@ -205,7 +140,7 @@ for nm, lg in zip(names, logits):
     coss += cos.tolist()
     per_text[nm] = {"top1": float(top.float().mean()), "cos_min": float(cos.min())}
 c = np.array(coss)
-res = {"qweights": a.qweights, "quant": a.quant, "only": sorted(only), "layers": a.layers, "rescale": a.rescale, "local": a.local,
+res = {"sat": a.sat, "qweights": a.qweights, "quant": a.quant, "only": sorted(only), "layers": a.layers, "rescale": a.rescale, "local": a.local,
        "top1": agree / tot, "positions": tot, "cos_mean": float(c.mean()), "cos_min": float(c.min()),
        "cos_p1": float(np.percentile(c, 1)), "texts": per_text, "seconds": round(time.time() - t0)}
 if a.local:

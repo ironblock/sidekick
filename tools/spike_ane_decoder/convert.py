@@ -14,7 +14,10 @@ the calibration (llama_ane.stream_calibrate, as reference.py writes it) is
 read from --cal, or computed and written there if missing.
 --rescale applies power-of-two input rescales to chosen projections
 (llama_ane.apply_rescales; D17/D19's small-input rule). --qweights takes
-gptq.py's weights, already on the int8 grid that --quant int8 then stores."""
+gptq.py's weights, already on the int8 grid that --quant int8 then stores.
+--fp16-keep leaves chosen projections unquantised (the ANE's int8 path
+overflows to inf where a projection's accumulator, in units of the int8
+scale, passes fp16's range: probe_intacc.py)."""
 import argparse
 import gc
 import json
@@ -42,6 +45,9 @@ ap.add_argument("--quant", default="none")
 ap.add_argument("--head-split", type=int, default=1)
 ap.add_argument("--silu", default="stable")
 ap.add_argument("--rescale", default=None)
+ap.add_argument("--fp16-keep", default="",
+                help="projections left in fp16 in a quantised build, as layer.proj (e.g. 7.down,41.q): the ANE's "
+                     "int8 path overflows on some (probe_intacc.py)")
 ap.add_argument("--qweights", default=None, help="gptq.py output: weights already on the int8 grid")
 a = ap.parse_args()
 
@@ -83,10 +89,15 @@ def quant_spec(q):
     return name, {k: int(v) for k, v in kw.items()}
 
 
-def quantize(ml):
+KEEP = [tuple(x.split(".")) for x in a.fp16_keep.split(",") if x]
+
+
+def quantize(ml, lo, hi):
     name, kw = quant_spec(a.quant)
     if name == "none":
         return ml
+    # const op names in the traced program: layers_<index within the chunk>_<proj>_weight_to_fp16
+    skip = {f"layers_{int(i) - lo}_{p}_weight_to_fp16": None for i, p in KEEP if lo <= int(i) < hi}
     if name in ("int8", "int4"):
         if "block" in kw:
             op = cto.coreml.OpLinearQuantizerConfig(mode="linear_symmetric", dtype=name, granularity="per_block",
@@ -97,12 +108,14 @@ def quantize(ml):
         else:
             op = cto.coreml.OpLinearQuantizerConfig(mode="linear_symmetric", dtype=name, granularity="per_block",
                                                     block_size=32, weight_threshold=2048)
-        return cto.coreml.linear_quantize_weights(ml, config=cto.coreml.OptimizationConfig(global_config=op))
+        return cto.coreml.linear_quantize_weights(ml, config=cto.coreml.OptimizationConfig(global_config=op,
+                                                                                            op_name_configs=skip))
     if name in ("pal4", "pal8"):
         op = cto.coreml.OpPalettizerConfig(mode="kmeans", nbits=int(name[3:]), granularity="per_grouped_channel",
                                             group_size=kw.get("group", 16), weight_threshold=2048,
                                             num_kmeans_workers=1)
-        return cto.coreml.palettize_weights(ml, config=cto.coreml.OptimizationConfig(global_config=op))
+        return cto.coreml.palettize_weights(ml, config=cto.coreml.OptimizationConfig(global_config=op,
+                                                                                      op_name_configs=skip))
     raise SystemExit(f"unknown quant {a.quant}")
 
 
@@ -111,7 +124,8 @@ meta = json.load(open(meta_path)) if meta_path.exists() else {}
 meta.update({"src": a.src, "C": a.C, "cuts": cuts, "funcs": [f for f, _ in funcs], "quant": a.quant, "K": K,
              "silu": a.silu, "head_split": a.head_split, "hidden": D, "head_dim": Dh, "rope_theta": cfg.rope_theta,
              "vocab": cfg.vocab_size, "layers": L, "kv_heads": cfg.num_key_value_heads,
-             "rescale": a.rescale and Path(a.rescale).name, "qweights": a.qweights and Path(a.qweights).name})
+             "rescale": a.rescale and Path(a.rescale).name, "qweights": a.qweights and Path(a.qweights).name,
+             "fp16_keep": a.fp16_keep})
 if len(meta.get("chunks", [])) != len(cuts):
     meta["chunks"] = [None] * len(cuts)
 tmp = out / "tmp"
@@ -137,6 +151,10 @@ for ci in todo:
                  hf.lm_head if has_head else None, a.head_split)
     c.K = float(K)
     c.eval()
+    if len(todo) == 1:          # the chunk holds fp32 copies of what it needs: drop the checkpoint (5 GB)
+        del hf, layers
+        gc.collect()
+        layers = None
     parts = []
     for fname, S in funcs:
         t0 = time.time()
@@ -158,7 +176,7 @@ for ci in todo:
                         minimum_deployment_target=ct.target.macOS15, compute_precision=ct.precision.FLOAT16,
                         compute_units=ct.ComputeUnit.CPU_AND_NE, skip_model_load=True)
         del tr
-        ml = quantize(ml)
+        ml = quantize(ml, lo, hi)
         p = tmp / f"chunk_{ci}_{fname}.mlpackage"
         ml.save(str(p))
         parts.append((fname, p))
