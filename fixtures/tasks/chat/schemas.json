@@ -1,0 +1,99 @@
+{
+  "event": {
+    "type": "object",
+    "properties": {
+      "name": {"type": "string", "description": "The event's name"},
+      "date": {"type": "string", "description": "The day it starts, as YYYY-MM-DD"},
+      "start_time": {"type": "string", "description": "Local start time, 24-hour HH:MM"},
+      "venue": {"type": "string", "description": "The building or place it is held in"},
+      "city": {"type": "string"},
+      "online": {"type": "boolean", "description": "True if attendees join over the internet"},
+      "ticket_price": {"type": "number", "description": "Price of one standard ticket; 0 if free"},
+      "currency": {"type": "string", "enum": ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "other"]}
+    },
+    "required": ["name", "date", "online"]
+  },
+  "contact": {
+    "type": "object",
+    "properties": {
+      "name": {"type": "string", "description": "The person's full name"},
+      "email": {"type": "string"},
+      "phone": {"type": "string"},
+      "organization": {"type": "string"},
+      "job_title": {"type": "string"}
+    },
+    "required": ["name"]
+  },
+  "product": {
+    "type": "object",
+    "properties": {
+      "product_name": {"type": "string"},
+      "brand": {"type": "string"},
+      "price": {"type": "number", "description": "The current selling price"},
+      "currency": {"type": "string", "enum": ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "other"]},
+      "in_stock": {"type": "boolean"},
+      "colors": {"type": "array", "items": {"type": "string"}, "description": "Colours it is offered in"}
+    },
+    "required": ["product_name", "price"]
+  },
+  "bug_report": {
+    "type": "object",
+    "properties": {
+      "summary": {"type": "string", "description": "One-line summary of the problem"},
+      "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+      "component": {"type": "string", "description": "The part of the software affected"},
+      "version": {"type": "string", "description": "The software version the reporter uses"},
+      "os": {"type": "string", "enum": ["macos", "windows", "linux", "ios", "android", "other"]},
+      "reproducible": {"type": "boolean", "description": "True if the reporter can make it happen again"}
+    },
+    "required": ["summary", "severity"]
+  },
+  "receipt": {
+    "type": "object",
+    "properties": {
+      "merchant": {"type": "string"},
+      "date": {"type": "string", "description": "Purchase date, as YYYY-MM-DD"},
+      "total": {"type": "number", "description": "The amount paid in total"},
+      "currency": {"type": "string", "enum": ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "other"]},
+      "payment_method": {"type": "string", "enum": ["cash", "card", "mobile", "other"]},
+      "item_count": {"type": "integer", "description": "Number of distinct line items"}
+    },
+    "required": ["merchant", "total"]
+  },
+  "flight": {
+    "type": "object",
+    "properties": {
+      "airline": {"type": "string"},
+      "flight_number": {"type": "string", "description": "Carrier code and number, such as BA117"},
+      "from_airport": {"type": "string", "description": "Departure airport's three-letter IATA code"},
+      "to_airport": {"type": "string", "description": "Arrival airport's three-letter IATA code"},
+      "date": {"type": "string", "description": "Departure date, as YYYY-MM-DD"},
+      "passengers": {"type": "integer"}
+    },
+    "required": ["flight_number", "date"]
+  },
+  "job_posting": {
+    "type": "object",
+    "properties": {
+      "job_title": {"type": "string"},
+      "company": {"type": "string"},
+      "city": {"type": "string"},
+      "work_mode": {"type": "string", "enum": ["onsite", "hybrid", "remote"]},
+      "salary_min": {"type": "integer", "description": "Lowest yearly salary offered"},
+      "salary_max": {"type": "integer", "description": "Highest yearly salary offered"}
+    },
+    "required": ["job_title", "company", "work_mode"]
+  },
+  "recipe": {
+    "type": "object",
+    "properties": {
+      "dish": {"type": "string"},
+      "servings": {"type": "integer"},
+      "prep_minutes": {"type": "integer"},
+      "cook_minutes": {"type": "integer"},
+      "vegetarian": {"type": "boolean", "description": "True if it contains no meat or fish"},
+      "ingredients": {"type": "array", "items": {"type": "string"}, "description": "Each ingredient's name, without quantities"}
+    },
+    "required": ["dish", "ingredients"]
+  }
+}
