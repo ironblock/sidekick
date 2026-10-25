@@ -46,6 +46,7 @@ ap.add_argument("--rescale", default=None)
 ap.add_argument("--texts", type=int, default=8)
 ap.add_argument("--sat", type=float, default=0.0,
                 help="simulate an accumulator that saturates at +-SAT in units of the int8 scale (y / scale)")
+ap.add_argument("--keep", default="", help="with --qweights: layer.proj left exact (fp16-keep)")
 ap.add_argument("--qweights", default=None, help="gptq.py output: use its weights (then --quant none)")
 a = ap.parse_args()
 torch.set_grad_enabled(False)
@@ -97,6 +98,7 @@ local = {}
 
 
 qmeta = json.load(open(Path(a.qweights) / "meta.json")) if a.qweights else None
+keep = set(a.keep.split(",")) - {""}
 
 
 def on_layer(i, layer):
@@ -104,6 +106,8 @@ def on_layer(i, layer):
         import gptq
         qw = torch.load(Path(a.qweights) / f"layer_{i}.pt")
         for name, (q, s) in qw.items():
+            if name not in only or f"{i}.{name}" in keep:
+                continue
             conv = getattr(layer, name)
             conv.weight.data = gptq.dequant(q, s, qmeta["block"]).view_as(conv.weight)
     if rescale is not None:
@@ -121,7 +125,7 @@ def on_layer(i, layer):
 
 t0 = time.time()
 texts = [ids[nm] for nm in names]
-if qmeta is not None and qmeta["head"]:
+if qmeta is not None and qmeta["head"] and "head" in only:
     import gptq
     q, s = torch.load(Path(a.qweights) / "head.pt")["head"]
     hf.lm_head.weight.data = gptq.dequant(q, s, qmeta["block"])
@@ -140,7 +144,7 @@ for nm, lg in zip(names, logits):
     coss += cos.tolist()
     per_text[nm] = {"top1": float(top.float().mean()), "cos_min": float(cos.min())}
 c = np.array(coss)
-res = {"sat": a.sat, "qweights": a.qweights, "quant": a.quant, "only": sorted(only), "layers": a.layers, "rescale": a.rescale, "local": a.local,
+res = {"keep": a.keep, "sat": a.sat, "qweights": a.qweights, "quant": a.quant, "only": sorted(only), "layers": a.layers, "rescale": a.rescale, "local": a.local,
        "top1": agree / tot, "positions": tot, "cos_mean": float(c.mean()), "cos_min": float(c.min()),
        "cos_p1": float(np.percentile(c, 1)), "texts": per_text, "seconds": round(time.time() - t0)}
 if a.local:

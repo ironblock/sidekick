@@ -1,5 +1,5 @@
 """convert.py <hf_src> <out_dir> --cal <calibration.json> [--C 2048] [--cuts 0-30] [--chunk i]
-                [--funcs decode,prefill:128,prefill:512] [--quant none|int8|int8:block=32|int4|pal4|pal8[:group=16]]
+                [--funcs decode,prefill:128,prefill:512] [--quant none|int8|int8:block=32|int4|pal4|pal8[:group=16]|pal8u[:group=16]]
                 [--head-split 1] [--silu stable|native] [--rescale <rescale.json>]
 
 Converts a LlamaForCausalLM to one multifunction Core ML program per chunk
@@ -110,6 +110,12 @@ def quantize(ml, lo, hi):
                                                     block_size=32, weight_threshold=2048)
         return cto.coreml.linear_quantize_weights(ml, config=cto.coreml.OptimizationConfig(global_config=op,
                                                                                             op_name_configs=skip))
+    if name == "pal8u":
+        # weights already on an 8-bit palette per group (gptq.py --grid pal8): keep it exactly
+        op = cto.coreml.OpPalettizerConfig(mode="unique", granularity="per_grouped_channel",
+                                            group_size=kw.get("group", 16), weight_threshold=2048)
+        return cto.coreml.palettize_weights(ml, config=cto.coreml.OptimizationConfig(global_config=op,
+                                                                                      op_name_configs=skip))
     if name in ("pal4", "pal8"):
         op = cto.coreml.OpPalettizerConfig(mode="kmeans", nbits=int(name[3:]), granularity="per_grouped_channel",
                                             group_size=kw.get("group", 16), weight_threshold=2048,
@@ -139,6 +145,8 @@ for ci in todo:
         qmeta = json.load(open(Path(a.qweights) / "meta.json"))
         for i, layer in zip(range(lo, hi), layers):
             for name, (q, s) in torch.load(Path(a.qweights) / f"layer_{i}.pt").items():
+                if (str(i), name) in KEEP:          # left in fp16: the checkpoint's own weights
+                    continue
                 conv = getattr(layer, name)
                 conv.weight.data = gptq.dequant(q, s, qmeta["block"]).view_as(conv.weight)
         if has_head and qmeta["head"]:
