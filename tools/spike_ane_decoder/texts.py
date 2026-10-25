@@ -79,3 +79,39 @@ CALIB_CHATS = [
 
 def prompts():
     return CHATS
+
+
+# GPTQ calibration (gptq.py): spans of repository files that the eval texts
+# don't read, plus chat-formatted prompts with a short answer
+_GPTQ_SOURCES = [
+    ("docs/DECISIONS.md", 0), ("docs/DECISIONS.md", 20000), ("docs/DECISIONS.md", 100000),
+    ("docs/DECISIONS.md", 160000), ("docs/DECISIONS.md", 200000), ("docs/DECISIONS.md", 240000),
+    ("docs/MODELS.md", 0), ("docs/MODELS.md", 60000), ("docs/MODELS.md", 130000),
+    ("docs/CONVERTING.md", 0), ("docs/CONVERTING.md", 40000), ("docs/API.md", 0), ("docs/BACKENDS.md", 0),
+    ("docs/PUBLISHING.md", 0), ("crates/sidekick-core/src/manifest.rs", 20000),
+    ("crates/sidekick-core/src/manifest.rs", 120000), ("crates/sidekick-embed/src/classify_input.rs", 10000),
+    ("crates/sidekick-fm/src/backend.rs", 5000), ("crates/sidekick-server/src/warm.rs", 2000),
+    ("crates/sidekick-embed/src/placement.rs", 2000),
+]
+_GPTQ_CHATS = [
+    "Write a short email declining a meeting invitation politely.",
+    "What are the main causes of inflation? Answer briefly.",
+    "Give a JSON object with the fields name, age and city for a fictional person.",
+    "Explain recursion to a ten-year-old.",
+    "Suggest a title for an article about saving energy at home.",
+    "List five tags for a photo of a mountain lake at sunrise.",
+]
+
+
+def gptq_texts(tok, n_tokens, seg=512):
+    out = []
+    for rel, start in _GPTQ_SOURCES:
+        ids = tok(_read(rel, start, 4000), add_special_tokens=False)["input_ids"][:seg]
+        if len(ids) >= 64:
+            out.append(ids)
+        if sum(map(len, out)) >= n_tokens:
+            break
+    for c in _GPTQ_CHATS:
+        out.append(chat_ids(tok, c) + tok("<think>\nThe user asks for something short. I will answer directly.\n"
+                                          "</think>\nHere is a concise answer.", add_special_tokens=False)["input_ids"])
+    return out

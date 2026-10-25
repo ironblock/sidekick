@@ -3,7 +3,8 @@
 - The step runs in its own process group (under /usr/bin/time -l, for its peak
   memory footprint), with a private Core ML home under $SPIKE_WORK.
 - Every 2 s the watchdog checks the system: swap used over SWAP_MAX_GB
-  (sysctl vm.swapusage) or free memory under FREE_MIN_PCT (memory_pressure -Q)
+  (sysctl vm.swapusage), free memory under FREE_MIN_PCT (memory_pressure -Q)
+  or free disk under DISK_MIN_GB (df; ANE compiles fill an undeletable cache)
   kills the whole group and records why. So does the timeout (an ANE call
   that hangs). It waits on the child's PID, never on a process-name match.
 - Logs the step's output, the peak RSS of its group, the minimum free-memory
@@ -19,8 +20,9 @@ import sys
 import time
 from pathlib import Path
 
-SWAP_MAX_GB = 4.0
-FREE_MIN_PCT = 15.0
+SWAP_MAX_GB = float(os.environ.get("WD_SWAP_MAX_GB", "4.0"))
+FREE_MIN_PCT = float(os.environ.get("WD_FREE_MIN_PCT", "15.0"))
+DISK_MIN_GB = float(os.environ.get("WD_DISK_MIN_GB", "25.0"))
 WORK = Path(os.environ.get("SPIKE_WORK", ".dev-data/spike-ane-decoder"))   # scratch: Core ML home, memory log
 HOME = WORK / "home"
 
@@ -82,6 +84,8 @@ while p.poll() is None:
         reason = f"swap used {sw:.2f} GB > {SWAP_MAX_GB} GB"
     elif fr < FREE_MIN_PCT:
         reason = f"free memory {fr:.0f}% < {FREE_MIN_PCT:.0f}%"
+    elif free_kib() / 2**20 < DISK_MIN_GB:
+        reason = f"free disk {free_kib() / 2**20:.1f} GB < {DISK_MIN_GB} GB"
     elif time.time() - t0 > timeout:
         reason = f"timeout {timeout:.0f} s (possible ANE hang)"
     if reason:

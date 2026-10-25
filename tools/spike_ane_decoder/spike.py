@@ -32,6 +32,8 @@ def job(a):
     if "greedy" in want:
         for i, rec in enumerate(g):
             tasks.append({"type": "greedy", "name": f"greedy{i}", "ids": rec["ids"], "n": len(rec["new"])})
+    if "switch" in want:
+        tasks.append({"type": "switch", "name": "switch", "bucket": m["p"], "steps": 8, "reps": 6})
     if "gen" in want:
         tasks.append({"type": "gen", "name": "gen", "ids": g[0]["ids"], "n": a.gen_n})
     json.dump({"tasks": tasks}, open(a.out, "w"))
@@ -72,7 +74,7 @@ def analyze(a):
             div = next((j for j, (x, y) in enumerate(zip(t["tokens"], ref)) if x != y), None)
             greedy.append({"prompt": g[i]["prompt"][:50], "n": len(ref), "first_divergence": div,
                            "identical": div is None})
-        elif t["type"] in ("bench", "gen"):
+        elif t["type"] in ("bench", "gen", "switch"):
             out[t["type"]] = {k: v for k, v in t.items() if k not in ("type", "name")}
     if tot:
         c = np.array(allc)
@@ -88,7 +90,7 @@ def analyze(a):
         divs = [x["first_divergence"] for x in greedy if x["first_divergence"] is not None]
         out["greedy"] = {"identical": f"{n_ident}/{len(greedy)}", "divergences": divs, "prompts": greedy}
     json.dump(out, open(pre + "_summary.json", "w"), indent=1)
-    print(json.dumps({k: out[k] for k in out if k in ("parity", "greedy", "bench", "gen")}, indent=1)[:6000])
+    print(json.dumps({k: out[k] for k in out if k in ("parity", "greedy", "bench", "gen", "switch")}, indent=1)[:6000])
 
 
 ap = argparse.ArgumentParser()
@@ -96,7 +98,7 @@ sub = ap.add_subparsers(dest="cmd")
 j = sub.add_parser("job")
 j.add_argument("refs")
 j.add_argument("out")
-j.add_argument("--tasks", default="bench,teacher,greedy,gen")
+j.add_argument("--tasks", default="bench,switch,teacher,greedy,gen")
 j.add_argument("--positions", default="128,512,1024,2016")
 j.add_argument("--gen-n", type=int, default=256)
 an = sub.add_parser("analyze")

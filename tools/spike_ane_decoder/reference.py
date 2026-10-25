@@ -4,8 +4,11 @@ PyTorch references for the spike, per eval text (texts.py):
 - fp32 teacher-forced logits at positions p-1 .. n-1 (eval_<name>.npy, fp32)
 - the same from the model in fp16 (CPU), the ideal-fp16 ceiling (ceil_<name>.npy)
 - greedy continuations of the chat prompts, fp32 (greedy.json)
-- an exactness check of the rewritten module (llama_ane, fp32 cache, after its
-  rewrites) against the checkpoint (exact.json)."""
+- the calibration (calibration.json, llama_ane.stream_calibrate) and an
+  exactness check of the rewritten module (fp32, after its rewrites, one layer
+  at a time) against the checkpoint (meta.json).
+Peak memory is the fp32 checkpoint (10 GB for a 2B model); the rest runs from
+a bf16 copy."""
 import argparse
 import json
 import sys
@@ -55,16 +58,18 @@ for user in T.prompts():
     print("greedy:", repr(tok.decode(new)[:120]), flush=True)
 json.dump(greedy, open(out / "greedy.json", "w"), indent=1)
 
-# rewritten module, fp32 cache, exactness against the checkpoint
-chunks, layers, norm = LA.build(hf, C=1024, cuts=[(0, hf.config.num_hidden_layers)], cache_dtype=torch.float32)
-embed = hf.model.embed_tokens.weight.detach()
-cal = LA.calibrate(chunks, layers, norm, hf.config, embed, T.calib_texts(tok))
+# free the fp32 checkpoint (10 GB for a 2B model) before the bf16 copy
+del hf
+import gc
+gc.collect()
+hf = LA.load_hf(a.src, dtype=torch.bfloat16)
+
+# calibration and the rewritten module (fp32, one layer at a time) against the checkpoint
+cal = LA.stream_calibrate(hf, T.calib_texts(tok))
 json.dump(cal, open(out / "calibration.json", "w"))
 worst = 0.0
 for name, ids in evals[:3]:
-    for c in chunks:
-        c.reset()
-    mine = LA.run_eager(chunks, hf.config, embed, ids)[a.p - 1:a.n].numpy()
+    mine = LA.stream(hf, [ids], cal=cal, rows=(a.p - 1, a.n))[0].numpy()
     ref = np.load(out / f"eval_{name}.npy")
     worst = max(worst, float(np.abs(mine - ref).max()))
 meta["rewrite_max_abs_logit_diff"] = worst

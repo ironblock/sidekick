@@ -125,6 +125,23 @@ func f16(_ shape: [Int]) -> MLMultiArray {
 
 var chunkTimes: [String: [Double]] = [:]
 
+// Per-prediction timeout (PREDICT_TIMEOUT s, default 60): a watcher thread
+// exits the process (code 4) at the first prediction that runs past it, so a
+// hung ANE call stops the run instead of being retried.
+let predictTimeout = Double(ProcessInfo.processInfo.environment["PREDICT_TIMEOUT"] ?? "60")!
+let callLock = NSLock()
+var callStarted: Date? = nil
+var callWhat = ""
+Thread.detachNewThread {
+    while true {
+        Thread.sleep(forTimeInterval: 1)
+        callLock.lock(); let s = callStarted; let w = callWhat; callLock.unlock()
+        if let s = s, Date().timeIntervalSince(s) > predictTimeout {
+            print("HANG: \(w) ran past \(predictTimeout) s"); fflush(stdout); exit(4)
+        }
+    }
+}
+
 /// One call of `fn` (S tokens) through every chunk; returns the logits (fp32).
 func call(_ fn: String, _ S: Int, _ ids: [Int], _ pos: Int, _ st: [MLState], sel: Int = 0) -> [Float] {
     precondition(pos + S <= C, "past the cache")
@@ -153,7 +170,9 @@ func call(_ fn: String, _ S: Int, _ ids: [Int], _ pos: Int, _ st: [MLState], sel
             d["sel"] = s
         }
         let t = Date()
+        callLock.lock(); callStarted = t; callWhat = "\(fn) chunk \(ci) pos \(pos)"; callLock.unlock()
         let o = try! models[ci][fn]!.prediction(from: try! MLDictionaryFeatureProvider(dictionary: d), using: st[ci])
+        callLock.lock(); callStarted = nil; callLock.unlock()
         chunkTimes["\(fn).chunk\(ci)", default: []].append(Date().timeIntervalSince(t) * 1000)
         if last { logits = o.featureValue(for: "logits")!.multiArrayValue! } else { h = o.featureValue(for: "hidden_out")!.multiArrayValue! }
     }
@@ -262,6 +281,30 @@ for task in job["tasks"] as! [[String: Any]] {
             t = Date(); _ = call("prefill_\(b)", b, ids, 0, keep, sel: b - 1); reused.append(Date().timeIntervalSince(t) * 1000)
         }
         r["fresh_prefill_ms"] = fresh; r["fresh_first_decode_ms"] = freshDec; r["reused_prefill_ms"] = reused
+    case "switch":
+        // the prefill <-> decode function-switch stall: reps of (one prefill, then
+        // `steps` decodes) on one state; per call, the time of every prefill, of
+        // the first decode after it, and of the steady decodes, with per-chunk
+        // times for the switched calls
+        let b = (task["bucket"] as? Int) ?? buckets[0]
+        let steps = (task["steps"] as? Int) ?? 8
+        let ids = (0..<b).map { 100 + ($0 * 37) % 900 }
+        let st = newStates()
+        var pre: [Double] = [], first: [Double] = [], steady: [Double] = []
+        var firstChunks: [[Double]] = [], preChunks: [[Double]] = []
+        for _ in 0..<((task["reps"] as? Int) ?? 6) {
+            var n0 = chunkTimes["prefill_\(b).chunk0"]?.count ?? 0
+            var t = Date(); _ = call("prefill_\(b)", b, ids, 0, st, sel: b - 1); pre.append(Date().timeIntervalSince(t) * 1000)
+            preChunks.append((0..<nChunks).map { chunkTimes["prefill_\(b).chunk\($0)"]![n0] })
+            n0 = chunkTimes["decode.chunk0"]?.count ?? 0
+            t = Date(); _ = call("decode", 1, [5], b, st); first.append(Date().timeIntervalSince(t) * 1000)
+            firstChunks.append((0..<nChunks).map { chunkTimes["decode.chunk\($0)"]![n0] })
+            for i in 1..<steps {
+                t = Date(); _ = call("decode", 1, [5 + i], b + i, st); steady.append(Date().timeIntervalSince(t) * 1000)
+            }
+        }
+        r["prefill_ms"] = pre; r["first_decode_ms"] = first; r["steady_decode_median_ms"] = median(steady)
+        r["first_decode_chunk_ms"] = firstChunks; r["prefill_chunk_ms"] = preChunks
     case "gen":
         let ids = task["ids"] as! [Int], n = task["n"] as! Int
         let st = newStates()

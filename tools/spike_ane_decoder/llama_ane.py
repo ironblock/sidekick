@@ -50,7 +50,7 @@ class Norm(nn.Module):
 
     def __init__(self, weight, eps):
         super().__init__()
-        self.weight = nn.Parameter(weight.detach().clone().view(1, -1, 1, 1), requires_grad=False)
+        self.weight = nn.Parameter(weight.detach().float().clone().view(1, -1, 1, 1), requires_grad=False)
         self.eps = float(eps)
         self.mult = 1.0
         self.stat = None            # calibration: max |x|
@@ -63,7 +63,7 @@ class Norm(nn.Module):
 
 
 def conv(lin, scale=1.0):
-    w = lin.weight.detach()
+    w = lin.weight.detach().float()
     c = nn.Conv2d(w.shape[1], w.shape[0], 1, bias=False)
     with torch.no_grad():
         c.weight.copy_((w * scale).view(w.shape[0], w.shape[1], 1, 1))
@@ -94,6 +94,7 @@ class Layer(nn.Module):
             self.act = nn.SiLU()
             self.up = conv(m.up_proj)
         self.gate, self.down = conv(m.gate_proj), conv(m.down_proj)
+        self.post_o, self.post_down = 1.0, 1.0      # apply_rescales: explicit 1/s after o and down
         self.ostat = None           # calibration: [max |q,k,v,gate,up out|, max |o,down out|]
 
     def _track(self, which, *ts):
@@ -128,10 +129,14 @@ class Layer(nn.Module):
         p = torch.softmax(s, dim=-1).view(KVH, rep * S, C)
         o = torch.matmul(p, V).view(H, S, Dh).transpose(1, 2).reshape(1, H * Dh, 1, S)
         o = self.o(o)
+        if self.post_o != 1.0:
+            o = o * self.post_o
         h = h + o
         x = self.n2(h)
         g, u = self.gate(x), self.up(x)
         d = self.down(self.act(g) * u)
+        if self.post_down != 1.0:
+            d = d * self.post_down
         self._track(0, g, u)
         self._track(1, o, d)
         return h + d
@@ -151,7 +156,7 @@ class Chunk(nn.Module):
         self.register_buffer("v_cache", torch.zeros(n, cfg.num_key_value_heads, C, cfg.head_dim, dtype=cache_dtype))
         self.norm = final_norm
         if head is not None:
-            w = head.weight.detach()
+            w = head.weight.detach().float()
             parts = torch.chunk(w, head_split, dim=0)
             self.heads = nn.ModuleList()
             for p in parts:
@@ -183,9 +188,11 @@ class Chunk(nn.Module):
         return logits.view(-1, S).transpose(0, 1)                # [S, V]
 
 
-def load_hf(src):
+def load_hf(src, dtype=torch.float32):
+    """The checkpoint, by default in fp32. bfloat16 keeps a 2B model at half
+    the memory; Layer and Chunk copy what they use to fp32 exactly."""
     from transformers import AutoModelForCausalLM
-    m = AutoModelForCausalLM.from_pretrained(src, dtype=torch.float32, attn_implementation="eager").eval()
+    m = AutoModelForCausalLM.from_pretrained(src, dtype=dtype, attn_implementation="eager").eval()
     if getattr(m.config, "head_dim", None) is None:
         m.config.head_dim = m.config.hidden_size // m.config.num_attention_heads
     return m
@@ -286,6 +293,136 @@ def calibrate(chunks, layers, norm, cfg, embed, texts_ids, report=print, K=None)
         l.ostat = None
     report(f"residual 1/K: K={K} (o/down max {scaled:.0f}, others {fixed:.0f}); norm input max |x| (scaled) "
            f"{max(v[0] for v in scales):.1f}; norm pre-scales != 1: {sum(v[1] != 1.0 for v in scales)}/{len(norms)}")
+    return {"K": K, "norm_max": [v[0] for v in scales], "norm_scale": [v[1] for v in scales],
+            "linear_out_max": lin}
+
+
+# Layer-at-a-time execution, for checkpoints whose fp32 copy doesn't fit in
+# memory beside the checkpoint itself (MiniCPM5-2B: 10 GB in fp32). Each layer
+# is built in fp32 from the checkpoint (bf16 or fp32), applied to every text's
+# hidden states, then freed. A per-text cache of capacity S makes it equal to
+# run_eager at C = S.
+
+def apply_calibration(layer, i, L, cal):
+    """Give a freshly built Layer i of L the calibrated rewrites: the residual
+    1/K and its norms' pre-scales (calibrate()'s order: 1/K first)."""
+    K = cal["K"]
+    if K != 1:
+        layer.residual_scale(1.0 / K)
+    for n, s in ((layer.n1, cal["norm_scale"][i]), (layer.n2, cal["norm_scale"][L + i])):
+        n.mult, n.eps = s, n.eps * s * s
+    return layer
+
+
+def final_norm(hf, cal):
+    n = Norm(hf.model.norm.weight, hf.config.rms_norm_eps)
+    if cal is not None:
+        K, s = cal["K"], cal["norm_scale"][-1]
+        n.eps /= K * K
+        n.mult, n.eps = s, n.eps * s * s
+    return n
+
+
+def apply_rescales(layer, spec):
+    """D17/D19's small-input rule: bring a projection's input towards rms 1
+    with a power-of-two scale s folded into the weights that produce it,
+    undone by an explicit multiply by 1/s after the projection (not folded
+    into its weights, which would push small ones toward fp16 subnormals).
+    spec: {"o": s, "down": s}. o's input is attention's output, so v_proj
+    takes s; down's input is act(gate) * up, so up_proj takes s."""
+    with torch.no_grad():
+        if spec.get("o", 1) != 1:
+            layer.v.weight.mul_(spec["o"])
+            layer.post_o = 1.0 / spec["o"]
+        if spec.get("down", 1) != 1:
+            layer.up.weight.mul_(spec["down"])
+            layer.post_down = 1.0 / spec["down"]
+    return layer
+
+
+def build_layer(hf, i, cal=None, silu="stable"):
+    layer = Layer(hf.model.layers[i], hf.config, silu)
+    if cal is not None:
+        apply_calibration(layer, i, hf.config.num_hidden_layers, cal)
+    return layer
+
+
+def stream(hf, texts_ids, cal=None, silu="stable", on_layer=None, on_hidden=None, rows=None, head=True,
+           layer_fn=None):
+    """fp32 forward of every text, one layer at a time. on_layer(i, layer)
+    may modify a layer before it runs (calibration stats, simulated
+    quantisation); on_hidden(i, t, h) sees layer i's output for text t.
+    layer_fn(i) builds layer i (default: build_layer with cal).
+    rows: (lo, hi) logits rows to keep (default all). Returns the logits
+    per text ([rows, V] fp32), or the final hidden states if head is False."""
+    cfg = hf.config
+    L, KVH, Dh = cfg.num_hidden_layers, cfg.num_key_value_heads, cfg.head_dim
+    K = cal["K"] if cal is not None else 1
+    emb = hf.model.embed_tokens.weight
+    hs = [emb[torch.tensor(ids)].float().T.reshape(1, -1, 1, len(ids)) / K for ids in texts_ids]
+    with torch.no_grad():
+        for i in range(L):
+            layer = layer_fn(i) if layer_fn is not None else build_layer(hf, i, cal, silu)
+            if on_layer is not None:
+                on_layer(i, layer)
+            for t, h in enumerate(hs):
+                S = h.shape[-1]
+                kc = torch.zeros(1, KVH, S, Dh)
+                vc = torch.zeros(1, KVH, S, Dh)
+                cos, sin = rope(cfg, list(range(S)))
+                hs[t] = layer(h, 0, kc, vc, torch.tensor([0], dtype=torch.int32), mask_for(0, S, S), cos, sin, S, S)
+                if on_hidden is not None:
+                    on_hidden(i, t, hs[t])
+            del layer
+        if not head:
+            return hs
+        return [logits_of(hf, cal, h, rows) for h in hs]
+
+
+def logits_of(hf, cal, h, rows=None):
+    """fp32 final norm and head over hidden [1, D, 1, S]; rows (lo, hi)."""
+    S = h.shape[-1]
+    lo, hi = rows if rows is not None else (0, S)
+    W = hf.lm_head.weight
+    with torch.no_grad():
+        x = final_norm(hf, cal)(h[..., lo:hi]).view(hf.config.hidden_size, hi - lo).T     # [rows, D]
+        return torch.cat([x @ W[j:j + 16384].float().T for j in range(0, W.shape[0], 16384)], dim=1)
+
+
+def stream_calibrate(hf, texts_ids, silu="stable", report=print, K=None):
+    """calibrate() by stream(): the same statistics and the same rule for K
+    and the norms' pre-scales, without the model's fp32 copy in memory."""
+    L = hf.config.num_hidden_layers
+    nmax = [0.0] * (2 * L + 1)
+    lin = [[0.0, 0.0] for _ in range(L)]
+    cur = {}
+
+    def on_layer(i, layer):
+        layer.n1.stat, layer.n2.stat, layer.ostat = 0.0, 0.0, [0.0, 0.0]
+        cur["layer"] = layer
+
+    def on_hidden(i, t, h):          # running maxima over the texts seen so far
+        lay = cur["layer"]
+        nmax[i], nmax[L + i], lin[i] = lay.n1.stat, lay.n2.stat, list(lay.ostat)
+
+    hs = stream(hf, texts_ids, silu=silu, on_layer=on_layer, on_hidden=on_hidden, head=False)
+    nmax[2 * L] = max(float(h.abs().max()) for h in hs)
+    fixed, scaled = max(x[0] for x in lin), max(x[1] for x in lin)
+    if K is None:
+        if fixed > HEADROOM * ANE_LINEAR_MAX:
+            raise SystemExit(f"an unscaled linear output reaches {fixed:.0f}")
+        K = 1
+        while scaled / K > HEADROOM * ANE_LINEAR_MAX:
+            K *= 2
+    scales = []
+    for m in nmax:
+        m = m / K
+        s = 1.0
+        while (m * s) ** 2 > NORM_SQ_MAX:
+            s /= 2.0
+        scales.append((m, s))
+    report(f"residual 1/K: K={K} (o/down max {scaled:.0f}, others {fixed:.0f}); norm input max |x| (scaled) "
+           f"{max(v[0] for v in scales):.1f}; norm pre-scales != 1: {sum(v[1] != 1.0 for v in scales)}/{len(scales)}")
     return {"K": K, "norm_max": [v[0] for v in scales], "norm_scale": [v[1] for v in scales],
             "linear_out_max": lin}
 
