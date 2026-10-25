@@ -1,0 +1,1802 @@
+{
+ "schema": "sidekick-chat-bench-run/1",
+ "row": {
+  "id": "afm-required",
+  "label": "Foundation Models, guided JSON, all properties required",
+  "server": "sidekick",
+  "json": "guided",
+  "schema_all_required": true,
+  "families": [
+   "extraction"
+  ]
+ },
+ "task_set": {
+  "extraction.jsonl": "9cf90b4b7f47075e3e88244fa28b5f97144a2352363e4626e0d225d56e28ece8",
+  "instructions.jsonl": "e4c1927781cf601e3d265b03bcfb11635ddb15e5eff78c233fc6639559ea373c",
+  "schemas.json": "3346b4808a516d913e20a8fc586a277a216291fa7567ebfbe84e926732cc2278",
+  "tags.jsonl": "817f0bfb785defb9ca6c5c69dfe9711631878eb90cd464ebfcaba81a57556f85",
+  "tasks.toml": "eca7faa28653953dfa0f42a7f2f5c756b14b74e090d630361f9585c9e2b34843",
+  "titles.jsonl": "0d436f55f9cb19850f7a177a021092f61b33afd6d24e6691fc38917657db8601",
+  "requests": "2d39a7b9c39dc613f29625999028f03ac9840c5174410247b359dbf71d287a23",
+  "version": 1
+ },
+ "model": {
+  "model": "apple-fm",
+  "availability": {
+   "state": "available"
+  },
+  "variant": "AFM 3 Core",
+  "variant_id": "core3",
+  "context_limit": 4096,
+  "sidekick_version": "0.16.0",
+  "sidekick_commit": "305c7bf2bf00a1d62dd0d744b850ea17add94910",
+  "model_header": "core3"
+ },
+ "stack": {
+  "server": "sidekickd",
+  "route": "/v1/chat/completions"
+ },
+ "machine": {
+  "macos": "27.0",
+  "macos_build": "26A428",
+  "chip": "Apple M1 Max",
+  "memory_gb": 32,
+  "arch": "arm64"
+ },
+ "request_shape": {
+  "model": "apple-fm",
+  "messages": "<item>",
+  "temperature": 0.0,
+  "max_tokens": 256,
+  "stream": true,
+  "stream_options": {
+   "include_usage": true
+  },
+  "response_format": {
+   "type": "json_schema",
+   "json_schema": {
+    "name": "extraction",
+    "schema": {
+     "type": "object",
+     "properties": {
+      "name": {
+       "type": "string",
+       "description": "The event's name"
+      },
+      "date": {
+       "type": "string",
+       "description": "The day it starts, as YYYY-MM-DD"
+      },
+      "start_time": {
+       "type": "string",
+       "description": "Local start time, 24-hour HH:MM"
+      },
+      "venue": {
+       "type": "string",
+       "description": "The building or place it is held in"
+      },
+      "city": {
+       "type": "string"
+      },
+      "online": {
+       "type": "boolean",
+       "description": "True if attendees join over the internet"
+      },
+      "ticket_price": {
+       "type": "number",
+       "description": "Price of one standard ticket; 0 if free"
+      },
+      "currency": {
+       "type": "string",
+       "enum": [
+        "USD",
+        "EUR",
+        "GBP",
+        "JPY",
+        "CAD",
+        "AUD",
+        "CHF",
+        "other"
+       ]
+      }
+     },
+     "required": [
+      "name",
+      "date",
+      "start_time",
+      "venue",
+      "city",
+      "online",
+      "ticket_price",
+      "currency"
+     ]
+    }
+   }
+  }
+ },
+ "started": "2026-10-24T21:04:28",
+ "timeout_s": 120.0,
+ "limit": null,
+ "records": [
+  {
+   "family": "extraction",
+   "item": "ext-001",
+   "status": 200,
+   "content": "{\"online\": false, \"city\": \"Leeds\", \"venue\": \"Wharf Street Hall\", \"currency\": \"GBP\", \"start_time\": \"10:00\", \"ticket_price\": 0, \"name\": \"Northgate Makers Market\", \"date\": \"2026-03-14\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 679,
+    "completion_tokens": 71,
+    "total_tokens": 750,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.4603321670001606,
+   "ttft_content_s": 2.4603321670001606,
+   "total_s": 2.4603792919988337,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-002",
+   "status": 200,
+   "content": "{\"name\": \"Lisbon Data Engineering Meetup #14\", \"online\": false, \"ticket_price\": 15, \"start_time\": \"18:30\", \"venue\": \"Armazém 7\", \"city\": \"Lisbon\", \"date\": \"2026-03-19\", \"currency\": \"EUR\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 686,
+    "completion_tokens": 87,
+    "total_tokens": 773,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.8517678330026683,
+   "ttft_content_s": 2.8517678330026683,
+   "total_s": 2.8518084999996063,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-003",
+   "status": 200,
+   "content": "{\"online\": true, \"city\": \"UK\", \"venue\": \"video call\", \"currency\": \"GBP\", \"start_time\": \"13:00\", \"ticket_price\": 0, \"name\": \"Budgeting for Freelancers\", \"date\": \"2026-04-22\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 660,
+    "completion_tokens": 79,
+    "total_tokens": 739,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.41408975000013,
+   "ttft_content_s": 2.41408975000013,
+   "total_s": 2.4141367920019547,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-004",
+   "status": 200,
+   "content": "{\"date\": \"2026-06-05\", \"city\": \"Not specified\", \"start_time\": \"Not specified\", \"currency\": \"other\", \"ticket_price\": 0, \"venue\": \"Old Boathouse\", \"online\": false, \"name\": \"Riverside Jazz Night\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 640,
+    "completion_tokens": 95,
+    "total_tokens": 735,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.8272972090016992,
+   "ttft_content_s": 2.8272972090016992,
+   "total_s": 2.8273352090000117,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-005",
+   "status": 200,
+   "content": "{\"name\": \"The Harbour Run 10K\", \"city\": \"Portsmouth\", \"start_time\": \"08:15\", \"currency\": \"GBP\", \"ticket_price\": 32, \"venue\": \"Marina Pavilion\", \"online\": false, \"date\": \"2026-05-17\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 673,
+    "completion_tokens": 77,
+    "total_tokens": 750,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.6379247499971825,
+   "ttft_content_s": 2.6379247499971825,
+   "total_s": 2.637973916996998,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-006",
+   "status": 200,
+   "content": "{\"date\": \"2026-10-08\", \"ticket_price\": 249, \"name\": \"Lakeshore Python Day 2026\", \"venue\": \"Metro Hall Conference Centre\", \"city\": \"Toronto\", \"online\": false, \"start_time\": \"09:00\", \"currency\": \"CAD\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 654,
+    "completion_tokens": 87,
+    "total_tokens": 741,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.6808840420017077,
+   "ttft_content_s": 2.6808840420017077,
+   "total_s": 2.680922499999724,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-007",
+   "status": 200,
+   "content": "{\"venue\": \"Not specified\", \"city\": \"Not specified\", \"start_time\": \"Not specified\", \"currency\": \"other\", \"date\": \"2026-11-11\", \"online\": true, \"name\": \"Lighthouse Stories Night\", \"ticket_price\": 0}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 649,
+    "completion_tokens": 73,
+    "total_tokens": 722,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.4843758749993867,
+   "ttft_content_s": 2.4843758749993867,
+   "total_s": 2.48441337499753,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-008",
+   "status": 200,
+   "content": "{\"venue\": \"Kanda Riverside Hall\", \"city\": \"Tokyo\", \"start_time\": \"11:00\", \"currency\": \"JPY\", \"ticket_price\": 3500, \"online\": false, \"name\": \"Tokyo Craft Beer Weekend\", \"date\": \"2026-07-25\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 649,
+    "completion_tokens": 77,
+    "total_tokens": 726,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.5521776669993415,
+   "ttft_content_s": 2.5521776669993415,
+   "total_s": 2.5522201669991773,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-009",
+   "status": 200,
+   "content": "{\"venue\": \"the ballroom of the Grand Lodge Hotel\", \"online\": false, \"start_time\": \"19:00\", \"name\": \"Annual Volunteers' Dinner\", \"city\": \"Edinburgh\", \"ticket_price\": 25, \"date\": \"2026-09-12\", \"currency\": \"GBP\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 669,
+    "completion_tokens": 101,
+    "total_tokens": 770,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 3.082038166001439,
+   "ttft_content_s": 3.082038166001439,
+   "total_s": 3.082077333001507,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-010",
+   "status": 200,
+   "content": "{\"currency\": \"CHF\", \"start_time\": \"00:00\", \"city\": \"Zürich\", \"ticket_price\": 5, \"name\": \"Zürich Open Source Hack Night\", \"online\": false, \"date\": \"2026-12-03\", \"venue\": \"Werkhaus\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 649,
+    "completion_tokens": 73,
+    "total_tokens": 722,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.601923457998055,
+   "ttft_content_s": 2.601923457998055,
+   "total_s": 2.6019637919998786,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-011",
+   "status": 200,
+   "content": "{\"organization\": \"Brightwell Analytics\", \"phone\": \"(312) 555-0142\", \"name\": \"Marta Kowalczyk\", \"job_title\": \"Head of Partnerships\", \"email\": \"marta.kowalczyk@example.com\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 374,
+    "completion_tokens": 79,
+    "total_tokens": 453,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.0867104579992883,
+   "ttft_content_s": 2.0867104579992883,
+   "total_s": 2.0867505829992297,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-012",
+   "status": 200,
+   "content": "{\"organization\": \"Fernhill Logistics\", \"name\": \"Aisha Rahman\", \"phone\": \"01632 960418\", \"email\": \"aisha.rahman@example.org\", \"job_title\": \"Procurement Manager\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 416,
+    "completion_tokens": 79,
+    "total_tokens": 495,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.0419045419985196,
+   "ttft_content_s": 2.0419045419985196,
+   "total_s": 2.0419430420006393,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-013",
+   "status": 200,
+   "content": "{\"job_title\": \"senior\", \"organization\": \"Lumen & Co\", \"phone\": \"\", \"email\": \"tomas.ferreira@example.com\", \"name\": \"Tomás Ferreira\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 353,
+    "completion_tokens": 47,
+    "total_tokens": 400,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.502743791003013,
+   "ttft_content_s": 1.502743791003013,
+   "total_s": 1.502782625000691,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-014",
+   "status": 200,
+   "content": "{\"organization\": \"Halvard Systems\", \"name\": \"NORA LINDQVIST\", \"phone\": \"+44 7700 900123\", \"job_title\": \"Senior Software Engineer\", \"email\": \"nora.lindqvist@example.com\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 382,
+    "completion_tokens": 81,
+    "total_tokens": 463,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.0784467079975,
+   "ttft_content_s": 2.0784467079975,
+   "total_s": 2.078486582999176,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-015",
+   "status": 200,
+   "content": "{\"organization\": \"Corvane Media\", \"name\": \"Elena Sorokina\", \"email\": \"elena.sorokina@example.com\", \"job_title\": \"Marketing Director\"}",
+   "reasoning": "",
+   "finish_reason": "length",
+   "usage": {
+    "prompt_tokens": 384,
+    "completion_tokens": 262,
+    "total_tokens": 646,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 5.675223874997755,
+   "ttft_content_s": 5.675223874997755,
+   "total_s": 5.675261749998754,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-016",
+   "status": 200,
+   "content": "{\"job_title\": \"fixed the boiler\", \"organization\": \"\", \"phone\": \"07700 900456\", \"email\": \"\", \"name\": \"Gareth Evans\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 354,
+    "completion_tokens": 47,
+    "total_tokens": 401,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.4903327079991868,
+   "ttft_content_s": 1.4903327079991868,
+   "total_s": 1.4903832909985795,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-017",
+   "status": 200,
+   "content": "{\"email\": \"beatriz.almeida@example.org\", \"job_title\": \"Data Protection Officer\", \"phone\": \"+1 (617) 555-0119\", \"organization\": \"Solenne Bank\", \"name\": \"Beatriz Almeida\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 380,
+    "completion_tokens": 77,
+    "total_tokens": 457,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.1334712499992747,
+   "ttft_content_s": 2.1334712499992747,
+   "total_s": 2.1335303749983723,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-018",
+   "status": 200,
+   "content": "{\"name\": \"Kenji Watanabe\", \"phone\": \"(646) 555-0177\", \"organization\": \"Tsubaki Freight\", \"email\": \"kenji.watanabe@example.com\", \"job_title\": \"Operations Lead\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 392,
+    "completion_tokens": 75,
+    "total_tokens": 467,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.117159041001287,
+   "ttft_content_s": 2.117159041001287,
+   "total_s": 2.1172002499988594,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-019",
+   "status": 200,
+   "content": "{\"organization\": \"Atelier Verre\", \"name\": \"Inès Moreau\", \"email\": \"\", \"job_title\": \"founder\", \"phone\": \"\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 359,
+    "completion_tokens": 37,
+    "total_tokens": 396,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.346868208001979,
+   "ttft_content_s": 1.346868208001979,
+   "total_s": 1.346908458002872,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-020",
+   "status": 200,
+   "content": "{\"organization\": \"Greenway Community Trust\", \"phone\": \"01632 960771\", \"job_title\": \"Volunteer Coordinator\", \"name\": \"Liam O'Connor\", \"email\": \"liam.oconnor@example.org\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 373,
+    "completion_tokens": 73,
+    "total_tokens": 446,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.0837450840008387,
+   "ttft_content_s": 2.0837450840008387,
+   "total_s": 2.083786459003022,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-021",
+   "status": 200,
+   "content": "{\"colors\": [\"forest green\", \"slate grey\", \"rust\"], \"price\": 129.99, \"currency\": \"USD\", \"brand\": \"Kestrel Outdoor\", \"product_name\": \"Northwind 40L Trail Backpack\", \"in_stock\": true}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 488,
+    "completion_tokens": 83,
+    "total_tokens": 571,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.385299167002813,
+   "ttft_content_s": 2.385299167002813,
+   "total_s": 2.3853377500017814,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-022",
+   "status": 200,
+   "content": "{\"currency\": \"GBP\", \"in_stock\": true, \"colors\": [\"oatmeal\", \"navy\", \"bottle green\"], \"price\": 64, \"brand\": \"Harrow & Finch\", \"product_name\": \"Harrow & Finch Merino Crew Jumper\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 485,
+    "completion_tokens": 63,
+    "total_tokens": 548,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.1807973329996457,
+   "ttft_content_s": 2.1807973329996457,
+   "total_s": 2.1808370830003696,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-023",
+   "status": 200,
+   "content": "{\"colors\": [], \"price\": 45, \"currency\": \"EUR\", \"brand\": \"Halden\", \"product_name\": \"Aurora desk lamp\", \"in_stock\": false}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 480,
+    "completion_tokens": 43,
+    "total_tokens": 523,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.6307859999978973,
+   "ttft_content_s": 1.6307859999978973,
+   "total_s": 1.6308391249986016,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-024",
+   "status": 200,
+   "content": "{\"colors\": [\"white\", \"charcoal\"], \"in_stock\": false, \"currency\": \"JPY\", \"brand\": \"Tsuchi Works\", \"price\": 4800, \"product_name\": \"Kumo Ceramic Pour-Over Dripper\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 488,
+    "completion_tokens": 63,
+    "total_tokens": 551,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.9452251250004338,
+   "ttft_content_s": 1.9452251250004338,
+   "total_s": 1.9452630410014535,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-025",
+   "status": 200,
+   "content": "{\"colors\": [\"Midnight Black\", \"Glacier White\", \"Sage\"], \"currency\": \"USD\", \"price\": 149, \"in_stock\": true, \"product_name\": \"Voltaic Pro wireless headphones\", \"brand\": \"Arden Audio\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 496,
+    "completion_tokens": 65,
+    "total_tokens": 561,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.0735212079998746,
+   "ttft_content_s": 2.0735212079998746,
+   "total_s": 2.0735590000003867,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-026",
+   "status": 200,
+   "content": "{\"colors\": [], \"in_stock\": true, \"currency\": \"USD\", \"brand\": \"Wave Mini\", \"product_name\": \"Wave Mini\", \"price\": 39.99}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 465,
+    "completion_tokens": 47,
+    "total_tokens": 512,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.629556624997349,
+   "ttft_content_s": 1.629556624997349,
+   "total_s": 1.6296011669983272,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-027",
+   "status": 200,
+   "content": "{\"in_stock\": true, \"product_name\": \"Alpenglow Insulated Jacket\", \"price\": 249, \"brand\": \"Bergli\", \"currency\": \"CHF\", \"colors\": [\"red\", \"navy\", \"black\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 482,
+    "completion_tokens": 57,
+    "total_tokens": 539,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.8598859999983688,
+   "ttft_content_s": 1.8598859999983688,
+   "total_s": 1.85993037499793,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-028",
+   "status": 200,
+   "content": "{\"brand\": \"Maple Ridge Coffee Co.\", \"price\": 18.95, \"colors\": [], \"currency\": \"CAD\", \"in_stock\": true, \"product_name\": \"Morning Roast, whole bean, 340 g bag\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 465,
+    "completion_tokens": 61,
+    "total_tokens": 526,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.8817625000010594,
+   "ttft_content_s": 1.8817625000010594,
+   "total_s": 1.8818018749989278,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-029",
+   "status": 200,
+   "content": "{\"brand\": \"Orbit\", \"price\": 19.99, \"colors\": [], \"currency\": \"USD\", \"in_stock\": false, \"product_name\": \"Orbit smart plug\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 474,
+    "completion_tokens": 47,
+    "total_tokens": 521,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.619756416999735,
+   "ttft_content_s": 1.619756416999735,
+   "total_s": 1.6198052500003541,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-030",
+   "status": 200,
+   "content": "{\"product_name\": \"Coastline Linen Beach Towel\", \"in_stock\": false, \"brand\": \"Saltmarsh Home\", \"price\": 59, \"colors\": [\"sand\", \"terracotta\", \"ocean blue\"], \"currency\": \"AUD\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 488,
+    "completion_tokens": 77,
+    "total_tokens": 565,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.296108250000543,
+   "ttft_content_s": 2.296108250000543,
+   "total_s": 2.2961561670017545,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-031",
+   "status": 200,
+   "content": "{\"summary\": \"App crashes when exporting a PDF\", \"version\": \"3.2.1\", \"os\": \"macos\", \"reproducible\": true, \"severity\": \"high\", \"component\": \"export\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 552,
+    "completion_tokens": 53,
+    "total_tokens": 605,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.7985709590029728,
+   "ttft_content_s": 1.7985709590029728,
+   "total_s": 1.7986093750005239,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-032",
+   "status": 200,
+   "content": "{\"component\": \"sync engine\", \"os\": \"windows\", \"version\": \"7.0.2\", \"severity\": \"critical\", \"summary\": \"URGENT: sync is deleting local notes\", \"reproducible\": true}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 558,
+    "completion_tokens": 51,
+    "total_tokens": 609,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.879356541998277,
+   "ttft_content_s": 1.879356541998277,
+   "total_s": 1.8793952919986623,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-033",
+   "status": 200,
+   "content": "{\"severity\": \"low\", \"os\": \"macos\", \"component\": \"toolbar's Share button\", \"version\": \"not specified\", \"reproducible\": true, \"summary\": \"in dark mode the label on the toolbar's Share button sits a couple of pixels lower than the other button labels. It doesn't affect anything functionally, it just looks a bit off once you notice it.\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 519,
+    "completion_tokens": 93,
+    "total_tokens": 612,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.8099352919998637,
+   "ttft_content_s": 2.8099352919998637,
+   "total_s": 2.809975584001222,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-034",
+   "status": 200,
+   "content": "{\"reproducible\": true, \"version\": \"2.4.1\", \"summary\": \"Search returns no results after upgrade\", \"os\": \"linux\", \"severity\": \"medium\", \"component\": \"search indexer\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 563,
+    "completion_tokens": 67,
+    "total_tokens": 630,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.3277991249997285,
+   "ttft_content_s": 2.3277991249997285,
+   "total_s": 2.3278381250020175,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-035",
+   "status": 200,
+   "content": "{\"os\": \"android\", \"component\": \"checkout\", \"reproducible\": false, \"summary\": \"Payment screen froze during checkout\", \"severity\": \"high\", \"version\": \"4.12.0\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 558,
+    "completion_tokens": 53,
+    "total_tokens": 611,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.965966332998505,
+   "ttft_content_s": 1.965966332998505,
+   "total_s": 1.9660132499993779,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-036",
+   "status": 200,
+   "content": "{\"summary\": \"Photos upload sideways from the iPhone app\", \"reproducible\": true, \"severity\": \"medium\", \"os\": \"ios\", \"version\": \"iOS 18.2, app version 5.6\", \"component\": \"image upload\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 542,
+    "completion_tokens": 73,
+    "total_tokens": 615,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.5430943749997823,
+   "ttft_content_s": 2.5430943749997823,
+   "total_s": 2.543151083998964,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-037",
+   "status": 200,
+   "content": "{\"summary\": \"Login sometimes fails with 'session expired' straight after signing in. It happens maybe one time in five, usually first thing in the morning, and hitting retry normally works. I haven't been able to trigger it on demand. I'd put this at medium severity, since there's a workaround but it confuses new users.\", \"reproducible\": false, \"severity\": \"medium\", \"os\": \"macos\", \"version\": \"Chrome\", \"component\": \"login\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 538,
+    "completion_tokens": 107,
+    "total_tokens": 645,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 3.3492041250028706,
+   "ttft_content_s": 3.3492041250028706,
+   "total_s": 3.34924354100076,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-038",
+   "status": 200,
+   "content": "{\"version\": \"5.0.0-rc2\", \"severity\": \"critical\", \"component\": \"logging\", \"summary\": \"With debug logging switched off, the auth service still writes the full request body of every login to server.log, including the password field in plain text.\", \"reproducible\": true, \"os\": \"linux\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 542,
+    "completion_tokens": 97,
+    "total_tokens": 639,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.7531524170008197,
+   "ttft_content_s": 2.7531524170008197,
+   "total_s": 2.753192416999809,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-039",
+   "status": 200,
+   "content": "{\"reproducible\": true, \"os\": \"windows\", \"component\": \"calendar month view\", \"version\": \"1.8.0 (build 2026-05-12, previous release 1.7.4)\", \"severity\": \"high\", \"summary\": \"Calendar shows events one day early for users west of UTC\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 580,
+    "completion_tokens": 83,
+    "total_tokens": 663,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.547503042002063,
+   "ttft_content_s": 2.547503042002063,
+   "total_s": 2.547541084000841,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-040",
+   "status": 200,
+   "content": "{\"summary\": \"on FreeBSD 14 the install script prints a warning about a missing optional dependency (libnotify), even though desktop notifications aren't used on servers. The install still completes and everything runs fine afterwards. Might be worth hiding the warning when the notification feature is disabled.\", \"version\": \"14\", \"component\": \"install script\", \"os\": \"linux\", \"reproducible\": true, \"severity\": \"low\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 512,
+    "completion_tokens": 93,
+    "total_tokens": 605,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.836251374999847,
+   "ttft_content_s": 2.836251374999847,
+   "total_s": 2.8363053329994727,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-041",
+   "status": 200,
+   "content": "{\"payment_method\": \"card\", \"total\": 13.5, \"currency\": \"GBP\", \"item_count\": 5, \"date\": \"2026-04-11\", \"merchant\": \"GREENLEAF GROCERS\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 567,
+    "completion_tokens": 73,
+    "total_tokens": 640,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.3067745000007562,
+   "ttft_content_s": 2.3067745000007562,
+   "total_s": 2.3068185000011,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-042",
+   "status": 200,
+   "content": "{\"payment_method\": \"cash\", \"total\": 7.95, \"item_count\": 3, \"currency\": \"GBP\", \"date\": \"2026-06-07\", \"merchant\": \"Corner Cup Café\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 544,
+    "completion_tokens": 59,
+    "total_tokens": 603,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.9590219169986085,
+   "ttft_content_s": 1.9590219169986085,
+   "total_s": 1.9590679169996292,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-043",
+   "status": 200,
+   "content": "{\"payment_method\": \"card\", \"total\": 42.1, \"currency\": \"USD\", \"item_count\": 1, \"date\": \"2023-10-01\", \"merchant\": \"Quillby Books\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 503,
+    "completion_tokens": 79,
+    "total_tokens": 582,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.1116760000004433,
+   "ttft_content_s": 2.1116760000004433,
+   "total_s": 2.1117211670025426,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-044",
+   "status": 200,
+   "content": "{\"merchant\": \"BÄCKEREI SONNENKORN\", \"total\": 8.3, \"item_count\": 3, \"currency\": \"EUR\", \"date\": \"2026-03-14\", \"payment_method\": \"mobile\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 562,
+    "completion_tokens": 79,
+    "total_tokens": 641,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.4881172079985845,
+   "ttft_content_s": 2.4881172079985845,
+   "total_s": 2.4881591250014026,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-045",
+   "status": 200,
+   "content": "{\"payment_method\": \"card\", \"total\": 64, \"currency\": \"USD\", \"item_count\": 4, \"date\": \"2026-09-19\", \"merchant\": \"Lantern Noodle House\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 558,
+    "completion_tokens": 79,
+    "total_tokens": 637,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.260990665999998,
+   "ttft_content_s": 2.260990665999998,
+   "total_s": 2.26103612499719,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-046",
+   "status": 200,
+   "content": "{\"date\": \"2026-02-27\", \"merchant\": \"Hoshi Stationery, Shibuya store\", \"payment_method\": \"card\", \"total\": 2860, \"currency\": \"JPY\", \"item_count\": 3}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 548,
+    "completion_tokens": 73,
+    "total_tokens": 621,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.366853584000637,
+   "ttft_content_s": 2.366853584000637,
+   "total_s": 2.3668957089976175,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-047",
+   "status": 200,
+   "content": "{\"date\": \"2026-03-22\", \"total\": 72, \"payment_method\": \"other\", \"merchant\": \"Vireo Garden Supply\", \"currency\": \"EUR\", \"item_count\": 4}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 570,
+    "completion_tokens": 71,
+    "total_tokens": 641,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.4022874170004798,
+   "ttft_content_s": 2.4022874170004798,
+   "total_s": 2.4023245419994055,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-048",
+   "status": 200,
+   "content": "{\"currency\": \"GBP\", \"item_count\": 1, \"date\": \"2024-10-01\", \"total\": 15, \"payment_method\": \"cash\", \"merchant\": \"Hillside Apiary\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 503,
+    "completion_tokens": 57,
+    "total_tokens": 560,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.8556306669997866,
+   "ttft_content_s": 1.8556306669997866,
+   "total_s": 1.8556754170022032,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-049",
+   "status": 200,
+   "content": "{\"item_count\": 3, \"currency\": \"CAD\", \"merchant\": \"Ridgeline Outfitters, Store #112\", \"total\": 187.58, \"payment_method\": \"card\", \"date\": \"2026-05-30\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 582,
+    "completion_tokens": 85,
+    "total_tokens": 667,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.563427041997784,
+   "ttft_content_s": 2.563427041997784,
+   "total_s": 2.563464709000982,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-050",
+   "status": 200,
+   "content": "{\"payment_method\": \"cash\", \"total\": 38.5, \"currency\": \"USD\", \"item_count\": 1, \"merchant\": \"Saffron Table\", \"date\": \"2026-09-02\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 513,
+    "completion_tokens": 59,
+    "total_tokens": 572,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.8885713329982536,
+   "ttft_content_s": 1.8885713329982536,
+   "total_s": 1.8886070000007749,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-051",
+   "status": 200,
+   "content": "{\"to_airport\": \"JFK\", \"flight_number\": \"BA117\", \"airline\": \"British Airways\", \"date\": \"2026-05-12\", \"from_airport\": \"LHR\", \"passengers\": 1}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 524,
+    "completion_tokens": 77,
+    "total_tokens": 601,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.4221607920007955,
+   "ttft_content_s": 2.4221607920007955,
+   "total_s": 2.4222077920021547,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-052",
+   "status": 200,
+   "content": "{\"flight_number\": \"LH400\", \"passengers\": 3, \"to_airport\": \"JFK\", \"from_airport\": \"FRA\", \"airline\": \"Lufthansa\", \"date\": \"2026-06-03\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 541,
+    "completion_tokens": 75,
+    "total_tokens": 616,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.422028416000103,
+   "ttft_content_s": 2.422028416000103,
+   "total_s": 2.4220673330019054,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-053",
+   "status": 200,
+   "content": "{\"flight_number\": \"914\", \"date\": \"2026-02-09\", \"passengers\": 1, \"from_airport\": \"\", \"airline\": \"UA\", \"to_airport\": \"\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 506,
+    "completion_tokens": 51,
+    "total_tokens": 557,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.7184027500006778,
+   "ttft_content_s": 1.7184027500006778,
+   "total_s": 1.7184401250015071,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-054",
+   "status": 200,
+   "content": "{\"passengers\": 2, \"date\": \"2026-08-28\", \"airline\": \"Aer Lingus\", \"to_airport\": \"DUB\", \"from_airport\": \"MAN\", \"flight_number\": \"EI203\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 506,
+    "completion_tokens": 77,
+    "total_tokens": 583,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.311631167001906,
+   "ttft_content_s": 2.311631167001906,
+   "total_s": 2.3116725420004514,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-055",
+   "status": 200,
+   "content": "{\"to_airport\": \"LHR\", \"airline\": \"KLM\", \"from_airport\": \"AMS\", \"flight_number\": \"KL1008\", \"date\": \"2026-02-14\", \"passengers\": 2}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 537,
+    "completion_tokens": 77,
+    "total_tokens": 614,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.444614249998267,
+   "ttft_content_s": 2.444614249998267,
+   "total_s": 2.4446640409987594,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-056",
+   "status": 200,
+   "content": "{\"passengers\": 1, \"airline\": \"Singapore Airlines\", \"to_airport\": \"LHR\", \"flight_number\": \"SQ322\", \"date\": \"2026-04-30\", \"from_airport\": \"SIN\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 515,
+    "completion_tokens": 75,
+    "total_tokens": 590,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.4034459169997717,
+   "ttft_content_s": 2.4034459169997717,
+   "total_s": 2.403486166997027,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-057",
+   "status": 200,
+   "content": "{\"passengers\": 0, \"airline\": \"QF\", \"to_airport\": \"\", \"flight_number\": \"QF1\", \"date\": \"2026-08-01\", \"from_airport\": \"\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 486,
+    "completion_tokens": 59,
+    "total_tokens": 545,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.7971329579995654,
+   "ttft_content_s": 1.7971329579995654,
+   "total_s": 1.7971743749985762,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-058",
+   "status": 200,
+   "content": "{\"from_airport\": \"YYZ\", \"flight_number\": \"AC856\", \"airline\": \"Air Canada\", \"to_airport\": \"LHR\", \"date\": \"2026-10-11\", \"passengers\": 1}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 505,
+    "completion_tokens": 77,
+    "total_tokens": 582,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.336304874999769,
+   "ttft_content_s": 2.336304874999769,
+   "total_s": 2.336353375001636,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-059",
+   "status": 200,
+   "content": "{\"passengers\": 4, \"airline\": \"Iberia\", \"to_airport\": \"LIS\", \"flight_number\": \"IB3166\", \"date\": \"2026-07-20\", \"from_airport\": \"MAD\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 527,
+    "completion_tokens": 77,
+    "total_tokens": 604,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.4170475419996365,
+   "ttft_content_s": 2.4170475419996365,
+   "total_s": 2.417096000001038,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-060",
+   "status": 200,
+   "content": "{\"from_airport\": \"BRS\", \"to_airport\": \"\", \"passengers\": 1, \"flight_number\": \"U2 8341\", \"airline\": \"easyJet\", \"date\": \"2026-12-06\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 496,
+    "completion_tokens": 67,
+    "total_tokens": 563,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.9704745410017495,
+   "ttft_content_s": 1.9704745410017495,
+   "total_s": 1.9705140000005485,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-061",
+   "status": 200,
+   "content": "{\"salary_min\": 75000, \"salary_max\": 90000, \"work_mode\": \"hybrid\", \"city\": \"Berlin, Germany\", \"company\": \"Lattice Bloom\", \"job_title\": \"Senior Backend Engineer\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 464,
+    "completion_tokens": 67,
+    "total_tokens": 531,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.9034137920025387,
+   "ttft_content_s": 1.9034137920025387,
+   "total_s": 1.9034630829992238,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-062",
+   "status": 200,
+   "content": "{\"salary_min\": 60000, \"job_title\": \"Product Designer\", \"work_mode\": \"onsite\", \"salary_max\": 70000, \"company\": \"Fernvale Studio\", \"city\": \"Manchester\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 476,
+    "completion_tokens": 63,
+    "total_tokens": 539,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.9522201250001672,
+   "ttft_content_s": 1.9522201250001672,
+   "total_s": 1.9522682909992,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-063",
+   "status": 200,
+   "content": "{\"salary_min\": 0, \"work_mode\": \"remote\", \"company\": \"Tessellate\", \"city\": \"\", \"job_title\": \"Developer Advocate\", \"salary_max\": 0}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 456,
+    "completion_tokens": 51,
+    "total_tokens": 507,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.6157808749994729,
+   "ttft_content_s": 1.6157808749994729,
+   "total_s": 1.6158218329983356,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-064",
+   "status": 200,
+   "content": "{\"salary_max\": 71000, \"salary_min\": 62000, \"work_mode\": \"onsite\", \"city\": \"Toronto, ON\", \"company\": \"Northbay Distribution\", \"job_title\": \"Warehouse Operations Supervisor\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 466,
+    "completion_tokens": 79,
+    "total_tokens": 545,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.195102207999298,
+   "ttft_content_s": 2.195102207999298,
+   "total_s": 2.1951434160000645,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-065",
+   "status": 200,
+   "content": "{\"company\": \"Quarry Lane Analytics\", \"work_mode\": \"hybrid\", \"city\": \"Bristol\", \"salary_min\": 42000, \"job_title\": \"Data Analyst\", \"salary_max\": 50000}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 486,
+    "completion_tokens": 63,
+    "total_tokens": 549,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.944953959002305,
+   "ttft_content_s": 1.944953959002305,
+   "total_s": 1.9449982500009355,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-066",
+   "status": 200,
+   "content": "{\"company\": \"Marlowe & Pike\", \"job_title\": \"Office Manager\", \"city\": \"Edinburgh\", \"salary_max\": 0, \"salary_min\": 0, \"work_mode\": \"hybrid\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 429,
+    "completion_tokens": 59,
+    "total_tokens": 488,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.6024354580004,
+   "ttft_content_s": 1.6024354580004,
+   "total_s": 1.6024772910022875,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-067",
+   "status": 200,
+   "content": "{\"city\": \"US\", \"company\": \"Cobaltline\", \"salary_max\": 155000, \"job_title\": \"Site Reliability Engineer\", \"salary_min\": 130000, \"work_mode\": \"remote\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 468,
+    "completion_tokens": 67,
+    "total_tokens": 535,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.858172290998482,
+   "ttft_content_s": 1.858172290998482,
+   "total_s": 1.8582147909983178,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-068",
+   "status": 200,
+   "content": "{\"company\": \"The Copper Kettle\", \"work_mode\": \"onsite\", \"city\": \"Bath\", \"salary_min\": 38000, \"job_title\": \"Head Chef\", \"salary_max\": 42000}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 462,
+    "completion_tokens": 63,
+    "total_tokens": 525,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.8187727500007895,
+   "ttft_content_s": 1.8187727500007895,
+   "total_s": 1.8188127920002444,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-069",
+   "status": 200,
+   "content": "{\"salary_max\": 165000, \"salary_min\": 140000, \"company\": \"Halcyon Robotics\", \"work_mode\": \"hybrid\", \"job_title\": \"Staff Machine Learning Engineer\", \"city\": \"San Francisco\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 460,
+    "completion_tokens": 61,
+    "total_tokens": 521,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.8844053749999148,
+   "ttft_content_s": 1.8844053749999148,
+   "total_s": 1.884454832998017,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-070",
+   "status": 200,
+   "content": "{\"job_title\": \"Junior UX Designer\", \"salary_min\": 0, \"city\": \"\", \"work_mode\": \"onsite\", \"company\": \"Pinewood Labs\", \"salary_max\": 0}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 437,
+    "completion_tokens": 55,
+    "total_tokens": 492,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 1.5623857080026937,
+   "ttft_content_s": 1.5623857080026937,
+   "total_s": 1.5624229999993986,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-071",
+   "status": 200,
+   "content": "{\"vegetarian\": true, \"prep_minutes\": 10, \"servings\": 2, \"ingredients\": [\"olive oil\", \"onion\", \"red pepper\", \"garlic\", \"cumin\", \"smoked paprika\", \"chopped tomatoes\", \"eggs\", \"salt\", \"coriander\"], \"dish\": \"Shakshuka\", \"cook_minutes\": 20}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 457,
+    "completion_tokens": 127,
+    "total_tokens": 584,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 3.233596292000584,
+   "ttft_content_s": 3.233596292000584,
+   "total_s": 3.233634084001096,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-072",
+   "status": 200,
+   "content": "{\"dish\": \"Sunday roast chicken with lemon and thyme\", \"vegetarian\": false, \"prep_minutes\": 30, \"ingredients\": [\"whole chicken\", \"two lemons\", \"a bunch of thyme\", \"a bulb of garlic\", \"butter\", \"potatoes\", \"carrots\", \"salt\", \"black pepper\"], \"cook_minutes\": 75, \"servings\": 4}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 448,
+    "completion_tokens": 129,
+    "total_tokens": 577,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 3.1541967500015744,
+   "ttft_content_s": 3.1541967500015744,
+   "total_s": 3.154237334001664,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-073",
+   "status": 200,
+   "content": "{\"prep_minutes\": 0, \"servings\": 0, \"cook_minutes\": 0, \"dish\": \"banana bread\", \"ingredients\": [\"bananas\", \"melted butter\", \"light brown sugar\", \"egg\", \"vanilla extract\", \"plain flour\", \"bicarbonate of soda\", \"salt\", \"walnuts\"], \"vegetarian\": true}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 460,
+    "completion_tokens": 87,
+    "total_tokens": 547,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.407835750000231,
+   "ttft_content_s": 2.407835750000231,
+   "total_s": 2.4078763329998765,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-074",
+   "status": 200,
+   "content": "{\"cook_minutes\": 30, \"servings\": 4, \"dish\": \"Weeknight lentil dal\", \"ingredients\": [\"red lentils\", \"vegetable stock\", \"turmeric\", \"salt\", \"onion\", \"garlic\", \"ginger\", \"cumin seeds\", \"ghee\", \"lime\"], \"prep_minutes\": 10, \"vegetarian\": true}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 459,
+    "completion_tokens": 127,
+    "total_tokens": 586,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 3.1896078329991724,
+   "ttft_content_s": 3.1896078329991724,
+   "total_s": 3.1896474999994098,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-075",
+   "status": 200,
+   "content": "{\"cook_minutes\": 15, \"dish\": \"Honey-soy glazed salmon\", \"servings\": 2, \"prep_minutes\": 10, \"ingredients\": [\"salmon fillets\", \"soy sauce\", \"honey\", \"garlic clove\", \"sesame oil\", \"spring onions\", \"sesame seeds\", \"steamed rice\"]}",
+   "reasoning": "",
+   "finish_reason": "length",
+   "usage": {
+    "prompt_tokens": 449,
+    "completion_tokens": 262,
+    "total_tokens": 711,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 5.938052959001652,
+   "ttft_content_s": 5.938052959001652,
+   "total_s": 5.938092584001424,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-076",
+   "status": 200,
+   "content": "{\"servings\": 0, \"vegetarian\": true, \"prep_minutes\": 0, \"ingredients\": [\"onion\", \"garlic\", \"curry paste\", \"chickpeas\", \"coconut milk\", \"spinach\", \"lemon juice\"], \"cook_minutes\": 0, \"dish\": \"Quick chickpea and spinach curry\"}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 438,
+    "completion_tokens": 73,
+    "total_tokens": 511,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.174451415998192,
+   "ttft_content_s": 2.174451415998192,
+   "total_s": 2.174498249998578,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-077",
+   "status": 200,
+   "content": "{\"prep_minutes\": 5, \"cook_minutes\": 3, \"dish\": \"Classic French omelette\", \"vegetarian\": true, \"ingredients\": [\"eggs\", \"salt\", \"butter\", \"chives\"], \"servings\": 1}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 456,
+    "completion_tokens": 75,
+    "total_tokens": 531,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.043565916999796,
+   "ttft_content_s": 2.043565916999796,
+   "total_s": 2.043604750000668,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-078",
+   "status": 200,
+   "content": "{\"cook_minutes\": 180, \"dish\": \"Slow-cooked beef ragù\", \"servings\": 6, \"ingredients\": [\"beef chuck\", \"onion\", \"carrot\", \"celery\", \"garlic\", \"tomato purée\", \"red wine\", \"chopped tomatoes\", \"beef stock\", \"bay leaves\", \"pappardelle\", \"Parmesan\"], \"vegetarian\": false, \"prep_minutes\": 20}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 442,
+    "completion_tokens": 101,
+    "total_tokens": 543,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.704871499998262,
+   "ttft_content_s": 2.704871499998262,
+   "total_s": 2.704921666998416,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-079",
+   "status": 200,
+   "content": "{\"dish\": \"Sheet-pan halloumi and vegetables\", \"vegetarian\": true, \"servings\": 3, \"cook_minutes\": 35, \"prep_minutes\": 15, \"ingredients\": [\"courgette\", \"red onion\", \"cherry tomatoes\", \"peppers\", \"halloumi\", \"olive oil\", \"dried oregano\", \"honey\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 449,
+    "completion_tokens": 115,
+    "total_tokens": 564,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 3.0663939160003792,
+   "ttft_content_s": 3.0663939160003792,
+   "total_s": 3.066442040999391,
+   "error": null,
+   "constrained": true
+  },
+  {
+   "family": "extraction",
+   "item": "ext-080",
+   "status": 200,
+   "content": "{\"dish\": \"Roasted carrot and ginger soup\", \"vegetarian\": true, \"servings\": 0, \"ingredients\": [\"carrots\", \"onion\", \"ginger\", \"vegetable stock\", \"crème fraîche\", \"salt\", \"pepper\"], \"cook_minutes\": 0, \"prep_minutes\": 0}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 430,
+    "completion_tokens": 75,
+    "total_tokens": 505,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttft_s": 2.0771202920004725,
+   "ttft_content_s": 2.0771202920004725,
+   "total_s": 2.077159208001831,
+   "error": null,
+   "constrained": true
+  }
+ ]
+}
