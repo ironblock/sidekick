@@ -199,7 +199,7 @@ def main():
     ap.add_argument("src")
     ap.add_argument("cal")
     ap.add_argument("out")
-    ap.add_argument("--grid", default="int8", choices=["int8", "pal8", "pal4"])
+    ap.add_argument("--grid", default="int8", choices=["int8", "pal8", "pal6", "pal4"])
     ap.add_argument("--group", type=int, default=16, help="pal8: output channels per palette")
     ap.add_argument("--act-order", action="store_true")
     ap.add_argument("--tokens", type=int, default=8192)
@@ -226,8 +226,9 @@ def main():
     def make_grid(W, H=None):
         if a.grid == "int8":
             return Int8PerChannel(W.double())
-        if a.grid == "pal4":
-            return Lut(W, lloyd_lut(W.float(), a.group, 16, None if H is None else torch.diag(H)), a.group)
+        if a.grid in ("pal4", "pal6"):
+            k = 2 ** int(a.grid[3:])
+            return Lut(W, lloyd_lut(W.float(), a.group, k, None if H is None else torch.diag(H)), a.group)
         return Lut(W, kmeans_lut(W.float(), a.group), a.group)
 
     def rtn(W, grid):
