@@ -8,8 +8,9 @@ routing between the two backends, and how a build is converted, graded and
 published. [D53](../DECISIONS.md#d53--open-llms-on-the-chat-route-a-stateful-ane-decoder-beside-foundation-models)
 records the decision; this note has the detail.
 
-This is a design. None of it is implemented yet. Where it states a number,
-the measurement is linked, not repeated:
+This is a design. Of it, only the decoder chain is implemented
+(`sidekick_coreml::KvDecoder`, #183); the rest isn't yet. Where it states a
+number, the measurement is linked, not repeated:
 - [#173](https://github.com/ironblock/sidekick/issues/173): the spike that
   ran a 1B and then a 2B decoder on the Neural Engine (ANE), with its KV
   cache in Core ML state. Its comments hold the speeds, grades and Core ML
@@ -291,6 +292,17 @@ never drained. So:
   measures outputs bit-identical and a step no slower.
 - **The acceptance test** is a flat footprint (`phys_footprint`) over 10,000
   steps.
+- **Loads need a pool too.** Core ML autoreleases the model while it loads;
+  left to a Rust thread's pool, a model its owner dropped stayed loaded,
+  its programs still on the ANE, until the thread exited. `sidekick-coreml`
+  drains a pool around every load and every prediction, the encoders'
+  included.
+
+Measured with the runtime (#183; its pull request has the numbers): the
+2B build's footprint held flat over 10,000 calls, and leaving the pool out
+grew even a toy decoder's by tens of kilobytes a call. Output backings
+gave bit-identical logits at the same speed, so the decoder uses them: no
+call allocates an output or a feature provider.
 
 ### Concurrency and state
 
@@ -316,9 +328,11 @@ never drained. So:
   position, so a previous request's keys never reach it. The state is
   replaced (`newState`) after any failed call or a non-finite logit, since
   a non-finite value in a hidden key could poison a later request through
-  its zero attention weight. Whether a fresh state per request costs
-  anything is to be measured with the runtime (the spike's runtime has a
-  task for it, `fresh`).
+  its zero attention weight. On the ANE that is a guard rather than a path
+  taken: #183 fed it an infinite and a NaN residual stream, and the logits
+  came back as zeros, never non-finite. A fresh state costs little: on the
+  2B build, `newState` took under 0.5 ms and the first call on it 63 ms
+  against 54 ms (#183).
 - **No prefix caching in the first release** ([deferred](#deferred-not-precluded)).
   Reusing the state makes it a runtime change: the decoder keeps the token
   ids its state holds, and a request that shares a prefix starts at the
@@ -367,6 +381,11 @@ So:
   process, like any other Core ML model; the decoder is one "bucket" of N
   chunks. The spike's first loads, compiles included, took tens of seconds
   (#173), well inside the default budget.
+- **A load ends with one call**, and the decoder is refused if the process
+  then holds no ANE program (`ri_neural_footprint`). Core ML runs a program
+  it judges too small for the ANE on the CPU, with no error; #183 measured
+  that for one layer at width 256 and anything at width 64. The footprint's
+  growth across the load is the decoder's share of the ANE budget.
 - **Idle unloading** (`model_idle_ttl_secs`) applies, which also frees the
   ANE's resident budget for other models.
 - **Where it doesn't run** — an Intel Mac, a Mac without an ANE, a manifest

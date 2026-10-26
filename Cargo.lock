@@ -1374,9 +1374,14 @@ name = "sidekick-coreml"
 version = "0.16.0"
 dependencies = [
  "block2",
+ "half",
+ "libc",
  "objc2",
  "objc2-core-ml",
  "objc2-foundation",
+ "safetensors",
+ "serde",
+ "serde_json",
  "sidekick-core",
  "tracing",
 ]

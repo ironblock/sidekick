@@ -36,6 +36,11 @@ objc2-core-ml = { version = "0.3", default-features = false, features = [
     "MLDictionaryFeatureProvider",
     "MLMultiArray",
     "MLModel_MLModelCompilation",
+    # The stateful decoder: KV caches in Core ML state, output backings.
+    "MLState",
+    "MLStateConstraint",
+    "MLModel_MLState",
+    "MLPredictionOptions",
     # Input shape constraints: the flexible-shape guard in CoremlModel::load.
     "MLMultiArrayConstraint",
     "MLMultiArrayShapeConstraint",
@@ -58,3 +63,11 @@ objc2-core-ml = { version = "0.3", default-features = false, features = [
 ] }
 # MLComputePlan loads through a completion-handler block.
 block2 = "0.6"
+# The decoder: fp16 inputs, the mapped embedding table, the RoPE tables.
+half = { workspace = true }
+libc = "0.2"
+safetensors = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
