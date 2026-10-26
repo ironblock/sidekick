@@ -57,6 +57,13 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 - **License:** Apache License 2.0 (full text below)
 - **What sidekick uses:** `fixtures/classify/laya-en.corpus.toml` describes a mechanical translation of the dataset into laya's question format, used to measure laya-en's accuracy on each compute path; `fixtures/classify/laya-typed-decisions.corpus.toml`, `fixtures/classify/julia-1.corpus.toml` and `fixtures/classify/lumma-fev-0.1b.corpus.toml` reuse that translation for laya-typed-decisions, Julia-1 and Lumma-fev-0.1b. `fixtures/classify/gliner2.5-decide.corpus.toml` sends each of its classification heads as a gliner2-format request, to measure GLiNER2.5-Decide's parity on each compute path. The dataset is fetched when a reference is generated, not committed. As text and as token ids, `fixtures/classify/laya-en.tokens.json`, `laya-typed-decisions.tokens.json`, `julia-1.tokens.json` and `lumma-fev-0.1b.tokens.json` each include three of its rows, and `gliner2.5-decide.tokens.json` two.
 
+## Wikipedia lead sections (causal-LM calibration)
+
+- **Source:** the lead sections of 149 English Wikipedia articles, each pinned to the revision it was read from; every entry's `source` is that revision's permanent link (`https://en.wikipedia.org/w/index.php?title=…&oldid=…`)
+- **License:** Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/). Attribution: Wikipedia contributors, as each entry's `attribution` field names the article.
+- **What sidekick uses:** `fixtures/causal-lm/calibration.jsonl` holds the lead sections as plain text (MediaWiki's TextExtracts rendering), beside text from this repository and conversations written for it (MIT), and `fixtures/causal-lm/minicpm5-2b.tokens.json` holds their token ids. The causal-LM converter calibrates its weight quantisation on them (docs/CONVERTING.md, "Causal language models"). Nothing from them is compiled into sidekick or shipped in a model.
+- **Changes:** reduced to the lead section and converted to plain text; otherwise unchanged. `tools/make_causal_lm_fixture.py` records how they were fetched.
+
 ## Verification corpus captures
 
 `fixtures/tasks/verification/captures.jsonl` holds the output of command-line tools run on fixtures written for sidekick (`tools/tasks/capture.py`, `fixtures/tasks/verification/recipes.toml`). That output includes the tools' own help and documentation text, and error messages. The tools are not redistributed: `capture.py` downloads the pinned release binaries in `fixtures/tasks/verification/tools.lock.toml` and checks their sha256.
