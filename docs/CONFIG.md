@@ -44,7 +44,7 @@ addr = "127.0.0.1:8790"        # loopback only by default
 # api_key = "..."              # require Authorization: Bearer <key> on every route but /health
 session_ttl_secs = 300         # Foundation Models session reuse window
 model_idle_ttl_secs = 900      # model residency (embedders, classifiers) after last use
-request_timeout_secs = 60      # a request's work: generation, or a prediction after any load it waited on
+request_timeout_secs = 60      # a request's work: generation, or a prediction after any load it waited on (per model: below)
 load_timeout_secs = 900        # how long a request waits on its model's and buckets' first loads
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
 ignore_cpu_seq_cap = false     # serve cpu_only models past 1,024 tokens (results vary by bucket)
@@ -63,7 +63,7 @@ warm_budget_secs = 1800        # start no warm-up load after this long; 0 for no
 | `api_key` | none | When set, every route except `/health` needs `Authorization: Bearer <key>`; a missing or wrong key is a 401 ([API.md](API.md#authentication)). |
 | `session_ttl_secs` | 300 | How long a Foundation Models session is kept for a conversation's follow-ups. |
 | `model_idle_ttl_secs` | 900 | How long a loaded embedder or classifier stays resident after its last use ([RUNNING.md](RUNNING.md#memory)). |
-| `request_timeout_secs` | 60 | Bounds a request's work: a generation, or the predictions after any load the request waited on. A request past it is a 504 with code `timeout`. |
+| `request_timeout_secs` | 60 | Bounds a request's work: a generation, streamed or not, or the predictions after any load the request waited on. A request past it is a 504 with code `timeout`. The default for every model; [per-model settings](#per-model-settings) override it. |
 | `load_timeout_secs` | 900 | How long a request waits for its model and buckets to load, compiles included. A load past it is a 504 with code `load_timeout` and continues in the background, so a retry finds it ready. |
 | `ignore_ane_weight_cap` | false | Load models served on the ANE even past Core ML's 1 GiB weight limit ([BACKENDS.md](BACKENDS.md#the-ane-weight-cap)). For experimentation. |
 | `ignore_cpu_seq_cap` | false | Serve `cpu_only` models past 1,024 tokens, or past their manifest's lower `cpu_max_seq_len` ([BACKENDS.md](BACKENDS.md#the-cpu-sequence-cap)). |
@@ -92,6 +92,9 @@ intra_op_threads = 2           # an onnx model's inference threads
 
 [models."qwen3-embedding-0.6b"]
 warm = false                   # leave a Core ML model out of startup and fetch warm-ups
+
+[models."apple-fm"]
+request_timeout_secs = 120     # this model's request timeout, over the global one
 ```
 
 | Key | What it does |
@@ -99,6 +102,7 @@ warm = false                   # leave a Core ML model out of startup and fetch 
 | `compute_units` | A Core ML model's compute units ([D38](DECISIONS.md#d38--the-operator-may-choose-a-models-compute-units)). The ANE weight limit and the CPU and ANE length caps judge it as they would the manifest's choice, and `/v1/models` and `/health` report that the operator chose ([BACKENDS.md](BACKENDS.md#compute-units)). |
 | `intra_op_threads` | An onnx model's inference threads, over `onnx_intra_op_threads`. At least 1. |
 | `warm` | `false` leaves a Core ML model out of the startup warm-up and fetch's; `sidekickd warm <id>` still warms it. |
+| `request_timeout_secs` | The model's request timeout, in seconds, at least 1: for any model, chat, embedder or classifier. A model's timeout is this, else the model's own default where it names one, else the global `request_timeout_secs`. `/health` reports each chat model's timeout and who chose it, and `request_timeout_overrides` lists the settings applied and those that name no model. |
 
 ## Command-line flags
 

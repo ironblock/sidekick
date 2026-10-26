@@ -597,8 +597,8 @@ pub struct ModelObject {
     /// `text-classification`, `zero-shot-classification`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<&'static str>,
-    /// Extension, embedders: what serves the model: `coreml`, `static` or
-    /// `onnx` (D40).
+    /// Extension: what serves the model: an embedder's `coreml`, `static`
+    /// or `onnx` (D40); a chat model's `foundation_models`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<&'static str>,
     /// Extension, text-classification: the labels in `probs` order.
@@ -687,6 +687,25 @@ pub struct ModelObject {
     /// applies, keyed `"<question_type>:<label count bucket>"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub calibration: Option<std::collections::BTreeMap<String, f32>>,
+    /// Extension, chat models: the combined prompt and completion budget,
+    /// in tokens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<usize>,
+    /// Extension, chat models: the optional request fields the model
+    /// honors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub honored_fields: Option<Vec<&'static str>>,
+    /// Extension, chat models: whether `response_format` `json_schema`
+    /// output streams as it is generated, rather than arriving whole.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guided_streaming: Option<bool>,
+    /// Extension, chat models: whether the model has guardrails that can
+    /// refuse a request (`content_filter`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guardrails: Option<bool>,
+    /// Extension, open chat models: the macOS on which the build was graded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graded_os: Option<String>,
 }
 
 impl ModelObject {
@@ -715,6 +734,11 @@ impl ModelObject {
             placement: None,
             compile_cache: None,
             calibration: None,
+            context_length: None,
+            honored_fields: None,
+            guided_streaming: None,
+            guardrails: None,
+            graded_os: None,
         }
     }
 }

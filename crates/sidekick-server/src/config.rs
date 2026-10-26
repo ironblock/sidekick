@@ -27,11 +27,13 @@ pub struct Config {
     /// How long a loaded model (embedder or classifier) stays resident after
     /// its last use.
     pub model_idle_ttl_secs: u64,
-    /// Hard cap on a single generation call. A hung Foundation Models call
-    /// otherwise hangs its request forever. For embeddings, classify and
-    /// rerank requests, it bounds the work after any model or bucket load
-    /// the request waited on: a first load compiles the bucket, which can
-    /// take minutes, and is bounded by `load_timeout_secs` instead.
+    /// Hard cap on a single generation call, streamed or not. A hung
+    /// Foundation Models call otherwise hangs its request forever. For
+    /// embeddings, classify and rerank requests, it bounds the work after
+    /// any model or bucket load the request waited on: a first load
+    /// compiles the bucket, which can take minutes, and is bounded by
+    /// `load_timeout_secs` instead. The default for every model; a
+    /// `[models."<id>"] request_timeout_secs` overrides it for one.
     pub request_timeout_secs: u64,
     /// How long an embeddings, classify or rerank request waits on loading
     /// its model and the buckets it needs. Far longer than any measured
@@ -103,6 +105,45 @@ pub struct ModelConfig {
     /// `false` leaves a Core ML model out of the startup warm-up and of
     /// fetch's (D52); `sidekickd warm <id>` still warms it.
     pub warm: Option<bool>,
+    /// This model's request timeout, in seconds, over its manifest's
+    /// default and the global `request_timeout_secs`.
+    pub request_timeout_secs: Option<u64>,
+}
+
+/// Each model's request timeout: the operator's for that model
+/// (`[models."<id>"] request_timeout_secs`), else the model's own default
+/// (a chat manifest's `[serving] request_timeout_secs`), else the global
+/// `request_timeout_secs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestTimeouts {
+    /// `request_timeout_secs`.
+    pub global: Duration,
+    /// `[models."<id>"] request_timeout_secs`.
+    pub by_model: BTreeMap<String, Duration>,
+}
+
+impl Default for RequestTimeouts {
+    fn default() -> Self {
+        Self { global: Config::default().request_timeout(), by_model: BTreeMap::new() }
+    }
+}
+
+impl RequestTimeouts {
+    /// A model's timeout, and who chose it: `config (model)`, `manifest` or
+    /// `config`.
+    pub fn resolve(&self, id: &str, model_default: Option<Duration>) -> (Duration, &'static str) {
+        match (self.by_model.get(id), model_default) {
+            (Some(&t), _) => (t, "config (model)"),
+            (None, Some(t)) => (t, "manifest"),
+            (None, None) => (self.global, "config"),
+        }
+    }
+
+    /// The timeout of a model that names no default of its own: an
+    /// embedder or classifier.
+    pub fn of(&self, id: &str) -> Duration {
+        self.resolve(id, None).0
+    }
 }
 
 /// Each `onnx` model's inference threads (D40): the operator's for that
@@ -193,6 +234,22 @@ impl Config {
         (self.warm_budget_secs > 0).then(|| Duration::from_secs(self.warm_budget_secs))
     }
 
+    /// Each model's request timeout. A per-model zero is a config error: it
+    /// would fail every request to that model.
+    pub fn request_timeouts(&self) -> anyhow::Result<RequestTimeouts> {
+        let mut by_model = BTreeMap::new();
+        for (id, m) in &self.models {
+            match m.request_timeout_secs {
+                Some(0) => anyhow::bail!("[models.\"{id}\"] request_timeout_secs must be at least 1"),
+                Some(secs) => {
+                    by_model.insert(id.clone(), Duration::from_secs(secs));
+                }
+                None => {}
+            }
+        }
+        Ok(RequestTimeouts { global: self.request_timeout(), by_model })
+    }
+
     /// The `onnx` models' inference threads. Zero threads is a config
     /// error: ONNX Runtime would read it as "as many as there are cores",
     /// the opposite of a limit.
@@ -273,6 +330,20 @@ mod tests {
         // Zero would mean "all cores" to ONNX Runtime: refused.
         assert!(toml::from_str::<Config>("onnx_intra_op_threads = 0").unwrap().onnx_threads().is_err());
         assert!(toml::from_str::<Config>("[models.e]\nintra_op_threads = 0").unwrap().onnx_threads().is_err());
+    }
+
+    #[test]
+    fn a_model_section_overrides_the_request_timeout() {
+        let toml = "request_timeout_secs = 30\n[models.\"apple-fm\"]\nrequest_timeout_secs = 5\n[models.e]\n";
+        let c: Config = toml::from_str(toml).unwrap();
+        let t = c.request_timeouts().unwrap();
+        let secs = |s| Duration::from_secs(s);
+        assert_eq!(t.resolve("apple-fm", Some(secs(120))), (secs(5), "config (model)"), "the model's setting wins");
+        assert_eq!(t.resolve("e", Some(secs(120))), (secs(120), "manifest"), "then the model's own default");
+        assert_eq!(t.resolve("e", None), (secs(30), "config"), "then the global setting");
+        assert_eq!(t.of("apple-fm"), secs(5));
+        assert_eq!(RequestTimeouts::default().of("x"), secs(60));
+        assert!(toml::from_str::<Config>("[models.e]\nrequest_timeout_secs = 0").unwrap().request_timeouts().is_err());
     }
 
     #[test]

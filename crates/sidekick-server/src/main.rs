@@ -167,9 +167,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let state = build_state(&config)?;
-    let availability = state.chat.availability().await;
-    let model = state.chat.model_info().await.unwrap_or_default();
-    state.chat_model.set(model.variant_id.clone());
     let config_file = match config_file {
         Some(p) => p.display().to_string(),
         None => match sidekick_server::config::default_config_path() {
@@ -181,12 +178,22 @@ async fn main() -> anyhow::Result<()> {
         config = %config_file,
         addr = %config.addr,
         models_dir = %config.models_dir().display(),
-        chat_availability = ?availability,
-        chat_model = model.variant.as_deref().unwrap_or("unknown"),
-        chat_context = state.chat.context_limit().unwrap_or(0),
         fm_sdk = sidekick_fm::FM_SDK,
         "sidekickd starting"
     );
+    for m in state.chat.iter() {
+        let availability = m.backend().availability().await;
+        let info = m.refresh_provenance().await.unwrap_or_default();
+        tracing::info!(
+            model = m.id(),
+            backend = m.listing.backend,
+            availability = ?availability,
+            variant = info.variant.as_deref().unwrap_or("unknown"),
+            context = m.backend().context_limit().unwrap_or(0),
+            request_timeout_secs = m.request_timeout.0.as_secs(),
+            "chat model"
+        );
+    }
 
     let listener = tokio::net::TcpListener::bind(config.addr).await?;
     let mut state = state;

@@ -67,7 +67,8 @@ async fn rerank(
     let parsed = parse(&req, &manifest, shape)?;
 
     // Loading isn't counted against the request timeout (api::deadline).
-    let mut deadline = Deadline::new(Work::Reranking, &req.model, state.request_timeout, state.load_timeout);
+    let request_timeout = state.request_timeouts.of(&req.model);
+    let mut deadline = Deadline::new(Work::Reranking, &req.model, request_timeout, state.load_timeout);
     let classifier = deadline.model(state.classifiers.get_tracked(&req.model)).await?;
 
     let (loaded_tx, loaded) = tokio::sync::oneshot::channel();

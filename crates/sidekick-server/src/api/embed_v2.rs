@@ -63,7 +63,8 @@ pub async fn embed_v2(
     };
 
     // Loading isn't counted against the request timeout (api::deadline).
-    let mut deadline = Deadline::new(Work::Embedding, &req.model, state.request_timeout, state.load_timeout);
+    let request_timeout = state.request_timeouts.of(&req.model);
+    let mut deadline = Deadline::new(Work::Embedding, &req.model, request_timeout, state.load_timeout);
     let embedder = deadline.model(state.embedders.get_tracked(&req.model)).await?;
 
     // Matryoshka dimensions, as `dimensions` on /v1/embeddings.

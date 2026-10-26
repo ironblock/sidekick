@@ -184,7 +184,7 @@ fn slow_state_with(delays: Delays, load_timeout: Duration) -> (AppState, Arc<Buc
         std::thread::sleep(delays.model);
         Ok(Arc::new(SlowEmbedder { delays, buckets: buckets.clone() }) as Arc<dyn Embedder>)
     }));
-    state.request_timeout = REQUEST;
+    state.request_timeouts.global = REQUEST;
     state.load_timeout = load_timeout;
     (state, out)
 }
@@ -320,4 +320,21 @@ async fn a_load_past_the_load_timeout_is_its_own_504_and_keeps_loading() {
     tokio::time::sleep(SLOW + Duration::from_secs(1)).await;
     let (code, _, body) = status(state, one()).await;
     assert_eq!(code, StatusCode::OK, "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_models_own_request_timeout_overrides_the_global_one() {
+    // A prediction past the global 2 s, inside the classifier's own 6 s.
+    let delays = Delays { run: HUNG, ..Default::default() };
+    let classify_one = || post_json("/v1/classify", json!({"model": "sentiment", "input": "a good film"}));
+    let calls = [classify_one as fn() -> Request<Body>, embed].map(|req| async move {
+        let (mut state, buckets) = slow_state_with(delays, LONG_LOAD);
+        state.request_timeouts.by_model.insert("sentiment".into(), Duration::from_secs(6));
+        warm(&state, &buckets).await;
+        status(state, req()).await
+    });
+    let results = futures::future::join_all(calls).await;
+    let ((classified, _, body), (embedded, _, _)) = (&results[0], &results[1]);
+    assert_eq!(*classified, StatusCode::OK, "its own timeout: {body}");
+    assert_eq!(*embedded, StatusCode::GATEWAY_TIMEOUT, "the global timeout for the rest");
 }

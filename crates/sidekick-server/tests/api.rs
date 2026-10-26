@@ -9,6 +9,7 @@ use common::*;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sidekick_server::build_router;
+use std::sync::Arc;
 use tower::ServiceExt;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -232,10 +233,11 @@ async fn models_and_health_report_state() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["chat"]["availability"]["state"], "unavailable");
-    assert_eq!(body["chat"]["context_limit"], 4096);
-    assert!(body["chat"]["variant"].is_null(), "no model info while unavailable");
-    assert_eq!(body["chat"]["fm_sdk"], sidekick_fm::FM_SDK);
+    let fm = &body["chat"]["models"]["apple-fm"];
+    assert_eq!(fm["availability"], json!({"state": "unavailable", "reason": "apple_intelligence_not_enabled"}));
+    assert_eq!(fm["context_limit"], 4096);
+    assert!(fm["variant"].is_null(), "no model info while unavailable");
+    assert_eq!(fm["fm_sdk"], sidekick_fm::FM_SDK);
     // No startup warm-up in a state built for tests.
     assert_eq!(body["warmup"]["state"], "off");
 
@@ -244,9 +246,10 @@ async fn models_and_health_report_state() {
         Request::get("/health").body(Body::empty()).unwrap(),
     )
     .await;
-    assert_eq!(body["chat"]["variant"], "AFM 3 Core");
-    assert_eq!(body["chat"]["variant_id"], "core3");
-    assert_eq!(body["chat"]["model_capabilities"], json!(["guided_generation", "tool_calling"]));
+    let fm = &body["chat"]["models"]["apple-fm"];
+    assert_eq!(fm["variant"], "AFM 3 Core");
+    assert_eq!(fm["variant_id"], "core3");
+    assert_eq!(fm["model_capabilities"], json!(["guided_generation", "tool_calling"]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -470,4 +473,237 @@ async fn stream_guardrail_stop_is_a_content_filter_finish() {
     let finish: Value = serde_json::from_str(&data[data.len() - 2]).unwrap();
     assert_eq!(finish["choices"][0]["finish_reason"], "content_filter");
     assert_eq!(data.last().unwrap(), "[DONE]");
+}
+
+/// The test state serving `apple-fm` and a second chat model, `test-llm`.
+fn two_chat_models() -> sidekick_server::AppState {
+    let mut state = test_state(true, None);
+    state.chat = chat_of([mock_fm(MockChat::fm(true)), mock_open_model("test-llm")]);
+    state
+}
+
+fn ask(model: &str) -> Request<Body> {
+    post_json("/v1/chat/completions", json!({"model": model, "messages": [{"role": "user", "content": "hi"}]}))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_routes_by_the_exact_model_id() {
+    for stream in [false, true] {
+        for (model, reply, provenance, units) in
+            [("apple-fm", "echo: hi", "core3", None), ("test-llm", "test-llm: hi", "test-llm", Some("cpu_and_ne"))]
+        {
+            let state = two_chat_models();
+            state.chat.get(model).unwrap().refresh_provenance().await;
+            let request = post_json(
+                "/v1/chat/completions",
+                json!({"model": model, "stream": stream, "messages": [{"role": "user", "content": "hi"}]}),
+            );
+            let (status, headers, body) = call_with_headers(state, request).await;
+            assert_eq!(status, StatusCode::OK, "{model}: {body}");
+            if stream {
+                assert!(body.as_str().unwrap().contains(&format!("\"content\":\"{reply}\"")), "{model}: {body}");
+            } else {
+                assert_eq!(body["choices"][0]["message"]["content"], reply, "{model} answered");
+                assert_eq!(body["model"], model);
+            }
+            assert_eq!(headers["sidekick-model"], provenance);
+            assert_eq!(headers.get("sidekick-compute-units").map(|v| v.to_str().unwrap()), units);
+        }
+    }
+    // No default, alias or near match: the id must be exact.
+    for model in ["", "Apple-FM", "apple-fm ", "apple", "test-llm@main", "gpt-4o"] {
+        let (status, body) = call(two_chat_models(), ask(model)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{model:?}: {body}");
+        assert_eq!(
+            body,
+            json!({"error": {
+                "message": format!("The model `{model}` does not exist or is not loaded"),
+                "type": "invalid_request_error",
+                "code": "model_not_found",
+            }}),
+            "OpenAI's shape"
+        );
+    }
+    let no_model = post_json("/v1/chat/completions", json!({"messages": [{"role": "user", "content": "hi"}]}));
+    let (status, body) = call(two_chat_models(), no_model).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "`model` is required: {body}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn another_routes_model_is_a_400_naming_its_route() {
+    let others = [("test-static", "/v1/embeddings"), ("sentiment", "/v1/classify"), ("reranker", "/v1/rerank")];
+    for (model, route) in others {
+        let (status, body) = call(two_chat_models(), ask(model)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{model}: {body}");
+        assert_eq!(body["error"]["code"], "invalid_request_error");
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(message.contains(&format!("use {route}")), "{model}: {message}");
+    }
+    // And a chat model sent elsewhere names the chat route.
+    let (status, body) =
+        call(two_chat_models(), post_json("/v1/embeddings", json!({"model": "test-llm", "input": "hi"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"]["message"].as_str().unwrap().contains("use /v1/chat/completions"), "{body}");
+    let tokenize = post_json("/tokenize", json!({"model": "test-llm", "prompt": "hi"}));
+    let (status, body) = call(two_chat_models(), tokenize).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn models_lists_each_chat_model_with_what_it_honors() {
+    let (status, body) = call(two_chat_models(), Request::get("/v1/models").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    let model = |id: &str| body["data"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+    let mut fm = model("apple-fm");
+    fm.as_object_mut().unwrap().remove("created");
+    assert_eq!(
+        fm,
+        json!({
+            "id": "apple-fm",
+            "object": "model",
+            "owned_by": "sidekick",
+            "task": "text-generation",
+            "backend": "foundation_models",
+            "context_length": 4096,
+            "honored_fields": ["max_completion_tokens", "max_tokens", "response_format", "stop", "temperature"],
+            "guided_streaming": false,
+            "guardrails": true,
+        })
+    );
+    let open = model("test-llm");
+    assert_eq!(open["task"], "text-generation");
+    assert_eq!(open["backend"], "coreml");
+    assert_eq!(open["guided_streaming"], true);
+    assert_eq!(open["guardrails"], false);
+    assert_eq!(open["compute_units"], "cpu_and_ne");
+    assert_eq!(open["graded_os"], "macOS 27");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn health_reports_each_chat_models_availability_and_timeout() {
+    let mut state = two_chat_models();
+    state.chat = chat_of([mock_fm(MockChat::fm(false)), mock_open_model("test-llm")]);
+    let (_, body) = call(state, Request::get("/health").body(Body::empty()).unwrap()).await;
+    let models = body["chat"]["models"].as_object().unwrap();
+    assert_eq!(models.keys().collect::<Vec<_>>(), ["apple-fm", "test-llm"]);
+    let fm = &models["apple-fm"];
+    assert_eq!(fm["backend"], "foundation_models");
+    assert_eq!(fm["availability"]["state"], "unavailable");
+    assert_eq!(fm["availability"]["reason"], "apple_intelligence_not_enabled");
+    assert_eq!(fm["request_timeout_secs"], 60);
+    assert_eq!(fm["request_timeout_source"], "config");
+    let open = &models["test-llm"];
+    assert_eq!(open["availability"], json!({"state": "available"}));
+    assert_eq!(open["request_timeout_secs"], 120);
+    assert_eq!(open["request_timeout_source"], "manifest");
+    assert!(open.get("fm_sdk").is_none(), "Foundation Models' facts are its own");
+    assert_eq!(body["request_timeout_overrides"], json!({"default_secs": 60, "applied": {}, "unmatched": []}));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guardrail_refusal_says_whether_output_was_guided() {
+    let refused = |extra: Value| {
+        let mut body = json!({"model": "apple-fm", "messages": [{"role": "user", "content": "error:content_filter"}]});
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        post_json("/v1/chat/completions", body)
+    };
+    let schema = json!({"response_format": {"type": "json_schema",
+        "json_schema": {"name": "t", "schema": {"type": "object", "properties": {"t": {"type": "string"}}}}}});
+    for stream in [false, true] {
+        let mut guided = schema.clone();
+        guided["stream"] = json!(stream);
+        let (status, body) = call(test_state(true, None), refused(guided)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "guided output arrives whole, so a refusal keeps its status");
+        assert_eq!(body["error"]["code"], "content_filter");
+        assert_eq!(body["error"]["param"], "response_format");
+        let message = body["error"]["message"].as_str().unwrap();
+        let guided = "`apple-fm`'s guardrails refused this request, whose output was guided";
+        assert!(message.starts_with(guided), "{message}");
+        assert!(message.contains("guardrailViolation"), "the backend's reason: {message}");
+        assert!(message.contains("a retry without response_format"), "{message}");
+
+        let (status, body) = call(test_state(true, None), refused(json!({"stream": stream}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "content_filter");
+        assert!(body["error"].get("param").is_none(), "{body}");
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(message.contains("whose output was plain text: guardrailViolation"), "{message}");
+    }
+    // Mid-stream, it stays a content_filter finish, not guided.
+    let (_, _, data) = stream_chat("stream:partial|FILTER", false).await;
+    let finish: Value = serde_json::from_str(&data[data.len() - 2]).unwrap();
+    assert_eq!(finish["choices"][0]["finish_reason"], "content_filter");
+    assert_eq!(finish["constrained"], false);
+}
+
+/// A Foundation Models engine whose every reply takes `delay`.
+struct SlowEngine {
+    delay: std::time::Duration,
+}
+
+impl sidekick_fm::SessionEngine for SlowEngine {
+    type Session = ();
+
+    fn availability(&self) -> sidekick_core::Availability {
+        sidekick_core::Availability::Available
+    }
+
+    fn create(&self, _instructions: &str) -> sidekick_core::Result<()> {
+        Ok(())
+    }
+
+    fn respond(
+        &self,
+        _session: &mut (),
+        prompt: &str,
+        _opts: &sidekick_fm::RespondOptions,
+    ) -> sidekick_core::Result<sidekick_fm::EngineResponse> {
+        std::thread::sleep(self.delay);
+        Ok(sidekick_fm::EngineResponse::text(format!("slow: {prompt}")))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_per_model_request_timeout_reaches_the_chat_backend() {
+    use std::time::Duration;
+    // A reply takes 3 s: inside the global 10 s, past apple-fm's own 1 s.
+    let state_for = |config: &str| {
+        let config: sidekick_server::Config = toml::from_str(config).unwrap();
+        let timeouts = config.request_timeouts().unwrap();
+        let fm = sidekick_server::chat_models::foundation_models(&timeouts, |timeout| {
+            let engine = SlowEngine { delay: Duration::from_secs(3) };
+            Arc::new(sidekick_fm::SessionChatBackend::new(engine, Duration::from_secs(60), timeout))
+        });
+        let mut state = test_state(true, None);
+        state.chat = chat_of([fm]);
+        state.request_timeouts = timeouts;
+        state
+    };
+    let overridden = "request_timeout_secs = 10\n\
+                      [models.\"apple-fm\"]\nrequest_timeout_secs = 1\n\
+                      [models.nope]\nrequest_timeout_secs = 5\n";
+    for stream in [false, true] {
+        let request = post_json(
+            "/v1/chat/completions",
+            json!({"model": "apple-fm", "stream": stream, "messages": [{"role": "user", "content": "hi"}]}),
+        );
+        let started = std::time::Instant::now();
+        let (status, body) = call(state_for(overridden), request).await;
+        assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "stream {stream}: {body}");
+        assert_eq!(body["error"]["code"], "timeout");
+        assert_eq!(body["error"]["message"], "Generation did not complete within 1s");
+        assert!(started.elapsed() < Duration::from_secs(3), "the model's 1 s, not the reply's 3 s");
+    }
+    let (status, body) = call(state_for("request_timeout_secs = 10\n"), ask("apple-fm")).await;
+    assert_eq!(status, StatusCode::OK, "the global timeout without an override: {body}");
+    assert_eq!(body["choices"][0]["message"]["content"], "slow: hi");
+
+    let (_, body) = call(state_for(overridden), Request::get("/health").body(Body::empty()).unwrap()).await;
+    let fm = &body["chat"]["models"]["apple-fm"];
+    assert_eq!(fm["request_timeout_secs"], 1);
+    assert_eq!(fm["request_timeout_source"], "config (model)");
+    assert_eq!(
+        body["request_timeout_overrides"],
+        json!({"default_secs": 10, "applied": {"apple-fm": 1}, "unmatched": ["nope"]})
+    );
 }

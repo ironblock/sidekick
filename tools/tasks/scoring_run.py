@@ -366,10 +366,11 @@ def run_fm(a) -> int:
     prompt = scoring_judge.load()
     key = os.environ.get("SIDEKICK_API_KEY")
     st, hdr, health = http(a.base_url, "/health", key=key)
-    chat = (health or {}).get("chat", {})
+    model = "apple-fm"
+    chat = (health or {}).get("chat", {}).get("models", {}).get(model, {})
     out_items, shape, parse_fail, version, variant = [], None, 0, hdr.get("sidekick-version"), None
     for it in items:
-        body = {"model": chat.get("model") or "foundation-models",
+        body = {"model": model,
                 "messages": scoring_judge.messages(prompt, "full", it["claim"], it["evidence"]),
                 "temperature": fm["temperature"], "max_tokens": fm["max_tokens"],
                 "response_format": {"type": "json_schema",
@@ -392,7 +393,7 @@ def run_fm(a) -> int:
                           "fenced": scoring_judge.fenced(content), "not_run": False,
                           "prompt_tokens": resp.get("usage", {}).get("prompt_tokens")})
     prov = provenance(lock, cfg, {
-        "route": fm["route"], "model": chat.get("model"), "availability": chat.get("availability"),
+        "route": fm["route"], "model": model, "availability": chat.get("availability"),
         "variant": chat.get("variant"),
         "variant_id": chat.get("variant_id"), "context_limit": chat.get("context_limit"),
         "sidekick_version": version, "sidekick_model_header": variant,
