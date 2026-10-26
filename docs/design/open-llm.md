@@ -299,10 +299,15 @@ never drained. So:
   included.
 
 Measured with the runtime (#183; its pull request has the numbers): the
-2B build's footprint held flat over 10,000 calls, and leaving the pool out
-grew even a toy decoder's by tens of kilobytes a call. Output backings
+2B build's footprint held flat over 10,000 calls. Leaving the pool out
+grew even a toy decoder's footprint, by 440 MB over 5,000 calls without
+output backings (about 88 KB a call) and by 1.8 MB with them (about 360
+bytes a call). Output backings
 gave bit-identical logits at the same speed, so the decoder uses them: no
-call allocates an output or a feature provider.
+call allocates an output or a feature provider. Core ML may decline a
+backing, so the decoder checks each chunk's returned output against its
+backing and, the first time it differs, carries the returned array and
+stops using backings.
 
 ### Concurrency and state
 
@@ -381,11 +386,17 @@ So:
   process, like any other Core ML model; the decoder is one "bucket" of N
   chunks. The spike's first loads, compiles included, took tens of seconds
   (#173), well inside the default budget.
-- **A load ends with one call**, and the decoder is refused if the process
-  then holds no ANE program (`ri_neural_footprint`). Core ML runs a program
-  it judges too small for the ANE on the CPU, with no error; #183 measured
-  that for one layer at width 256 and anything at width 64. The footprint's
-  growth across the load is the decoder's share of the ANE budget.
+- **A load ends with one call**, and then reads the process's ANE
+  footprint (`ri_neural_footprint`). Core ML runs a program it judges too
+  small for the ANE on the CPU, with no error; #183 measured that for one
+  layer at width 256 and anything at width 64. The decoder is refused unless
+  the footprint grew by at least half its programs' weights. The footprint
+  is the whole process's, and a load can evict the process's other idle ANE
+  programs, so only a process holding nothing else on the ANE reads it
+  conclusively: the warm-up child (D52) is where the check holds, and the
+  serving process can load with the lenient check, which refuses only a
+  process holding no ANE program at all. The growth is the decoder's share
+  of the ANE budget.
 - **Idle unloading** (`model_idle_ttl_secs`) applies, which also frees the
   ANE's resident budget for other models.
 - **Where it doesn't run** — an Intel Mac, a Mac without an ANE, a manifest

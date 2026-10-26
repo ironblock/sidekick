@@ -70,6 +70,11 @@ impl CoremlModel {
     /// process with an Objective-C exception Rust can't catch (D27). Other
     /// flexible-shape models load with a warning; they run on the CPU.
     pub fn load(path: &Path, units: ComputeUnits) -> Result<Self> {
+        // The description reads autorelease too; drained here, as `open`'s are.
+        autoreleasepool(|_| Self::load_in_pool(path, units))
+    }
+
+    fn load_in_pool(path: &Path, units: ComputeUnits) -> Result<Self> {
         let model = open(path, units)?;
         match load_verdict(&read_input_shapes(&model)) {
             ShapeVerdict::Static => {}

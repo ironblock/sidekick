@@ -168,17 +168,17 @@ pub struct Watchdog {
 }
 
 impl Watchdog {
-    pub fn start(timeout: Duration, monitor: DecoderMonitor) -> Self {
+    /// Start the watchdog's thread; `Err` when the thread can't be spawned.
+    pub fn start(timeout: Duration, monitor: DecoderMonitor) -> std::io::Result<Self> {
         let shared = Arc::new(WatchShared::default());
         let watched = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
             .name("sidekick-decoder-watchdog".into())
-            .spawn(move || watch(&watched, timeout, &monitor))
-            .expect("spawn the decoder watchdog");
-        Self {
+            .spawn(move || watch(&watched, timeout, &monitor))?;
+        Ok(Self {
             shared,
             thread: Some(thread),
-        }
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, WatchState> {
@@ -308,14 +308,15 @@ mod tests {
     #[test]
     fn the_watchdog_fails_a_call_that_runs_past_the_timeout() {
         let m = DecoderMonitor::new();
-        let w = Watchdog::start(ms(100), m.clone());
+        // A 2 s timeout: calls here take 10 ms, so even a slow CI runner
+        // leaves well over a second's margin.
+        let w = Watchdog::start(Duration::from_secs(2), m.clone()).unwrap();
         // Calls that return in time leave it alone.
         for _ in 0..5 {
             w.arm("a quick call".into());
             std::thread::sleep(ms(10));
             w.disarm();
         }
-        std::thread::sleep(ms(200));
         assert_eq!(m.failed(), None);
         w.arm("chunk 2 at position 48".into());
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -324,7 +325,7 @@ mod tests {
         }
         let reason = m.failed().expect("the watchdog fired");
         assert!(
-            reason.contains("chunk 2 at position 48") && reason.contains("0.1s"),
+            reason.contains("chunk 2 at position 48") && reason.contains("past 2s"),
             "{reason}"
         );
         w.disarm();
@@ -333,7 +334,7 @@ mod tests {
 
     #[test]
     fn dropping_an_idle_watchdog_returns() {
-        let w = Watchdog::start(Duration::from_secs(3600), DecoderMonitor::new());
+        let w = Watchdog::start(Duration::from_secs(3600), DecoderMonitor::new()).unwrap();
         w.arm("never finishes".into());
         drop(w);
     }

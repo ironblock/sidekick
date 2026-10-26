@@ -91,13 +91,13 @@ mod tests {
         // A process that has loaded nothing onto the ANE holds nothing there.
         assert!(matches!(m.neural_footprint, None | Some(0)), "{m:?}");
         // Allocating and touching memory grows the footprint.
-        let v = vec![1u8; 64 << 20];
+        let v = std::hint::black_box(vec![1u8; 64 << 20]);
         let grown = super::process_memory().unwrap().phys_footprint;
         assert!(
             grown >= m.phys_footprint + (32 << 20),
             "{} -> {grown}",
             m.phys_footprint
         );
-        drop(v);
+        drop(std::hint::black_box(v));
     }
 }

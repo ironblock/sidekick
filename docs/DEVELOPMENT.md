@@ -71,9 +71,12 @@ which SDK a binary was built with; after switching Xcode with
   a fixed identifier after each build (`codesign -s - -f -i <identifier>`),
   or a large build's ANE compile is redone and stored again whenever the
   linker's identifier changes ([coreml-cache.md](design/coreml-cache.md#the-cache-key)).
-- `sidekick-coreml`'s decoder tests run a small `kv-state-1` decoder,
-  built by `tools/make_decoder_test_model.py`, on the Neural Engine; a Mac
-  whose Core ML lists none (a CI virtual machine) skips them.
+- `SIDEKICK_ANE_TESTS=1 cargo test -p sidekick-coreml --test kv_decoder`
+  runs a small `kv-state-1` decoder, built by
+  `tools/make_decoder_test_model.py`, on the Neural Engine. Without the
+  variable, and on a Mac whose Core ML lists no Neural Engine (a CI virtual
+  machine), the tests skip: they compile programs for the ANE and want it
+  to themselves.
 - The parity suite (`crates/sidekick-embed/examples/parity`,
   [D26](DECISIONS.md#d26--a-parity-suite-grades-every-model-on-every-compute-path))
   grades every model on every compute path against its reference;
@@ -102,6 +105,7 @@ Read by tests and examples, never by the daemon:
 
 | Variable | |
 |---|---|
+| `SIDEKICK_ANE_TESTS` | `1` runs `sidekick-coreml`'s decoder tests on the Neural Engine (`tests/kv_decoder.rs`); they skip otherwise. |
 | `SIDEKICK_REQUIRE_ONNX` | `1` fails the ONNX tests instead of skipping them when `ORT_DYLIB_PATH` isn't set. |
 | `SIDEKICK_CLASSIFY_FIXTURES` | The classifier token fixtures (default: `fixtures/classify`). |
 | `SIDEKICK_MODELS_DIR` | The models directory the classifier fixture test reads. |

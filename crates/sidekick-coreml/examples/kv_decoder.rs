@@ -3,7 +3,7 @@
 //!
 //! ```sh
 //! cargo run --release -p sidekick-coreml --example kv_decoder -- \
-//!     <model dir> <job.json> <out prefix> [--no-backings] [--hidden-input NAME]
+//!     <model dir> <job.json> <out prefix> [--no-backings] [--hidden-input NAME] [--plan]
 //! ```
 //!
 //! The job is `{"tasks": [...]}`; each task's result goes into
@@ -62,7 +62,7 @@ fn main() {
         };
     }
     let [dir, job, out] = <[String; 3]>::try_from(args)
-        .expect("usage: kv_decoder <model dir> <job.json> <out prefix> [--no-backings] [--hidden-input NAME]");
+        .expect("usage: kv_decoder <model dir> <job.json> <out prefix> [--no-backings] [--hidden-input NAME] [--plan]");
     let dir = PathBuf::from(dir);
     let job: Value =
         serde_json::from_str(&std::fs::read_to_string(&job).expect("job")).expect("job json");

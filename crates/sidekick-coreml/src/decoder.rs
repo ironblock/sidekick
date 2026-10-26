@@ -33,6 +33,7 @@ use objc2_core_ml::{
 use objc2_foundation::{NSDictionary, NSNumber, NSString};
 use sidekick_core::chat_manifest::{kv_names, ChatManifest, KV_MASK_HIDDEN, KV_STATE_INTERFACE};
 use sidekick_core::{ComputeUnits, Error, Result, ScanOptions};
+use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -60,6 +61,38 @@ pub struct DecoderOptions {
     /// the Neural Engine itself, which is detected whatever
     /// `no_neural_engine` says.
     pub scan: ScanOptions,
+    /// How the load confirms that Core ML put the programs on the ANE.
+    pub ane_check: AneCheck,
+}
+
+/// How [`KvDecoder::load_with`] confirms that Core ML placed the decoder on
+/// the Neural Engine. Core ML runs a program it judges too small for the
+/// ANE, or one whose ANE compile failed, on the CPU without an error, and a
+/// `kv-state-1` decoder's state crashes there. Nothing reports where a
+/// loaded program runs short of a compute plan, which costs another full
+/// compile and another copy of the weights, so the load reads the process's
+/// ANE footprint (`ri_neural_footprint`) before it and after its first call.
+///
+/// The footprint is the whole process's. A load can make the system evict
+/// another of the process's idle ANE programs, so the total can grow by
+/// less than the decoder holds, or not at all, while the decoder is on the
+/// ANE. Only in a process that held nothing else on the ANE is the reading
+/// conclusive either way: load the decoder there first to confirm it (as
+/// D52's warm-up child does), and with [`AneCheck::Lenient`] where other
+/// models may already be loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AneCheck {
+    /// Refuse the decoder unless the footprint grew by at least half the
+    /// programs' weights on disk (the 2B build's ANE share was 1.01 times
+    /// its weights; a palettized test program's about 1.4 times). In a
+    /// process holding other ANE programs this can refuse a decoder that is
+    /// on the ANE, if its load evicted theirs.
+    #[default]
+    Strict,
+    /// Refuse only when the process holds no ANE program at all after the
+    /// call, which is conclusive; when the footprint grew by less than
+    /// [`Strict`](Self::Strict) asks, load anyway and log a warning.
+    Lenient,
 }
 
 impl Default for DecoderOptions {
@@ -69,6 +102,7 @@ impl Default for DecoderOptions {
             output_backings: true,
             names: ProgramNames::default(),
             scan: ScanOptions::default(),
+            ane_check: AneCheck::default(),
         }
     }
 }
@@ -108,7 +142,8 @@ pub struct KvDecoder {
     shape: DecoderShape,
     hidden_in: String,
     chunks: Vec<Chunk>,
-    inputs: Inputs,
+    /// Dropped by hand, in an autorelease pool (`Drop`).
+    inputs: ManuallyDrop<Inputs>,
     /// Each chunk's output backing, when they're used.
     backings: Vec<Retained<MLMultiArray>>,
     embedding: Embedding,
@@ -214,13 +249,14 @@ impl KvDecoder {
         }
 
         let monitor = DecoderMonitor::new();
-        let watchdog = Watchdog::start(options.call_timeout, monitor.clone());
+        let watchdog = Watchdog::start(options.call_timeout, monitor.clone())
+            .map_err(|e| refuse(format!("can't start its watchdog thread: {e}")))?;
         let mut decoder = Self {
             id: id.clone(),
             shape,
             hidden_in: options.names.hidden_in,
             chunks,
-            inputs,
+            inputs: ManuallyDrop::new(inputs),
             backings,
             embedding,
             cos,
@@ -241,22 +277,43 @@ impl KvDecoder {
             }
         }
         // One call, as a request makes it, so every program is resident on
-        // the ANE before the load returns. Core ML puts a program it judges
-        // too small for the ANE, or one whose ANE compile failed, on the CPU
-        // without an error; a process that holds no ANE program after a call
-        // is running the decoder there, where its state crashes.
+        // the ANE before the load returns, then the placement check
+        // ([`AneCheck`]). If Core ML put the decoder on the CPU, this one
+        // call runs there: the test build that Core ML places on the CPU
+        // has never crashed in one call, nor in thousands.
         decoder
             .step(&[PAD_TOKEN], 0)
             .map_err(|e| refuse(format!("the first call failed: {e}")))?;
-        match (neural_before, neural_footprint()) {
-            (_, Some(0)) => {
+        let expected = d.program_weight_bytes(dir);
+        match placement(neural_before, expected) {
+            Placement::Confirmed(bytes) => decoder.ane_bytes = Some(bytes),
+            Placement::Unreported => {
+                tracing::warn!(model = %id, "this kernel doesn't report the Neural Engine footprint, so the \
+                    decoder's placement on the ANE can't be confirmed");
+            }
+            Placement::Off => {
                 return Err(refuse(format!(
                     "Core ML didn't place its programs on the Neural Engine (this process holds no ANE program \
                      after a call), and a `{KV_STATE_INTERFACE}` decoder runs only there"
                 )))
             }
-            (Some(before), Some(after)) if after > before => decoder.ane_bytes = Some(after - before),
-            _ => {}
+            Placement::Unconfirmed { grew } => {
+                let reason = format!(
+                    "the process's Neural Engine footprint grew by {grew} bytes across the load, under half the \
+                     programs' {expected} bytes of weights: Core ML may have placed a chunk off the ANE, where a \
+                     `{KV_STATE_INTERFACE}` decoder's state crashes, or the load evicted another of the process's \
+                     ANE programs"
+                );
+                match options.ane_check {
+                    AneCheck::Strict => {
+                        return Err(refuse(format!(
+                            "{reason}. Load it where nothing else is on the ANE to confirm it (on the Neural \
+                             Engine or not), then with `AneCheck::Lenient`"
+                        )))
+                    }
+                    AneCheck::Lenient => tracing::warn!(model = %id, "{reason}; loading it anyway"),
+                }
+            }
         }
         Ok(decoder)
     }
@@ -274,13 +331,14 @@ impl KvDecoder {
     /// How much loading the decoder and making its first call added to this
     /// process's Neural Engine footprint: its share of the ANE's budget
     /// (#187 measured 2,185 MiB for MiniCPM5-2B's build). `None` when the
-    /// kernel doesn't report the footprint or it didn't grow, as when the
-    /// load evicted as much of the process's other idle programs.
+    /// load couldn't confirm it ([`AneCheck`]): the kernel doesn't report
+    /// the footprint, or it grew by less than half the programs' weights.
     pub fn ane_bytes(&self) -> Option<u64> {
         self.ane_bytes
     }
 
-    /// Whether each call writes into output backings.
+    /// Whether each call writes into output backings: as asked at load,
+    /// until Core ML once returns a chunk's output somewhere else.
     pub fn output_backings(&self) -> bool {
         !self.backings.is_empty()
     }
@@ -497,6 +555,11 @@ impl KvDecoder {
                 )
             };
             self.watchdog.disarm();
+            // A call that returns after the watchdog gave up on it: the
+            // decoder has failed, and the rest of the chain doesn't run.
+            if let Some(reason) = self.monitor.failed() {
+                return Err(self.failed(&reason));
+            }
             let out = out.map_err(|e| {
                 Error::Inference(format!(
                     "decoder `{}`, chunk {i} at position {pos}: {}",
@@ -507,11 +570,42 @@ impl KvDecoder {
             if i + 1 == n {
                 let logits = output(&out, kv_names::LOGITS)?;
                 read_f16_row(&logits, &mut self.logits)?;
-            } else if self.backings.is_empty() {
-                carried = Some(output(&out, kv_names::HIDDEN_OUT)?);
+                continue;
+            }
+            let hidden = output(&out, kv_names::HIDDEN_OUT)?;
+            match self.backings.get(i) {
+                Some(backing) if same_array(&hidden, backing) => {}
+                // Core ML "may not use the specified backing object"
+                // (MLPredictionOptions.h). The next chunk's built provider
+                // would then read a stale buffer, and the logits would be
+                // wrong but finite, so carry what it returned instead.
+                Some(_) => {
+                    tracing::warn!(
+                        model = %self.id,
+                        "Core ML didn't write chunk {i}'s `{}` into its output backing; output backings are off \
+                         for this decoder",
+                        kv_names::HIDDEN_OUT
+                    );
+                    self.disable_backings();
+                    carried = Some(hidden);
+                }
+                None => carried = Some(hidden),
             }
         }
         Ok(())
+    }
+
+    /// Stop using output backings: Core ML's own outputs from now on, and
+    /// providers built per call for every chunk after the first.
+    fn disable_backings(&mut self) {
+        let none = NSDictionary::<NSString, AnyObject>::new();
+        for (i, chunk) in self.chunks.iter_mut().enumerate() {
+            unsafe { chunk.options.setOutputBackings(&none) };
+            if i > 0 {
+                chunk.provider = None;
+            }
+        }
+        self.backings.clear();
     }
 
     /// Chunk `i`'s inputs, with `hidden` as its residual stream.
@@ -551,6 +645,75 @@ impl KvDecoder {
             )
         }
         .map_err(|e| Error::Inference(format!("decoder `{}`: feature provider: {e}", self.id)))
+    }
+}
+
+impl Drop for KvDecoder {
+    fn drop(&mut self) {
+        // Releasing a model or a state can autorelease Core ML's objects;
+        // drained here rather than at the thread's exit, the programs leave
+        // the ANE when the decoder goes.
+        autoreleasepool(|_| {
+            self.chunks.clear();
+            self.backings.clear();
+            // SAFETY: dropped once, here, and never used again.
+            unsafe { ManuallyDrop::drop(&mut self.inputs) };
+        });
+    }
+}
+
+/// Whether Core ML returned `backing` itself, or another array over its
+/// buffer, as a chunk's output.
+fn same_array(returned: &MLMultiArray, backing: &MLMultiArray) -> bool {
+    std::ptr::eq(returned, backing)
+        || unsafe { returned.dataPointer().as_ptr() == backing.dataPointer().as_ptr() }
+}
+
+/// Where the load's footprint reading puts the decoder ([`AneCheck`]).
+#[derive(Debug, PartialEq, Eq)]
+enum Placement {
+    /// The footprint grew by at least half the programs' weights: by this much.
+    Confirmed(u64),
+    /// The process holds no ANE program after the call.
+    Off,
+    /// It grew by less (a shrink reads as 0): the decoder may be off the
+    /// ANE, or the load evicted another of the process's programs.
+    Unconfirmed { grew: u64 },
+    /// The kernel doesn't report the footprint.
+    Unreported,
+}
+
+/// Read the process's ANE footprint against `before` and the programs'
+/// weights. The kernel's accounting can trail a load, so a short reading is
+/// retried for up to a second before it counts.
+fn placement(before: Option<u64>, expected: u64) -> Placement {
+    let Some(before) = before else {
+        return Placement::Unreported;
+    };
+    let mut verdict = Placement::Unreported;
+    for attempt in 0..10 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let Some(after) = neural_footprint() else {
+            return Placement::Unreported;
+        };
+        verdict = judge_placement(before, after, expected);
+        if matches!(verdict, Placement::Confirmed(_)) {
+            break;
+        }
+    }
+    verdict
+}
+
+fn judge_placement(before: u64, after: u64, expected: u64) -> Placement {
+    let grew = after.saturating_sub(before);
+    if after == 0 {
+        Placement::Off
+    } else if grew > 0 && grew >= expected / 2 {
+        Placement::Confirmed(grew)
+    } else {
+        Placement::Unconfirmed { grew }
     }
 }
 
@@ -809,4 +972,42 @@ fn read_rope(path: &Path, capacity: usize, head_dim: usize) -> Result<(Vec<u16>,
             .collect())
     };
     Ok((table("cos")?, table("sin")?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{judge_placement, Placement};
+
+    #[test]
+    fn placement_needs_half_the_weights() {
+        let mib = 1 << 20;
+        assert_eq!(
+            judge_placement(0, 2185 * mib, 2173 * mib),
+            Placement::Confirmed(2185 * mib)
+        );
+        assert_eq!(
+            judge_placement(500 * mib, 1600 * mib, 2173 * mib),
+            Placement::Confirmed(1100 * mib)
+        );
+        assert_eq!(judge_placement(0, 0, 2173 * mib), Placement::Off);
+        // Another model's programs keep the total up; the decoder added nothing.
+        assert_eq!(
+            judge_placement(300 * mib, 300 * mib, 2173 * mib),
+            Placement::Unconfirmed { grew: 0 }
+        );
+        assert_eq!(
+            judge_placement(300 * mib, 200 * mib, 2173 * mib),
+            Placement::Unconfirmed { grew: 0 }
+        );
+        assert_eq!(
+            judge_placement(300 * mib, 900 * mib, 2173 * mib),
+            Placement::Unconfirmed { grew: 600 * mib }
+        );
+        // Programs with next to no weights still have to show up.
+        assert_eq!(
+            judge_placement(10, 10, 0),
+            Placement::Unconfirmed { grew: 0 }
+        );
+        assert_eq!(judge_placement(10, 20, 0), Placement::Confirmed(10));
+    }
 }

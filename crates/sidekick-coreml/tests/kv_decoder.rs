@@ -7,9 +7,12 @@
 //! Core ML puts off the Neural Engine, and keeps a flat memory footprint
 //! over thousands of calls.
 //!
-//! macOS on Apple silicon only: `kv-state-1` runs with `cpu_and_ne` alone
-//! (its state crashes on the CPU), so a Mac whose Core ML lists no Neural
-//! Engine, a CI virtual machine among them, skips these tests.
+//! Opt-in, with `SIDEKICK_ANE_TESTS=1`: they compile the fixture's
+//! programs for the ANE (a few MB in the system's ANE cache, once per test
+//! binary) and time and measure the process, so they want the ANE to
+//! themselves. On Apple silicon only: `kv-state-1` runs with `cpu_and_ne`
+//! alone (its state crashes on the CPU), so a Mac whose Core ML lists no
+//! Neural Engine, a CI virtual machine among them, skips them even then.
 #![cfg(target_os = "macos")]
 
 use serde::Deserialize;
@@ -30,7 +33,12 @@ fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-kv-decoder")
 }
 
+/// Whether to run: `SIDEKICK_ANE_TESTS=1`, on a Mac with a Neural Engine.
 fn ane() -> bool {
+    if std::env::var("SIDEKICK_ANE_TESTS").as_deref() != Ok("1") {
+        eprintln!("skipping: set SIDEKICK_ANE_TESTS=1 to run the decoder on the Neural Engine");
+        return false;
+    }
     let ane = sidekick_coreml::has_neural_engine();
     if !ane {
         eprintln!("skipping: Core ML lists no Neural Engine here, and a kv-state-1 decoder runs only there");
@@ -116,11 +124,16 @@ fn the_chain_matches_the_torch_model_call_for_call() {
     if !ane() {
         return;
     }
+    // The calls end at C − T, the last position a call can start at: the
+    // mask's last column and the RoPE tables' last rows.
     let (e, want) = expected();
+    assert_eq!(e.calls.last().unwrap().pos, 256 - 64);
     for backings in [true, false] {
         let mut decoder = load(backings);
-        assert_eq!(decoder.output_backings(), backings);
         let got = run_calls(&mut decoder, &e.calls);
+        // Core ML wrote every chunk's output into its backing: the decoder
+        // turns them off the first time it doesn't.
+        assert_eq!(decoder.output_backings(), backings);
         for (i, (g, w)) in got.iter().zip(&want).enumerate() {
             let cos = cosine(g, w);
             assert!(cos > 0.999, "call {i} (backings {backings}): cosine {cos}");
@@ -171,6 +184,59 @@ fn the_prompt_and_greedy_decoding_reproduce_the_reference() {
 }
 
 #[test]
+fn a_prompt_continued_from_a_later_position_matches() {
+    let _serial = serial();
+    if !ane() {
+        return;
+    }
+    let (e, want) = expected();
+    let reference = run_calls(&mut load(true), &e.calls[..2]);
+    let mut decoder = load(true);
+    // Split where the reference's calls split: the same calls, bit for bit.
+    decoder.prefill(&e.prompt[..64], 0).unwrap();
+    assert_eq!(decoder.prefill(&e.prompt[64..], 64).unwrap(), reference[1]);
+    // Split elsewhere: other calls over the same positions, the same logits
+    // within the ANE's rounding.
+    decoder.prefill(&e.prompt[..40], 0).unwrap();
+    let got = decoder.prefill(&e.prompt[40..], 40).unwrap().to_vec();
+    assert!(cosine(&got, &want[1]) > 0.999, "{}", cosine(&got, &want[1]));
+    assert_eq!(argmax(&got), argmax(&want[1]));
+}
+
+#[test]
+fn the_residual_stream_can_be_given_directly() {
+    let _serial = serial();
+    if !ane() {
+        return;
+    }
+    let (e, _) = expected();
+    let raw = std::fs::read(fixture().join("embedding.safetensors")).unwrap();
+    let st = safetensors::SafeTensors::deserialize(&raw).unwrap();
+    let table: Vec<u16> = st
+        .tensor("embedding")
+        .unwrap()
+        .data()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| u16::from_le_bytes(*b))
+        .collect();
+    let (t, d) = (64, 256);
+    let reference = run_calls(&mut load(true), &e.calls);
+    let mut decoder = load(true);
+    for (i, call) in e.calls.iter().enumerate() {
+        // The call's T rows, token-major, padded with token 0's.
+        let mut hidden = Vec::with_capacity(t * d);
+        for s in 0..t {
+            let tok = call.tokens.get(s).copied().unwrap_or(0) as usize;
+            hidden.extend_from_slice(&table[tok * d..(tok + 1) * d]);
+        }
+        let got = decoder.step_hidden(&hidden, call.pos, call.sel).unwrap();
+        assert_eq!(got, reference[i], "call {i}");
+    }
+}
+
+#[test]
 fn one_state_serves_request_after_request() {
     let _serial = serial();
     if !ane() {
@@ -179,6 +245,8 @@ fn one_state_serves_request_after_request() {
     let (e, _) = expected();
     let mut decoder = load(true);
     let first = run_calls(&mut decoder, &e.calls);
+    // A Core ML error can't be caused on demand, so the replacement a failed
+    // call makes isn't tested here; `reset_state` is what it calls.
     // Another request, with another prompt, fills the cache with its keys.
     decoder
         .prefill(
@@ -359,8 +427,9 @@ fn host_tables_that_dont_match_the_manifest_are_refused() {
 }
 
 /// The same contract at width 64, which Core ML judges too small for the
-/// Neural Engine and runs on the CPU, where a decoder's state crashes: the
-/// load refuses it rather than predict.
+/// Neural Engine and runs on the CPU, where a decoder's state crashes. The
+/// load makes its one call (on the CPU), finds the process holds nothing on
+/// the ANE, and refuses it before any request can.
 #[test]
 fn a_decoder_core_ml_places_off_the_neural_engine_is_refused() {
     let _serial = serial();

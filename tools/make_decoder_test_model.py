@@ -36,16 +36,21 @@ Files:
 - `chat.toml`: the manifest's `[decoder]` table for the above.
 - `expected.json` and `expected.safetensors`: fixed calls through the
   same T-token contract the runtime uses (a prompt in T-token calls, then
-  one token per call, the state carried over), the fp32 torch model's
-  logits for each (`logits` [calls, V] fp32), and its greedy
-  continuation.
+  one token per call, the state carried over, then teacher-forced calls up
+  to the last a call can start at, C − T, which reads the mask's last
+  column and the RoPE tables' last rows), the fp32 torch model's logits for
+  each (`logits` [calls, V] fp32), and its greedy continuation.
 
 tiny-kv-decoder-cpu/ holds the same contract at width 64 (vocabulary 64,
 T = 4, C = 32, one layer per chunk), which Core ML places on the CPU under
 `cpu_and_ne`: the build checks it does. The runtime must refuse to load it.
 
 Usage:
-    python tools/make_decoder_test_model.py crates/sidekick-coreml/tests/fixtures
+    python tools/make_decoder_test_model.py crates/sidekick-coreml/tests/fixtures [--expected-only]
+
+    --expected-only   rewrite the manifests, host tables and reference calls
+                      but not the programs (no Core ML compile, no compute
+                      plan); the programs are seeded, so they don't change.
 
 Requires torch, coremltools (8 or later, for state), numpy and safetensors
 (arm64-native Python 3.12 or earlier), plus Xcode for compiling the
@@ -295,6 +300,7 @@ rope = "rope.safetensors"
 
 def main():
     fixtures = Path(sys.argv[1])
+    expected_only = "--expected-only" in sys.argv[2:]
     root = fixtures / "tiny-kv-decoder"
     chunks, embed = write_model(root, "tiny-kv-decoder")
     cos, sin = rope_tables()
@@ -320,9 +326,23 @@ def main():
         rows.append(ref.call([tok], pos, 0))
         calls.append({"tokens": [tok], "pos": pos, "sel": 0})
         pos += 1
+    # Teacher-forced to the end of the context: a full call, a short one,
+    # and one token at C − T, the last position a call can start at.
+    tail = [int(x) for x in rng.integers(1, VOCAB, size=C - T - pos)]
+    for piece in (tail[:T], tail[T:]):
+        rows.append(ref.call(piece, pos, len(piece) - 1))
+        calls.append({"tokens": piece, "pos": pos, "sel": len(piece) - 1})
+        pos += len(piece)
+    assert pos == C - T, pos
+    tok = int(rng.integers(1, VOCAB))
+    rows.append(ref.call([tok], pos, 0))
+    calls.append({"tokens": [tok], "pos": pos, "sel": 0})
     expected = {"prompt": prompt, "greedy": greedy, "calls": calls}
     (root / "expected.json").write_text(json.dumps(expected, indent=1) + "\n")
     save_file({"logits": np.stack(rows).astype(np.float32)}, str(root / "expected.safetensors"))
+    if expected_only:
+        print(f"wrote {root}'s reference: {len(calls)} calls, greedy {greedy}")
+        return
 
     for i, c in enumerate(chunks):
         c.k_cache.zero_()
