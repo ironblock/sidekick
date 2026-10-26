@@ -666,12 +666,13 @@ impl sidekick_fm::SessionEngine for SlowEngine {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_per_model_request_timeout_reaches_the_chat_backend() {
     use std::time::Duration;
-    // A reply takes 3 s: inside the global 10 s, past apple-fm's own 1 s.
+    // A reply takes 6 s: inside the global 10 s, past apple-fm's own 1 s.
+    // The wide gap keeps the elapsed-time check clear of slow CI runners.
     let state_for = |config: &str| {
         let config: sidekick_server::Config = toml::from_str(config).unwrap();
         let timeouts = config.request_timeouts().unwrap();
         let fm = sidekick_server::chat_models::foundation_models(&timeouts, |timeout| {
-            let engine = SlowEngine { delay: Duration::from_secs(3) };
+            let engine = SlowEngine { delay: Duration::from_secs(6) };
             Arc::new(sidekick_fm::SessionChatBackend::new(engine, Duration::from_secs(60), timeout))
         });
         let mut state = test_state(true, None);
@@ -687,12 +688,13 @@ async fn a_per_model_request_timeout_reaches_the_chat_backend() {
             "/v1/chat/completions",
             json!({"model": "apple-fm", "stream": stream, "messages": [{"role": "user", "content": "hi"}]}),
         );
+        let state = state_for(overridden);
         let started = std::time::Instant::now();
-        let (status, body) = call(state_for(overridden), request).await;
+        let (status, body) = call(state, request).await;
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "stream {stream}: {body}");
         assert_eq!(body["error"]["code"], "timeout");
         assert_eq!(body["error"]["message"], "Generation did not complete within 1s");
-        assert!(started.elapsed() < Duration::from_secs(3), "the model's 1 s, not the reply's 3 s");
+        assert!(started.elapsed() < Duration::from_secs(4), "the model's 1 s, not the reply's 6 s");
     }
     let (status, body) = call(state_for("request_timeout_secs = 10\n"), ask("apple-fm")).await;
     assert_eq!(status, StatusCode::OK, "the global timeout without an override: {body}");
