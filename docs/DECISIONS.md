@@ -29,6 +29,10 @@ specific reason: AI toggled off, model downloading, ineligible hardware) and
 *client* policy, and an Anemll-style local LLM tier is deferred until there's
 evidence the FM-unavailable population matters (design doc §3, open question 1).
 
+*Amended by D53:* the chat route is to serve open models that a client
+names, beside Foundation Models. `apple-fm` still answers 503 when
+Foundation Models is unavailable, and nothing falls back to another model.
+
 ## D4 — Fake streaming in v1
 `stream: true` is wire-compatible (SSE chunks: role → content → finish →
 optional usage → `[DONE]`) but emits the whole completion as one content
@@ -70,6 +74,11 @@ object/string/integer/number/boolean/enum/array/nested objects/required — to
 no schema to constrain against. Unsupported schema keywords fail loudly in
 the shim rather than being silently dropped. D21 extends the fail-loudly rule to
 errors (typed classification, real HTTP statuses) and to `stop`.
+
+*Amended by D53:* the shim does drop some unsupported forms silently
+(#179). D53 moves validation into a JSON Schema layer in `sidekick-core`,
+which checks one subset for every chat backend and refuses the rest with a
+400 `unsupported_schema`.
 
 ## D9 — Embedding purpose via non-standard `input_type` (amended: `none` turns the prompt off)
 OpenAI's embeddings API has no query/document distinction, but EmbeddingGemma
@@ -625,6 +634,10 @@ false`. Everything else unknown is still ignored on purpose, including
 could map `seed`/`top_p` in the future. This is a behavior change for
 clients that relied on those parameters being dropped, so it warrants a
 minor version bump when released.
+
+*Amended by D53:* `seed` and `top_p` are to be honored on the chat route
+by both backends: open models sample with them, and Foundation Models
+receives them through its random sampling mode.
 
 **Amendment (September 2026): the same rule for `/v1/classify`, and
 malformed bodies are a 400 everywhere.** `/v1/classify` (D28) applies this
@@ -4353,6 +4366,109 @@ compile.
 **Not covered.** A compute-plan read (`report_compute_plans`) is a cache
 entry of its own, a full compile (docs/design/coreml-cache.md, "The
 cache key"), so warming doesn't warm it (#145).
+
+## D53 — Open LLMs on the chat route: a stateful ANE decoder beside Foundation Models
+D3 deferred a local LLM tier until there was evidence it mattered. There is
+now. The chat benchmark (docs/CHAT-BENCHMARK.md, #174) found MiniCPM5-2B
+level with Foundation Models on titles, fixed-vocabulary tags and
+instructions, well ahead on extraction, and refusing nothing, while
+Foundation Models' guided generation drops optional fields (#177) and its
+guardrails refuse guided output on ordinary text (#178). The spike in #173
+ran that model on the Neural Engine: four chunk programs of one 16-token
+function, the KV cache in Core ML state, weights rotated and quantised by
+GPTQ onto 8-bit palettes, grade B, beside a GPU model whose decode it slowed by about
+6%. Slower end to end than Foundation Models or the GPU, but off the GPU,
+which is what sidekick is for. The design is docs/design/open-llm.md;
+this records what it settles. None of it is implemented yet.
+
+**Decision.**
+- **Open causal LMs serve `/v1/chat/completions` beside `apple-fm`,**
+  chosen by the request's `model`, exactly; no default and no alias. The
+  first is MiniCPM5-2B.
+- **A third manifest, `chat.toml`** (`task = "text-generation"`), with a
+  versioned program contract (`interface = "kv-state-1"`): N chunk programs
+  at layer boundaries (D37), each one static function taking T tokens per
+  call, for prompt and generation alike, and owning its layers' KV cache as
+  state; a cache capacity C under the ANE length cap (D48), and a usable
+  context of C − T + 1. The embedding table and RoPE tables ship as fp16
+  files the host reads, with the tokenizer and the checkpoint's chat
+  template. Quantisation and rotation are folded into the weights and
+  recorded for provenance only.
+- **`cpu_and_ne` only.** `cpu_only` with state segfaults (#173), and the
+  GPU with state is ungraded, so an operator's D38 override is refused for
+  this task, and a Mac without a Neural Engine skips the model.
+- **The runtime is Rust:** a stateful chunk chain in `sidekick-coreml`
+  (`objc2-core-ml` binds `MLState`, stateful prediction and output
+  backings) and the loop in a new platform-neutral crate, `sidekick-llm`.
+  Every call runs in an autorelease pool, with inputs allocated once: the
+  spike's loop without one grew to a 19.7 GB footprint. One decoder thread
+  per model, one sequence at a time, a bounded queue (503 `backend_busy`
+  past it), one KV state reused across requests and replaced after a
+  failure, a per-call watchdog for a hung ANE request. One open model is
+  resident at a time, and the registry reports the ANE-resident weights of
+  everything loaded, since #173 found a budget of roughly 2–3 GiB.
+- **Tokenizer and template:** the `tokenizers` crate, as the embedders use
+  it; the template rendered by `minijinja` with Python compatibility, gated
+  against transformers' `apply_chat_template` on committed fixtures; the
+  text of special tokens rewritten out of message content, as fev does.
+- **Sampling and the wire:** greedy at temperature 0, temperature and
+  `top_p` honored, `seed` honored; the checkpoint's sampling defaults when
+  a request omits them, not greedy. Foundation Models honors `seed` and
+  `top_p` too, through its random sampling mode, so both backends read the
+  same fields. `request_timeout_secs` is set per model: the manifest names
+  a model's default (120 s for the 2B build, whose long replies pass the
+  daemon's 60 s) and a `[models."<id>"]` table overrides it. A prompt plus `max_tokens` past the context is a
+  400 `context_length_exceeded`. Exact usage counts; the stop-sequence
+  shaper shared with the AFM path; the route's existing streaming events,
+  guided output included.
+- **One JSON Schema layer for both backends,** in `sidekick-core`: it
+  validates `response_format`'s schema against one subset and refuses the
+  rest with a 400 `unsupported_schema` naming the keyword (#179), keeps
+  `properties` in the order sent (#180; `serde_json`'s `preserve_order`),
+  and keeps JSON Schema's optional-property meaning (#177's AFM mapping is
+  decided by measurement). A keyword enters the subset only when both
+  backends honor it. AFM's bridge receives properties as an ordered list,
+  and its reply is re-serialized in schema order.
+- **Constrained decoding on the open path is llguidance** (MIT, Rust),
+  masking each step's logits on the host, concurrently with the next ANE
+  call; the grammar's forced tokens ride in the call's padding slots.
+- **No fallback between backends.** A guardrail refusal stays a 400
+  `content_filter` (#178), saying whether output was guided; `apple-fm`
+  still answers 503 when Foundation Models is unavailable (D3).
+  `/v1/models` lists each chat model's backend, context, honored fields and
+  guardrails, so a client chooses.
+- **Conversion and release:** the spike's converter moves into
+  `tools/sidekick_convert`; calibration is a committed, seeded fixture of
+  this repository's text and revision-pinned Wikipedia leads, disjoint from
+  what is graded; recipe variants are screened in PyTorch
+  before any ANE compile. A build is graded teacher-forced against fp32,
+  anchored on the first-percentile logit cosine and top-1 agreement rather
+  than the worst position, which moved with the calibration draw, and a
+  second calibration draw must grade alike. The release gate runs a slice
+  of the benchmark's tasks, guided and prompt-only, and checks replies at
+  temperature 0 are byte-identical. The build publishes under its D50 tier
+  (Apache-2.0 model and listed training sets).
+
+**Rejected.**
+- **A multifunction package** with prefill and decode functions: its
+  functions share weights on disk but not on the ANE, so both are resident
+  and every switch stalls (#173).
+- **A Swift runtime,** like the AFM bridge: a vocabulary-sized FFI crossing
+  every step, and a second copy of the Core ML handling the encoders have
+  in Rust.
+- **Falling back to another model on a refusal,** silently or by
+  configuration: the answer would come from a model the client didn't name,
+  and D3 already left degradation to the client.
+- **Grading on the worst position alone:** the same recipe went from B to C
+  on another calibration draw, while the first percentile held.
+
+**Deferred, not precluded:** speculative decoding (verifying 16 drafted
+tokens costs about 1.12× a step, #173), prefix caching, `logprobs`, tool
+calling and thinking, other families, a GPU path, Intel Macs, and a grade
+on macOS 26 (the first build ships graded on macOS 27, and `/v1/models`
+says so). Whether the ANE budget is per process or system-wide, and whether
+Foundation Models shares it, is to be measured before the registry
+enforces it.
 
 ## Hardware verification status
 
