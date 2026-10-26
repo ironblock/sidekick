@@ -25,7 +25,7 @@ Two design documents hold the full contracts of classification
 
 | Route | What it serves |
 |---|---|
-| `POST /v1/chat/completions` | Apple Foundation Models: Apple silicon, macOS 26+, Apple Intelligence on ([BACKENDS.md](BACKENDS.md#foundation-models)) |
+| `POST /v1/chat/completions` | Chat models, by `model`: Apple Foundation Models (`apple-fm`) on Apple silicon, macOS 26+, Apple Intelligence on ([BACKENDS.md](BACKENDS.md#foundation-models)) |
 | `POST /v1/embeddings` | Embedders, OpenAI's shape |
 | `POST /v2/embed` | The embedders, in Cohere's v2 shape |
 | `POST /v1/classify` | Classifiers, including zero-shot and NLI: vLLM's `/classify` (Core ML, macOS) |
@@ -56,14 +56,14 @@ Every error, malformed JSON included, is OpenAI's shape:
 | Status | `code` | When |
 |---|---|---|
 | 400 | `invalid_request_error` | A field the route rejects, named in the message: an unknown option, an input over the model's limit, or a model sent to a route that doesn't serve its task (the message names the route that does) |
-| 400 | `context_length_exceeded`, `content_filter`, `unsupported_language`, `unsupported_schema` | Chat: a prompt over the model's context, a guardrail refusal, a language the model doesn't support, or a `response_format` schema guided generation can't use |
+| 400 | `context_length_exceeded`, `content_filter`, `unsupported_language`, `unsupported_schema` | Chat: a prompt over the model's context, a guardrail refusal ([below](#guardrail-refusals)), a language the model doesn't support, or a `response_format` schema guided generation can't use |
 | 401 | `invalid_api_key` | A key is configured, and the request's is missing or wrong |
 | 404 | `model_not_found` | No model by that id is served |
 | 413 | | A body over 2 MiB |
 | 429 | `rate_limit_exceeded` | Foundation Models is rate-limiting; `Retry-After` says when to retry |
 | 503 | `backend_unavailable` | A backend this machine or build doesn't have, with the reason, which `/health` reports too. Never a hang. |
 | 503 | `backend_busy` | Foundation Models is busy; retry |
-| 504 | `timeout` | The request's work ran past `request_timeout_secs` |
+| 504 | `timeout` | The request's work ran past its model's request timeout ([CONFIG.md](CONFIG.md#per-model-settings)) |
 | 504 | `load_timeout` | Its model's or buckets' first load ran past `load_timeout_secs`. `Retry-After` is set: the load continues, so a retry finds it ready |
 
 ## Provenance headers
@@ -72,13 +72,13 @@ Every inference response carries provenance headers. They follow OpenAI's
 `openai-model` / `openai-version` style:
 - `sidekick-version`.
 - `sidekick-model`: `<id>@<revision>` when the manifest has a `source`,
-  otherwise `<id>`. For chat it's the Foundation Models variant id, read
-  in the background and cached; until it's known, the chat model's id.
+  otherwise `<id>`. For `apple-fm` it's the Foundation Models variant id,
+  read in the background and cached; until it's known, `apple-fm`.
 - `sidekick-compute-units`: the configuration the serving instance was
   loaded with: a Core ML model's `compute_units` (`cpu_and_ne` unless its
   manifest says otherwise; see [Compute units](BACKENDS.md#compute-units)), `cpu` for static and ONNX
   models ([D40](DECISIONS.md#d40--an-onnx-runtime-cpu-backend-for-embeddings)).
-  Chat omits it. It reports configuration, not the executing device, which
+  `apple-fm` omits it. It reports configuration, not the executing device, which
   Core ML doesn't expose.
 - `sidekick-buckets`: the sequence-length bucket each input ran in, in
   input order and comma-separated (`256,256,512`; one input gives `256`).
@@ -92,8 +92,14 @@ Every inference response carries provenance headers. They follow OpenAI's
 
 ## Chat
 
-`POST /v1/chat/completions` serves Apple's Foundation Models as the model
-`apple-fm`. Point an OpenAI provider (OpenCode, an editor, a script) at
+`POST /v1/chat/completions` serves each chat model `/v1/models` lists with
+`task: "text-generation"`; today that is Apple's Foundation Models as
+`apple-fm`. A request goes to the model its `model` names, exactly: there
+is no default, no alias and no fallback from one model to another. An id
+another route serves (an embedder, a classifier) is a 400 naming the route
+that serves it; any other id is a 404 `model_not_found`.
+
+Point an OpenAI provider (OpenCode, an editor, a script) at
 `http://127.0.0.1:8790/v1` with that model. Constrained output works via
 the standard `response_format`; for example, a session title:
 
@@ -125,6 +131,28 @@ chat reports real token usage, including
 cached tokens when a follow-up reuses its session. `/health` reports which
 Foundation Models variant the Mac has and its context size. Over-long
 prompts are a proper 400 ([D21](DECISIONS.md#d21--macos-27-real-usage-and-model-facts-typed-errors-the-shim-stays)).
+
+### Guardrail refusals
+
+A model with guardrails (`guardrails: true` in `/v1/models`;
+Foundation Models has them) can refuse a request. A refusal before any
+text is a 400 with code `content_filter`; one after text has streamed
+ends the stream with `finish_reason: "content_filter"`. The daemon
+never retries a refusal or answers it with another model. The 400's
+message names the model and says whether the output was guided. When it
+was, the error also carries `param: "response_format"`, because guided
+output can be refused where the same prompt as plain text isn't
+([#178](https://github.com/ironblock/sidekick/issues/178)), so a client
+can retry without `response_format`, or with another model:
+
+```json
+{"error": {
+  "message": "`apple-fm`'s guardrails refused this request, whose output was guided by response_format json_schema: May contain sensitive content. Guided output can be refused where plain text isn't; a retry without response_format, or with another model, may succeed",
+  "type": "invalid_request_error",
+  "param": "response_format",
+  "code": "content_filter"
+}}
+```
 
 ## Embeddings
 
@@ -389,8 +417,11 @@ shape: `input_type` (`search_query` / `search_document`, or `none`) or
 ## Listing models and health
 
 `GET /v1/models` lists what this machine serves, OpenAI's shape with
-sidekick's fields beside it: for every model its task and backend; for an
-embedder its `max_seq_len`, `buckets`, `dims`, `matryoshka`, `prompts`
+sidekick's fields beside it: for every model its task and backend; for a
+chat model its `context_length` (prompt and completion together), the
+optional request fields it honors (`honored_fields`), whether guided
+output streams as it is generated (`guided_streaming`), and whether it
+has guardrails (`guardrails`); for an embedder its `max_seq_len`, `buckets`, `dims`, `matryoshka`, `prompts`
 and `named_prompts`; for a classifier its labels or `max_labels`,
 `max_batch`, `extensions`, `required` fields and calibration; for a Core
 ML model its `compute_units`, any `seq_cap`, and each bucket's
@@ -398,7 +429,8 @@ ML model its `compute_units`, any `seq_cap`, and each bucket's
 Nothing is loaded to answer.
 
 `GET /health` reports availability per backend and why anything is
-unavailable: the chat model's state, variant and context size; the
+unavailable: each chat model's state and the reason it is unavailable,
+variant, context size and request timeout, by id (`chat.models`); the
 backends the build serves (`backends`: `coreml`, `onnx`, `static`); the
 models resident; each manifest skipped, with the reason (`skipped_models`);
 length caps, compute-unit overrides and compute plans; and ONNX Runtime's
