@@ -106,7 +106,7 @@ _GPTQ_CHATS = [
 def gptq_texts(tok, n_tokens, seg=512):
     out = []
     for rel, start in _GPTQ_SOURCES:
-        ids = tok(_read(rel, start, 4000), add_special_tokens=False)["input_ids"][:seg]
+        ids = tok(_read(rel, start, max(4000, 8 * seg)), add_special_tokens=False)["input_ids"][:seg]
         if len(ids) >= 64:
             out.append(ids)
         if sum(map(len, out)) >= n_tokens:

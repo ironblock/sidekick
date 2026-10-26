@@ -49,6 +49,10 @@ ap.add_argument("--fp16-keep", default="",
                 help="projections left in fp16 in a quantised build, as layer.proj (e.g. 7.down,41.q): the ANE's "
                      "int8 path overflows on some (probe_intacc.py)")
 ap.add_argument("--qweights", default=None, help="gptq.py output: weights already on the int8 grid")
+ap.add_argument("--rot", type=int, default=None, help="rotate the model (llama_ane.rotate_model) with this seed; "
+                                                       "--cal must then be that rotated model's calibration")
+ap.add_argument("--no-r2", action="store_true")
+ap.add_argument("--r4", type=int, default=0)
 a = ap.parse_args()
 
 import coremltools as ct
@@ -60,6 +64,8 @@ out.mkdir(parents=True, exist_ok=True)
 from transformers import AutoTokenizer
 tok = AutoTokenizer.from_pretrained(a.src)
 hf = LA.load_hf(a.src, dtype=torch.bfloat16)
+if a.rot is not None:           # R1/R2 (and R4) folded into the weights: llama_ane.rotate_model
+    LA.rotate_model(hf, a.rot, r2=not a.no_r2, r4=a.r4)
 cfg = hf.config
 L = cfg.num_hidden_layers
 cuts = [(0, L)] if not a.cuts else [tuple(map(int, c.split("-"))) for c in a.cuts.split(",")]

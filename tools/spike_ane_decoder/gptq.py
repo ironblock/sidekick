@@ -216,6 +216,9 @@ def main():
     ap.add_argument("--r4", type=int, default=0)
     ap.add_argument("--act-order", action="store_true")
     ap.add_argument("--tokens", type=int, default=8192)
+    ap.add_argument("--seg", type=int, default=512, help="tokens per calibration text")
+    ap.add_argument("--lut-from", default=None,
+                    help="a .pt of palettes {'<layer>.<proj>' | 'head': lut} to reuse (lut_extract.py), skipping k-means")
     ap.add_argument("--damp", type=float, default=0.01)
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--skip-head", action="store_true")
@@ -240,9 +243,14 @@ def main():
         json.dump(cal, open(a.cal, "w"))
     cfg = hf.config
     L, KVH, Dh = cfg.num_hidden_layers, cfg.num_key_value_heads, cfg.head_dim
-    texts = T.gptq_texts(tok, a.tokens)
+    texts = T.gptq_texts(tok, a.tokens, a.seg)
+
+    luts = torch.load(a.lut_from) if a.lut_from else None
+    cur = {"key": None}
 
     def make_grid(W, H=None):
+        if luts is not None and cur["key"] in luts:      # palettes from an earlier run (k-means on the same weights)
+            return Lut(W, luts[cur["key"]], a.group)
         if a.grid in ("int8", "int4"):
             return Int8PerChannel(W.double(), 127 if a.grid == "int8" else 7)
         if a.grid in ("pal4", "pal6"):
@@ -286,6 +294,7 @@ def main():
             setattr(layer, p, convs[p])
             H = acc[HESS[p]][0] / acc[HESS[p]][1]
             W = convs[p].weight.view(convs[p].weight.shape[0], -1)
+            cur["key"] = f"{i}.{p}"
             grid = make_grid(W, H)
             q, s = gptq(W, H, grid, a.damp, act_order=a.act_order)
             Wq = dequant(q, s)
@@ -313,6 +322,7 @@ def main():
         H = X @ X.T / X.shape[1]
         imatrix["head"] = torch.diag(H).float()
         W = hf.lm_head.weight.float()
+        cur["key"] = "head"
         q, s = gptq(W, H, make_grid(W, H), a.damp, act_order=a.act_order)
         torch.save({"head": (q, s)}, out / "head.pt")
         print(f"head: {time.time() - t0:.0f}s", flush=True)
