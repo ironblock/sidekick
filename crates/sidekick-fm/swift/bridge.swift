@@ -2,7 +2,8 @@
 //
 // Exposes a deliberately tiny surface: availability probing, model info,
 // session create/free, and a blocking respond() with optional guided
-// generation from a JSON Schema subset. All strings cross the boundary as
+// generation from a schema the Rust side has already validated (see
+// `dynamicSchema`) and a sampling mode. All strings cross the boundary as
 // (pointer, length) UTF-8 buffers; every buffer returned to Rust is
 // malloc'd here and freed by Rust via sk_fm_buf_free/sk_fm_string_free.
 //
@@ -119,46 +120,48 @@ private final class SessionBox: @unchecked Sendable {
     }
 }
 
-/// Convert a JSON Schema subset into a DynamicGenerationSchema.
-/// Supported: object/string/integer/number/boolean, string enums, arrays of
-/// the above, nested objects, required lists (absent => optional property).
+/// Build a DynamicGenerationSchema from the shim's schema form, which the
+/// Rust side writes from a request's validated JSON Schema (src/bridge.rs):
+/// {"kind": "object", "name", "description"?, "properties": [{"name",
+/// "description"?, "optional", "schema"}]} | {"kind": "array", "items",
+/// "min_items", "max_items"} | {"kind": "enum", "name", "values"} |
+/// {"kind": "string" | "integer" | "number" | "boolean"}. Properties are a
+/// list, in the client's order: the model generates them in this order.
+/// Validation happened in Rust; anything unexpected here is a shim bug.
 @available(macOS 26.0, *)
-private func dynamicSchema(from json: [String: Any], name: String) throws -> DynamicGenerationSchema {
-    let type = json["type"] as? String ?? "object"
+private func dynamicSchema(from json: [String: Any]) throws -> DynamicGenerationSchema {
+    let kind = json["kind"] as? String ?? ""
+    let name = json["name"] as? String ?? ""
     let description = json["description"] as? String
 
-    if let anyOf = json["enum"] as? [String] {
-        return DynamicGenerationSchema(name: name, description: description, anyOf: anyOf)
-    }
-
-    switch type {
+    switch kind {
     case "object":
-        let props = json["properties"] as? [String: Any] ?? [:]
-        let required = Set(json["required"] as? [String] ?? [])
         var properties: [DynamicGenerationSchema.Property] = []
-        // Sort for deterministic order.
-        for key in props.keys.sorted() {
-            guard let sub = props[key] as? [String: Any] else { continue }
-            let subSchema = try dynamicSchema(from: sub, name: key)
+        for property in json["properties"] as? [[String: Any]] ?? [] {
+            guard
+                let propertyName = property["name"] as? String,
+                let schema = property["schema"] as? [String: Any]
+            else { throw shimError("malformed object property") }
             properties.append(
                 DynamicGenerationSchema.Property(
-                    name: key,
-                    description: sub["description"] as? String,
-                    schema: subSchema,
-                    isOptional: !required.contains(key)
+                    name: propertyName,
+                    description: property["description"] as? String,
+                    schema: try dynamicSchema(from: schema),
+                    isOptional: property["optional"] as? Bool ?? false
                 )
             )
         }
         return DynamicGenerationSchema(name: name, description: description, properties: properties)
     case "array":
-        let items = json["items"] as? [String: Any] ?? ["type": "string"]
-        let itemSchema = try dynamicSchema(from: items, name: name + "Item")
-        let minItems = json["minItems"] as? Int
-        let maxItems = json["maxItems"] as? Int
+        guard let items = json["items"] as? [String: Any] else { throw shimError("array without items") }
         return DynamicGenerationSchema(
-            arrayOf: itemSchema,
-            minimumElements: minItems,
-            maximumElements: maxItems
+            arrayOf: try dynamicSchema(from: items),
+            minimumElements: json["min_items"] as? Int,
+            maximumElements: json["max_items"] as? Int
+        )
+    case "enum":
+        return DynamicGenerationSchema(
+            name: name, description: description, anyOf: json["values"] as? [String] ?? []
         )
     case "string":
         return DynamicGenerationSchema(type: String.self)
@@ -169,11 +172,48 @@ private func dynamicSchema(from json: [String: Any], name: String) throws -> Dyn
     case "boolean":
         return DynamicGenerationSchema(type: Bool.self)
     default:
-        throw NSError(
-            domain: "sidekick.fm", code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "unsupported JSON schema type: \(type)"]
-        )
+        throw shimError("unknown schema kind `\(kind)`")
     }
+}
+
+private func shimError(_ message: String) -> NSError {
+    NSError(domain: "sidekick.fm", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+}
+
+/// Generation options from the C arguments. `sampling` is 0 for Foundation
+/// Models' default, 1 for greedy, 2 for random sampling with
+/// `probabilityThreshold` and, when `hasSeed` is nonzero, `seed`
+/// (src/bridge.rs decides which). A negative temperature means unset;
+/// greedy decoding ignores it.
+@available(macOS 26.0, *)
+private func generationOptions(
+    temperature: Double, sampling: Int32, probabilityThreshold: Double, seed: UInt64, hasSeed: Int32,
+    maxTokens: Int64
+) -> GenerationOptions {
+    var options = GenerationOptions()
+    var mode: GenerationOptions.SamplingMode?
+    switch sampling {
+    case 1:
+        mode = .greedy
+    case 2:
+        mode = .random(probabilityThreshold: probabilityThreshold, seed: hasSeed != 0 ? seed : nil)
+    default:
+        mode = nil
+    }
+    if let mode {
+        #if SK_SDK_27
+        options.samplingMode = mode
+        #else
+        options.sampling = mode
+        #endif
+    }
+    if temperature >= 0 && sampling != 1 {
+        options.temperature = temperature
+    }
+    if maxTokens > 0 {
+        options.maximumResponseTokens = Int(maxTokens)
+    }
+    return options
 }
 
 // MARK: - Error classification
@@ -372,7 +412,7 @@ private func respondEnvelope(
             else {
                 return errorEnvelope(["kind": "unsupported_guide", "message": "schema is not a JSON object"])
             }
-            let root = try dynamicSchema(from: parsed, name: "Response")
+            let root = try dynamicSchema(from: parsed)
             schema = try GenerationSchema(root: root, dependencies: [])
         } catch {
             return errorEnvelope(["kind": "unsupported_guide", "message": String(describing: error)])
@@ -523,6 +563,10 @@ public func sk_fm_respond(
     _ schemaJson: UnsafePointer<UInt8>?,
     _ schemaLen: UInt,
     _ temperature: Double,
+    _ sampling: Int32,
+    _ probabilityThreshold: Double,
+    _ seed: UInt64,
+    _ hasSeed: Int32,
     _ maxTokens: Int64,
     _ out: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>?,
     _ outLen: UnsafeMutablePointer<UInt>?,
@@ -538,13 +582,10 @@ public func sk_fm_respond(
         let promptText = takeString(prompt, promptLen)
         let schemaText = takeString(schemaJson, schemaLen)
 
-        var options = GenerationOptions()
-        if temperature >= 0 {
-            options = GenerationOptions(temperature: temperature)
-        }
-        if maxTokens > 0 {
-            options.maximumResponseTokens = Int(maxTokens)
-        }
+        let options = generationOptions(
+            temperature: temperature, sampling: sampling, probabilityThreshold: probabilityThreshold,
+            seed: seed, hasSeed: hasSeed, maxTokens: maxTokens
+        )
 
         let semaphore = DispatchSemaphore(value: 0)
         var envelope: [String: Any] = [:]
@@ -583,6 +624,10 @@ public func sk_fm_respond_stream(
     _ prompt: UnsafePointer<UInt8>?,
     _ promptLen: UInt,
     _ temperature: Double,
+    _ sampling: Int32,
+    _ probabilityThreshold: Double,
+    _ seed: UInt64,
+    _ hasSeed: Int32,
     _ maxTokens: Int64,
     _ onSnapshot: SkSnapshotCallback?,
     _ ctx: UnsafeMutableRawPointer?,
@@ -600,13 +645,10 @@ public func sk_fm_respond_stream(
         let promptText = takeString(prompt, promptLen)
         let context = CallbackContext(pointer: ctx)
 
-        var options = GenerationOptions()
-        if temperature >= 0 {
-            options = GenerationOptions(temperature: temperature)
-        }
-        if maxTokens > 0 {
-            options.maximumResponseTokens = Int(maxTokens)
-        }
+        let options = generationOptions(
+            temperature: temperature, sampling: sampling, probabilityThreshold: probabilityThreshold,
+            seed: seed, hasSeed: hasSeed, maxTokens: maxTokens
+        )
 
         let semaphore = DispatchSemaphore(value: 0)
         var envelope: [String: Any] = [:]

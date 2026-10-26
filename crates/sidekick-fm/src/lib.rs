@@ -15,10 +15,10 @@
 //! alias for the backend over a stub engine that reports `Unavailable`.
 
 pub mod backend;
+pub mod bridge;
 pub mod cache;
 pub mod engine;
 pub mod envelope;
-pub mod shaping;
 
 #[cfg(all(target_os = "macos", not(fm_stub)))]
 mod ffi;

@@ -34,6 +34,12 @@ pub enum Error {
     #[error("unsupported language or locale: {0}")]
     UnsupportedLanguage(String),
 
+    /// A `response_format` schema outside the supported subset (a client
+    /// error: HTTP 400 `unsupported_schema`); the message names the keyword
+    /// and where it is.
+    #[error("response_format schema: {0}")]
+    UnsupportedSchema(String),
+
     #[error("guided generation failed: {0}")]
     GuidedGeneration(String),
 

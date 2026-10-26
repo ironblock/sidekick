@@ -56,7 +56,7 @@ Every error, malformed JSON included, is OpenAI's shape:
 | Status | `code` | When |
 |---|---|---|
 | 400 | `invalid_request_error` | A field the route rejects, named in the message: an unknown option, an input over the model's limit, or a model sent to a route that doesn't serve its task (the message names the route that does) |
-| 400 | `context_length_exceeded`, `content_filter`, `unsupported_language`, `unsupported_schema` | Chat: a prompt over the model's context, a guardrail refusal ([below](#guardrail-refusals)), a language the model doesn't support, or a `response_format` schema guided generation can't use |
+| 400 | `context_length_exceeded`, `content_filter`, `unsupported_language`, `unsupported_schema` | Chat: a prompt over the model's context, a guardrail refusal ([below](#guardrail-refusals)), a language the model doesn't support, or a `response_format` schema outside the [supported subset](#structured-output) |
 | 401 | `invalid_api_key` | A key is configured, and the request's is missing or wrong |
 | 404 | `model_not_found` | No model by that id is served |
 | 413 | | A body over 2 MiB |
@@ -119,7 +119,8 @@ the standard `response_format`; for example, a session title:
 ```
 
 The schema is enforced by the on-device model's constrained decoding
-(guided generation), not asked for in the prompt. Check `finish_reason`: a reply cut by `max_tokens` reports `"length"`, and
+(guided generation), not asked for in the prompt, and must be in the
+[supported subset](#structured-output). Check `finish_reason`: a reply cut by `max_tokens` reports `"length"`, and
 for constrained output that means the JSON may be missing properties.
 
 `stop` (one string or up to four) is supported, except together with
@@ -153,6 +154,64 @@ can retry without `response_format`, or with another model:
   "code": "content_filter"
 }}
 ```
+
+### Sampling
+
+| Field | Meaning |
+|---|---|
+| `temperature` | 0 is greedy decoding: the most likely token every step, so a request repeats byte for byte on the same Mac and macOS. Above 0, sampling at that temperature. Omitted, the model's default. |
+| `top_p` | Nucleus sampling, 0 to 1: Foundation Models' random sampling mode with that probability threshold. 0 is greedy. Outside 0–1 is a 400. |
+| `seed` | A non-negative integer that makes sampling at a temperature above 0 repeatable. With `seed` and no `top_p`, sampling covers the whole distribution (`top_p` 1). |
+
+A request with neither `top_p` nor `seed` samples as Foundation Models
+does by default. Other sampling fields (penalties, `logit_bias`) and
+`user` are ignored; fields that change what the reply is (`n` > 1, tools,
+`logprobs`) are a 400 ([D22](DECISIONS.md#d22--reject-request-parameters-the-daemon-cant-honor)).
+
+### Structured output
+
+`response_format: {"type": "json_schema", ...}` constrains the reply to a
+JSON Schema. Every chat backend reads the schema through one layer, which
+accepts the subset below and refuses everything else with a 400
+`unsupported_schema` whose message names the keyword and its JSON pointer
+(``unsupported keyword `pattern` at `/properties/sku` ``). A keyword is in
+the subset only when every chat backend can honor it, so no schema is
+answered as if part of it weren't there. `json_schema.strict` is accepted
+either way: output is always constrained.
+
+| Keyword | Supported |
+|---|---|
+| `type` | `object`, `array`, `string`, `integer`, `number`, `boolean`; one type, optionally with `"null"` (see nullable below). Inferred as `object` from `properties`, `array` from `items`, `string` from `enum`/`const`; otherwise required |
+| `properties` | Generated, and returned, in the order sent |
+| `required` | Properties not listed may be left out (JSON Schema's meaning); every name listed must be in `properties` |
+| `additionalProperties` | Absent or `false`: objects are closed |
+| `enum`, `const` | Strings only (and `null` in a nullable enum) |
+| `items`, `minItems`, `maxItems` | `items` is required on an array, and is one schema |
+| `anyOf` | Only as a nullable union: one schema and `{"type": "null"}` |
+| `description` | Passed to the model as guidance |
+| `title`, `$schema`, `examples`, `default` | Accepted and ignored |
+
+Refused, among others: `anyOf` of anything else, `oneOf`, `allOf`, `not`,
+`$ref` and `$defs` (write the schema inline), a union of types
+(`["string", "integer"]`), `enum` of non-strings, `minimum`, `maximum`,
+`multipleOf`, `pattern`, `format`, `minLength`, `maxLength`,
+`patternProperties`, `uniqueItems`, `prefixItems`, and any keyword not
+listed above.
+
+**Nullable properties.** `{"type": ["string", "null"]}` and
+`{"anyOf": [{"type": "string"}, {"type": "null"}]}` are supported as an
+object property's value, and nowhere else (not as the schema root or an
+array's items). Foundation Models generates such a property as one it may
+leave out, and the reply carries `null` where it did, when the property is
+`required`; an optional nullable property it leaves out stays absent. So a
+`required` nullable property is the way to ask for every field, with
+`null` for what the text doesn't state.
+
+**Key order.** A guided reply is compact JSON with its keys in the order
+the schema lists them, so identical requests at temperature 0 give
+identical bytes. The model also generates the properties in that order,
+which can change what it writes: put the fields it should decide first
+first.
 
 ## Embeddings
 

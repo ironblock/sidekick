@@ -16,6 +16,8 @@ pub mod embed;
 pub mod error;
 pub mod manifest;
 pub mod onnx_graph;
+pub mod schema;
+pub mod shaping;
 
 pub use chat::{
     ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, FinishReason, ModelInfo, Role,
@@ -27,6 +29,7 @@ pub use classify::{
 };
 pub use embed::{named_prompt, truncate_normalized, EmbedLimits, EmbedPurpose, Embedder, Truncate};
 pub use error::{Error, Result};
+pub use schema::JsonSchema;
 pub use manifest::{
     ane_seq_cap, ane_weight_refusal, artifact_files, calibration_key, capped_as, cpu_seq_cap, seq_len_cap, Chunking, AneWeightLimit, ClassifierManifest, ClassifyFormat, ComputeUnits,
     ComputeUnitsSource, EmbeddingBackendKind,

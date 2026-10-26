@@ -293,6 +293,11 @@ impl From<Error> for ApiError {
                 "unsupported_language",
                 message,
             ),
+            Error::UnsupportedSchema(message) => Self::new(
+                StatusCode::BAD_REQUEST,
+                "unsupported_schema",
+                format!("response_format schema: {message}"),
+            ),
             Error::GuidedGeneration(message) => Self::new(
                 StatusCode::BAD_REQUEST,
                 "unsupported_schema",
