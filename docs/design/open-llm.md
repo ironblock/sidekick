@@ -163,6 +163,9 @@ stop_token_ids = [1, 130073]         # generation_config.json's eos_token_id
 temperature = 1.0
 top_p = 0.95
 
+[serving]
+request_timeout_secs = 120           # this model's default; [models."<id>"] overrides it
+
 [build]                              # written by the converter; provenance, not read to serve
 weights = "palette8"                 # GPTQ onto 8-bit palettes, one per group of 16 output channels
 rotation = { r1 = true, r2 = true, seed = 0 }
@@ -300,7 +303,14 @@ never drained. So:
   and few.
 - **A bounded FIFO queue,** `[models."<id>"] queue_depth` (default 4).
   A request past it is a 503 `backend_busy` with `Retry-After`, as AFM's
-  busy state is. Time in the queue counts against `request_timeout_secs`.
+  busy state is. Time in the queue counts against the request's timeout.
+- **A timeout per model.** `request_timeout_secs` bounds a request's whole
+  work, streamed or not, as it does for Foundation Models. At the 2B
+  build's rate a reply near `context_length` passes the daemon's 60 s
+  default, so the manifest's `[serving] request_timeout_secs` sets the
+  model's default (120 s for the 2B build) and a `[models."<id>"]` table
+  overrides it, as it overrides `compute_units`. The global setting stays
+  the default for models whose manifest names none.
 - **One KV state, reused across requests, not reset.** A request writes its
   prompt from position 0 and the mask hides everything past its own
   position, so a previous request's keys never reach it. The state is
@@ -349,6 +359,7 @@ So:
   and the daemon logs a warning when loading a model would pass 2 GiB.
 - **Enforcement waits for a measurement** of the decoder beside ANE
   embedders and beside AFM requests ([Open questions](#open-questions)).
+  It reuses the 2B build already compiled, so it adds no ANE cache.
 
 ### Loading, warm-up and where it doesn't run
 
@@ -398,9 +409,9 @@ The request and response shapes are the chat route's
 
 | Field | Open models | AFM, for comparison |
 |---|---|---|
-| `temperature` | 0 is greedy argmax, ties to the lower token id; otherwise softmax at that temperature. Omitted: the manifest's `[sampling]` (the checkpoint's `generation_config.json`) | passed to Foundation Models |
-| `top_p` | honored (nucleus over the masked distribution) | ignored (D22) |
-| `seed` | honored: a seeded ChaCha generator makes sampling at temperature > 0 repeatable | ignored (D22) |
+| `temperature` | 0 is greedy argmax, ties to the lower token id; otherwise softmax at that temperature. Omitted: the manifest's `[sampling]` (the checkpoint's `generation_config.json`) | passed to Foundation Models; omitted, its own default |
+| `top_p` | honored (nucleus over the masked distribution) | honored: Foundation Models' random sampling mode with that probability threshold |
+| `seed` | honored: a seeded ChaCha generator makes sampling at temperature > 0 repeatable | honored: the sampling mode's seed |
 | `max_tokens`, `max_completion_tokens` | a limit on generated tokens; omitted, the rest of `context_length` | as today |
 | prompt + `max_tokens` past `context_length` | 400 `context_length_exceeded`, as vLLM and OpenAI answer | 400 for an over-long prompt (D21) |
 | `stop` | up to four strings, matched on the detokenized text; the reply ends before the earliest | as today |
@@ -416,6 +427,10 @@ The request and response shapes are the chat route's
   as complete UTF-8, and text that could still become a stop sequence is
   held back. `sidekick-fm`'s stop-sequence shaper (`shaping.rs`) moves to
   `sidekick-core`, so both backends cut text the same way.
+- **Defaults are the model's.** A request that omits `temperature` or
+  `top_p` samples at the checkpoint's own defaults, as OpenAI's API and
+  Foundation Models do; greedy is not the default. A client that wants
+  repeatable output sends `temperature: 0`, as the benchmark does.
 - **Determinism.** At temperature 0 a request gives the same bytes on the
   same build, Mac and macOS, guided or not; the release gate checks it.
   With a `seed`, so does sampling. Prefix caching, when it comes, must keep
@@ -560,7 +575,8 @@ not malformed JSON. So:
   chat models have guardrails, so a client can choose up front.
 - **AFM-only behavior is reported, not emulated:** session reuse and
   `cached_tokens`, guardrails, `unsupported_language`. Open-only behavior
-  likewise: `seed`, `top_p`, streamed guided output.
+  likewise: streamed guided output. `seed` and `top_p` are honored by both
+  backends (amending D22).
 
 ## Conversion and release
 
@@ -592,11 +608,15 @@ The spike's converter (`llama_ane.py`, `convert.py`, `gptq.py`) moves into
 - **Committed, not read live.** The spike calibrated on spans of this
   repository's own files, which change with every commit. The calibration
   set becomes a fixture: text and the token ids it encodes to, its
-  sources and licences recorded as the benchmark's items are (this
-  repository's text, MIT; prompts written for it), and its sha256 in the
-  build's `[build]` table.
+  sources and licences recorded as the benchmark's items are, and its
+  sha256 in the build's `[build]` table.
+- **Broader than this repository.** The spike's set was mostly code and
+  docs, which may be why its grade depended on the draw. The fixture
+  mixes this repository's text and prompts written for it (MIT) with
+  revision-pinned Wikipedia lead sections (CC BY-SA 4.0), recorded with
+  their attribution as the benchmark records its own.
 - **Disjoint from what is graded:** the parity texts and the benchmark's
-  task set, under `core.Calibration`'s existing guard.
+  task set (no Wikipedia article the benchmark draws on), under `core.Calibration`'s existing guard.
 - **Seeded:** the rotation's Hadamard seed, GPTQ's order and the palettes'
   k-means initialisation are recorded, so a rerun reproduces the build's
   bytes (CONVERTING.md, "Reproducing a published build").
@@ -692,13 +712,19 @@ with a fixed one), and a macOS update presumably does too.
 - **The ANE's resident budget.** Is the 2–3 GiB budget per process or
   system-wide, does Foundation Models' model count against it, and do ANE
   embedders beside the decoder make it thrash? The answer decides whether
-  the registry warns or evicts.
-- **Default sampling.** A request without `temperature` samples at the
-  checkpoint's defaults (1.0, top-p 0.95). Greedy would make sidekick's
-  short tasks repeatable by default, at the cost of OpenAI's convention.
-- **macOS 26.** Grade the build there before the first release, or ship
-  graded on 27 alone.
-- **`seed` and `top_p` on AFM.** They stay ignored there (D22). Mapping them
-  to Foundation Models' sampling modes would close the asymmetry.
-- **`request_timeout_secs`.** At the 2B build's rate, a reply of 2,000
-  tokens takes longer than the default 60 s.
+  the registry warns or evicts; it is measured before the backend ships.
+
+Settled while this note was reviewed:
+
+- **Grading** is anchored on the first-percentile cosine and top-1, with
+  the stability check ([Grading a causal LM](#grading-a-causal-lm)).
+- **Default sampling** is the checkpoint's
+  ([Sampling and the wire contract](#sampling-and-the-wire-contract)).
+- **macOS 26.** The first build ships graded on macOS 27, and
+  `/v1/models` says so ([Where the decode loop lives](#where-the-decode-loop-lives-rust));
+  a macOS 26 grade is added when a Mac running it is free.
+- **`seed` and `top_p` on AFM** map to Foundation Models' sampling mode.
+- **`request_timeout_secs`** is set per model
+  ([Concurrency and state](#concurrency-and-state)).
+- **Calibration** adds Wikipedia leads to this repository's text
+  ([Calibration](#calibration)).

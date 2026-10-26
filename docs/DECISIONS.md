@@ -635,6 +635,10 @@ could map `seed`/`top_p` in the future. This is a behavior change for
 clients that relied on those parameters being dropped, so it warrants a
 minor version bump when released.
 
+*Amended by D53:* `seed` and `top_p` are to be honored on the chat route
+by both backends: open models sample with them, and Foundation Models
+receives them through its random sampling mode.
+
 **Amendment (September 2026): the same rule for `/v1/classify`, and
 malformed bodies are a 400 everywhere.** `/v1/classify` (D28) applies this
 decision to every field vLLM defines for classification. Each one is
@@ -4409,7 +4413,11 @@ this records what it settles. None of it is implemented yet.
   text of special tokens rewritten out of message content, as fev does.
 - **Sampling and the wire:** greedy at temperature 0, temperature and
   `top_p` honored, `seed` honored; the checkpoint's sampling defaults when
-  a request omits them. A prompt plus `max_tokens` past the context is a
+  a request omits them, not greedy. Foundation Models honors `seed` and
+  `top_p` too, through its random sampling mode, so both backends read the
+  same fields. `request_timeout_secs` is set per model: the manifest names
+  a model's default (120 s for the 2B build, whose long replies pass the
+  daemon's 60 s) and a `[models."<id>"]` table overrides it. A prompt plus `max_tokens` past the context is a
   400 `context_length_exceeded`. Exact usage counts; the stop-sequence
   shaper shared with the AFM path; the route's existing streaming events,
   guided output included.
@@ -4430,8 +4438,9 @@ this records what it settles. None of it is implemented yet.
   `/v1/models` lists each chat model's backend, context, honored fields and
   guardrails, so a client chooses.
 - **Conversion and release:** the spike's converter moves into
-  `tools/sidekick_convert`; calibration is a committed, seeded fixture,
-  disjoint from what is graded; recipe variants are screened in PyTorch
+  `tools/sidekick_convert`; calibration is a committed, seeded fixture of
+  this repository's text and revision-pinned Wikipedia leads, disjoint from
+  what is graded; recipe variants are screened in PyTorch
   before any ANE compile. A build is graded teacher-forced against fp32,
   anchored on the first-percentile logit cosine and top-1 agreement rather
   than the worst position, which moved with the calibration draw, and a
@@ -4455,9 +4464,11 @@ this records what it settles. None of it is implemented yet.
 
 **Deferred, not precluded:** speculative decoding (verifying 16 drafted
 tokens costs about 1.12× a step, #173), prefix caching, `logprobs`, tool
-calling and thinking, other families, a GPU path, Intel Macs. Whether the
-ANE budget is per process or system-wide, and whether Foundation Models
-shares it, is to be measured before the registry enforces it.
+calling and thinking, other families, a GPU path, Intel Macs, and a grade
+on macOS 26 (the first build ships graded on macOS 27, and `/v1/models`
+says so). Whether the ANE budget is per process or system-wide, and whether
+Foundation Models shares it, is to be measured before the registry
+enforces it.
 
 ## Hardware verification status
 
