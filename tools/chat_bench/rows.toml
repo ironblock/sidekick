@@ -1,6 +1,7 @@
 # The chat benchmark's rows: one model, served one way (tools/chat_bench/run.py).
 #
-# server   "sidekick"   Foundation Models through a running sidekickd (`--base-url`)
+# server   "sidekick"   a chat model of a running sidekickd (`--base-url`)
+# model    sidekick rows: the chat model's id (default "apple-fm", Foundation Models)
 #          "mlx_lm"     mlx_lm.server over the repository's own weights, started by run.py
 #          "serve_ref"  tools/chat_bench/serve_ref.py (torch or mlx backend), started by run.py
 # json     "guided"     JSON families send response_format json_schema (constrained decoding)

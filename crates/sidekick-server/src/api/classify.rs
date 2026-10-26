@@ -54,7 +54,8 @@ pub async fn classify(
     };
 
     // Loading isn't counted against the request timeout (api::deadline).
-    let mut deadline = Deadline::new(Work::Classification, &req.model, state.request_timeout, state.load_timeout);
+    let request_timeout = state.request_timeouts.of(&req.model);
+    let mut deadline = Deadline::new(Work::Classification, &req.model, request_timeout, state.load_timeout);
     let classifier = deadline.model(state.classifiers.get_tracked(&req.model)).await?;
     let labels: Vec<String> = match manifest.task {
         ClassifyTask::TextClassification | ClassifyTask::TextRanking => classifier.labels().to_vec(),

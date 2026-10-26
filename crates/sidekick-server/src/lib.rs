@@ -3,8 +3,9 @@
 //! and ONNX Runtime on the CPU on macOS and Linux.
 //!
 //! Endpoints:
-//! - `POST /v1/chat/completions` — Apple Foundation Models (streaming and
-//!   non-streaming, `response_format: json_schema` via guided generation)
+//! - `POST /v1/chat/completions` — chat models by exact `model` id: Apple
+//!   Foundation Models as `apple-fm` (streaming and non-streaming,
+//!   `response_format: json_schema` via guided generation)
 //! - `POST /v1/embeddings` — registry models (Core ML/ANE encoders, ONNX
 //!   Runtime CPU encoders, static floor tier), with Matryoshka `dimensions`
 //!   and base64 support
@@ -18,6 +19,7 @@
 //! daemon) can build the router without binding a socket.
 
 pub mod api;
+pub mod chat_models;
 pub mod config;
 pub mod fetch;
 pub mod pool;
@@ -29,6 +31,7 @@ pub use config::Config;
 pub use pool::{ClassifierPool, EmbedderPool, ModelPool, TokenizerPool};
 pub use state::AppState;
 
+use chat_models::ChatModels;
 use sidekick_core::{ChatBackend, EmbeddingBackendKind, ModelRegistry, ScanOptions};
 use std::sync::Arc;
 use std::time::Instant;
@@ -51,10 +54,11 @@ pub fn scan(config: &Config) -> anyhow::Result<ModelRegistry> {
     Ok(ModelRegistry::scan_with(&config.models_dir(), &scan_options(config))?)
 }
 
-/// Assemble state from config with the default (Foundation Models) chat
-/// backend. Tests inject their own backend via `AppState` directly.
+/// Assemble state from config, with Foundation Models as the chat model
+/// `apple-fm`. Tests inject their own chat models via `AppState` directly.
 pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
     let onnx_threads = config.onnx_threads()?;
+    let request_timeouts = config.request_timeouts()?;
     let mut registry = scan(config)?;
     // ONNX Runtime loads only for an onnx model, and then at startup, so a
     // missing runtime skips the onnx models with its reason in /health
@@ -72,19 +76,20 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
             "no models found; /v1/embeddings and /v1/classify will 404"
         );
     }
-    let chat: Arc<dyn ChatBackend> =
-        Arc::new(sidekick_fm::fm_backend(config.session_ttl(), config.request_timeout()));
+    let mut chat = ChatModels::default();
+    chat.insert(chat_models::foundation_models(&request_timeouts, |timeout| {
+        Arc::new(sidekick_fm::fm_backend(config.session_ttl(), timeout)) as Arc<dyn ChatBackend>
+    }))?;
     Ok(AppState {
-        chat,
+        chat: Arc::new(chat),
         embedders: Arc::new(EmbedderPool::embedders_with(registry.clone(), config.model_idle_ttl(), onnx_threads.clone())),
         classifiers: Arc::new(ClassifierPool::classifiers(registry.clone(), config.model_idle_ttl())),
         tokenizers: Arc::new(TokenizerPool::tokenizers(registry.clone(), config.model_idle_ttl())),
         registry,
         classifiers_supported: sidekick_embed::CLASSIFIERS_SUPPORTED,
-        chat_model: Default::default(),
         api_key: config.api_key.as_deref().map(Arc::from),
         started_at: Instant::now(),
-        request_timeout: config.request_timeout(),
+        request_timeouts,
         load_timeout: config.load_timeout(),
         onnx_threads,
         // Started by the daemon once it's serving (`warm::Warmup::start`).

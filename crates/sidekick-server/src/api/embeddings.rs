@@ -54,7 +54,8 @@ pub async fn embeddings(
     let limits = EmbedLimits { truncate: truncate(req.truncate.as_ref())?, max_tokens: None };
 
     // Loading isn't counted against the request timeout (api::deadline).
-    let mut deadline = Deadline::new(Work::Embedding, &req.model, state.request_timeout, state.load_timeout);
+    let request_timeout = state.request_timeouts.of(&req.model);
+    let mut deadline = Deadline::new(Work::Embedding, &req.model, request_timeout, state.load_timeout);
     let embedder = deadline.model(state.embedders.get_tracked(&req.model)).await?;
 
     // Validate requested dimensions against the model's Matryoshka set.

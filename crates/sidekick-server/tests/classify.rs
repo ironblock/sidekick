@@ -928,7 +928,7 @@ async fn embeddings_and_chat_carry_provenance_headers() {
 
     for stream in [false, true] {
         let state = test_state(true, None);
-        state.refresh_chat_model().await;
+        state.chat.get("apple-fm").unwrap().refresh_provenance().await;
         let (status, headers, _) = call_with_headers(
             state,
             post_json(
@@ -957,7 +957,7 @@ async fn a_slow_model_info_never_delays_chat() {
     // The shim takes a minute to report its variant: requests don't wait,
     // name the chat id until the variant is known, and start one refresh.
     let mut state = test_state(true, None);
-    state.chat = std::sync::Arc::new(MockChat { available: true, info_delay: Duration::from_secs(60) });
+    state.chat = chat_of([mock_fm(MockChat { info_delay: Duration::from_secs(60), ..MockChat::fm(true) })]);
     for stream in [false, true] {
         let request = post_json(
             "/v1/chat/completions",
@@ -970,9 +970,10 @@ async fn a_slow_model_info_never_delays_chat() {
         assert_eq!(headers["sidekick-model"], "apple-fm");
     }
     // Once known, the variant is what the header names.
-    state.chat = std::sync::Arc::new(MockChat { available: true, info_delay: Duration::ZERO });
-    state.refresh_chat_model().await;
-    assert_eq!(state.chat_model_id(), "core3");
+    state.chat = chat_of([mock_fm(MockChat::fm(true))]);
+    let fm = state.chat.get("apple-fm").unwrap();
+    fm.refresh_provenance().await;
+    assert_eq!(fm.provenance_id(), "core3");
 }
 
 #[tokio::test(flavor = "multi_thread")]

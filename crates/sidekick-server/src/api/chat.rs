@@ -1,7 +1,9 @@
 use super::wire::*;
 use super::{ApiError, ApiJson, Provenance};
+use crate::chat_models::ChatModel;
 use crate::state::AppState;
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -13,36 +15,41 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 
+/// `POST /v1/chat/completions`, routed by the request's exact `model` to
+/// one chat model: no default, no alias, no fallback (D53). An id another
+/// route serves is a 400 naming that route; any other is a 404.
 pub async fn chat_completions(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
-    if req.model != state.chat.id() {
+    let Some(model) = state.chat.get(&req.model).cloned() else {
         return Err(match super::model_task(&state, &req.model) {
             Some(task) => super::wrong_route(&req.model, task, "/v1/chat/completions"),
             None => ApiError::model_not_found(&req.model),
         });
-    }
-    // Provenance names the Foundation Models variant, from a cache: asking
-    // the backend is a blocking call that must not delay the reply.
-    let response = complete(&state, req).await?;
-    Ok(Provenance { model: state.chat_model_id(), compute_units: None, buckets: None }.apply(response))
+    };
+    let response = complete(&model, req).await?;
+    // Provenance names the model's variant, from a cache: asking the
+    // backend can be a blocking call that must not delay the reply.
+    Ok(Provenance { model: model.provenance_id(), compute_units: model.listing.compute_units, buckets: None }
+        .apply(response))
 }
 
-async fn complete(state: &AppState, req: ChatCompletionRequest) -> Result<Response, ApiError> {
+async fn complete(model: &ChatModel, req: ChatCompletionRequest) -> Result<Response, ApiError> {
     let core_req = to_core_request(&req)?;
     let meta = StreamMeta {
         id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
         created: now_unix(),
         model: req.model.clone(),
         include_usage: req.stream_options.as_ref().map(|o| o.include_usage).unwrap_or(false),
+        guided: core_req.schema.is_some(),
     };
 
     if req.stream.unwrap_or(false) {
-        return stream_completion(state.chat.clone(), core_req, meta).await;
+        return stream_completion(model.backend().clone(), core_req, meta).await;
     }
 
-    let response = state.chat.complete(core_req).await?;
+    let response = model.backend().complete(core_req).await.map_err(|e| meta.error(e))?;
     Ok(Json(ChatCompletionResponse {
         id: meta.id,
         object: "chat.completion",
@@ -67,16 +74,53 @@ fn finish_str(finish: FinishReason) -> &'static str {
     }
 }
 
+/// What the route knows about a request that its backend's reply and
+/// errors don't carry.
 struct StreamMeta {
     id: String,
     created: u64,
     model: String,
     include_usage: bool,
+    /// Whether the request's output was guided (`response_format`
+    /// `json_schema`).
+    guided: bool,
 }
 
 type SseItem = Result<Event, axum::Error>;
 
 impl StreamMeta {
+    /// A backend error as the API reports it. A guardrail refusal names the
+    /// model and says whether output was guided (`param:
+    /// "response_format"` when it was), since guided output can be refused
+    /// where the same prompt as plain text isn't (#178): a client can retry
+    /// prompt-only, or with another model. The daemon never does that
+    /// itself (D53).
+    fn error(&self, e: Error) -> ApiError {
+        let Error::ContentFiltered(reason) = e else {
+            return e.into();
+        };
+        let model = &self.model;
+        if !self.guided {
+            return ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "content_filter",
+                format!("`{model}`'s guardrails refused this request, whose output was plain text: {reason}"),
+            );
+        }
+        ApiError {
+            param: Some("response_format"),
+            ..ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "content_filter",
+                format!(
+                    "`{model}`'s guardrails refused this request, whose output was guided by response_format \
+                     json_schema: {reason}. Guided output can be refused where plain text isn't; a retry without \
+                     response_format, or with another model, may succeed"
+                ),
+            )
+        }
+    }
+
     fn chunk(&self, choices: Vec<ChunkChoice>, usage: Option<WireUsage>, constrained: Option<bool>) -> SseItem {
         Event::default().json_data(ChatCompletionChunk {
             id: self.id.clone(),
@@ -133,9 +177,10 @@ impl StreamMeta {
                 events
             }
             // The model's guardrails stopped it mid-reply: an OpenAI
-            // content_filter finish, not an error.
+            // content_filter finish, not an error. `constrained` says
+            // whether the output was guided.
             Err(Error::ContentFiltered(_)) => vec![
-                self.finish("content_filter", false),
+                self.finish("content_filter", self.guided),
                 Ok(Event::default().data("[DONE]")),
             ],
             Err(e) => {
@@ -179,7 +224,7 @@ async fn stream_completion(
             queue.push_back(meta.content(delta));
             (Some(task), None)
         }
-        Start::Finished(Err(e)) if rx.is_empty() => return Err(e.into()),
+        Start::Finished(Err(e)) if rx.is_empty() => return Err(meta.error(e)),
         Start::Finished(result) => (None, Some(result)),
     };
 

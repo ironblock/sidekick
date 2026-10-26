@@ -80,7 +80,7 @@ pub fn model_task(state: &AppState, id: &str) -> Option<&'static str> {
     if state.registry.get(id).is_ok() {
         return Some("feature-extraction");
     }
-    (id == state.chat.id()).then_some("text-generation")
+    state.chat.get(id).map(|_| "text-generation")
 }
 
 /// The 400 for a model sent to a route that doesn't serve its task.
@@ -195,11 +195,14 @@ pub struct ApiError {
     pub kind: Option<&'static str>,
     /// Sent as a `Retry-After` header (seconds).
     pub retry_after_secs: Option<u64>,
+    /// OpenAI's `param`: the request field the error is about, when one is.
+    /// Sent only when set.
+    pub param: Option<&'static str>,
 }
 
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
-        Self { status, code, message: message.into(), kind: None, retry_after_secs: None }
+        Self { status, code, message: message.into(), kind: None, retry_after_secs: None, param: None }
     }
 
     pub fn invalid(message: impl Into<String>) -> Self {
@@ -214,13 +217,17 @@ impl ApiError {
         } else {
             "server_error"
         });
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "error": {
                 "message": self.message,
                 "type": kind,
                 "code": self.code,
             }
-        })
+        });
+        if let Some(param) = self.param {
+            body["error"]["param"] = param.into();
+        }
+        body
     }
 
     pub fn model_not_found(model: &str) -> Self {

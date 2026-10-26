@@ -14,21 +14,55 @@ use sidekick_core::{
     ClassifyTask, DeltaSink, Error, FinishReason, ModelInfo, ModelRegistry, NliPair, NliPairs, PairParams, Prepared,
     ProblemType, Result, Source, Usage,
 };
+use sidekick_server::chat_models::{self, ChatListing, ChatModel, ChatModels};
+use sidekick_server::config::RequestTimeouts;
 use sidekick_server::{build_router, AppState, ClassifierPool, EmbedderPool, TokenizerPool};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
 pub struct MockChat {
+    pub id: &'static str,
     pub available: bool,
     /// How long `model_info` takes: a slow Swift shim.
     pub info_delay: Duration,
 }
 
+impl MockChat {
+    /// A mock Foundation Models, `apple-fm`.
+    pub fn fm(available: bool) -> Self {
+        Self { id: "apple-fm", available, info_delay: Duration::ZERO }
+    }
+}
+
+/// The mock registered as Foundation Models is, with the real listing.
+pub fn mock_fm(chat: MockChat) -> ChatModel {
+    chat_models::foundation_models(&RequestTimeouts::default(), |_| Arc::new(chat))
+}
+
+/// A second chat model beside `apple-fm`, listed as an open model would be.
+pub fn mock_open_model(id: &'static str) -> ChatModel {
+    let listing = ChatListing {
+        backend: "coreml",
+        honored_fields: vec!["max_tokens", "seed", "temperature", "top_p"],
+        guided_streaming: true,
+        guardrails: false,
+        compute_units: Some("cpu_and_ne"),
+        graded_os: Some("macOS 27".into()),
+    };
+    let chat = MockChat { id, available: true, info_delay: Duration::ZERO };
+    ChatModel::new(Arc::new(chat), listing, (Duration::from_secs(120), "manifest"))
+}
+
+/// Chat models for a test state.
+pub fn chat_of(models: impl IntoIterator<Item = ChatModel>) -> Arc<ChatModels> {
+    Arc::new(models.into_iter().collect())
+}
+
 #[async_trait::async_trait]
 impl ChatBackend for MockChat {
     fn id(&self) -> &str {
-        "apple-fm"
+        self.id
     }
 
     fn context_limit(&self) -> Option<usize> {
@@ -37,7 +71,7 @@ impl ChatBackend for MockChat {
 
     async fn model_info(&self) -> Option<ModelInfo> {
         tokio::time::sleep(self.info_delay).await;
-        self.available.then(|| ModelInfo {
+        (self.available && self.id == "apple-fm").then(|| ModelInfo {
             variant: Some("AFM 3 Core".into()),
             variant_id: Some("core3".into()),
             context_size: Some(4096),
@@ -113,7 +147,8 @@ impl ChatBackend for MockChat {
         } else if !req.stop.is_empty() {
             format!("stops: {}", req.stop.join("|"))
         } else {
-            format!("echo: {}", req.messages.last().unwrap().content)
+            let who = if self.id == "apple-fm" { "echo" } else { self.id };
+            format!("{who}: {}", req.messages.last().unwrap().content)
         };
         Ok(ChatResponse {
             content,
@@ -815,16 +850,15 @@ pub fn test_state_scanned(chat_available: bool, api_key: Option<&str>, options: 
         })
     };
     let state = AppState {
-        chat: Arc::new(MockChat { available: chat_available, info_delay: Duration::ZERO }),
+        chat: chat_of([mock_fm(MockChat::fm(chat_available))]),
         embedders: Arc::new(EmbedderPool::embedders(registry.clone(), Duration::from_secs(60))),
         classifiers: Arc::new(classifiers),
         tokenizers: Arc::new(TokenizerPool::tokenizers(registry.clone(), Duration::from_secs(60))),
         registry,
         classifiers_supported: true,
-        chat_model: Default::default(),
         api_key: api_key.map(Arc::from),
         started_at: Instant::now(),
-        request_timeout: Duration::from_secs(60),
+        request_timeouts: RequestTimeouts::default(),
         load_timeout: Duration::from_secs(900),
         onnx_threads: Default::default(),
         placements: None,

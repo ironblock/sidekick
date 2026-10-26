@@ -135,7 +135,7 @@ async fn run<T: Send + 'static>(
     bytes: usize,
     work: impl FnOnce(&ModelTokenizer) -> sidekick_core::Result<T> + Send + 'static,
 ) -> Result<T, ApiError> {
-    let mut deadline = Deadline::new(Work::Tokenizing, model, state.request_timeout, state.load_timeout);
+    let mut deadline = Deadline::new(Work::Tokenizing, model, state.request_timeouts.of(model), state.load_timeout);
     let tokenizer = deadline.model(state.tokenizers.get_tracked(model)).await?;
     let turn = deadline
         .within(BUDGET.clone().acquire_many_owned(permits(bytes)))
@@ -182,11 +182,14 @@ fn served(state: &AppState, id: &str, route: &str) -> Result<Served, ApiError> {
         }
         return Ok(Served { kind: Kind::Classifier, provenance: provenance(c.manifest.source.as_ref()) });
     }
-    if id == state.chat.id() {
+    if id == crate::chat_models::APPLE_FM {
         return Err(ApiError::invalid(format!(
             "model `{id}` runs on Apple's Foundation Models, which report token counts but not token ids, \
              so {route} can't serve it"
         )));
+    }
+    if state.chat.get(id).is_some() {
+        return Err(super::wrong_route(id, "text-generation", route));
     }
     Err(ApiError::model_not_found(id))
 }

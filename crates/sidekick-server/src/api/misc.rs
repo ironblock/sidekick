@@ -14,16 +14,27 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
     let created = now_unix();
     let mut data: Vec<ModelObject> = Vec::new();
 
-    // The chat model is listed whenever it could plausibly serve requests;
+    // A chat model is listed whenever it could plausibly serve requests;
     // /health carries the detailed availability story.
-    let availability = state.chat.availability().await;
-    if !matches!(
-        availability,
-        sidekick_core::Availability::Unavailable {
-            reason: sidekick_core::UnavailableReason::NotSupportedInBuild
+    let availability = futures::future::join_all(state.chat.iter().map(|m| m.backend().availability())).await;
+    for (m, availability) in state.chat.iter().zip(availability) {
+        let not_built = sidekick_core::Availability::Unavailable {
+            reason: sidekick_core::UnavailableReason::NotSupportedInBuild,
+        };
+        if availability == not_built {
+            continue;
         }
-    ) {
-        data.push(ModelObject::new(state.chat.id().to_string(), created, "text-generation"));
+        let l = &m.listing;
+        data.push(ModelObject {
+            backend: Some(l.backend),
+            context_length: m.backend().context_limit(),
+            honored_fields: Some(l.honored_fields.clone()),
+            guided_streaming: Some(l.guided_streaming),
+            guardrails: Some(l.guardrails),
+            compute_units: l.compute_units,
+            graded_os: l.graded_os.clone(),
+            ..ModelObject::new(m.id().to_string(), created, "text-generation")
+        });
     }
 
     // Each Core ML bucket's state in Core ML's compile cache (D52).
@@ -230,11 +241,49 @@ fn onnx_health(state: &AppState) -> Value {
     })
 }
 
+/// `/health`'s `chat` section: each chat model's backend, availability
+/// and the reason when it is unavailable, context, request timeout and
+/// what its backend reports about it.
+async fn chat_health(state: &AppState) -> Value {
+    let models = futures::future::join_all(state.chat.iter().map(|m| async move {
+        let availability = m.backend().availability().await;
+        // Fetched before context_limit(), which it refreshes.
+        let info = m.refresh_provenance().await.unwrap_or_default();
+        let (timeout, source) = m.request_timeout;
+        let mut v = json!({
+            "backend": m.listing.backend,
+            "availability": availability,
+            "context_limit": m.backend().context_limit(),
+            "request_timeout_secs": timeout.as_secs(),
+            // Who chose it: `config (model)` ([models."<id>"]), `manifest`
+            // or `config` (request_timeout_secs).
+            "request_timeout_source": source,
+            "variant": info.variant,
+            "variant_id": info.variant_id,
+            // What the underlying model supports; this daemon serves text.
+            "model_capabilities": info.capabilities,
+        });
+        v.as_object_mut().unwrap().extend(m.health.clone());
+        (m.id().to_string(), v)
+    }))
+    .await;
+    json!({"models": models.into_iter().collect::<Map<String, Value>>()})
+}
+
+/// `/health`'s `request_timeout_overrides`: each `[models."<id>"]
+/// request_timeout_secs`, and those that name no model this daemon serves.
+fn request_timeout_health(state: &AppState) -> Value {
+    let by_model = &state.request_timeouts.by_model;
+    let served = |id: &str| {
+        state.chat.get(id).is_some() || state.registry.get(id).is_ok() || state.registry.classifier(id).is_ok()
+    };
+    let applied: Map<String, Value> =
+        by_model.iter().filter(|(id, _)| served(id)).map(|(id, t)| (id.clone(), json!(t.as_secs()))).collect();
+    let unmatched: Vec<&String> = by_model.keys().filter(|id| !served(id)).collect();
+    json!({"default_secs": state.request_timeouts.global.as_secs(), "applied": applied, "unmatched": unmatched})
+}
+
 pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let chat_availability = state.chat.availability().await;
-    // Fetched before context_limit(), which it refreshes.
-    let info = state.chat.model_info().await.unwrap_or_default();
-    state.chat_model.set(info.variant_id.clone());
     let embedding_models: Vec<&str> = state.registry.ids().collect();
     let classifier_models: Vec<&str> = state.registry.classifier_ids().collect();
     // Models running with a sequence-length cap (D33's on the CPU, D48's on
@@ -294,18 +343,10 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         "uptime_secs": state.started_at.elapsed().as_secs(),
         // The model backends this build serves (`static` always).
         "backends": sidekick_embed::compiled_backends(),
-        "chat": {
-            "model": state.chat.id(),
-            "availability": chat_availability,
-            "context_limit": state.chat.context_limit(),
-            "variant": info.variant,
-            "variant_id": info.variant_id,
-            // What the underlying model supports; this daemon serves text.
-            "model_capabilities": info.capabilities,
-            // The SDK the Foundation Models shim was compiled against; the
-            // macOS 27 features are only present when it is 27 or newer.
-            "fm_sdk": sidekick_fm::FM_SDK,
-        },
+        // Each chat model, by id (D53).
+        "chat": chat_health(&state).await,
+        // Request timeouts the operator set per model in the daemon config.
+        "request_timeout_overrides": request_timeout_health(&state),
         "embeddings": {
             "models": embedding_models,
             "resident": state.embedders.resident().await,

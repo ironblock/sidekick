@@ -198,12 +198,14 @@ def start_server(row: dict, port: int, log: Path) -> tuple[subprocess.Popen, dic
     return proc, stack
 
 
-def sidekick_provenance(base: str) -> dict:
+def sidekick_provenance(base: str, model: str) -> dict:
     st, hdr, health = get_json(base, "/health")
     if st != 200 or not health:
         raise SystemExit(f"sidekickd /health answered {st}")
-    chat = health.get("chat", {})
-    return {"model": chat.get("model"), "availability": chat.get("availability"),
+    chat = health.get("chat", {}).get("models", {}).get(model)
+    if chat is None:
+        raise SystemExit(f"sidekickd serves no chat model `{model}`")
+    return {"model": model, "availability": chat.get("availability"),
             "variant": chat.get("variant"), "variant_id": chat.get("variant_id"),
             "context_limit": chat.get("context_limit"),
             "sidekick_version": hdr.get("sidekick-version") or health.get("version"),
@@ -250,7 +252,7 @@ def main() -> int:
         if not a.base_url:
             raise SystemExit("sidekick rows need --base-url")
         base = a.base_url.rstrip("/")
-        prov = sidekick_provenance(base)
+        prov = sidekick_provenance(base, row.get("model", "apple-fm"))
         model = prov["model"]
         stack = {"server": "sidekickd", "route": "/v1/chat/completions"}
     else:
