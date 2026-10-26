@@ -199,7 +199,7 @@ impl KvDecoder {
         let shape = DecoderShape::from_section(d);
 
         let mut chunks = Vec::with_capacity(d.chunks);
-        let neural_before = neural_footprint();
+        let neural_before = settled_neural_footprint();
         for (i, file) in d.chunk_files().into_iter().enumerate() {
             let model = open(&dir.join(&file), ComputeUnits::CpuAndNeuralEngine)?;
             if let ShapeVerdict::Warn(reason) | ShapeVerdict::Refuse(reason) =
@@ -720,6 +720,27 @@ fn judge_placement(before: u64, after: u64, expected: u64) -> Placement {
 /// This process's Neural Engine footprint, where the kernel reports it.
 fn neural_footprint() -> Option<u64> {
     crate::process_memory().and_then(|m| m.neural_footprint)
+}
+
+/// The footprint once it holds still: a model dropped just before (a
+/// decoder reloaded, say) leaves the ANE some tens of milliseconds later,
+/// and a reading taken before that would count it against this load.
+/// Waits only while the footprint is non-zero and changing, for at most a
+/// second.
+fn settled_neural_footprint() -> Option<u64> {
+    let mut last = neural_footprint()?;
+    for _ in 0..20 {
+        if last == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        let now = neural_footprint()?;
+        if now == last {
+            break;
+        }
+        last = now;
+    }
+    Some(last)
 }
 
 /// A new contiguous multi-array.
