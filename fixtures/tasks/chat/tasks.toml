@@ -1,0 +1,119 @@
+# The chat benchmark's task set: what each family asks a model, and how its
+# replies are scored (tools/chat_bench/). The items are the .jsonl files beside
+# this one; schemas.json holds the extraction schemas.
+#
+# Every item records its source and licence. Items written for this benchmark
+# are "authored" (MIT, this repository's licence); Wikipedia excerpts are
+# CC-BY-SA-4.0, pinned to a revision by their `source` URL, with attribution.
+#
+# Changing a prompt, a limit or an item changes what every row measured, so
+# bump `version` and run every row again rather than mixing versions.
+
+schema = "sidekick-chat-bench-tasks/1"
+version = 1
+
+# Sent with every request. Greedy decoding: temperature 0 everywhere.
+temperature = 0.0
+
+[titles]
+items = "titles.jsonl"
+max_tokens = 32
+max_words = 6
+system = "You write short, specific titles."
+conversation = """Write a title for the conversation below. Use at most 6 words. Reply with the title only: no quotes, no prefix, no trailing punctuation.
+
+Conversation:
+{transcript}"""
+document = """Write a title for the document below. Use at most 6 words. Reply with the title only: no quotes, no prefix, no trailing punctuation.
+
+Document:
+{text}"""
+
+[tags]
+items = "tags.jsonl"
+vocabulary = ["programming", "databases", "networking", "security", "cloud-devops", "hardware",
+              "mobile-apps", "machine-learning", "personal-finance", "business", "health", "fitness",
+              "travel", "food-cooking", "sports", "music", "film-tv", "books", "science", "history",
+              "education", "law", "home-garden", "pets", "automotive", "gaming", "environment", "shopping"]
+
+[tags.vocab]
+# A JSON task: guided generation where the row has it, prompt-only otherwise.
+json = true
+max_tokens = 64
+max_tags = 3
+system = "You label texts with tags from a fixed list."
+user = """Choose the tags from this list that describe what the text is about: {vocabulary}. Pick 1 to 3 tags, most relevant first, using only tags from the list.
+
+Reply with only a JSON object of the form {{"tags": ["..."]}}.
+
+Text:
+{text}"""
+
+[tags.free]
+max_tokens = 48
+min_tags = 3
+max_tags = 5
+max_tag_words = 3
+system = "You label texts with short tags."
+user = """Write 3 to 5 short tags for the text below: lowercase, one to three words each, separated by commas. Reply with the tags only.
+
+Text:
+{text}"""
+
+[extraction]
+items = "extraction.jsonl"
+schemas = "schemas.json"
+json = true
+max_tokens = 256
+system = "You extract structured data from text."
+user = """Extract the information in the text below into a JSON object that matches this JSON Schema:
+{schema}
+
+Leave out any field the text does not state. Reply with only the JSON object.
+
+Text:
+{text}"""
+
+# How a field's value is compared with the gold value (tools/chat_bench/score.py):
+#   text    casefolded, punctuation and spacing ignored; also right when one
+#           is a whole-word run inside the other ("Shakshuka" and "Shakshuka for two")
+#   summary token F1 of at least 0.5 against the gold, after stemming
+#   exact   equal after trimming surrounding whitespace
+#   code    casefolded, spaces and hyphens ignored (flight numbers, versions, IATA codes)
+#   digits  equal digit sequences (phone numbers)
+#   number  within 0.005
+#   set     a list scored by F1, elements matched as `text` or by token F1 >= 0.5
+# Fields not listed are `exact` (dates, times, enums, booleans, integers).
+# A field the gold leaves out is right when the reply leaves it out too (or
+# gives null, "" or []). A field in an item's `either` list is inferred rather
+# than stated, so leaving it out scores as right as the gold value.
+[extraction.match]
+name = "text"
+venue = "text"
+city = "text"
+organization = "text"
+job_title = "text"
+product_name = "text"
+brand = "text"
+summary = "summary"   # free text: token F1 >= 0.5 against the gold summary
+component = "text"
+merchant = "text"
+airline = "text"
+company = "text"
+dish = "text"
+email = "code"
+version = "code"
+flight_number = "code"
+from_airport = "code"
+to_airport = "code"
+phone = "digits"
+ticket_price = "number"
+price = "number"
+total = "number"
+colors = "set"
+ingredients = "set"
+
+[instructions]
+items = "instructions.jsonl"
+max_tokens = 256
+# No system message: the item's prompt is the whole request.

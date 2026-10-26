@@ -1,0 +1,28 @@
+# The Python environment for tools/chat_bench/: the open models' reference
+# servers (mlx_lm.server; serve_ref.py's torch and mlx backends, llguidance
+# for its guided rows) and the scorer (jsonschema, rouge-score, lingua).
+# Pinned to the versions the committed results (docs/data/chat-bench/results.json)
+# were measured with. Python 3.12, on an Apple silicon Mac:
+#
+#   uv venv --python 3.12 .dev-data/chat-bench/venv
+#   uv pip install --python .dev-data/chat-bench/venv/bin/python -r tools/chat_bench/requirements.txt
+#
+# The Foundation Models rows need only a built sidekickd and the standard
+# library; scoring needs numpy, jsonschema, rouge-score (with nltk) and lingua.
+huggingface-hub==2.3.0
+jinja2==3.1.6
+jsonschema==4.26.0
+lingua-language-detector==2.2.0
+llguidance==1.9.1
+mlx==0.32.4
+mlx-lm==0.32.2
+mlx-metal==0.32.4
+nltk==3.10.4
+numpy==2.5.4
+protobuf==7.36.2
+rouge-score==0.1.2
+safetensors==0.8.0
+sentencepiece==0.2.2
+tokenizers==0.23.3
+torch==2.14.1
+transformers==5.20.2

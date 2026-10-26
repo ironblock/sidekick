@@ -1,0 +1,74 @@
+{"error":"May contain unsafe content","guardrails":"default","id":"refused:titles:title-017","mode":"text","refused":true}
+{"guardrails":"permissive","id":"refused:titles:title-017","mode":"text","refused":false,"reply":"Puppy crate anxiety"}
+{"guardrails":"default","id":"refused:tags_vocab:tag-020","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"security\", \"databases\", \"cloud-devops\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-020","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-020","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"security\", \"databases\", \"cloud-devops\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-020","mode":"guided","refused":true}
+{"guardrails":"default","id":"refused:tags_vocab:tag-027","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"personal-finance\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-027","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-027","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"personal-finance\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-027","mode":"guided","refused":true}
+{"guardrails":"default","id":"refused:tags_vocab:tag-036","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"security\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-036","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-036","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"security\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-036","mode":"guided","refused":true}
+{"guardrails":"default","id":"refused:tags_vocab:tag-042","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"music\", \"history\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-042","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-042","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"music\", \"history\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-042","mode":"guided","refused":true}
+{"guardrails":"default","id":"refused:tags_vocab:tag-045","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"health\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-045","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-045","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"health\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-045","mode":"guided","refused":true}
+{"guardrails":"default","id":"refused:tags_vocab:tag-046","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"science\", \"business\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-046","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-046","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"science\", \"business\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-046","mode":"guided","refused":true}
+{"guardrails":"default","id":"refused:tags_vocab:tag-054","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"environment\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-054","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-054","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"environment\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-054","mode":"guided","refused":true}
+{"guardrails":"default","id":"refused:tags_vocab:tag-058","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"machine-learning\", \"databases\", \"security\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-058","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-058","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"machine-learning\", \"databases\", \"security\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-058","mode":"guided","refused":true}
+{"error":"May contain unsafe content","guardrails":"default","id":"refused:tags_vocab:tag-060","mode":"text","refused":true}
+{"error":"May contain unsafe content","guardrails":"default","id":"refused:tags_vocab:tag-060","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-060","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"networking\", \"security\"]\n}\n```"}
+{"error":"May contain unsafe content","guardrails":"permissive","id":"refused:tags_vocab:tag-060","mode":"guided","refused":true}
+{"guardrails":"default","id":"refused:tags_vocab:tag-071","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"law\", \"books\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-071","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-071","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"law\", \"books\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-071","mode":"guided","refused":true}
+{"guardrails":"default","id":"refused:tags_vocab:tag-073","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"history\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"default","id":"refused:tags_vocab:tag-073","mode":"guided","refused":true}
+{"guardrails":"permissive","id":"refused:tags_vocab:tag-073","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"history\"]\n}\n```"}
+{"error":"May contain sensitive content","guardrails":"permissive","id":"refused:tags_vocab:tag-073","mode":"guided","refused":true}
+{"error":"May contain unsafe content","guardrails":"default","id":"refused:tags_free:tag-036","mode":"text","refused":true}
+{"guardrails":"permissive","id":"refused:tags_free:tag-036","mode":"text","refused":false,"reply":"lease, deposit, landlord, demand letter"}
+{"error":"May contain unsafe content","guardrails":"default","id":"refused:tags_free:tag-060","mode":"text","refused":true}
+{"guardrails":"permissive","id":"refused:tags_free:tag-060","mode":"text","refused":false,"reply":"vlan, iot, firewall, network"}
+{"guardrails":"default","id":"control:tags_vocab:tag-001","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"history\"]\n}\n```"}
+{"guardrails":"default","id":"control:tags_vocab:tag-001","mode":"guided","refused":false,"reply":"{\"tags\": [\"history\", \"books\"]}"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-001","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"history\"]\n}\n```"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-001","mode":"guided","refused":false,"reply":"{\"tags\": [\"history\", \"books\"]}"}
+{"guardrails":"default","id":"control:tags_vocab:tag-002","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"environment\", \"science\"]\n}\n```"}
+{"guardrails":"default","id":"control:tags_vocab:tag-002","mode":"guided","refused":false,"reply":"{\"tags\": [\"environment\", \"science\", \"history\"]}"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-002","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"environment\", \"science\"]\n}\n```"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-002","mode":"guided","refused":false,"reply":"{\"tags\": [\"environment\", \"science\", \"history\"]}"}
+{"guardrails":"default","id":"control:tags_vocab:tag-003","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"home-garden\"]\n}\n```"}
+{"guardrails":"default","id":"control:tags_vocab:tag-003","mode":"guided","refused":false,"reply":"{\"tags\": [\"home-garden\"]}"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-003","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"home-garden\"]\n}\n```"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-003","mode":"guided","refused":false,"reply":"{\"tags\": [\"home-garden\"]}"}
+{"guardrails":"default","id":"control:tags_vocab:tag-004","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"history\"]\n}\n```"}
+{"guardrails":"default","id":"control:tags_vocab:tag-004","mode":"guided","refused":false,"reply":"{\"tags\": [\"history\"]}"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-004","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"history\"]\n}\n```"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-004","mode":"guided","refused":false,"reply":"{\"tags\": [\"history\"]}"}
+{"guardrails":"default","id":"control:tags_vocab:tag-005","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"health\", \"food-cooking\"]\n}\n```"}
+{"guardrails":"default","id":"control:tags_vocab:tag-005","mode":"guided","refused":false,"reply":"{\"tags\": [\"health\", \"food-cooking\"]}"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-005","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"health\", \"food-cooking\"]\n}\n```"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-005","mode":"guided","refused":false,"reply":"{\"tags\": [\"health\", \"food-cooking\"]}"}
+{"guardrails":"default","id":"control:tags_vocab:tag-006","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"pets\"]\n}\n```"}
+{"guardrails":"default","id":"control:tags_vocab:tag-006","mode":"guided","refused":false,"reply":"{\"tags\": [\"pets\", \"health\"]}"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-006","mode":"text","refused":false,"reply":"```json\n{\n  \"tags\": [\"pets\"]\n}\n```"}
+{"guardrails":"permissive","id":"control:tags_vocab:tag-006","mode":"guided","refused":false,"reply":"{\"tags\": [\"pets\", \"health\"]}"}

@@ -413,4 +413,6 @@ macOS 26 ([DEVELOPMENT.md](DEVELOPMENT.md)).
 A conversation's follow-ups reuse its Foundation Models session for
 `session_ttl_secs` (default 300) after its last request
 ([CONFIG.md](CONFIG.md#the-config-file)). The request and response
-shapes are in [API.md](API.md#chat).
+shapes are in [API.md](API.md#chat). How well it does titles, tags,
+extraction and short instructions, against small open models, is in
+[CHAT-BENCHMARK.md](CHAT-BENCHMARK.md).
