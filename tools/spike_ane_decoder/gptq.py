@@ -51,16 +51,18 @@ class Int8PerChannel:
     (max |w| / 127), the element at the max pinned to +-127 so the scale
     survives requantisation."""
 
-    def __init__(self, W):
-        self.scale = f16(W.abs().amax(1).float() / 127.0).double().clamp(min=1e-12)
+    def __init__(self, W, qmax=127):
+        self.qmax = qmax              # 127; 7 gives the per-channel int4 grid (stored as a palette per channel)
+        self.scale = f16(W.abs().amax(1).float() / qmax).double().clamp(min=1e-12)
         self.pin = W.abs().argmax(1)
         self.codes = torch.zeros(W.shape, dtype=torch.int8)
 
     def round(self, w, col):
-        q = torch.clamp(torch.round(w / self.scale), -127, 127)
+        m = float(self.qmax)
+        q = torch.clamp(torch.round(w / self.scale), -m, m)
         hit = self.pin == col
-        q[hit] = 127.0 * torch.sign(w[hit])
-        q[hit & (w == 0)] = 127.0
+        q[hit] = m * torch.sign(w[hit])
+        q[hit & (w == 0)] = m
         self.codes[:, col] = q.to(torch.int8)
         return q * self.scale
 
@@ -125,26 +127,33 @@ def gptq(W, H, grid, damp=0.01, chunk=128, act_order=False):
     return grid.result()
 
 
-def lloyd_lut(W, g, k, importance=None, iters=60):
+def lloyd_lut(W, g, k, importance=None, iters=60, pin=False):
     """k-entry palette per group of g output channels, all groups at once:
     Lloyd's k-means from the group's quantiles, each weight weighted by the
     importance of its input channel (mean squared activation, the imatrix;
     sensitivity-weighted k-means in the spirit of SKMPalettizer). For small
-    k (4-bit), where Lloyd converges well. Returns fp16 values [G, k]."""
+    k (4-bit), where Lloyd converges well. pin keeps the group's min and max
+    as the first and last entries (outlier-preserving: k-means alone lets
+    the rare extreme weights, which this model depends on, fall into a
+    centroid well inside them). Returns fp16 values [G, k]."""
     o, i = W.shape
     if (o // g) * g * i > 2 ** 23:            # torch.quantile's size limit: a slice of groups at a time
         step = max(1, 2 ** 23 // (g * i)) * g
-        return torch.cat([lloyd_lut(W[r:r + step], g, k, importance, iters) for r in range(0, o, step)])
+        return torch.cat([lloyd_lut(W[r:r + step], g, k, importance, iters, pin) for r in range(0, o, step)])
     x = W.reshape(o // g, g * i).float()
     wt = torch.ones(i) if importance is None else importance.float().clamp(min=1e-12)
     wt = (wt / wt.mean()).repeat(g).view(1, -1).expand_as(x).contiguous()
-    c = torch.quantile(x, torch.linspace(0, 1, k + 2)[1:-1], dim=1).T.contiguous()       # [G, k]
+    q = torch.linspace(0, 1, k) if pin else torch.linspace(0, 1, k + 2)[1:-1]
+    c = torch.quantile(x, q, dim=1).T.contiguous()       # [G, k]
+    lo, hi = x.min(1).values, x.max(1).values
     for _ in range(iters):
         idx = torch.searchsorted((c[:, 1:] + c[:, :-1]) / 2, x.contiguous())
         sums = torch.zeros_like(c).scatter_add_(1, idx, x * wt)
         cnt = torch.zeros_like(c).scatter_add_(1, idx, wt)
         c = torch.where(cnt > 0, sums / cnt.clamp(min=1e-30), c)
         c, _ = torch.sort(c, dim=1)
+        if pin:
+            c[:, 0], c[:, -1] = lo, hi
     return f16(c)
 
 
@@ -199,8 +208,12 @@ def main():
     ap.add_argument("src")
     ap.add_argument("cal")
     ap.add_argument("out")
-    ap.add_argument("--grid", default="int8", choices=["int8", "pal8", "pal6", "pal4"])
+    ap.add_argument("--grid", default="int8", choices=["int8", "int4", "pal8", "pal6", "pal4"])
     ap.add_argument("--group", type=int, default=16, help="pal8: output channels per palette")
+    ap.add_argument("--pin", action="store_true", help="pal4/pal6: keep each group's min and max in its palette")
+    ap.add_argument("--rot", type=int, default=None, help="rotate the model (llama_ane.rotate_model) with this seed")
+    ap.add_argument("--no-r2", action="store_true")
+    ap.add_argument("--r4", type=int, default=0)
     ap.add_argument("--act-order", action="store_true")
     ap.add_argument("--tokens", type=int, default=8192)
     ap.add_argument("--damp", type=float, default=0.01)
@@ -217,24 +230,30 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(a.src)
-    cal = json.load(open(a.cal))
     hf = LA.load_hf(a.src, dtype=torch.bfloat16)
+    if a.rot is not None:
+        LA.rotate_model(hf, a.rot, r2=not a.no_r2, r4=a.r4)
+    if Path(a.cal).exists():
+        cal = json.load(open(a.cal))
+    else:                       # e.g. a rotated model's own calibration
+        cal = LA.stream_calibrate(hf, T.calib_texts(tok))
+        json.dump(cal, open(a.cal, "w"))
     cfg = hf.config
     L, KVH, Dh = cfg.num_hidden_layers, cfg.num_key_value_heads, cfg.head_dim
     texts = T.gptq_texts(tok, a.tokens)
 
     def make_grid(W, H=None):
-        if a.grid == "int8":
-            return Int8PerChannel(W.double())
+        if a.grid in ("int8", "int4"):
+            return Int8PerChannel(W.double(), 127 if a.grid == "int8" else 7)
         if a.grid in ("pal4", "pal6"):
             k = 2 ** int(a.grid[3:])
-            return Lut(W, lloyd_lut(W.float(), a.group, k, None if H is None else torch.diag(H)), a.group)
+            return Lut(W, lloyd_lut(W.float(), a.group, k, None if H is None else torch.diag(H), pin=a.pin), a.group)
         return Lut(W, kmeans_lut(W.float(), a.group), a.group)
 
     def rtn(W, grid):
-        if a.grid == "int8":
-            s = grid.scale.float().view(-1, 1)
-            return f16(torch.clamp(torch.round(W / s), -127, 127) * s)
+        if a.grid in ("int8", "int4"):
+            s, m = grid.scale.float().view(-1, 1), grid.qmax
+            return f16(torch.clamp(torch.round(W / s), -m, m) * s)
         mid = (grid.row_lut[:, 1:] + grid.row_lut[:, :-1]) / 2
         idx = torch.searchsorted(mid, W.double().contiguous()).clamp(max=grid.lut.shape[1] - 1)
         return torch.gather(grid.row_lut, 1, idx).float()
@@ -299,7 +318,7 @@ def main():
         print(f"head: {time.time() - t0:.0f}s", flush=True)
     if a.imatrix:
         torch.save({"inputs": imatrix, "tokens": sum(map(len, texts)), "calibration": "texts.gptq_texts"}, a.imatrix)
-    json.dump({"block": 0, "grid": a.grid, "group": a.group, "act_order": a.act_order, "tokens": sum(map(len, texts)), "damp": a.damp, "head": not a.skip_head,
+    json.dump({"block": 0, "rot": a.rot, "r4": a.r4, "r2": not a.no_r2, "pin": a.pin, "grid": a.grid, "group": a.group, "act_order": a.act_order, "tokens": sum(map(len, texts)), "damp": a.damp, "head": not a.skip_head,
                "stats": stats}, open(out / "meta.json", "w"), indent=1)
     print("done", flush=True)
 

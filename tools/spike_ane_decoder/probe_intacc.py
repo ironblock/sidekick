@@ -23,6 +23,7 @@ ap.add_argument("src")
 ap.add_argument("refs")
 ap.add_argument("out")
 ap.add_argument("--rescale", default=None)
+ap.add_argument("--rot", type=int, default=None, help="rotate the model (llama_ane.rotate_model) with this seed")
 ap.add_argument("--calib", action="store_true", help="the calibration texts instead of the eval texts")
 a = ap.parse_args()
 torch.set_grad_enabled(False)
@@ -31,6 +32,9 @@ meta = json.load(open(refs / "meta.json"))
 cal = json.load(open(refs / "calibration.json"))
 ids = json.load(open(refs / "eval_ids.json"))
 hf = LA.load_hf(a.src, dtype=torch.bfloat16)
+if a.rot is not None:
+    LA.rotate_model(hf, a.rot)
+    cal = json.load(open(refs / f"calibration_rot{a.rot}.json"))
 rescale = json.load(open(a.rescale)) if a.rescale else None
 PROJ = ["q", "k", "v", "o", "gate", "up", "down"]
 stat = {}          # (text, layer, proj) -> max |y/scale|

@@ -165,7 +165,7 @@ func call(_ fn: String, _ S: Int, _ ids: [Int], _ pos: Int, _ st: [MLState], sel
     for ci in 0..<nChunks {
         var d: [String: Any] = ["hidden": h, "pos": posA, "mask": mask, "cos": cosA, "sin": sinA]
         let last = ci == nChunks - 1
-        if last && S > 1 {
+        if last && S > 1 && models[ci][fn]!.modelDescription.inputDescriptionsByName["sel"] != nil {
             let s = f16([S]); let p = s.dataPointer.bindMemory(to: Float16.self, capacity: S)
             for i in 0..<S { p[i] = i == sel ? 1 : 0 }
             d["sel"] = s
@@ -175,7 +175,10 @@ func call(_ fn: String, _ S: Int, _ ids: [Int], _ pos: Int, _ st: [MLState], sel
         let o = try! models[ci][fn]!.prediction(from: try! MLDictionaryFeatureProvider(dictionary: d), using: st[ci])
         callLock.lock(); callStarted = nil; callLock.unlock()
         chunkTimes["\(fn).chunk\(ci)", default: []].append(Date().timeIntervalSince(t) * 1000)
-        if last { logits = o.featureValue(for: "logits")!.multiArrayValue! } else { h = o.featureValue(for: "hidden_out")!.multiArrayValue! }
+        if last, let lv = o.featureValue(for: "logits") { logits = lv.multiArrayValue! } else {
+            h = o.featureValue(for: "hidden_out")!.multiArrayValue!
+            if last { logits = h }
+        }
         if traceOut != nil {
             let a = last ? logits! : h
             let n = a.count
@@ -192,16 +195,26 @@ func call(_ fn: String, _ S: Int, _ ids: [Int], _ pos: Int, _ st: [MLState], sel
     return out
 }
 
+// MULTI=T: one T-token function (prefill_T) serves prompt and generation.
+// A decode step pads the call to T tokens and picks the real token's logits
+// with sel; the padding writes junk keys at pos+1..pos+T-1, which no query
+// attends to before the next real token overwrites them.
+let multiT = Int(ProcessInfo.processInfo.environment["MULTI"] ?? "0")!
+func decodeCall(_ tok: Int, _ pos: Int, _ st: [MLState]) -> [Float] {
+    if multiT > 0 { return call("prefill_\(multiT)", multiT, [tok], pos, st, sel: 0) }
+    return call("decode", 1, [tok], pos, st)
+}
+
 func argmax(_ x: [Float]) -> Int { var b = 0; for i in 1..<x.count where x[i] > x[b] { b = i }; return b }
 
 func prefill(_ ids: [Int], _ st: [MLState], bucket: Int? = nil) -> [Float] {
     if buckets.isEmpty {
         // a decode-only build (FUNCS=decode or no prefill function): one token per call
         var lg: [Float] = []
-        for (i, t) in ids.enumerated() { lg = call("decode", 1, [t], i, st) }
+        for (i, t) in ids.enumerated() { lg = decodeCall(t, i, st) }
         return lg
     }
-    let b = bucket ?? (buckets.first { $0 >= ids.count } ?? buckets.last!)
+    let b = bucket.flatMap { buckets.contains($0) ? $0 : nil } ?? (buckets.first { $0 >= ids.count } ?? buckets.last!)
     var pos = 0
     var lg: [Float] = []
     while pos < ids.count {
@@ -236,7 +249,7 @@ for task in job["tasks"] as! [[String: Any]] {
         let st = newStates()
         var toks = [argmax(prefill(ids, st))]
         var pos = ids.count
-        while toks.count < n { toks.append(argmax(call("decode", 1, [toks.last!], pos, st))); pos += 1 }
+        while toks.count < n { toks.append(argmax(decodeCall(toks.last!, pos, st))); pos += 1 }
         r["tokens"] = toks
     case "bench":
         let st = newStates()
@@ -252,10 +265,10 @@ for task in job["tasks"] as! [[String: Any]] {
         }
         var dec: [String: Any] = [:]
         let steps = (task["steps"] as? Int) ?? 32
-        for p in (task["positions"] as! [Int]) where p + steps <= C {
+        for p in (task["positions"] as! [Int]) where p + steps + max(multiT, 1) <= C {
             var ts: [Double] = []
             for i in 0..<steps {
-                let t = Date(); _ = call("decode", 1, [100 + i], p + i, st); ts.append(Date().timeIntervalSince(t) * 1000)
+                let t = Date(); _ = decodeCall(100 + i, p + i, st); ts.append(Date().timeIntervalSince(t) * 1000)
             }
             let w = Array(ts.dropFirst(2))
             dec["\(p)"] = ["ms": median(w), "p90_ms": pct(w, 0.9), "tok_s": 1000 / median(w)]
@@ -275,7 +288,7 @@ for task in job["tasks"] as! [[String: Any]] {
             var tok = argmax(prefill(ids, st))
             let t2 = Date()
             var pos = ids.count
-            for _ in 0..<n { tok = argmax(call("decode", 1, [tok], pos, st)); pos += 1 }
+            for _ in 0..<n { tok = argmax(decodeCall(tok, pos, st)); pos += 1 }
             let t3 = Date()
             runs.append(["start": t1.timeIntervalSince1970, "end": t3.timeIntervalSince1970,
                          "ttft_ms": t2.timeIntervalSince(t1) * 1000, "decode_tok_s": Double(n) / t3.timeIntervalSince(t2)])
@@ -283,23 +296,44 @@ for task in job["tasks"] as! [[String: Any]] {
         r["runs"] = runs
     case "fresh":
         // first prefill (and first decode) on a fresh MLState vs on a reused one
-        let b = (task["bucket"] as? Int) ?? buckets[0]
+        let b = (task["bucket"] as? Int).flatMap { buckets.contains($0) ? $0 : nil } ?? buckets[0]
         let ids = (0..<b).map { 100 + ($0 * 37) % 900 }
         var fresh: [Double] = [], freshDec: [Double] = [], reused: [Double] = []
         let keep = newStates()
         for _ in 0..<((task["reps"] as? Int) ?? 4) {
             let st = newStates()
             var t = Date(); _ = call("prefill_\(b)", b, ids, 0, st, sel: b - 1); fresh.append(Date().timeIntervalSince(t) * 1000)
-            t = Date(); _ = call("decode", 1, [5], b, st); freshDec.append(Date().timeIntervalSince(t) * 1000)
+            t = Date(); _ = decodeCall(5, b, st); freshDec.append(Date().timeIntervalSince(t) * 1000)
             t = Date(); _ = call("prefill_\(b)", b, ids, 0, keep, sel: b - 1); reused.append(Date().timeIntervalSince(t) * 1000)
         }
         r["fresh_prefill_ms"] = fresh; r["fresh_first_decode_ms"] = freshDec; r["reused_prefill_ms"] = reused
+    case "tbench":
+        // per call of each loaded prefill_T function at a few positions: ms, and
+        // tokens/s if all T tokens are real (prompt) or calls/s if one is (decode)
+        let st = newStates()
+        var res: [String: Any] = [:]
+        for fn in funcs where fn.hasPrefix("prefill_") {
+            let T = Int(fn.split(separator: "_")[1])!
+            let ids = (0..<T).map { 100 + ($0 * 37) % 900 }
+            var per: [String: Any] = [:]
+            for p in (task["positions"] as? [Int]) ?? [128, 1024] where p + T <= C {
+                _ = call(fn, T, ids, p, st, sel: T - 1)
+                var ts: [Double] = []
+                for _ in 0..<((task["reps"] as? Int) ?? 20) {
+                    let t = Date(); _ = call(fn, T, ids, p, st, sel: T - 1); ts.append(Date().timeIntervalSince(t) * 1000)
+                }
+                per["\(p)"] = ["ms": median(ts), "p90_ms": pct(ts, 0.9), "prompt_tok_s": Double(T) / median(ts) * 1000,
+                               "decode_tok_s": 1000 / median(ts)]
+            }
+            res[fn] = per
+        }
+        r["tbench"] = res
     case "switch":
         // the prefill <-> decode function-switch stall: reps of (one prefill, then
         // `steps` decodes) on one state; per call, the time of every prefill, of
         // the first decode after it, and of the steady decodes, with per-chunk
         // times for the switched calls
-        let b = (task["bucket"] as? Int) ?? buckets[0]
+        let b = (task["bucket"] as? Int).flatMap { buckets.contains($0) ? $0 : nil } ?? buckets[0]
         let steps = (task["steps"] as? Int) ?? 8
         let ids = (0..<b).map { 100 + ($0 * 37) % 900 }
         let st = newStates()
@@ -310,10 +344,10 @@ for task in job["tasks"] as! [[String: Any]] {
             var t = Date(); _ = call("prefill_\(b)", b, ids, 0, st, sel: b - 1); pre.append(Date().timeIntervalSince(t) * 1000)
             preChunks.append((0..<nChunks).map { chunkTimes["prefill_\(b).chunk\($0)"]![n0] })
             n0 = chunkTimes["decode.chunk0"]?.count ?? 0
-            t = Date(); _ = call("decode", 1, [5], b, st); first.append(Date().timeIntervalSince(t) * 1000)
+            t = Date(); _ = decodeCall(5, b, st); first.append(Date().timeIntervalSince(t) * 1000)
             firstChunks.append((0..<nChunks).map { chunkTimes["decode.chunk\($0)"]![n0] })
             for i in 1..<steps {
-                t = Date(); _ = call("decode", 1, [5 + i], b + i, st); steady.append(Date().timeIntervalSince(t) * 1000)
+                t = Date(); _ = decodeCall(5 + i, b + i, st); steady.append(Date().timeIntervalSince(t) * 1000)
             }
         }
         r["prefill_ms"] = pre; r["first_decode_ms"] = first; r["steady_decode_median_ms"] = median(steady)
@@ -325,7 +359,7 @@ for task in job["tasks"] as! [[String: Any]] {
         var dumps = [[Float]](repeating: [], count: nChunks)
         for (i, t) in ids.enumerated() {
             traceOut = [[Float]](repeating: [], count: nChunks)
-            _ = call("decode", 1, [t], i, st)
+            _ = decodeCall(t, i, st)
             for ci in 0..<nChunks { dumps[ci] += traceOut![ci] }
         }
         traceOut = nil
@@ -342,7 +376,7 @@ for task in job["tasks"] as! [[String: Any]] {
         let t2 = Date()
         var pos = ids.count
         var toks = [tok]
-        for _ in 0..<n { tok = argmax(call("decode", 1, [tok], pos, st)); pos += 1; toks.append(tok) }
+        for _ in 0..<n { tok = argmax(decodeCall(tok, pos, st)); pos += 1; toks.append(tok) }
         let t3 = Date()
         r["prompt_tokens"] = ids.count; r["ttft_ms"] = t2.timeIntervalSince(t1) * 1000
         r["decode_tokens"] = n; r["decode_tok_s"] = Double(n) / t3.timeIntervalSince(t2)

@@ -110,7 +110,7 @@ def quantize(ml, lo, hi):
                                                     block_size=32, weight_threshold=2048)
         return cto.coreml.linear_quantize_weights(ml, config=cto.coreml.OptimizationConfig(global_config=op,
                                                                                             op_name_configs=skip))
-    if name == "pal8u":
+    if name in ("pal8u", "pal6u", "pal4u"):
         # weights already on an 8-bit palette per group (gptq.py --grid pal8): keep it exactly
         op = cto.coreml.OpPalettizerConfig(mode="unique", granularity="per_grouped_channel",
                                             group_size=kw.get("group", 16), weight_threshold=2048)

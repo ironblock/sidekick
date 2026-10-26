@@ -134,7 +134,10 @@ class Layer(nn.Module):
         h = h + o
         x = self.n2(h)
         g, u = self.gate(x), self.up(x)
-        d = self.down(self.act(g) * u)
+        m = self.act(g) * u
+        if getattr(self, "r4", None) is not None:      # R4: block-diagonal Hadamard at run time (grouped 1x1 conv)
+            m = self.r4(m)
+        d = self.down(m)
         if self.post_down != 1.0:
             d = d * self.post_down
         self._track(0, g, u)
@@ -340,8 +343,93 @@ def apply_rescales(layer, spec):
     return layer
 
 
+# Incoherence processing (QuaRot / SpinQuant's R1 and R2, the rotation half of
+# QTIP / EXL3): orthogonal rotations folded into the weights offline, so the
+# converted program is unchanged in shape and runs no extra op.
+# - R1, a random Hadamard Q on the residual stream: every RMSNorm's weight is
+#   folded into the linears it feeds (the norm itself is rotation-invariant:
+#   rms(Qh) = rms(h)), readers take W' = W diag(g) Q^T, writers (o, down) Q W,
+#   the embedding table E Q^T (the host gathers rows of it) and the head
+#   W_head diag(g_final) Q^T. Massive activations, which sit in a few channels
+#   of h, are spread over all of them.
+# - R2, a random Hadamard per attention head on v and o: v's rows per KV head
+#   H W_v, o's columns per head W_o H^T (attention mixes V's rows linearly).
+# MiniCPM5-2B is a plain Llama (no muP scalars, untied embeddings).
+
+def hadamard(n, seed):
+    """A random orthogonal Hadamard (Sylvester, sign-flipped columns) / sqrt(n), fp64."""
+    H = torch.ones(1, 1, dtype=torch.float64)
+    while H.shape[0] < n:
+        H = torch.cat([torch.cat([H, H], 1), torch.cat([H, -H], 1)], 0)
+    if H.shape[0] != n:
+        raise ValueError(f"no Sylvester Hadamard of size {n}")
+    g = torch.Generator().manual_seed(seed)
+    s = (torch.randint(0, 2, (n,), generator=g) * 2 - 1).to(torch.float64)
+    return H * s.view(1, -1) / math.sqrt(n)
+
+
+def rotate_model(hf, seed=0, r2=True, r4=0):
+    """Rotate the checkpoint's edges in place (embedding, final norm, head,
+    in fp32) and record the rotation for build_layer, which rotates each
+    layer as it builds it."""
+    cfg = hf.config
+    Q = hadamard(cfg.hidden_size, seed)
+    Hh = hadamard(cfg.head_dim, seed + 1) if r2 else None
+    with torch.no_grad():
+        E = hf.model.embed_tokens.weight
+        hf.model.embed_tokens.weight = nn.Parameter((E.double() @ Q.T).float(), requires_grad=False)
+        gf = hf.model.norm.weight.double()
+        W = hf.lm_head.weight
+        hf.lm_head.weight = nn.Parameter(torch.cat([(W[j:j + 16384].double() * gf) @ Q.T
+                                                    for j in range(0, W.shape[0], 16384)]).float(),
+                                         requires_grad=False)
+        hf.model.norm.weight = nn.Parameter(torch.ones_like(hf.model.norm.weight, dtype=torch.float32),
+                                            requires_grad=False)
+    Hb = hadamard(r4, seed + 2) if r4 else None
+    hf._rotation = {"Q": Q, "H": Hh, "seed": seed, "r2": r2, "Hb": Hb}
+    return hf
+
+
+def rotate_layer(layer, rotation):
+    """R1 (and R2) on a freshly built Layer (fp32 conv weights, norms with weights)."""
+    Q, Hh = rotation["Q"], rotation["H"]
+    with torch.no_grad():
+        for norm, readers in ((layer.n1, ("q", "k", "v")), (layer.n2, ("gate", "up"))):
+            g = norm.weight.view(-1).double()
+            for p in readers:
+                c = getattr(layer, p)
+                W = c.weight.view(c.weight.shape[0], -1).double()
+                c.weight.copy_(((W * g) @ Q.T).float().reshape(c.weight.shape))
+            norm.weight.fill_(1.0)
+        for p in ("o", "down"):
+            c = getattr(layer, p)
+            W = c.weight.view(c.weight.shape[0], -1).double()
+            c.weight.copy_((Q @ W).float().reshape(c.weight.shape))
+        Hb = rotation.get("Hb")
+        if Hb is not None:
+            # R4 on down_proj's input: blocks of b channels rotated by Hb at run time (a grouped 1x1 conv,
+            # weights b x b per group), and W_down's columns by Hb^T offline, so down(Hb x) = down(x)
+            b = Hb.shape[0]
+            I = layer.down.weight.shape[1]
+            r4 = nn.Conv2d(I, I, 1, groups=I // b, bias=False)
+            r4.weight.copy_(Hb.float().view(1, b, b).expand(I // b, b, b).reshape(I, b, 1, 1))
+            r4.requires_grad_(False)
+            layer.r4 = r4
+            Wd = layer.down.weight.view(-1, I // b, b).double()
+            layer.down.weight.copy_(torch.einsum("ogj,ij->ogi", Wd, Hb).float().reshape(layer.down.weight.shape))
+        if Hh is not None:
+            Dh, KVH, H = layer.Dh, layer.KVH, layer.H
+            Wv = layer.v.weight.view(KVH, Dh, -1).double()
+            layer.v.weight.copy_(torch.einsum("ij,kjd->kid", Hh, Wv).float().reshape(layer.v.weight.shape))
+            Wo = layer.o.weight.view(-1, H, Dh).double()
+            layer.o.weight.copy_(torch.einsum("ohj,ij->ohi", Wo, Hh).float().reshape(layer.o.weight.shape))
+    return layer
+
+
 def build_layer(hf, i, cal=None, silu="stable"):
     layer = Layer(hf.model.layers[i], hf.config, silu)
+    if getattr(hf, "_rotation", None) is not None:
+        rotate_layer(layer, hf._rotation)
     if cal is not None:
         apply_calibration(layer, i, hf.config.num_hidden_layers, cal)
     return layer

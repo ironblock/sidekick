@@ -65,7 +65,24 @@ def q_pal8(w, g):
     return lut_round(w, pal_lut(w, g), g)
 
 
+def q_int4pc(w):
+    s = f16(w.abs().amax(1, keepdim=True) / 7.0).clamp(min=1e-12)
+    return f16(torch.clamp(torch.round(w / s), -7, 7) * s)
+
+
+def q_lut(w, bits, g, pin):
+    import gptq
+    return lut_round(w, gptq.lloyd_lut(w, g, 2 ** bits, pin=pin), g)
+
+
 def quantizer(name):
+    import re
+    m = re.fullmatch(r"lut(\d)g(\d+)(p?)", name)
+    if m:                       # e.g. lut4g1p: 4-bit Lloyd palette per output channel, min/max pinned
+        bits, g, pin = int(m.group(1)), int(m.group(2)), m.group(3) == "p"
+        return lambda w: q_lut(w, bits, g, pin)
+    if name == "int4pc":
+        return q_int4pc
     if name == "int8pc":
         return q_int8pc
     if name == "int8pc-mse":

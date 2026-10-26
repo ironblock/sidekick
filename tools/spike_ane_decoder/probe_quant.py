@@ -46,6 +46,9 @@ ap.add_argument("--rescale", default=None)
 ap.add_argument("--texts", type=int, default=8)
 ap.add_argument("--sat", type=float, default=0.0,
                 help="simulate an accumulator that saturates at +-SAT in units of the int8 scale (y / scale)")
+ap.add_argument("--rot", type=int, default=None, help="rotate the model (llama_ane.rotate_model) with this seed")
+ap.add_argument("--no-r2", action="store_true")
+ap.add_argument("--r4", type=int, default=0, help="with --rot: block size of a run-time Hadamard on down_proj input")
 ap.add_argument("--keep", default="", help="with --qweights: layer.proj left exact (fp16-keep)")
 ap.add_argument("--qweights", default=None, help="gptq.py output: use its weights (then --quant none)")
 a = ap.parse_args()
@@ -69,6 +72,16 @@ ids = json.load(open(refs / "eval_ids.json"))
 names = meta["texts"][:a.texts]
 p, n = meta["p"], meta["n"]
 hf = LA.load_hf(a.src, dtype=torch.bfloat16)
+if a.rot is not None:
+    LA.rotate_model(hf, a.rot, r2=not a.no_r2, r4=a.r4)
+    rc = refs / (f"calibration_rot{a.rot}" + ('' if not a.no_r2 else '_nor2') + (f'_r4b{a.r4}' if a.r4 else '') + '.json')
+    if rc.exists():
+        cal = json.load(open(rc))
+    else:
+        import texts as T
+        from transformers import AutoTokenizer
+        cal = LA.stream_calibrate(hf, T.calib_texts(AutoTokenizer.from_pretrained(a.src)))
+        json.dump(cal, open(rc, "w"))
 rescale = json.load(open(a.rescale)) if a.rescale else None
 
 
@@ -144,7 +157,7 @@ for nm, lg in zip(names, logits):
     coss += cos.tolist()
     per_text[nm] = {"top1": float(top.float().mean()), "cos_min": float(cos.min())}
 c = np.array(coss)
-res = {"keep": a.keep, "sat": a.sat, "qweights": a.qweights, "quant": a.quant, "only": sorted(only), "layers": a.layers, "rescale": a.rescale, "local": a.local,
+res = {"rot": a.rot, "r4": a.r4, "r2": not a.no_r2, "keep": a.keep, "sat": a.sat, "qweights": a.qweights, "quant": a.quant, "only": sorted(only), "layers": a.layers, "rescale": a.rescale, "local": a.local,
        "top1": agree / tot, "positions": tot, "cos_mean": float(c.mean()), "cos_min": float(c.min()),
        "cos_p1": float(np.percentile(c, 1)), "texts": per_text, "seconds": round(time.time() - t0)}
 if a.local:
@@ -153,4 +166,4 @@ if a.local:
                            "rel_err_max": max(v["rel_err"]) if v["rel_err"] else None}
                        for k, v in local.items()}
 json.dump(res, open(a.out, "w"), indent=1)
-print("RESULT", json.dumps({k: res[k] for k in ("qweights", "quant", "only", "layers", "top1", "cos_min", "cos_p1", "seconds")}))
+print("RESULT", json.dumps({k: res[k] for k in ("rot", "qweights", "quant", "only", "layers", "top1", "cos_min", "cos_p1", "seconds")}))
