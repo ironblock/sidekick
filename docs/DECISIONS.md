@@ -4470,6 +4470,17 @@ says so). Whether the ANE budget is per process or system-wide, and whether
 Foundation Models shares it, is to be measured before the registry
 enforces it.
 
+*Amended after #187's measurement (October 2026):* the ANE budget is
+system-wide, and Foundation Models' model (about 2.3 GiB) counts against
+it. Past about 2.8 GiB of programs in active use, programs reload on nearly
+every call: an `apple-fm` request overlapping a generation slowed both
+about 25×. Idle programs cost nothing. So the daemon schedules instead of
+evicting: `apple-fm` and the open chat models share one queue, the
+registry reports the process's measured ANE total and warns past
+`ane_budget_mib` (2.75 GiB by default, measured on an M1 Max), and stalls
+from other apps' use of the ANE are counted and reported, since the daemon
+can't prevent them.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

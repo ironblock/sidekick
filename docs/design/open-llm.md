@@ -71,7 +71,7 @@ by the small model's own latency second.
 | Compute units | `cpu_and_ne` only; Intel Macs and Macs without an ANE skip the model | `cpu_only` (MLState crash), `all` and `cpu_and_gpu` (ungraded with state) |
 | Runtime | Rust, in `sidekick-coreml` (the decoder) and a new platform-neutral `sidekick-llm` crate (the loop) | A Swift shim like `sidekick-fm`'s: an FFI crossing per token, and a second Core ML loader |
 | Memory | An autorelease pool around every call; preallocated inputs; output backings if measured equal | Relying on the thread's pool (the spike's loop reached a 19.7 GB footprint) |
-| Concurrency | One decoder thread per model, a bounded FIFO queue, one KV state reused across requests | A state per request; batching |
+| Concurrency | One decoder thread per model, a bounded FIFO queue shared with `apple-fm` (one ANE chat lane), one KV state reused across requests | A state per request; batching; evicting models to fit the ANE budget |
 | Tokenizer | The `tokenizers` crate, as the embedders use it | — |
 | Template | `minijinja` with Python compatibility, gated against transformers | Hand-written templates per family |
 | Sampling | Greedy at temperature 0; temperature and top-p; `seed` honored | Penalties, `n` > 1, `logprobs` (deferred) |
@@ -346,20 +346,52 @@ For MiniCPM5-2B at C = 2,048 (the formulas carry to other builds):
 | Inputs | under 200 KiB (mask 64 KiB, hidden 64 KiB, RoPE rows, `sel`) | allocated once |
 | Tokenizer, token trie, grammars | tens of MB, to be measured | host |
 
-**The ANE's resident budget is shared.** #173 found a resident-weight
-budget of roughly 2–3 GiB across all loaded functions, on one M1 Max; past
-it, programs reload on almost every call. The 2B build alone sits near it.
-The daemon may also hold ANE embedders and classifiers, and whether
-Foundation Models' own model counts against the same budget is unmeasured.
-So:
-- **One open chat model is resident at a time.** Several may be installed;
-  a request for another waits for the resident one to unload.
-- **The registry accounts for it.** Each Core ML model's weights served on
-  the ANE are summed; `/health` reports the total for the loaded models,
-  and the daemon logs a warning when loading a model would pass 2 GiB.
-- **Enforcement waits for a measurement** of the decoder beside ANE
-  embedders and beside AFM requests ([Open questions](#open-questions)).
-  It reuses the 2B build already compiled, so it adds no ANE cache.
+**The ANE's budget is shared by the whole machine.** #187 measured it on
+an M1 Max (macOS 27) beside the 2B build:
+- **It is system-wide.** A second process running the same build slowed
+  both decoders about 21×, as #173 saw from 4.2 GiB in one process.
+- **Foundation Models counts against it.** Its model takes about 2.3 GiB.
+  With `apple-fm` requests running, a decoder call took 1.2 s instead of
+  54 ms, and a 37-token AFM reply 32–39 s instead of 1.3 s. Any overlap
+  thrashes both for its whole duration.
+- **Only programs in active use count.** Up to 2.79 GiB of active programs
+  the decoder only shares the ANE's time (54 ms per call became 56–106 ms
+  beside busy embedders); from 2.88 GiB programs reload on nearly every
+  call, about 20× slower on both sides. Loaded but idle programs cost
+  nothing: the system evicts the least recently used one on the next
+  load, and it returns in 0.1–1.2 s.
+- **A program's ANE size is its weights minus the token-embedding table,**
+  which runs on the CPU (the 2B decoder: 2,185 MiB). A process can read
+  its own total (`ri_neural_footprint` from `proc_pid_rusage`).
+
+So the daemon schedules rather than evicts. Evicting its own models gains
+nothing while idle ones are free, and can't reach Foundation Models or
+other apps.
+- **One ANE chat lane.** `apple-fm` and the open chat models share one
+  queue: a Foundation Models request waits while an open model generates,
+  and the reverse. Each would otherwise slow the other about 25×. The lane
+  has the open model's `queue_depth`. When no open model is installed,
+  `apple-fm` runs as it does today.
+- **One open chat model is resident at a time.** Two decoders pass the
+  knee. Several may be installed; a request for another waits for the
+  resident one to unload.
+- **The registry accounts for it.** `/health` reports the daemon's ANE
+  total as the process reads it, and each loaded Core ML model's share
+  (estimated before a load as its weights minus its embedding table). The
+  daemon logs a warning when a load would take the total past
+  `ane_budget_mib` (default 2,816, 2.75 GiB, under the 2.79 GiB measured
+  safe; measured on an M1 Max only).
+- **Embedders and classifiers aren't held.** An occasional request that
+  takes the active total past the knee costs a stall of up to about 1.7 s
+  on each side; a continuous load past it thrashes. An operator who serves
+  large ANE embedders beside an open model can move them to the GPU
+  (D38's `compute_units`). Holding them while a generation runs is
+  deferred until a deployment needs it.
+- **Contention from outside is reported, not prevented.** Other apps'
+  Foundation Models or ANE use slows a generation the same way, and the
+  daemon can't stop it. The decoder counts calls over five times its
+  warm median as stalls; `/health` reports recent stalls, and the request
+  timeout bounds the worst case.
 
 ### Loading, warm-up and where it doesn't run
 
@@ -709,12 +741,11 @@ with a fixed one), and a macOS update presumably does too.
 
 ## Open questions
 
-- **The ANE's resident budget.** Is the 2–3 GiB budget per process or
-  system-wide, does Foundation Models' model count against it, and do ANE
-  embedders beside the decoder make it thrash? The answer decides whether
-  the registry warns or evicts; it is measured before the backend ships.
+None remain. Settled while this note was reviewed:
 
-Settled while this note was reviewed:
+- **The ANE's budget** is system-wide and shared with Foundation Models
+  (#187): the daemon serializes its ANE chat models and warns, rather
+  than evicting ([Memory budget](#memory-budget)).
 
 - **Grading** is anchored on the first-percentile cosine and top-1, with
   the stability check ([Grading a causal LM](#grading-a-causal-lm)).
