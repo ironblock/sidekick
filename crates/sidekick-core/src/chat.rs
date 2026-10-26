@@ -1,4 +1,4 @@
-use crate::{Availability, Result};
+use crate::{Availability, JsonSchema, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,13 +26,19 @@ impl ChatMessage {
 #[derive(Debug, Clone, Default)]
 pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
+    /// Sampling temperature; 0 asks for greedy decoding.
     pub temperature: Option<f32>,
+    /// Nucleus sampling: sample from the smallest set of tokens whose
+    /// probabilities add up to at least this (0 to 1).
+    pub top_p: Option<f32>,
+    /// Makes sampling at a temperature above 0 repeatable.
+    pub seed: Option<u64>,
     pub max_tokens: Option<u32>,
-    /// JSON Schema for constrained output. When set, backends that support
-    /// guided generation (Foundation Models) must return valid JSON matching
-    /// the schema; backends that don't should fall back to prompt-based JSON
-    /// coaxing and report so via `ChatResponse::constrained`.
-    pub schema: Option<serde_json::Value>,
+    /// Schema for constrained output, already validated against the
+    /// supported subset ([`crate::schema`]). When set, a backend returns
+    /// JSON matching it, re-serialized with [`JsonSchema::conform`], and
+    /// reports `ChatResponse::constrained`.
+    pub schema: Option<JsonSchema>,
     /// Stop sequences (OpenAI semantics): the reply ends before the earliest
     /// occurrence of any of them, which is not included.
     pub stop: Vec<String>,

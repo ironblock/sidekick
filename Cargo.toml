@@ -26,7 +26,10 @@ sidekick-onnx = { path = "crates/sidekick-onnx" }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: a JSON object keeps the order its keys were written in.
+# The chat route's schema layer relies on it to keep `properties` in the
+# order a client sent them (sidekick-core's schema module).
+serde_json = { version = "1", features = ["preserve_order"] }
 toml = "0.8"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }

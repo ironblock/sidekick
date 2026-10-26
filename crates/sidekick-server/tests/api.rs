@@ -8,8 +8,11 @@ use axum::http::{Request, StatusCode};
 use common::*;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use sidekick_server::build_router;
-use std::sync::Arc;
+use sidekick_core::schema::Kind;
+use sidekick_fm::{EngineResponse, RespondOptions, SessionChatBackend, SessionEngine};
+use sidekick_server::{build_router, AppState};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tower::ServiceExt;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -565,7 +568,15 @@ async fn models_lists_each_chat_model_with_what_it_honors() {
             "task": "text-generation",
             "backend": "foundation_models",
             "context_length": 4096,
-            "honored_fields": ["max_completion_tokens", "max_tokens", "response_format", "stop", "temperature"],
+            "honored_fields": [
+                "max_completion_tokens",
+                "max_tokens",
+                "response_format",
+                "seed",
+                "stop",
+                "temperature",
+                "top_p"
+            ],
             "guided_streaming": false,
             "guardrails": true,
         })
@@ -665,7 +676,6 @@ impl sidekick_fm::SessionEngine for SlowEngine {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_per_model_request_timeout_reaches_the_chat_backend() {
-    use std::time::Duration;
     // A reply takes 6 s: inside the global 10 s, past apple-fm's own 1 s.
     // The wide gap keeps the elapsed-time check clear of slow CI runners.
     let state_for = |config: &str| {
@@ -708,4 +718,170 @@ async fn a_per_model_request_timeout_reaches_the_chat_backend() {
         body["request_timeout_overrides"],
         json!({"default_secs": 10, "applied": {"apple-fm": 1}, "unmatched": ["nope"]})
     );
+}
+
+/// A chat request with `response_format` set to this schema.
+fn guided(schema: Value) -> Value {
+    json!({
+        "model": "apple-fm",
+        "messages": [{"role": "user", "content": "extract"}],
+        "response_format": {"type": "json_schema", "json_schema": {"name": "t", "schema": schema, "strict": true}}
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn schemas_outside_the_subset_are_unsupported_schema_naming_the_keyword() {
+    for (schema, keyword, pointer) in [
+        (
+            json!({"type": "object", "properties": {"a": {"anyOf": [{"type": "string"}, {"type": "integer"}]}}}),
+            "anyOf",
+            "/properties/a",
+        ),
+        (json!({"type": "object", "properties": {"a": {"type": ["string", "integer"]}}}), "type", "/properties/a"),
+        (json!({"type": "object", "properties": {"n": {"type": "integer", "minimum": 0}}}), "minimum", "/properties/n"),
+        (json!({"type": "object", "properties": {"n": {"type": "number", "maximum": 9}}}), "maximum", "/properties/n"),
+        (json!({"type": "object", "properties": {"s": {"type": "string", "pattern": "^a"}}}), "pattern", "/properties/s"),
+        (json!({"type": "object", "properties": {"s": {"$ref": "#/$defs/s"}}}), "$ref", "/properties/s"),
+        (json!({"type": "object", "additionalProperties": true}), "additionalProperties", "the schema root"),
+        (json!({"type": ["object", "null"]}), "type", "the schema root"),
+    ] {
+        let (status, body) =
+            call(test_state(true, None), post_json("/v1/chat/completions", guided(schema.clone()))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{schema}: {body}");
+        assert_eq!(body["error"]["code"], "unsupported_schema", "{schema}: {body}");
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(message.contains(&format!("`{keyword}`")) && message.contains(pointer), "{schema}: {message}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nullable_properties_are_accepted() {
+    let (status, body) = call(
+        test_state(true, None),
+        post_json(
+            "/v1/chat/completions",
+            guided(json!({
+                "type": "object",
+                "properties": {
+                    "a": {"type": ["string", "null"]},
+                    "b": {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+                },
+                "required": ["a", "b"],
+                "additionalProperties": false
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["constrained"], true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn top_p_out_of_range_is_rejected() {
+    for top_p in [-0.1, 1.5] {
+        let (status, body) = call(
+            test_state(true, None),
+            post_json(
+                "/v1/chat/completions",
+                json!({"model": "apple-fm", "messages": [{"role": "user", "content": "hi"}], "top_p": top_p}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{top_p}: {body}");
+        assert!(body["error"]["message"].as_str().unwrap().contains("top_p"), "{body}");
+    }
+}
+
+/// A Foundation Models stand-in under the real `SessionChatBackend`: it
+/// answers a guided request with the schema's properties in reverse order,
+/// as Foundation Models' own key order varies, and records the options it
+/// was given.
+struct ReversingEngine {
+    seen: Arc<Mutex<Vec<RespondOptions>>>,
+}
+
+impl SessionEngine for ReversingEngine {
+    type Session = ();
+
+    fn availability(&self) -> sidekick_core::Availability {
+        sidekick_core::Availability::Available
+    }
+
+    fn create(&self, _instructions: &str) -> sidekick_core::Result<()> {
+        Ok(())
+    }
+
+    fn respond(&self, _s: &mut (), _prompt: &str, opts: &RespondOptions) -> sidekick_core::Result<EngineResponse> {
+        self.seen.lock().unwrap().push(opts.clone());
+        let Some(schema) = &opts.schema else {
+            return Ok(EngineResponse::text("plain"));
+        };
+        let Kind::Object { properties } = &schema.root().kind else {
+            return Ok(EngineResponse::text("\"not an object\""));
+        };
+        let fields: Vec<String> = properties
+            .iter()
+            .rev()
+            .filter(|p| !p.nullable)
+            .map(|p| format!("\"{}\": \"{}-value\"", p.name, p.name))
+            .collect();
+        Ok(EngineResponse::text(format!("{{ {} }}", fields.join(", "))))
+    }
+}
+
+fn reversing_state() -> (AppState, Arc<Mutex<Vec<RespondOptions>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut state = test_state(true, None);
+    let fm = sidekick_server::chat_models::foundation_models(&state.request_timeouts, |timeout| {
+        Arc::new(SessionChatBackend::new(ReversingEngine { seen: seen.clone() }, Duration::from_secs(60), timeout))
+    });
+    state.chat = chat_of([fm]);
+    (state, seen)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn guided_replies_keep_the_schema_property_order() {
+    let (state, _) = reversing_state();
+    let (status, body) = call(
+        state,
+        post_json(
+            "/v1/chat/completions",
+            guided(json!({
+                "type": "object",
+                "properties": {
+                    "zeta": {"type": "string"},
+                    "alpha": {"type": "string"},
+                    "middle": {"type": ["string", "null"]},
+                    "beta": {"type": "string"},
+                    "optional": {"type": ["string", "null"]}
+                },
+                "required": ["zeta", "alpha", "middle", "beta"]
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // Schema order, compact; the required nullable property the model left
+    // out is written as null, the optional one stays absent.
+    assert_eq!(
+        body["choices"][0]["message"]["content"],
+        r#"{"zeta":"zeta-value","alpha":"alpha-value","middle":null,"beta":"beta-value"}"#
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn seed_and_top_p_reach_the_backend() {
+    let (state, seen) = reversing_state();
+    let (status, body) = call(
+        state,
+        post_json(
+            "/v1/chat/completions",
+            json!({"model": "apple-fm", "messages": [{"role": "user", "content": "hi"}],
+                   "temperature": 0.8, "top_p": 0.9, "seed": 7}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let opts = seen.lock().unwrap().pop().unwrap();
+    assert_eq!((opts.temperature, opts.top_p, opts.seed), (Some(0.8), Some(0.9), Some(7)));
 }

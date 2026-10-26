@@ -1,12 +1,14 @@
-use sidekick_core::{Availability, ModelInfo, Result, UnavailableReason};
+use sidekick_core::{Availability, JsonSchema, ModelInfo, Result, UnavailableReason};
 
 /// Options for a single response.
 #[derive(Debug, Clone, Default)]
 pub struct RespondOptions {
-    /// JSON Schema for guided generation. When set, the engine returns the
-    /// JSON text of content constrained to the schema.
-    pub schema: Option<serde_json::Value>,
+    /// Schema for guided generation. When set, the engine returns the JSON
+    /// text of content constrained to the schema.
+    pub schema: Option<JsonSchema>,
     pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub seed: Option<u64>,
     pub max_tokens: Option<u32>,
 }
 

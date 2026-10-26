@@ -11,6 +11,10 @@ pub struct ChatCompletionRequest {
     pub messages: Vec<WireMessage>,
     #[serde(default)]
     pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub seed: Option<u64>,
     /// Legacy name, still what most clients send.
     #[serde(default)]
     pub max_tokens: Option<u32>,

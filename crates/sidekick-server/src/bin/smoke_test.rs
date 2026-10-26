@@ -7,7 +7,8 @@
 //! ```
 //!
 //! Exercises the real Swift shim end-to-end: availability probe, model info,
-//! plain completion, session-reuse follow-up, schema-constrained generation,
+//! plain completion, session-reuse follow-up, schema-constrained generation
+//! (keys in schema order), repeatable greedy and seeded sampling,
 //! finish reasons (max_tokens, stop sequences), real streaming (incremental
 //! deltas, early stop, no reuse of an interrupted session), and the
 //! context-overflow error mapping. On macOS 27 with a 27-SDK build it also requires real
@@ -17,11 +18,15 @@
 //! "Needs hardware verification".
 
 use sidekick_core::{
-    Availability, ChatBackend, ChatMessage, ChatRequest, Error, FinishReason, Role,
+    Availability, ChatBackend, ChatMessage, ChatRequest, Error, FinishReason, JsonSchema, Role,
     UnavailableReason,
 };
 use sidekick_fm::fm_backend;
 use std::time::{Duration, Instant};
+
+fn schema(value: serde_json::Value) -> JsonSchema {
+    JsonSchema::parse(&value).unwrap_or_else(|e| fail(format!("schema refused: {e}")))
+}
 
 fn req(messages: Vec<ChatMessage>) -> ChatRequest {
     ChatRequest { messages, ..Default::default() }
@@ -144,14 +149,16 @@ async fn main() {
         Role::User,
         "Name one planet in our solar system and its position from the sun.",
     )]);
-    constrained.schema = Some(serde_json::json!({
+    // Not alphabetical: the reply must keep this order (#180).
+    let planet_schema = schema(serde_json::json!({
         "type": "object",
         "properties": {
-            "planet": { "type": "string" },
-            "position": { "type": "integer" }
+            "position": { "type": "integer" },
+            "planet": { "type": "string" }
         },
-        "required": ["planet", "position"]
+        "required": ["position", "planet"]
     }));
+    constrained.schema = Some(planet_schema.clone());
     match backend.complete(constrained).await {
         Ok(r) => {
             println!("[{:?}] {:?} (constrained: {})", start.elapsed(), r.content, r.constrained);
@@ -172,10 +179,47 @@ async fn main() {
                 eprintln!("FAIL: constrained output missing required fields: {parsed}");
                 std::process::exit(1);
             }
+            let keys: Vec<&String> = parsed.as_object().map(|o| o.keys().collect()).unwrap_or_default();
+            if keys != ["position", "planet"] {
+                fail(format!("constrained output keys {keys:?} are not in schema order"));
+            }
         }
         Err(e) => {
             eprintln!("FAIL: constrained completion errored: {e}");
             std::process::exit(1);
+        }
+    }
+
+    println!("\n== repeatable sampling ==");
+    // Greedy (temperature 0) and seeded sampling must each give the same
+    // bytes twice, guided or not.
+    let ask = |temperature: f32, seed: Option<u64>, guided: bool| {
+        let mut r = req(vec![ChatMessage::new(Role::User, "Invent a name for a small moon and say why.")]);
+        r.temperature = Some(temperature);
+        r.seed = seed;
+        r.max_tokens = Some(60);
+        if guided {
+            r.messages[0].content = "Name one planet in our solar system and its position from the sun.".into();
+            r.schema = Some(planet_schema.clone());
+        }
+        r
+    };
+    for (label, temperature, seed, guided) in [
+        ("temperature 0", 0.0, None, false),
+        ("temperature 0, guided", 0.0, None, true),
+        ("temperature 0.8, seed 7", 0.8, Some(7), false),
+        ("temperature 0.8, seed 7, guided", 0.8, Some(7), true),
+    ] {
+        let first = backend.complete(ask(temperature, seed, guided)).await;
+        let second = backend.complete(ask(temperature, seed, guided)).await;
+        match (first, second) {
+            (Ok(a), Ok(b)) => {
+                println!("{label}: {:?}", a.content);
+                if a.content != b.content {
+                    fail(format!("{label}: replies differ: {:?} vs {:?}", a.content, b.content));
+                }
+            }
+            (Err(e), _) | (_, Err(e)) => fail(format!("{label}: errored: {e}")),
         }
     }
 

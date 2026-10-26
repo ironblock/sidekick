@@ -8,7 +8,8 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use sidekick_core::{
-    ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, Error, FinishReason, Role,
+    ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, Error, FinishReason, JsonSchema,
+    Role,
 };
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -279,8 +280,8 @@ fn joined_result(
 /// Reject parameters this daemon can't honor, rather than answering as if
 /// they weren't there (D22). Harmless forms that clients send by default —
 /// `n: 1`, `tool_choice: "auto"`/`"none"` without tools, `logprobs: false` —
-/// are accepted. Everything else unknown (`seed`, `top_p`, penalties,
-/// `user`, …) is ignored on purpose.
+/// are accepted. `seed` and `top_p` are honored; everything else unknown
+/// (penalties, `user`, …) is ignored on purpose.
 fn reject_unsupported(req: &ChatCompletionRequest) -> Result<(), ApiError> {
     if req.n.is_some_and(|n| n > 1) {
         return Err(ApiError::invalid("`n` > 1 is not supported; send separate requests"));
@@ -328,13 +329,12 @@ fn to_core_request(req: &ChatCompletionRequest) -> Result<ChatRequest, ApiError>
     let schema = match &req.response_format {
         None => None,
         Some(f) if f.kind == "text" => None,
-        Some(f) if f.kind == "json_schema" => Some(
-            f.json_schema
+        Some(f) if f.kind == "json_schema" => Some(JsonSchema::parse(
+            &f.json_schema
                 .as_ref()
                 .ok_or_else(|| ApiError::invalid("response_format.json_schema is required"))?
-                .schema
-                .clone(),
-        ),
+                .schema,
+        )?),
         // json_object has no schema to constrain against; nudge via prompt.
         Some(f) if f.kind == "json_object" => {
             if let Some(last) = messages.iter_mut().rev().find(|m| m.role == Role::User) {
@@ -378,7 +378,19 @@ fn to_core_request(req: &ChatCompletionRequest) -> Result<ChatRequest, ApiError>
         ));
     }
 
-    Ok(ChatRequest { messages, temperature: req.temperature, max_tokens, schema, stop })
+    if req.top_p.is_some_and(|p| !(0.0..=1.0).contains(&p)) {
+        return Err(ApiError::invalid("`top_p` must be between 0 and 1"));
+    }
+
+    Ok(ChatRequest {
+        messages,
+        temperature: req.temperature,
+        top_p: req.top_p,
+        seed: req.seed,
+        max_tokens,
+        schema,
+        stop,
+    })
 }
 
 fn flatten_content(content: &WireContent) -> Result<String, ApiError> {

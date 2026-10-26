@@ -630,8 +630,8 @@ sidekick can't do now gets a 400:
 The harmless forms that OpenAI SDKs send by default are still accepted:
 `n: 1`, empty tools, `tool_choice` `"auto"`/`"none"`/null, `logprobs:
 false`. Everything else unknown is still ignored on purpose, including
-`seed`, `top_p`, penalties and `user`. Foundation Models' sampling options
-could map `seed`/`top_p` in the future. This is a behavior change for
+penalties and `user` (`seed` and `top_p` were too, until the D53
+amendment below; [API.md](API.md#sampling) has how they are honored). This is a behavior change for
 clients that relied on those parameters being dropped, so it warrants a
 minor version bump when released.
 
