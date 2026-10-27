@@ -578,17 +578,28 @@ a new model.
   commit (27 spans), 48 conversations written for the fixture (both MIT),
   and the lead sections of 148 Wikipedia articles, each pinned to a
   revision (CC BY-SA 4.0, attributed; THIRD_PARTY_NOTICES.md). Each
-  document records its source and licence.
+  document records its source and licence. Twelve request frames, also
+  written for the fixture, hold a system prompt (or none) and an
+  instruction, worded unlike the evaluation's request.
 - **Disjoint from what is graded**, checked at every run: no parity-corpus
   text (`core.Calibration`), no run of 32 tokens shared with an evaluation
   text (shorter runs are shared link anchors and signatures, not passages),
   and no Wikipedia article the chat benchmark draws on. The evaluation's
   articles are in neither.
 - **A draw** is what one conversion calibrates on: the documents in a
-  seeded order (numpy's `default_rng(seed).permutation`), packed into
-  sequences of exactly 2,048 tokens, each starting at a document, until
-  40,960 tokens. The build's draw is seed 0. The stability draw (seed 1)
-  reads only documents draw 0 didn't, so the two share no text.
+  seeded order (numpy's `default_rng(seed).permutation`), packed into 20
+  sequences of exactly 2,048 tokens (40,960 tokens), each starting at a
+  document. **Eight of the 20 are long chat requests** (`chat_sequences`,
+  recorded in `[build]`): a frame, in a seeded order, then the draw's own
+  next documents, then the template's end of the user turn and start of
+  the assistant's, as a served request ends; a conversation from the
+  fixture never goes inside one. Served requests are long,
+  instruction-framed user turns, and calibration without them left GPTQ's
+  early layers blind to them: with plain packing (no chat sequences) no
+  calibration chat turn passed 104 tokens, and the evaluation's chat-framed
+  article graded C while the same kind of plain article stayed in B (#184). The build's
+  draw is seed 0. The stability draw (seed 1) reads only documents draw 0
+  didn't, so the two share no text.
 - **Evaluation** (`evaluation.jsonl`), in two families, graded together and
   reported apart:
   - **repository**: #173's set, so grades stay comparable with it: eight
@@ -635,6 +646,13 @@ fp32's last-position logits.
 - **The worst position is reported, not graded**, and so are the mean
   cosine and the ideal-fp16 ceiling (`fp16sim`) on the same positions:
   for MiniCPM5-2B, p1 0.99999, top-1 99.90%, worst 0.99998 (A).
+- **KL divergence is reported beside cosine**, not graded: KL(fp32 ‖
+  build) per position, its mean, p99 and maximum, overall and per family.
+  The logits' cosine weighs the whole vocabulary alike, KL the tokens a
+  sampler would pick, and they rank positions very differently (rank
+  correlation 0.08 on MiniCPM5-2B's first ANE build, where a cosine of
+  0.89 came with a KL of 0.003). It is reported for chat models only; the
+  encoders' and classifiers' grading is unchanged.
 - **Non-finite logits are F.**
 - **Families:** every grade is also given per family, so a weak family
   shows, but the letter is the pooled one.
