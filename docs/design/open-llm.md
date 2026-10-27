@@ -11,9 +11,10 @@ records the decision; this note has the detail.
 Implemented so far: the decoder chain (`sidekick_coreml::KvDecoder`,
 #183), the loop and the chat route's open-model backend (`sidekick-llm`,
 #185): template, tokenizer, sampling, the wire contract, the ANE chat lane
-and `/health`'s accounting; and constrained decoding on the open path with
-llguidance (#186). Where this note states a number, the measurement is
-linked, not repeated:
+and `/health`'s accounting; constrained decoding on the open path with
+llguidance (#186); and the converter (#184,
+[CONVERTING.md](../CONVERTING.md#causal-language-models)). Where this note
+states a number, the measurement is linked, not repeated:
 - [#173](https://github.com/ironblock/sidekick/issues/173): the spike that
   ran a 1B and then a 2B decoder on the Neural Engine (ANE), with its KV
   cache in Core ML state. Its comments hold the speeds, grades and Core ML
@@ -757,7 +758,8 @@ not malformed JSON. So:
 
 The spike's converter (`llama_ane.py`, `convert.py`, `gptq.py`) moves into
 `tools/sidekick_convert` as the converters' layers expect
-([CONVERTING.md](../CONVERTING.md#layers)):
+([CONVERTING.md](../CONVERTING.md#layers)); as built, it is described in
+[CONVERTING.md](../CONVERTING.md#causal-language-models):
 - **Backbone** `backbones.llama_causal`: LlamaForCausalLM in the channels-first
   form, explicit attention (D25), StableSilu (D39), RMSNorm pre-scales, the
   residual stream at 1/K, the R1 and R2 rotations folded into the weights.
