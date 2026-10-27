@@ -149,6 +149,29 @@ class Rewrites(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "rope_scaling"):
                 LC.Checkpoint(d)
 
+    def test_reads_transformers_5_rope_parameters(self):
+        with tempfile.TemporaryDirectory() as d:
+            tiny_llama(d, layers=1)
+            cfg = json.loads((Path(d) / "config.json").read_text())
+            cfg.pop("rope_theta", None)
+            cfg.pop("rope_scaling", None)
+            cfg["rope_parameters"] = {"rope_type": "default", "rope_theta": 5e6}
+            (Path(d) / "config.json").write_text(json.dumps(cfg))
+            self.assertEqual(LC.Checkpoint(d).theta, 5e6)
+            cfg["rope_parameters"] = {"rope_type": "yarn", "rope_theta": 5e6, "factor": 4.0}
+            (Path(d) / "config.json").write_text(json.dumps(cfg))
+            with self.assertRaisesRegex(ValueError, "rope_parameters"):
+                LC.Checkpoint(d)
+
+    def test_logits_at_chosen_positions(self):
+        rot = LC.Rotation(seed=0).bind(self.ck)
+        h = LC.stream(self.ck, self.ids[:1], lambda i: LC.build_layer(self.ck, i, rot), LC.embedding_table(
+            self.ck, rot))[0]
+        norm, head = LC.final_norm(self.ck, rot), LC.head_weight(self.ck, rot)
+        every = LC.logits(norm, head, h)
+        self.assertTrue(torch.allclose(LC.logits(norm, head, h, (3, 9)), every[3:9], atol=1e-6))
+        self.assertTrue(torch.allclose(LC.logits(norm, head, h, [2, 7, 30]), every[[2, 7, 30]], atol=1e-6))
+
 
 class Gptq(unittest.TestCase):
     def setUp(self):
@@ -192,11 +215,30 @@ class Draws(unittest.TestCase):
     def test_draws_are_seeded_full_and_start_at_documents(self):
         fx = self.fixture([30, 7, 12, 50, 9, 3, 40, 22, 18, 5])
         starts = {v[0] for v in fx.ids["calibration"].values()}
-        a = L.draw(fx, 0, 64, 16, [-1])
-        self.assertEqual(a, L.draw(fx, 0, 64, 16, [-1]))
-        self.assertNotEqual(a, L.draw(fx, 1, 64, 16, [-1]))
+        a, used = L.draw(fx, 0, 64, 16, [-1])
+        self.assertEqual((a, used), L.draw(fx, 0, 64, 16, [-1]))
+        self.assertNotEqual(a, L.draw(fx, 1, 64, 16, [-1])[0])
+        owner = {t: d for d, ids in fx.ids["calibration"].items() for t in ids}
+        self.assertLessEqual({owner[t] for s in a for t in s if t != -1}, used)
         self.assertEqual([len(s) for s in a], [16] * 4)
         self.assertTrue(all(s[0] in starts for s in a))
+
+    def test_the_stability_draw_reads_only_documents_the_build_draw_did_not(self):
+        fx = self.fixture([30, 7, 12, 50, 9, 3, 40, 22, 18, 5, 33, 41, 26, 17, 60, 8])
+        job = L.Job(model_id="m", src=".", work=".", recipe=L.Recipe(tokens=64, sequence=16, draw_seed=0,
+                                                                      stability_seed=1))
+        saved = L._separator
+        L._separator = lambda job: [-1]
+        try:
+            _, used0 = L.draw(fx, 0, 64, 16, [-1])
+            first = L.job_draw(job, fx, 0)
+            second = L.job_draw(job, fx, 1)
+        finally:
+            L._separator = saved
+        self.assertEqual(first, L.draw(fx, 0, 64, 16, [-1])[0])
+        owner = {t: d for d, ids in fx.ids["calibration"].items() for t in ids}
+        read = {owner[t] for s in second for t in s if t != -1}
+        self.assertFalse(read & used0)
 
     def test_a_draw_too_large_for_the_fixture_fails(self):
         with self.assertRaises(ValueError):
@@ -232,11 +274,99 @@ class Grading(unittest.TestCase):
         near[0, 4] = 5.001
         self.assertEqual(L.grade({"t": near}, {"t": near_ref})["wide_flips"], 0)
 
+    def test_the_wide_margin_is_compared_unrounded(self):
+        ref = self.rows(v=10)
+        ref[0] = 0.0
+        ref[0, 3], ref[0, 4] = 5.0, 5.0 - L.WIDE_MARGIN - 1e-6        # rounded to 4 places it would be narrow
+        got = ref.copy()
+        got[0, 4] = 5.5
+        self.assertEqual(L.grade({"t": got}, {"t": ref})["wide_flips"], 1)
+
+    def test_families_are_graded_on_their_own_texts(self):
+        ref = {"a": self.rows(seed=0), "b": self.rows(seed=1)}
+        got = {"a": ref["a"], "b": ref["b"] + np.random.default_rng(2).normal(size=ref["b"].shape) * 0.3}
+        g = L.grade(got, ref, {"a": "repository", "b": "prose"})
+        self.assertEqual(g["families"]["repository"]["grade"], "A")
+        self.assertEqual(g["families"]["prose"]["positions"], 200)
+        self.assertEqual(g["families"]["prose"]["grade"], L._grade({"b": got["b"]}, {"b": ref["b"]})["grade"])
+
     def test_non_finite_output_is_f(self):
         ref = self.rows()
         got = ref.copy()
         got[5, 2] = np.nan
         self.assertEqual(L.grade({"t": got}, {"t": ref})["grade"], "F")
+
+
+class WorkDirectory(unittest.TestCase):
+    """The converter's cache of intermediates, and its install."""
+
+    def test_an_intermediate_is_reused_only_for_its_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "ranges-0.json"
+            self.assertFalse(L.fresh(path, {"a": 1}))
+            path.write_text("{}")
+            self.assertFalse(L.fresh(path, {"a": 1}))         # made, but from unknown inputs
+            L._stamp(path, {"a": 1})
+            self.assertTrue(L.fresh(path, {"a": 1}))
+            self.assertFalse(L.fresh(path, {"a": 2}))
+            L._discard(path)
+            self.assertFalse(path.exists() or L._key_path(path).exists())
+
+    def test_keys_follow_the_inputs_they_depend_on(self):
+        job = L.Job(model_id="m", src=".", work=".", recipe=L.Recipe())
+        job.inputs = {"revision": "r", "config_sha256": "c", "tokenizer_sha256": "t", "calibration_sha256": "k",
+                      "evaluation_sha256": "e", "manifest_sha256": "m",
+                      "versions": {"torch": "1", "transformers": "2", "scikit_learn": "3", "coremltools": "4"}}
+        a = L.keys(job, 0)
+        job.inputs = {**job.inputs, "evaluation_sha256": "e2"}
+        b = L.keys(job, 0)
+        self.assertNotEqual(a["references"], b["references"])
+        self.assertNotEqual(a["screen"], b["screen"])
+        self.assertEqual(a["gptq"], b["gptq"])                 # GPTQ doesn't read the evaluation set
+        job.inputs = {**job.inputs, "calibration_sha256": "k2"}
+        self.assertNotEqual(L.keys(job, 0)["gptq"], a["gptq"])
+        self.assertNotEqual(L.keys(job, 1)["ranges"]["disjoint_from"], a["ranges"]["disjoint_from"])
+        self.assertNotEqual(a["stage"], L.keys(job, 1)["stage"])
+
+    def test_install_is_atomic_and_keeps_unchanged_programs(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            stage, dest = d / "stage-0", d / "models" / "m"
+            for i, content in enumerate((b"zero", b"one")):
+                (stage / f"decoder.{i}.mlmodelc" / "weights").mkdir(parents=True)
+                (stage / f"decoder.{i}.mlmodelc" / "weights" / "weight.bin").write_bytes(content)
+            m = {"decoder": {"chunks": 2}}
+            job = L.Job(model_id="m", src=".", work=str(d), recipe=L.Recipe())
+            saved = L.install_host
+            L.install_host = lambda job, m, where, fixture, summaries: (where / "chat.toml").write_text("new")
+            try:
+                L.install(job, m, stage, dest, None, [])
+                inode = (dest / "decoder.0.mlmodelc" / "weights" / "weight.bin").stat().st_ino
+                (stage / "decoder.1.mlmodelc" / "weights" / "weight.bin").write_bytes(b"changed")
+                L.install(job, m, stage, dest, None, [])
+                self.assertEqual((dest / "decoder.0.mlmodelc" / "weights" / "weight.bin").stat().st_ino, inode)
+                self.assertEqual((dest / "decoder.1.mlmodelc" / "weights" / "weight.bin").read_bytes(), b"changed")
+
+                def fail(job, m, where, fixture, summaries):
+                    raise OSError("disk full")
+                L.install_host = fail
+                (stage / "decoder.0.mlmodelc" / "weights" / "weight.bin").write_bytes(b"newer")
+                with self.assertRaises(OSError):
+                    L.install(job, m, stage, dest, None, [])
+                self.assertEqual((dest / "decoder.0.mlmodelc" / "weights" / "weight.bin").read_bytes(), b"zero")
+                self.assertEqual((dest / "chat.toml").read_text(), "new")
+            finally:
+                L.install_host = saved
+
+    def test_chat_ids_must_be_token_ids(self):
+        class Template:
+            def apply_chat_template(self, messages, **kwargs):
+                return {"input_ids": [1, 2], "attention_mask": [1, 1]}      # a BatchEncoding-like mapping
+
+        tok = L.Tokens.__new__(L.Tokens)
+        tok.hf, tok.template_kwargs = Template(), {}
+        with self.assertRaises(TypeError):
+            tok.chat([{"role": "user", "content": "hi"}], True)
 
 
 class Committed(unittest.TestCase):
@@ -249,9 +379,11 @@ class Committed(unittest.TestCase):
             self.assertEqual(rec["evaluation_sha256"], L.sha256(L.EVALUATION), f.name)
             cal = {e["id"] for e in L.read_jsonl(L.CALIBRATION)}
             self.assertEqual(set(rec["calibration"]), cal)
+            for ids in list(rec["calibration"].values()) + list(rec["evaluation"].values()):
+                self.assertTrue(ids and all(isinstance(i, int) for i in ids))
 
-    def test_every_calibration_document_records_its_source_and_licence(self):
-        for e in L.read_jsonl(L.CALIBRATION):
+    def test_every_document_records_its_source_and_licence(self):
+        for e in L.read_jsonl(L.CALIBRATION) + L.read_jsonl(L.EVALUATION):
             self.assertIn(e["licence"], ("MIT", "CC-BY-SA-4.0"), e["id"])
             self.assertTrue(e["source"], e["id"])
             if e["licence"] == "CC-BY-SA-4.0":
@@ -268,7 +400,8 @@ class Committed(unittest.TestCase):
 
     def test_the_build_table_appends_valid_toml(self):
         text = L.manifest_path("minicpm5-2b").read_text()
-        job = L.Job(model_id="minicpm5-2b", src=".", work=".", recipe=L.Recipe(fp16_projections=("7.down",)))
+        job = L.Job(model_id="minicpm5-2b", src=".", work=".", recipe=L.Recipe(fp16_projections=("7.down",)),
+                    inputs={"versions": {"torch": "2.13.0", "coremltools": "9.0"}})
         fx = L.Fixture([], [], {}, "ab" * 32, Path("."))
         s = {"ane": 10, "gpu": 0, "cpu": 0, "unassigned": 5, "total": 15, "off": {}}
         placement = "\n[placement]\ncompute_units = \"cpu_and_ne\"\n\n[placement.chunks.0]\n" + "\n".join(
@@ -278,6 +411,22 @@ class Committed(unittest.TestCase):
         self.assertEqual(m["build"]["fp16_projections"], ["7.down"])
         self.assertEqual(m["build"]["calibration"]["tokens"], 40960)
         self.assertEqual(m["placement"]["chunks"]["0"]["ane"], 10)
+        self.assertEqual(m["build"]["versions"]["coremltools"], "9.0")
+
+    def test_the_evaluation_set_has_long_held_out_prose(self):
+        rec = json.loads((L.FIXTURES / "minicpm5-2b.tokens.json").read_text())
+        fx = L.Fixture(L.read_jsonl(L.CALIBRATION), L.read_jsonl(L.EVALUATION), rec, "", Path("."))
+        texts = fx.teacher_forced
+        prose = [t for t in texts if t.family == "prose"]
+        self.assertEqual(len(prose), 2)
+        context = tomllib.loads(L.manifest_path("minicpm5-2b").read_text())["decoder"]["context_length"]
+        for t in prose:
+            self.assertGreater(len(t.ids), 1900)
+            self.assertLessEqual(len(t.ids), context)
+            self.assertLess(len(t.ids) - 1 - t.rows[-1], 8)          # graded to the end
+        calibrated = {L.wikipedia_title(e["source"]) for e in fx.calibration}
+        for e in fx.evaluation:
+            self.assertNotIn(L.wikipedia_title(e["source"]) or "-", calibrated)
 
 
 if __name__ == "__main__":

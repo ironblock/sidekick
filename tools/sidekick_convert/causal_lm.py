@@ -12,32 +12,36 @@ decoder for the chat route (docs/DECISIONS.md D53; docs/design/open-llm.md,
    prompts, and the ideal-fp16 ceiling (fp16sim) of the same texts.
 3. **Ranges**, per calibration draw: the R1/R2 rotation, then the residual
    stream's K and the RMSNorm pre-scales from the draw's activations
-   (backbones.llama_causal); then the **rewrite gate**: the rotated,
-   rewritten model in fp32 must reproduce the checkpoint's logits.
+   (backbones.llama_causal). The stability draw reads only documents the
+   build's draw didn't.
 4. **Palettes**: k-means per group of output channels, once per rotation.
 5. **GPTQ** onto those palettes, per draw (techniques.gptq), layer by
    layer, each layer calibrated on the outputs of the layers already
    quantised.
-6. **The PyTorch screen**, per draw: the quantised model teacher-forced in
+6. **The rewrite gate and the PyTorch screen**, per draw: the rotated,
+   rewritten model in fp32 must reproduce the checkpoint's logits, and the
+   quantised model, teacher-forced in
    fp32 over the evaluation texts, graded as an ANE build is graded. Only a
    recipe whose screen passes is compiled, since every ANE compile leaves
    about a copy of the weights in a system cache nobody can delete. With a
    second (stability) draw, both draws must grade alike.
-7. **Conversion** of the first draw, one chunk per process: trace,
+7. **Conversion** of the build's draw, one chunk per process: trace,
    coremltools with the KV cache as state, the weights stored as 8-bit
    palettes (`unique` mode, so GPTQ's values survive exactly), compiled.
 8. **Gates**: no forbidden op (the fused attention op, D25; the native
    silu, which StableSilu replaced), each chunk under the ANE weight limit
    (D32), and, unless skipped, the compute plan with every operation of
-   every chunk on the ANE (one plan read per chunk, which compiles it).
-9. **Install**: the chunks, the host's embedding and RoPE tables, the
+   every chunk on the ANE (one plan read per new program, which compiles
+   it; recorded by the program's hash).
+9. **Install**, atomically: the chunks (unchanged ones moved, not copied,
+   to keep their ANE compile), the host's embedding and RoPE tables, the
    tokenizer, the chat template, and chat.toml with its [build] and
    [placement] tables.
 
 Each heavy step runs in its own process (`python -m sidekick_convert.causal_lm
 step ...`), so its memory is returned when it ends, and leaves its result in
-the job's work directory, where a later run finds it: the references, the
-ranges, the palettes and each draw's GPTQ weights are computed once. The
+the job's work directory with the key of the inputs it was made from
+(`keys()`); a later run reuses a result only when its key still matches. The
 ANE grade itself is tools/grade_causal_lm.py's: it runs the installed build
 through sidekick's own decoder (sidekick_coreml::KvDecoder) and grades it
 with `grade()` below.
@@ -144,9 +148,10 @@ class Job:
     src: str
     work: str
     recipe: Recipe
-    plan: bool = True                # read the compute plans (one ANE compile per chunk)
+    plan: bool = True                # read the compute plans (one ANE compile per new chunk program)
     screen_only: bool = False
     keep_packages: bool = False
+    inputs: dict = None              # what the intermediates depend on (inputs()): hashes and versions
 
     def path(self, *parts):
         return Path(self.work).joinpath(*parts)
@@ -192,8 +197,11 @@ class Tokens:
 
     def chat(self, messages, generation_prompt):
         ids = self.hf.apply_chat_template(messages, tokenize=True, add_generation_prompt=generation_prompt,
-                                          **self.template_kwargs)
-        return list(ids["input_ids"] if isinstance(ids, dict) else ids)
+                                          return_dict=False, **self.template_kwargs)
+        ids = list(ids)
+        if not all(isinstance(i, int) for i in ids):
+            raise TypeError(f"apply_chat_template returned {type(ids[0]).__name__}s, not token ids")
+        return ids
 
     def encode_entry(self, e):
         if "messages" in e:
@@ -211,6 +219,23 @@ def sha256(path):
 
 
 @dataclasses.dataclass
+class Text:
+    name: str
+    ids: list
+    rows: list                 # the positions graded
+    family: str                # "repository" or "prose": grades are also reported per family
+
+
+def wikipedia_title(source):
+    """The normalized article title of a Wikipedia permalink, or None."""
+    import urllib.parse
+    if "wikipedia.org" not in source:
+        return None
+    title = urllib.parse.parse_qs(urllib.parse.urlparse(source).query)["title"][0]
+    return urllib.parse.unquote(title).replace("_", " ").strip().casefold()
+
+
+@dataclasses.dataclass
 class Fixture:
     calibration: list          # entries
     evaluation: list
@@ -220,7 +245,15 @@ class Fixture:
 
     @property
     def teacher_forced(self):
-        return [(e["id"], self.ids["evaluation"][e["id"]]) for e in self.evaluation if e["kind"] == "teacher-forced"]
+        """Every teacher-forced text: its name, ids, graded positions
+        (FIRST_GRADED - 1 to the end, every `stride`-th) and family."""
+        out = []
+        for e in self.evaluation:
+            if e["kind"] == "teacher-forced":
+                ids = self.ids["evaluation"][e["id"]]
+                out.append(Text(e["id"], ids, list(range(FIRST_GRADED - 1, len(ids), e.get("stride", 1))),
+                                e.get("family", "repository")))
+        return out
 
     @property
     def greedy(self):
@@ -272,41 +305,55 @@ def load_fixture(src, model_id, tokens=None, report=print):
     if shared:
         raise core.GateFailure(f"calibration documents share {SHARED_RUN}-token runs with the evaluation set: "
                                f"{shared[:5]}")
-    bench = set()
-    import urllib.parse
-    for f in BENCHMARK.glob("*.jsonl"):
-        for e in read_jsonl(f):
-            if "wikipedia.org" in e.get("source", ""):
-                bench.add(urllib.parse.parse_qs(urllib.parse.urlparse(e["source"]).query)["title"][0])
-    clash = [e["id"] for e in cal if "wikipedia.org" in e["source"]
-             and urllib.parse.parse_qs(urllib.parse.urlparse(e["source"]).query)["title"][0] in bench]
+    bench = {wikipedia_title(e.get("source", "")) for f in BENCHMARK.glob("*.jsonl") for e in read_jsonl(f)}
+    bench.discard(None)
+    calibrated = {wikipedia_title(e["source"]) for e in cal} - {None}
+    clash = [e["id"] for e in cal if wikipedia_title(e["source"]) in bench]
     if clash:
         raise core.GateFailure(f"calibration articles the chat benchmark uses: {clash}")
+    clash = [e["id"] for e in ev if wikipedia_title(e["source"]) in bench | calibrated]
+    if clash:
+        raise core.GateFailure(f"evaluation articles the calibration or the chat benchmark uses: {clash}")
     n = sum(map(len, rec["calibration"].values()))
     report(f"fixture: {len(cal)} calibration documents ({n} tokens), {len(ev)} evaluation entries; disjoint")
     return Fixture(cal, ev, {"calibration": rec["calibration"], "evaluation": rec["evaluation"]},
                    rec["calibration_sha256"], path)
 
 
-def draw(fixture, seed, tokens, sequence, separator):
+def draw(fixture, seed, tokens, sequence, separator, exclude=frozenset()):
     """A calibration draw: the documents in a seeded order (numpy's
-    default_rng(seed).permutation), packed into sequences of exactly
-    `sequence` tokens, each starting at a document: documents are appended,
-    `separator` between them, until the sequence is full, and the rest of
-    the last one is dropped. `tokens / sequence` sequences."""
+    default_rng(seed).permutation), less those in `exclude`, packed into
+    sequences of exactly `sequence` tokens, each starting at a document:
+    documents are appended, `separator` between them, until the sequence is
+    full, and the rest of the last one is dropped. Returns `tokens /
+    sequence` sequences and the ids of the documents they read."""
     if tokens % sequence:
         raise ValueError(f"{tokens} calibration tokens aren't a whole number of {sequence}-token sequences")
-    docs = [fixture.ids["calibration"][e["id"]] for e in fixture.calibration]
-    order = np.random.default_rng(seed).permutation(len(docs))
-    out, cur = [], []
+    names = [e["id"] for e in fixture.calibration]
+    order = np.random.default_rng(seed).permutation(len(names))
+    out, cur, used = [], [], set()
     for j in order:
-        cur = cur + (separator if cur else []) + docs[j]
+        if names[j] in exclude:
+            continue
+        cur = cur + (separator if cur else []) + fixture.ids["calibration"][names[j]]
+        used.add(names[j])
         if len(cur) >= sequence:
             out.append(cur[:sequence])
             cur = []
             if len(out) == tokens // sequence:
-                return out
-    raise ValueError(f"the fixture holds too few tokens for {tokens // sequence} sequences of {sequence}")
+                return out, used
+    raise ValueError(f"the fixture holds too few tokens for {tokens // sequence} sequences of {sequence}"
+                     + (f" outside the {len(exclude)} documents excluded" if exclude else ""))
+
+
+def job_draw(job, fixture, seed):
+    """The draw a job calibrates on with `seed`: the build's draw, or the
+    stability draw, which reads only documents the build's draw didn't."""
+    r, sep = job.recipe, _separator(job)
+    if seed == r.draw_seed:
+        return draw(fixture, seed, r.tokens, r.sequence, sep)[0]
+    _, used = draw(fixture, r.draw_seed, r.tokens, r.sequence, sep)
+    return draw(fixture, seed, r.tokens, r.sequence, sep, exclude=used)[0]
 
 
 # ---------------------------------------------------------------- manifest
@@ -376,8 +423,32 @@ def build_toml(job, ranges, fixture, placement=None):
              f"tokens = {r.tokens}, sequence = {r.sequence}, seed = {r.draw_seed} }}",
              f"residual_scale = {ranges['K']}",
              f"head_split = {r.head_split}",
-             f"fp16_projections = [{fp16}]"]
+             f"fp16_projections = [{fp16}]",
+             "versions = { " + ", ".join(f'{k} = "{v}"' for k, v in sorted(job.inputs["versions"].items())) + " }"]
     return "\n".join(lines) + "\n" + (placement or "")
+
+
+def versions():
+    """The library versions a build's bytes depend on, recorded in [build]."""
+    import importlib.metadata as md
+    out = {}
+    for name, dist in (("torch", "torch"), ("transformers", "transformers"), ("scikit_learn", "scikit-learn"),
+                       ("coremltools", "coremltools"), ("numpy", "numpy"), ("safetensors", "safetensors")):
+        try:
+            out[name] = md.version(dist)
+        except md.PackageNotFoundError:
+            out[name] = "absent"
+    return out
+
+
+def inputs(job, m):
+    """What the intermediates depend on besides the recipe: the checkpoint,
+    the fixtures, the manifest and the library versions."""
+    src = Path(job.src)
+    return {"revision": _tok.snapshot_revision(src), "config_sha256": sha256(src / "config.json"),
+            "tokenizer_sha256": sha256(src / "tokenizer.json"), "calibration_sha256": sha256(CALIBRATION),
+            "evaluation_sha256": sha256(EVALUATION), "manifest_sha256": sha256(manifest_path(job.model_id)),
+            "versions": versions()}
 
 
 def placement_toml(summaries):
@@ -398,13 +469,26 @@ def softmax_margin(ref):
     return np.abs(top2[:, 1] - top2[:, 0])         # a logit difference is a log-probability difference
 
 
-def grade(got, refs):
+def grade(got, refs, families=None):
     """Teacher-forced grade of `got` ({text: logits rows}) against the fp32
     `refs` (the same rows): per position the logits' cosine and whether the
     top-1 token agrees. The letter is the worse of the first-percentile
     cosine's (on the parity suite's cosine scale) and top-1 agreement's
     (TOP1), capped at C by any flip where fp32's top-two margin is at least
-    WIDE_MARGIN. The worst position is reported, not graded."""
+    WIDE_MARGIN. The worst position is reported, not graded. With
+    `families` ({text: family}), each family is also graded on its own
+    texts, under "families"."""
+    g = _grade(got, refs)
+    if families:
+        g["families"] = {}
+        for fam in sorted(set(families.values())):
+            names = [n for n in refs if families.get(n) == fam]
+            sub = _grade({n: got[n] for n in names}, {n: refs[n] for n in names})
+            g["families"][fam] = {k: v for k, v in sub.items() if k not in ("flips", "texts")}
+    return g
+
+
+def _grade(got, refs):
     cos, agree, flips, texts = [], [], [], {}
     for name in refs:
         a = np.asarray(got[name], dtype=np.float64)
@@ -417,7 +501,7 @@ def grade(got, refs):
         t = a.argmax(1) == b.argmax(1)
         margin = softmax_margin(b)
         for j in np.nonzero(~t)[0]:
-            flips.append({"text": name, "row": int(j), "fp32_margin": round(float(margin[j]), 4)})
+            flips.append({"text": name, "row": int(j), "fp32_margin": float(margin[j])})
         cos += c.tolist()
         agree += t.tolist()
         texts[name] = {"top1": round(float(t.mean()), 4), "cos_min": round(float(np.min(c)), 6)}
@@ -448,6 +532,95 @@ def load_refs(job, kind="fp32"):
     return {name: np.load(d / f"{kind}_{name}.npy") for name in meta["texts"]}
 
 
+def families(fixture):
+    return {t.name: t.family for t in fixture.teacher_forced}
+
+
+# ---------------------------------------------------------------- the work directory's cache
+
+def _key_path(path):
+    return Path(str(path) + ".key.json")
+
+
+def fresh(path, key):
+    """Whether the intermediate at `path` exists and was made from `key`."""
+    k = _key_path(path)
+    return Path(path).exists() and k.exists() and json.loads(k.read_text()) == key
+
+
+def _discard(path):
+    path = Path(path)
+    if path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+    _key_path(path).unlink(missing_ok=True)
+
+
+def _stamp(path, key):
+    _key_path(path).write_text(json.dumps(key, indent=1, sort_keys=True))
+
+
+def keys(job, seed=None):
+    """What each intermediate depends on. An intermediate is reused only
+    when its recorded key equals the current one, so a changed fixture,
+    tokenizer, checkpoint, manifest, library or recipe recomputes what it
+    touches and nothing else."""
+    r, i = job.recipe, job.inputs
+    ck = {"revision": i["revision"], "config_sha256": i["config_sha256"]}
+    references = {**ck, "evaluation_sha256": i["evaluation_sha256"], "tokenizer_sha256": i["tokenizer_sha256"],
+                  "first_graded": FIRST_GRADED, "greedy_tokens": GREEDY_TOKENS,
+                  "torch": i["versions"]["torch"], "transformers": i["versions"]["transformers"]}
+    rotation = {**ck, "rotation_seed": r.rotation_seed, "r2": r.r2, "torch": i["versions"]["torch"],
+                "threads": r.threads}
+    out = {"references": references}
+    if seed is not None:
+        draw_key = {**rotation, "calibration_sha256": i["calibration_sha256"],
+                    "tokenizer_sha256": i["tokenizer_sha256"], "tokens": r.tokens, "sequence": r.sequence,
+                    "seed": seed, "K": r.K, "disjoint_from": None if seed == r.draw_seed else r.draw_seed}
+        out["ranges"] = draw_key
+        out["gptq"] = {**draw_key, "palette_group": r.palette_group, "palette_seed": r.palette_seed,
+                       "scikit_learn": i["versions"]["scikit_learn"], "act_order": r.act_order, "damp": r.damp,
+                       "fp16_projections": list(r.fp16_projections)}
+        out["screen"] = {"gptq": out["gptq"], "references": references}
+        out["stage"] = {"gptq": out["gptq"], "manifest_sha256": i["manifest_sha256"], "head_split": r.head_split,
+                        "coremltools": i["versions"]["coremltools"]}
+    out["palettes"] = lambda K: {**rotation, "K": K, "palette_group": r.palette_group,
+                                 "palette_seed": r.palette_seed, "scikit_learn": i["versions"]["scikit_learn"]}
+    return out
+
+
+def _cached(job, path, key, step, *args):
+    """Run `step` unless `path` is fresh for `key`; then record the key."""
+    if fresh(path, key):
+        return False
+    _discard(path)
+    _child(job, step, *args)
+    _stamp(path, key)
+    return True
+
+
+def program_hash(compiled):
+    """sha256 over a compiled program's model.mil and weight files: what its
+    compute plan depends on (coremldata.bin changes with every compile)."""
+    h = hashlib.sha256()
+    for f in sorted(Path(compiled).rglob("*")):
+        if f.is_file() and (f.name == "model.mil" or "weights" in f.relative_to(compiled).parts):
+            h.update(str(f.relative_to(compiled)).encode())
+            with open(f, "rb") as fh:
+                for block in iter(lambda: fh.read(1 << 24), b""):
+                    h.update(block)
+    return h.hexdigest()
+
+
+def same_tree(a, b):
+    """Whether two directories hold the same files, byte for byte."""
+    import filecmp
+    fa = sorted(p.relative_to(a) for p in Path(a).rglob("*") if p.is_file())
+    fb = sorted(p.relative_to(b) for p in Path(b).rglob("*") if p.is_file())
+    return fa == fb and all(filecmp.cmp(Path(a) / p, Path(b) / p, shallow=False) for p in fa)
+
+
 # ---------------------------------------------------------------- the run
 
 def _child(job, step, *args):
@@ -469,34 +642,27 @@ def run(job, install_dir):
     check_manifest(m, job.src, job.model_id)
     tokens = Tokens(job.src, m.get("chat", {}).get("template_kwargs", {}))
     fixture = load_fixture(job.src, job.model_id, tokens)
-    if job.path("job.json").exists():
-        # the intermediates are keyed by draw seed alone, so one work directory holds one recipe
-        old = Job.load(job.path("job.json"))
-        same = ("draw_seed", "stability_seed", "min_grade")
-        differ = [k for k, v in dataclasses.asdict(job.recipe).items()
-                  if k not in same and getattr(old.recipe, k) != v]
-        if differ or old.src != job.src or old.model_id != job.model_id:
-            raise core.GateFailure(f"{job.work} holds another recipe's intermediates ({differ or 'checkpoint'}); "
-                                   "give each recipe its own work directory")
+    d, r = m["decoder"], job.recipe
+    if d["vocab_size"] % (r.head_split * r.palette_group):
+        raise core.GateFailure(f"the head's {d['vocab_size']} rows don't split into {r.head_split} convolutions of "
+                               f"whole {r.palette_group}-row palette groups")
+    long = [t.name for t in fixture.teacher_forced if len(t.ids) > d["context_length"]]
+    if long:
+        raise core.GateFailure(f"evaluation texts longer than the context ({d['context_length']}): {long}")
+    job.inputs = inputs(job, m)
     job.save()
-    report = {"recipe": dataclasses.asdict(job.recipe)}
-    if not job.path("references", "meta.json").exists():
-        _child(job, "references")
-    for seed in job.recipe.draws():
-        if not job.path(f"ranges-{seed}.json").exists():
-            _child(job, "ranges", seed)
-        report[f"rewrite_gate_{seed}"] = json.loads(job.path(f"ranges-{seed}.json").read_text())["gate"]
-    K = {json.loads(job.path(f"ranges-{s}.json").read_text())["ranges"]["K"] for s in job.recipe.draws()}
-    for k in sorted(K):
-        if not job.path(f"palettes-{job.recipe.rotation_seed}-K{k}.pt").exists():
-            _child(job, "palettes", k)
+    report = {"recipe": dataclasses.asdict(r), "inputs": job.inputs}
+    _cached(job, job.path("references"), keys(job)["references"], "references")
     screens = {}
-    for seed in job.recipe.draws():
-        if not job.path(f"gptq-{seed}", "meta.json").exists():
-            _child(job, "gptq", seed)
-        if not job.path(f"screen-{seed}.json").exists():
-            _child(job, "screen", seed)
+    for seed in r.draws():
+        k = keys(job, seed)
+        _cached(job, job.path(f"ranges-{seed}.json"), k["ranges"], "ranges", seed)
+        K = json.loads(job.path(f"ranges-{seed}.json").read_text())["ranges"]["K"]
+        _cached(job, job.path(f"palettes-{r.rotation_seed}-K{K}.pt"), keys(job)["palettes"](K), "palettes", K)
+        _cached(job, job.path(f"gptq-{seed}"), k["gptq"], "gptq", seed)
+        _cached(job, job.path(f"screen-{seed}.json"), k["screen"], "screen", seed)
         screens[seed] = json.loads(job.path(f"screen-{seed}.json").read_text())
+        report[f"rewrite_gate_{seed}"] = screens[seed]["rewrite_gate"]
         print(f"screen, draw {seed}: {describe(screens[seed])}", flush=True)
     report["screens"] = {str(s): {k: v for k, v in g.items() if k != "flips"} for s, g in screens.items()}
     letters = {s: g["grade"] for s, g in screens.items()}
@@ -506,21 +672,27 @@ def run(job, install_dir):
     if not stable:
         print(f"the draws grade differently: {letters}; the build's grade is the lower, {report['screen_grade']}")
     job.path("report.json").write_text(json.dumps(report, indent=1))
-    if worse(report["screen_grade"], job.recipe.min_grade) != job.recipe.min_grade:
+    if worse(report["screen_grade"], r.min_grade) != r.min_grade:
         raise core.GateFailure(f"the PyTorch screen grades {report['screen_grade']}, below the recipe's "
-                               f"{job.recipe.min_grade}: not compiling")
+                               f"{r.min_grade}: not compiling")
     if job.screen_only:
         return report
     core.require_coremltools()
-    stage = job.path("stage")
-    for i in range(m["decoder"]["chunks"]):
+    stage = job.path(f"stage-{r.draw_seed}")
+    if not fresh(stage, keys(job, r.draw_seed)["stage"]):
+        _discard(stage)
+        stage.mkdir(parents=True)
+        _stamp(stage, keys(job, r.draw_seed)["stage"])
+    for i in range(d["chunks"]):
         if not (stage / f"decoder.{i}.mlmodelc").exists():
             _child(job, "convert", i)
     from . import plan
     chunks, summaries = [], []
-    for i in range(m["decoder"]["chunks"]):
+    for i in range(d["chunks"]):
         c = stage / f"decoder.{i}.mlmodelc"
         info = json.loads((stage / f"decoder.{i}.json").read_text())
+        if info["draw"] != r.draw_seed:
+            raise core.GateFailure(f"staged chunk {i} is draw {info['draw']}'s, not {r.draw_seed}'s")
         bad = sorted(set(info["ops"]) & FORBID_OPS)
         if bad:
             raise core.GateFailure(f"chunk {i} contains forbidden ops {bad}")
@@ -529,29 +701,72 @@ def run(job, install_dir):
             raise core.GateFailure(plan.over_cap(job.model_id, "decoder", size, i, True))
         chunks.append({"weight_bytes": size, **info})
     report["chunks"] = chunks
-    install_dir.mkdir(parents=True, exist_ok=True)
-    for i in range(m["decoder"]["chunks"]):
-        dest = install_dir / f"decoder.{i}.mlmodelc"
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.copytree(stage / f"decoder.{i}.mlmodelc", dest)
     if job.plan:
-        for i in range(m["decoder"]["chunks"]):
-            s = plan.summarize(plan.read(install_dir / f"decoder.{i}.mlmodelc"))
-            s["units"] = "CPU_AND_NE"
+        plans = job.path("plans")
+        plans.mkdir(exist_ok=True)
+        for i in range(d["chunks"]):
+            c = stage / f"decoder.{i}.mlmodelc"
+            cached = plans / f"{program_hash(c)}.json"
+            if cached.exists():          # these exact program bytes were read before: no second ANE compile
+                s = json.loads(cached.read_text())
+            else:
+                s = plan.summarize(plan.read(c))
+                s["units"] = "CPU_AND_NE"
+                cached.write_text(json.dumps(s))
             if s["cpu"] or s["gpu"]:
                 raise core.GateFailure(f"compute plan: chunk {i} has operations off the ANE: {s['off']} "
                                        "(a kv-state-1 decoder's state must stay on the ANE)")
             print(f"chunk {i}: compute plan {s['ane']}/{s['assigned']} operations on the ANE", flush=True)
             summaries.append(s)
         report["plans"] = [{k: s[k] for k in ("ane", "gpu", "cpu", "unassigned", "total")} for s in summaries]
-    install_host(job, m, install_dir, report, fixture, summaries)
+    install(job, m, stage, install_dir, fixture, summaries)
     job.path("report.json").write_text(json.dumps(report, indent=1))
     print(f"installed {install_dir}", flush=True)
     return report
 
 
-def install_host(job, m, install_dir, report, fixture, summaries):
+def install(job, m, stage, install_dir, fixture, summaries):
+    """Install atomically: the build is assembled in a sibling directory and
+    renamed into place, so a failed run never leaves new programs beside an
+    old manifest. A chunk whose installed bytes already equal the staged
+    ones is moved over, not copied: the ANE's compile of a program is
+    cached by its path and file identity, so a copy would cost a second
+    compile, and another copy of its weights in a cache nobody can delete
+    (docs/design/coreml-cache.md)."""
+    tmp = install_dir.parent / f".{install_dir.name}.installing"
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    tmp.mkdir(parents=True)
+    keep = []
+    for i in range(m["decoder"]["chunks"]):
+        name = f"decoder.{i}.mlmodelc"
+        if (install_dir / name).exists() and same_tree(install_dir / name, stage / name):
+            keep.append(name)
+        else:
+            shutil.copytree(stage / name, tmp / name)
+    install_host(job, m, tmp, fixture, summaries)
+    moved = []
+    try:
+        for name in keep:
+            os.rename(install_dir / name, tmp / name)
+            moved.append(name)
+    except OSError:
+        for name in moved:
+            os.rename(tmp / name, install_dir / name)
+        raise
+    old = install_dir.parent / f".{install_dir.name}.replaced"
+    if old.exists():
+        shutil.rmtree(old)
+    if install_dir.exists():
+        os.rename(install_dir, old)
+    os.rename(tmp, install_dir)
+    if old.exists():
+        shutil.rmtree(old)
+    if keep:
+        print(f"kept {len(keep)} installed chunk(s) whose bytes were unchanged: {', '.join(keep)}", flush=True)
+
+
+def install_host(job, m, install_dir, fixture, summaries):
     from safetensors.numpy import save_file
     from .backbones import llama_causal as LC
     d = m["decoder"]
@@ -591,7 +806,9 @@ def _separator(job):
 
 
 def step_references(job):
-    """fp32 teacher-forced logits, greedy continuations, the fp16 ceiling."""
+    """fp32 teacher-forced logits at each text's graded positions, fp32's
+    greedy continuations and its last prompt row for each greedy prompt,
+    and the fp16 ceiling at the graded positions."""
     import torch
     from transformers import AutoModelForCausalLM
     from . import fp16sim
@@ -600,31 +817,35 @@ def step_references(job):
     out.mkdir(parents=True, exist_ok=True)
     hf = AutoModelForCausalLM.from_pretrained(job.src, dtype=torch.float32, attn_implementation="eager").eval()
     texts = fixture.teacher_forced
-    for name, ids in texts:
+    for t in texts:
         t0 = time.time()
-        lg = hf(torch.tensor([ids])).logits[0, FIRST_GRADED - 1:len(ids)].float().numpy()
-        np.save(out / f"fp32_{name}.npy", lg)
-        print(f"fp32 {name}: {time.time() - t0:.1f} s", flush=True)
-    meta = {"texts": [n for n, _ in texts], "first_graded": FIRST_GRADED, "revision": _tok.snapshot_revision(job.src)}
-    greedy = []
+        np.save(out / f"fp32_{t.name}.npy", hf(torch.tensor([t.ids])).logits[0, t.rows].float().numpy())
+        print(f"fp32 {t.name}: {len(t.ids)} tokens, {len(t.rows)} graded, {time.time() - t0:.1f} s", flush=True)
+    meta = {"texts": [t.name for t in texts], "rows": {t.name: t.rows for t in texts},
+            "families": {t.name: t.family for t in texts}, "first_graded": FIRST_GRADED,
+            "revision": _tok.snapshot_revision(job.src)}
+    greedy, prefill = [], []
     for name, ids in fixture.greedy:
+        prefill.append(hf(torch.tensor([ids])).logits[0, -1].float().numpy())
         g = hf.generate(torch.tensor([ids]), attention_mask=torch.ones(1, len(ids), dtype=torch.long),
                         do_sample=False, max_new_tokens=GREEDY_TOKENS, pad_token_id=hf.config.pad_token_id)
         greedy.append({"name": name, "ids": ids, "new": g[0, len(ids):].tolist()})
         print(f"greedy {name}: {len(greedy[-1]['new'])} tokens", flush=True)
     (out / "greedy.json").write_text(json.dumps(greedy))
-    for name, ids in texts:
+    np.save(out / "fp32_prefill.npy", np.stack(prefill))
+    for t in texts:
         t0 = time.time()
         try:
-            lg = fp16sim.run(hf, torch.tensor([ids])).logits[0, FIRST_GRADED - 1:len(ids)].float().numpy()
+            lg = fp16sim.run(hf, torch.tensor([t.ids])).logits[0, t.rows].float().numpy()
         except fp16sim.Fp16Overflow as e:
             print(f"no fp16 ceiling: {e}", flush=True)
             meta["ceiling"] = str(e)
             break
-        np.save(out / f"fp16_{name}.npy", lg)
-        print(f"fp16 ceiling {name}: {time.time() - t0:.1f} s", flush=True)
+        np.save(out / f"fp16_{t.name}.npy", lg)
+        print(f"fp16 ceiling {t.name}: {time.time() - t0:.1f} s", flush=True)
     else:
-        meta["ceiling"] = grade(load_refs_from(out, meta, "fp16"), load_refs_from(out, meta, "fp32"))
+        meta["ceiling"] = grade(load_refs_from(out, meta, "fp16"), load_refs_from(out, meta, "fp32"),
+                                meta["families"])
         print(f"fp16 ceiling: {describe(meta['ceiling'])}", flush=True)
     (out / "meta.json").write_text(json.dumps(meta, indent=1))
 
@@ -634,29 +855,16 @@ def load_refs_from(d, meta, kind):
 
 
 def step_ranges(job, seed):
-    """The draw's range calibration, and the rewrite gate."""
+    """The draw's range calibration: the residual scale and the norms'
+    pre-scales."""
     LC, m, fixture = _setup(job)
     r = job.recipe
     ck = LC.Checkpoint(job.src)
     rot = LC.Rotation(r.rotation_seed, r.r2).bind(ck)
-    seqs = draw(fixture, seed, r.tokens, r.sequence, _separator(job))
+    seqs = job_draw(job, fixture, seed)
     ranges = LC.calibrate_ranges(ck, seqs, rot, K=r.K)
-    # the rewrite gate: the rotated, rescaled model in fp32 against the checkpoint's own forward
-    texts = fixture.teacher_forced
-    hs = LC.stream(ck, [ids for _, ids in texts], lambda i: LC.build_layer(ck, i, rot, ranges),
-                   LC.embedding_table(ck, rot, ranges.K))
-    norm, head = LC.final_norm(ck, rot, ranges), LC.head_weight(ck, rot)
-    refs = load_refs(job)
-    got = {name: LC.logits(norm, head, h, (FIRST_GRADED - 1, len(ids))).numpy() for (name, ids), h in zip(texts, hs)}
-    g = grade(got, refs)
-    gate = {"cos_min": g["cos_min"], "top1": g["top1"],
-            "max_abs_logit_diff": max(float(np.abs(got[n] - refs[n]).max()) for n in refs)}
-    print(f"rewrite gate, draw {seed}: worst cosine {g['cos_min']:.7f}, top-1 {g['top1']:.2%}, max |dlogit| "
-          f"{gate['max_abs_logit_diff']:.2e}", flush=True)
-    if not g["cos_min"] >= 0.99999:
-        raise core.GateFailure(f"the rewritten model doesn't reproduce the checkpoint: worst cosine {g['cos_min']}")
-    job.path(f"ranges-{seed}.json").write_text(json.dumps({"ranges": ranges.to_json(), "gate": gate,
-                                                           "sequences": len(seqs)}, indent=1))
+    job.path(f"ranges-{seed}.json").write_text(json.dumps({"ranges": ranges.to_json(), "sequences": len(seqs)},
+                                                          indent=1))
 
 
 def _ranges(LC, job, seed):
@@ -701,7 +909,7 @@ def step_gptq(job, seed):
     palettes = torch.load(job.path(f"palettes-{r.rotation_seed}-K{ranges.K}.pt"))
     out = job.path(f"gptq-{seed}")
     out.mkdir(parents=True, exist_ok=True)
-    seqs = draw(fixture, seed, r.tokens, r.sequence, _separator(job))
+    seqs = job_draw(job, fixture, seed)
     table = LC.embedding_table(ck, rot, ranges.K)
     hs = [LC.embed(table, ids) for ids in seqs]
     del table
@@ -772,7 +980,10 @@ def quantized_head(G, job, seed):
 
 
 def step_screen(job, seed):
-    """The quantised model, fp32, teacher-forced over the evaluation texts."""
+    """The rewrite gate, then the PyTorch screen: the rotated, rescaled model
+    in fp32 must reproduce the checkpoint's logits at every graded position
+    (worst cosine 0.99999), and the quantised model, teacher-forced in fp32
+    over the evaluation texts, is graded as an ANE build is."""
     from .techniques import gptq as G
     LC, _, fixture = _setup(job)
     r = job.recipe
@@ -780,19 +991,35 @@ def step_screen(job, seed):
     rot = LC.Rotation(r.rotation_seed, r.r2).bind(ck)
     ranges = _ranges(LC, job, seed)
     texts = fixture.teacher_forced
-    hs = LC.stream(ck, [ids for _, ids in texts],
-                   lambda i: quantized_layer(LC, G, job, ck, rot, ranges, seed, i),
-                   LC.embedding_table(ck, rot, ranges.K))
-    norm, head = LC.final_norm(ck, rot, ranges), quantized_head(G, job, seed)
-    got = {name: LC.logits(norm, head, h, (FIRST_GRADED - 1, len(ids))).numpy() for (name, ids), h in zip(texts, hs)}
-    g = grade(got, load_refs(job))
+    refs = load_refs(job)
+    table = LC.embedding_table(ck, rot, ranges.K)
+    norm = LC.final_norm(ck, rot, ranges)
+    hs = LC.stream(ck, [t.ids for t in texts], lambda i: LC.build_layer(ck, i, rot, ranges), table)
+    head = LC.head_weight(ck, rot)
+    got = {t.name: LC.logits(norm, head, h, t.rows).numpy() for t, h in zip(texts, hs)}
+    g = grade(got, refs)
+    gate = {"cos_min": g["cos_min"], "top1": g["top1"],
+            "max_abs_logit_diff": max(float(np.abs(got[n] - refs[n]).max()) for n in refs)}
+    print(f"rewrite gate, draw {seed}: worst cosine {g['cos_min']:.7f}, top-1 {g['top1']:.2%}, max |dlogit| "
+          f"{gate['max_abs_logit_diff']:.2e}", flush=True)
+    if not g["cos_min"] >= 0.99999:
+        raise core.GateFailure(f"the rewritten model doesn't reproduce the checkpoint: worst cosine {g['cos_min']}")
+    del hs, head, got
+    hs = LC.stream(ck, [t.ids for t in texts], lambda i: quantized_layer(LC, G, job, ck, rot, ranges, seed, i),
+                   table)
+    head = quantized_head(G, job, seed)
+    got = {t.name: LC.logits(norm, head, h, t.rows).numpy() for t, h in zip(texts, hs)}
+    g = grade(got, refs, families(fixture))
+    g["rewrite_gate"] = gate
     print(f"screen, draw {seed}: {describe(g)}", flush=True)
+    for fam, sub in g["families"].items():
+        print(f"  {fam}: {describe(sub)}", flush=True)
     job.path(f"screen-{seed}.json").write_text(json.dumps(g, indent=1))
 
 
 def step_convert(job, index):
-    """Chunk `index` of the first draw: trace, convert with state, palettize,
-    compile into the stage directory."""
+    """Chunk `index` of the build's draw: trace, convert with state,
+    palettize, compile into the draw's stage directory."""
     import coremltools as ct
     import coremltools.optimize as cto
     import torch
@@ -853,7 +1080,7 @@ def step_convert(job, index):
     if left:
         raise core.GateFailure(f"chunk {index}: weights not stored as palettes: {left[:5]}")
     ops = sorted(core.mil_op_types(ml))
-    stage = job.path("stage")
+    stage = job.path(f"stage-{seed}")
     stage.mkdir(parents=True, exist_ok=True)
     pkg = stage / "packages" / f"decoder.{index}.mlpackage"
     if pkg.exists():
@@ -872,7 +1099,7 @@ def step_convert(job, index):
     shutil.rmtree(tmp)
     if not job.keep_packages:
         shutil.rmtree(pkg)
-    (stage / f"decoder.{index}.json").write_text(json.dumps({"layers": [lo, hi], "head": last, "ops": ops,
+    (stage / f"decoder.{index}.json").write_text(json.dumps({"draw": seed, "layers": [lo, hi], "head": last, "ops": ops,
                                                              "seconds": round(time.time() - t0)}, indent=1))
     print(f"chunk {index} (layers {lo}-{hi}{', head' if last else ''}): {time.time() - t0:.0f} s", flush=True)
 

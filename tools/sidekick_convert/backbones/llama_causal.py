@@ -95,6 +95,9 @@ class Checkpoint:
             problems.append(f"architecture {c.get('architectures')} / {c.get('model_type')}, not LlamaForCausalLM")
         if c.get("rope_scaling"):
             problems.append(f"rope_scaling {c['rope_scaling']} (kv-state-1 ships plain RoPE tables)")
+        rope = c.get("rope_parameters") or {}            # transformers 5's form of rope_theta and rope_scaling
+        if rope.get("rope_type", "default") != "default":
+            problems.append(f"rope_parameters {rope} (kv-state-1 ships plain RoPE tables)")
         if c.get("hidden_act", "silu") != "silu":
             problems.append(f"hidden_act {c['hidden_act']}")
         for flag in ("attention_bias", "mlp_bias"):
@@ -143,7 +146,8 @@ class Checkpoint:
 
     @property
     def theta(self):
-        return float(self.config.get("rope_theta", 10000.0))
+        theta = self.config.get("rope_theta") or (self.config.get("rope_parameters") or {}).get("rope_theta")
+        return float(theta or 10000.0)
 
 
 # ---------------------------------------------------------------- modules
@@ -458,11 +462,15 @@ def stream(ck, sequences, make_layer, table, on_layer=None, on_hidden=None):
 
 
 def logits(norm, head, h, rows=None):
-    """fp32 final norm and head over hidden [1, D, 1, S]: [rows, V]."""
+    """fp32 final norm and head over hidden [1, D, 1, S]: [rows, V], for
+    every position, a (lo, hi) range or a list of positions."""
     S = h.shape[-1]
-    lo, hi = rows if rows is not None else (0, S)
+    if rows is None:
+        rows = list(range(S))
+    elif isinstance(rows, tuple):
+        rows = list(range(*rows))
     with torch.no_grad():
-        x = norm(h[..., lo:hi]).view(h.shape[1], hi - lo).T
+        x = norm(h[..., rows]).reshape(h.shape[1], len(rows)).T
         return torch.cat([x @ head[j:j + 16384].T for j in range(0, head.shape[0], 16384)], dim=1)
 
 
