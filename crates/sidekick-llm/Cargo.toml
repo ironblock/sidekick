@@ -33,6 +33,11 @@ tokio = { workspace = true }
 libc = "0.2"
 async-trait = { workspace = true }
 tracing = { workspace = true }
+# Constrained decoding for `response_format: json_schema` (#186): the
+# grammar's token mask each step, and the tokenizer's bridge to it. MIT.
+llguidance = { version = "=1.9.1", default-features = false }
+toktrie = "=1.9.1"
+toktrie_hf_tokenizers = { version = "=1.9.1", default-features = false }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

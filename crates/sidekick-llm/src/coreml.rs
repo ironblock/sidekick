@@ -37,8 +37,8 @@ impl Decoder for CoremlDecoder {
         self.0.prefill(tokens, 0)
     }
 
-    fn step(&mut self, token: u32, pos: usize) -> Result<&[f32]> {
-        self.0.step(&[token], pos)
+    fn step(&mut self, tokens: &[u32], pos: usize) -> Result<&[f32]> {
+        self.0.step(tokens, pos)
     }
 
     fn probe(&self) -> Arc<dyn DecoderProbe> {

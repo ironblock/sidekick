@@ -9,11 +9,10 @@ published. [D53](../DECISIONS.md#d53--open-llms-on-the-chat-route-a-stateful-ane
 records the decision; this note has the detail.
 
 Implemented so far: the decoder chain (`sidekick_coreml::KvDecoder`,
-#183), and the loop and the chat route's open-model backend
-(`sidekick-llm`, #185): template, tokenizer, sampling, the wire contract,
-the ANE chat lane and `/health`'s accounting. Structured output on the open
-path (#186) isn't yet; until it is, `response_format` `json_schema` is a
-400 on an open model. Where this note states a number, the measurement is
+#183), the loop and the chat route's open-model backend (`sidekick-llm`,
+#185): template, tokenizer, sampling, the wire contract, the ANE chat lane
+and `/health`'s accounting; and constrained decoding on the open path with
+llguidance (#186). Where this note states a number, the measurement is
 linked, not repeated:
 - [#173](https://github.com/ironblock/sidekick/issues/173): the spike that
   ran a 1B and then a 2B decoder on the Neural Engine (ANE), with its KV
@@ -595,30 +594,56 @@ extraction is recommended on it.
 [llguidance](https://github.com/guidance-ai/llguidance) (MIT; Rust; 1.9.1 is
 the version the benchmark used) computes, per step, the set of tokens the
 grammar allows; the sampler sets every other logit to −∞.
-- **API.** One `ParserFactory` per loaded model, built from the tokenizer
+- **API.** One `ParserFactory` per model, built from its tokenizer
   through `toktrie_hf_tokenizers` (which depends on `tokenizers` 0.21 with
-  the pure-Rust regex, as the workspace does). Per request, the schema
+  the pure-Rust regex, as the workspace does), with the model's stop tokens
+  as its end-of-sequence tokens. It is built on the model's first guided
+  request (about 0.4 s for MiniCPM5-2B's 130k vocabulary), not at startup,
+  so a model never asked for JSON costs nothing. Per request, the schema
   layer's representation is written back out as JSON Schema with the
-  `x-guidance` options and compiled with
-  `TopLevelGrammar::from_json_schema`; a `Matcher` then gives
-  `compute_mask`, `consume_token` and `compute_ff_tokens` each step.
-  Compiled grammars are cached by the normalized schema's hash.
-- **Cost.** llguidance's own figures for a 128k vocabulary are about 50 µs
-  of one core per mask typically, about 1.5 ms for a full mask, and under
-  30 ms in the worst case it has seen, against a decode step of about
-  54 ms (18.6 tokens/s, #173). The mask for the next step depends only on
-  the token just sampled, as the next ANE call does, so the two run
-  concurrently and the mask is hidden behind the call.
+  `x-guidance` options (`sidekick_llm::guided::grammar_schema`) and
+  compiled with `TopLevelGrammar::from_json_schema` (under 1 ms for the
+  benchmark's extraction schemas); a `Matcher` then gives `compute_mask`,
+  `consume_token` and `compute_ff_tokens` each step. A model keeps its 32
+  most recently used grammars, keyed by the schema written out, and a
+  request starts from a copy. A schema the layer accepts but llguidance
+  can't compile is a 400 `unsupported_schema`, and a tokenizer llguidance
+  can't read (one that isn't byte-level or byte-fallback BPE) a 400 for
+  guided requests to that model.
+- **Cost, measured: the mask doesn't need hiding.** The design first had
+  each mask computed on another thread while the next ANE call ran. Over
+  the chat benchmark's 80 extraction answers walked through MiniCPM5-2B's
+  tokenizer (`cargo run -p sidekick-llm --example guided_masks`), a mask
+  took 9 µs on average (p50 3 µs, p99 42 µs, at most 236 µs), against a
+  call's 53 ms; handing it to a scoped thread and back costs 41 µs, more
+  than the mask. So the mask is computed after each call, on the decoder
+  thread. Each reply's log line carries its masks' maximum, so a schema
+  that makes them slow shows.
 - **Forced tokens are free.** Where the grammar allows exactly one
-  continuation (`{"name": "`, a closing brace), `compute_ff_tokens`
-  returns it, and those tokens fill the next call's padding slots: a call
-  costs about the same for 1 as for 16 tokens. Guided JSON can take fewer
-  calls than its token count.
-- **Whitespace is bounded** with `x-guidance`'s `whitespace_pattern`, so a
-  model can't fill its budget with blank lines inside a valid object. The
-  exact bound is measured against llguidance's default on the benchmark's
-  extraction and tag sets.
-- **`constrained` is true** on every guided open-model reply.
+  continuation (`{"name":"`, a closing brace), `compute_ff_tokens`
+  returns it, and those tokens are fed in the same call as the sampled
+  token before them, in slots that call would otherwise pad: a call costs
+  about the same for 1 as for 16 tokens. A reply's forced opening follows
+  the prompt in its calls, and a reply the grammar forces whole (a `const`)
+  needs no call. Over the extraction answers, 21% of the tokens were forced
+  and a reply took 1.30 tokens a call.
+- **No whitespace.** The grammar allows none between JSON tokens and uses
+  `,` and `:` as separators (`whitespace_flexible: false`), rather than
+  bounding whitespace with a pattern. The reply is then compact JSON with
+  its keys in schema order, as `apple-fm`'s re-serialized reply is
+  ([API.md](../API.md#structured-output), "Key order"), whether streamed
+  or not, and a model can't fill its budget with blank lines. Strings and
+  numbers are as the model writes them, within JSON's grammar.
+- **The end.** When the JSON is complete and nothing may follow it, the
+  reply ends with `finish_reason: "stop"` and no stop token is generated;
+  where the JSON could go on (a number at the root), the stop tokens are
+  allowed once it is complete. `max_tokens` before the end is `"length"`
+  with the JSON cut off, as `apple-fm` reports it. A grammar that allows no
+  token of the vocabulary, or an llguidance error mid-reply, fails the
+  request (500), and is logged.
+- **`constrained` is true** on every guided open-model reply, and each
+  reply's log line carries its forced tokens and its masks' mean and
+  maximum time.
 
 ### What the benchmark implies
 

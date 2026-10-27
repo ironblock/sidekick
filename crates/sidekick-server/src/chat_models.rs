@@ -222,10 +222,18 @@ pub fn foundation_models(
 pub fn open_listing() -> ChatListing {
     ChatListing {
         backend: "coreml",
-        honored_fields: vec!["max_completion_tokens", "max_tokens", "seed", "stop", "temperature", "top_p"],
-        // No guided output until llguidance (#186): `response_format`
-        // json_schema is a 400 on open models.
-        guided_streaming: false,
+        honored_fields: vec![
+            "max_completion_tokens",
+            "max_tokens",
+            "response_format",
+            "seed",
+            "stop",
+            "temperature",
+            "top_p",
+        ],
+        // Guided output is generated token by token under its grammar, so
+        // it streams as it is generated (#186).
+        guided_streaming: true,
         guardrails: false,
         compute_units: Some(sidekick_core::ComputeUnits::CpuAndNeuralEngine.name()),
         graded_os: None,

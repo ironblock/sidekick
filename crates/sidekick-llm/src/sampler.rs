@@ -12,9 +12,13 @@
 //!   one, the generator is seeded from the OS. Each sampled token takes one
 //!   64-bit draw, mapped to a float in [0, 1) by its top 53 bits, so a
 //!   seed's sequence doesn't depend on a library's distribution code.
+//! - **A grammar's mask** (guided output) sets every token it doesn't allow
+//!   to −∞ first, so greedy picks the most likely allowed token and the
+//!   nucleus is taken over the masked distribution.
 
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
+use toktrie::SimpleVob;
 
 /// One request's sampling settings, its own or the model's defaults.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,6 +35,8 @@ pub struct Sampler {
     /// Unnormalized probabilities, reused from step to step.
     weights: Vec<f64>,
     nucleus: Vec<u32>,
+    /// The masked logits, reused from step to step.
+    masked: Vec<f32>,
 }
 
 impl Sampler {
@@ -39,7 +45,7 @@ impl Sampler {
             Some(seed) => ChaCha20Rng::seed_from_u64(seed),
             None => ChaCha20Rng::from_os_rng(),
         };
-        Self { params, rng, weights: Vec::new(), nucleus: Vec::new() }
+        Self { params, rng, weights: Vec::new(), nucleus: Vec::new(), masked: Vec::new() }
     }
 
     pub fn params(&self) -> SamplingParams {
@@ -64,6 +70,22 @@ impl Sampler {
         self.nucleus(total);
         let mass: f64 = self.nucleus.iter().map(|&i| self.weights[i as usize]).sum();
         pick(self.nucleus.iter().map(|&i| (i, self.weights[i as usize])), u * mass)
+    }
+
+    /// The next token among those `mask` allows (it allows at least one).
+    pub fn sample_masked(&mut self, logits: &[f32], mask: Option<&SimpleVob>) -> u32 {
+        let Some(mask) = mask else { return self.sample(logits) };
+        let mut masked = std::mem::take(&mut self.masked);
+        masked.clear();
+        masked.resize(logits.len(), f32::NEG_INFINITY);
+        mask.iter_set_entries(|i| {
+            if let Some(&l) = logits.get(i) {
+                masked[i] = l;
+            }
+        });
+        let token = self.sample(&masked);
+        self.masked = masked;
+        token
     }
 
     /// The nucleus, most likely first (ties to the lower id): the shortest
@@ -192,6 +214,26 @@ mod tests {
         assert!((share(1.0) - 0.731).abs() < 0.03);
         assert!((share(1.0 / 3.0) - 0.953).abs() < 0.02);
         assert!((share(2.0) - 0.622).abs() < 0.03);
+    }
+
+    #[test]
+    fn a_mask_restricts_greedy_and_sampling_to_what_it_allows() {
+        let logits = [5.0, 4.0, 3.0, 2.0, 1.0];
+        let mut mask = SimpleVob::alloc(5);
+        mask.allow_token(2);
+        mask.allow_token(4);
+        let mut s = Sampler::new(params(0.0, 1.0, None));
+        assert_eq!(s.sample_masked(&logits, Some(&mask)), 2);
+        assert_eq!(s.sample_masked(&logits, None), 0);
+        // Sampling: only 2 and 4, in proportion e^3 : e^1 (0.88 : 0.12).
+        let mut s = Sampler::new(params(1.0, 1.0, Some(9)));
+        let picks: Vec<u32> = (0..2000).map(|_| s.sample_masked(&logits, Some(&mask))).collect();
+        assert!(picks.iter().all(|&p| p == 2 || p == 4));
+        let share = picks.iter().filter(|&&p| p == 2).count() as f64 / 2000.0;
+        assert!((share - 0.881).abs() < 0.03, "{share}");
+        // The nucleus is over the masked distribution: 0.8 keeps only 2.
+        let mut s = Sampler::new(params(1.0, 0.8, Some(9)));
+        assert!((0..200).all(|_| s.sample_masked(&logits, Some(&mask)) == 2));
     }
 
     #[test]

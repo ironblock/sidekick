@@ -4481,6 +4481,16 @@ registry reports the process's measured ANE total and warns past
 from other apps' use of the ANE are counted and reported, since the daemon
 can't prevent them.
 
+*Amended by #186 (October 2026):* llguidance's mask is computed after each
+call on the decoder thread, not concurrently with the next. Over the chat
+benchmark's extraction answers on MiniCPM5-2B's tokenizer a mask took 9 µs
+on average and 236 µs at most, against a 53 ms call, and handing it to a
+helper thread costs 41 µs, more than it would hide. Guided output allows no
+whitespace between JSON tokens, so an open model's guided reply is compact
+JSON in schema order, as `apple-fm`'s is, rather than whitespace bounded by
+a pattern (docs/design/open-llm.md, "Constrained decoding on the open
+path").
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via

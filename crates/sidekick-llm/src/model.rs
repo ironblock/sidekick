@@ -5,6 +5,7 @@
 use crate::decoder::{DecoderProbe, DecoderStatus};
 use crate::engine::{DecoderLoader, Engine, Work};
 use crate::generate::{Generated, Job};
+use crate::guided::{Guidance, Guide};
 use crate::lane::{ready, ChatLane, LanePermit, ReadyError};
 use crate::prompt::Prompter;
 use crate::sampler::SamplingParams;
@@ -26,6 +27,8 @@ pub struct OpenModelSpec {
     pub prompter: Arc<Prompter>,
     /// Tokens that end a reply.
     pub stop_token_ids: Vec<u32>,
+    /// The decoder's logits row's width (the manifest's `vocab_size`).
+    pub vocab_size: usize,
     /// The checkpoint's defaults for a request that omits them.
     pub sampling: SamplingSection,
     /// The model's programs' weights: its estimated share of the Neural
@@ -40,6 +43,8 @@ pub struct OpenModelSpec {
 pub struct OpenModel {
     spec: OpenModelSpec,
     stop_ids: Arc<[u32]>,
+    /// Constrained decoding for `json_schema` requests.
+    guidance: Arc<Guidance>,
     lane: Arc<ChatLane>,
     loader: DecoderLoader,
     request_timeout: Duration,
@@ -69,6 +74,11 @@ impl OpenModel {
     ) -> Self {
         Self {
             stop_ids: spec.stop_token_ids.clone().into(),
+            guidance: Arc::new(Guidance::new(
+                spec.prompter.tokenizer().clone(),
+                &spec.stop_token_ids,
+                spec.vocab_size,
+            )),
             spec,
             lane,
             loader,
@@ -101,21 +111,18 @@ impl OpenModel {
         *self.load_error.lock().unwrap_or_else(PoisonError::into_inner) = error;
     }
 
-    /// The prompt's token ids and how many tokens may follow them, rendered
-    /// and tokenized on a blocking thread: a 2 MiB body is milliseconds of
-    /// work.
-    async fn plan(&self, req: &ChatRequest) -> Result<(Vec<u32>, usize)> {
-        if req.schema.is_some() {
-            return Err(Error::InvalidRequest(format!(
-                "`{}` doesn't support response_format json_schema yet; ask for JSON in the prompt, or use \
-                 `apple-fm` for guided output",
-                self.spec.id
-            )));
-        }
+    /// The prompt's token ids, how many tokens may follow them, and a
+    /// guided request's grammar, made on a blocking thread: a 2 MiB body is
+    /// milliseconds of work, as is compiling a schema.
+    async fn plan(&self, req: &ChatRequest) -> Result<(Vec<u32>, usize, Option<Guide>)> {
         let (prompter, messages) = (self.spec.prompter.clone(), req.messages.clone());
-        let prompt = tokio::task::spawn_blocking(move || prompter.encode(&messages))
-            .await
-            .map_err(|e| Error::Other(format!("tokenizing task failed: {e}")))??;
+        let (guidance, schema) = (self.guidance.clone(), req.schema.clone());
+        let (prompt, guide) = tokio::task::spawn_blocking(move || -> Result<_> {
+            let guide = schema.map(|s| guidance.guide(&s)).transpose()?;
+            Ok((prompter.encode(&messages)?, guide))
+        })
+        .await
+        .map_err(|e| Error::Other(format!("tokenizing task failed: {e}")))??;
         let limit = self.spec.context_length;
         let n = prompt.len();
         let max = match req.max_tokens {
@@ -127,7 +134,7 @@ impl OpenModel {
         if n + max.max(1) > limit {
             return Err(Error::ContextOverflow { limit, actual: Some(n + max.max(1)) });
         }
-        Ok((prompt, max))
+        Ok((prompt, max, guide))
     }
 
     async fn run(&self, req: ChatRequest, sink: Option<DeltaSink>) -> Result<ChatResponse> {
@@ -135,7 +142,8 @@ impl OpenModel {
         if let Some(reason) = self.failed() {
             return Err(unavailable(&self.spec.id, &reason));
         }
-        let (prompt, max_tokens) = self.plan(&req).await?;
+        let (prompt, max_tokens, guide) = self.plan(&req).await?;
+        let constrained = guide.is_some();
         let sampling = SamplingParams {
             temperature: req.temperature.unwrap_or(self.spec.sampling.temperature),
             top_p: req.top_p.unwrap_or(self.spec.sampling.top_p),
@@ -195,7 +203,7 @@ impl OpenModel {
 
         let cancel = Arc::new(AtomicBool::new(false));
         let (reply, result) = oneshot::channel();
-        let job = Job { prompt, max_tokens, sampling, stop: req.stop, cancel: cancel.clone(), sink };
+        let job = Job { prompt, max_tokens, sampling, stop: req.stop, guide, cancel: cancel.clone(), sink };
         if !engine.submit(Work { job, reply }) {
             self.lane.forget(&self.spec.id);
             return Err(Error::Inference(format!("`{}`'s decoder thread is gone", self.spec.id)));
@@ -236,7 +244,7 @@ impl OpenModel {
                 cached_tokens: Some(0),
                 reasoning_tokens: None,
             },
-            constrained: false,
+            constrained,
         })
     }
 
@@ -315,14 +323,22 @@ fn unavailable(id: &str, reason: &str) -> Error {
 fn log(id: &str, g: &Generated) {
     let decoded = g.completion_tokens.saturating_sub(1);
     let rate = (decoded > 0 && !g.decode.is_zero()).then(|| decoded as f64 / g.decode.as_secs_f64());
+    let guided = g.guided.as_ref();
+    let mask_mean_us = guided.and_then(|s| (s.masks > 0).then(|| s.mask_total.as_micros() as u64 / u64::from(s.masks)));
     tracing::info!(
         model = %id,
         prompt_tokens = g.prompt_tokens,
         completion_tokens = g.completion_tokens,
+        calls = g.calls,
         first_token_ms = g.first_token.as_millis() as u64,
         decode_ms = g.decode.as_millis() as u64,
         tokens_per_sec = rate.map(|r| (r * 10.0).round() / 10.0),
         finish = ?g.finish,
+        guided = guided.is_some(),
+        forced = guided.map(|s| s.forced),
+        grammar_compiled = guided.map(|s| s.compiled),
+        mask_mean_us,
+        mask_max_us = guided.map(|s| s.mask_max.as_micros() as u64),
         "generated"
     );
 }
@@ -473,8 +489,8 @@ mod tests {
             self.prompt_len = tokens.len();
             Ok(self.call(0))
         }
-        fn step(&mut self, _token: u32, pos: usize) -> Result<&[f32]> {
-            let k = pos + 1 - self.prompt_len;
+        fn step(&mut self, tokens: &[u32], pos: usize) -> Result<&[f32]> {
+            let k = pos + tokens.len() - self.prompt_len;
             Ok(self.call(k))
         }
         fn probe(&self) -> Arc<dyn DecoderProbe> {
@@ -529,6 +545,7 @@ mod tests {
             context_length: 64,
             prompter: Arc::new(prompter()),
             stop_token_ids: vec![257, 259],
+            vocab_size: 300,
             sampling: SamplingSection { temperature: 0.0, top_p: 1.0 },
             estimated_ane_bytes: 1000,
             queue_depth: 4,
@@ -587,10 +604,10 @@ mod tests {
         assert!(matches!(err, Error::ContextOverflow { limit: 64, actual: Some(_) }), "{err}");
         let err = m.complete(ask(&"x".repeat(80), None)).await.unwrap_err();
         assert!(matches!(err, Error::ContextOverflow { limit: 64, .. }), "{err}");
-        // Guided output arrives with llguidance (#186).
+        // Guided output: an empty object's grammar forces all of it.
         let schema = sidekick_core::JsonSchema::parse(&serde_json::json!({"type": "object", "properties": {}})).unwrap();
-        let err = m.complete(ChatRequest { schema: Some(schema), ..ask("Hi", None) }).await.unwrap_err();
-        assert!(matches!(&err, Error::InvalidRequest(msg) if msg.contains("json_schema")), "{err}");
+        let r = m.complete(ChatRequest { schema: Some(schema), ..ask("Hi", None) }).await.unwrap();
+        assert_eq!((r.content.as_str(), r.finish, r.usage.completion_tokens, r.constrained), ("{}", FinishReason::Stop, 2, true));
     }
 
     #[tokio::test]
@@ -793,6 +810,7 @@ mod tests {
             context_length: 64,
             prompter: Arc::new(prompter()),
             stop_token_ids: vec![257],
+            vocab_size: 300,
             sampling: SamplingSection::default(),
             estimated_ane_bytes: 0,
             queue_depth: 4,
