@@ -819,7 +819,9 @@ def step_references(job):
     texts = fixture.teacher_forced
     for t in texts:
         t0 = time.time()
-        np.save(out / f"fp32_{t.name}.npy", hf(torch.tensor([t.ids])).logits[0, t.rows].float().numpy())
+        keep = torch.tensor(t.rows)          # only the graded rows: a 2,000-row logits tensor is 1 GB
+        lg = hf(torch.tensor([t.ids]), logits_to_keep=keep).logits[0].float().numpy()
+        np.save(out / f"fp32_{t.name}.npy", lg)
         print(f"fp32 {t.name}: {len(t.ids)} tokens, {len(t.rows)} graded, {time.time() - t0:.1f} s", flush=True)
     meta = {"texts": [t.name for t in texts], "rows": {t.name: t.rows for t in texts},
             "families": {t.name: t.family for t in texts}, "first_graded": FIRST_GRADED,
@@ -836,7 +838,8 @@ def step_references(job):
     for t in texts:
         t0 = time.time()
         try:
-            lg = fp16sim.run(hf, torch.tensor([t.ids])).logits[0, t.rows].float().numpy()
+            lg = fp16sim.run(hf, torch.tensor([t.ids]), logits_to_keep=torch.tensor(t.rows)).logits[0]
+            lg = lg.float().numpy()
         except fp16sim.Fp16Overflow as e:
             print(f"no fp16 ceiling: {e}", flush=True)
             meta["ceiling"] = str(e)
