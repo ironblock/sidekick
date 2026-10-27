@@ -11,10 +11,15 @@
 //! - `{"type": "tbench", "positions": [128, 1024], "reps": 20}`: one call's
 //!   time with all T tokens real, per position (median, p90);
 //! - `{"type": "greedy", "name": …, "ids": [...], "n": 96}`: the prompt in
-//!   T-token calls, then `n` greedy tokens, one per call;
-//! - `{"type": "trace", "name": …, "ids": [...]}`: teacher forcing, one token
-//!   per call from position 0; every call's logits row goes to
-//!   `<out prefix>_<name>.f32` (fp32, row-major);
+//!   T-token calls, then `n` greedy tokens, one per call; the prompt's last
+//!   logits row (the T-token path's) goes to `<out prefix>_<name>_prefill.f32`;
+//! - `{"type": "trace", "name": …, "ids": [...]}`: teacher forcing from
+//!   position 0, one token per call; every position's logits row goes to
+//!   `<out prefix>_<name>.f32` (fp32, row-major). `"rows": [...]` writes only
+//!   those positions' rows, in ascending order. `"calls": "tokens"` feeds the
+//!   text T tokens per call instead, as a prompt is fed, and reads each
+//!   position's row by rerunning its call with `sel` at it (a call rewrites
+//!   the same cache positions, so a rerun is idempotent);
 //! - `{"type": "gen", "name": …, "ids": [...], "n": 128}`: a served-style
 //!   generation, timed (time to first token, decode tokens per second);
 //! - `{"type": "fresh", "reps": 8}`: what a fresh KV state costs: the time
@@ -155,7 +160,13 @@ fn main() {
             "greedy" => {
                 let prompt = ids(task);
                 let n = task["n"].as_u64().unwrap() as usize;
-                let mut tokens = vec![argmax(decoder.prefill(&prompt, 0).expect("prefill"))];
+                let first = decoder.prefill(&prompt, 0).expect("prefill");
+                let mut file = std::fs::File::create(format!("{out}_{name}_prefill.f32"))
+                    .expect("prefill row file");
+                for v in first {
+                    file.write_all(&v.to_le_bytes()).unwrap();
+                }
+                let mut tokens = vec![argmax(first)];
                 let mut pos = prompt.len();
                 while tokens.len() < n {
                     tokens.push(argmax(
@@ -170,13 +181,42 @@ fn main() {
                 let path = format!("{out}_{name}.f32");
                 let mut file =
                     std::io::BufWriter::new(std::fs::File::create(&path).expect("trace file"));
-                for (pos, &tok) in tokens.iter().enumerate() {
-                    let row = decoder.step(&[tok], pos).expect("step");
+                let wanted: Option<std::collections::BTreeSet<usize>> = task.get("rows").map(|r| {
+                    r.as_array()
+                        .expect("rows")
+                        .iter()
+                        .map(|v| v.as_u64().unwrap() as usize)
+                        .collect()
+                });
+                let wanted = |pos: usize| wanted.as_ref().is_none_or(|w| w.contains(&pos));
+                let mut written = 0;
+                let mut write = |row: &[f32]| {
                     for v in row {
                         file.write_all(&v.to_le_bytes()).unwrap();
                     }
+                    written += 1;
+                };
+                if task["calls"].as_str() == Some("tokens") {
+                    for start in (0..tokens.len()).step_by(t_tokens) {
+                        let call = &tokens[start..(start + t_tokens).min(tokens.len())];
+                        let sels: Vec<usize> =
+                            (0..call.len()).filter(|&s| wanted(start + s)).collect();
+                        if sels.is_empty() {
+                            decoder.step(call, start).expect("call");
+                        }
+                        for sel in sels {
+                            write(decoder.step_select(call, start, sel).expect("call"));
+                        }
+                    }
+                } else {
+                    for (pos, &tok) in tokens.iter().enumerate() {
+                        let row = decoder.step(&[tok], pos).expect("step");
+                        if wanted(pos) {
+                            write(row);
+                        }
+                    }
                 }
-                r["rows"] = json!(tokens.len());
+                r["rows"] = json!(written);
                 r["vocab"] = json!(shape.vocab_size);
             }
             "gen" => {

@@ -21,10 +21,15 @@ revisions; the committed file, not this tool, is the fixture, and the
 converter records its sha256.
 
 `evaluation` writes evaluation.jsonl: the teacher-forced texts and greedy
-prompts the converter grades a build on, which are #173's (the spike that
-first graded MiniCPM5-2B on the ANE), so grades stay comparable with it:
-spans of this repository's files at EVAL_COMMIT, a run of numbers, and six
-chat prompts.
+prompts the converter grades a build on. Family "repository" is #173's set
+(the spike that first graded MiniCPM5-2B on the ANE), so grades stay
+comparable with it: 256-token spans of this repository's files at
+EVAL_COMMIT and a run of numbers, and six chat prompts. Family "prose"
+holds two texts of about 2,000 tokens, graded at every 8th position to the
+end of the cache: a held-out Wikipedia article as plain text, and another
+inside a chat request of the kind the route serves (a title, tags and a
+field to extract), each pinned to a revision. Neither article is in the
+calibration set or the chat benchmark.
 
 `tokens` writes <model id>.tokens.json: every document's token ids under the
 checkpoint's tokenizer.json (chats through its chat template, with the
@@ -122,6 +127,21 @@ EVAL_SPANS = [
     ("numbers", None, None), ("models_table", "docs/MODELS.md", 30000),
 ]
 EVAL_CHARS = 4000
+
+LONG_STRIDE = 8
+LONG_TOKENS = 2000
+"""The long texts' length: within the context of a 2,048-position cache
+(2,033 at T = 16), so their last positions are the cache's last."""
+
+EVAL_ARTICLES = [
+    # (id, article, characters, as a chat request?)
+    ("prose_lighthouse", "Lighthouse", 12000, False),
+    ("chat_suspension_bridge", "Suspension bridge", 9400, True),
+]
+EXTRACT_SYSTEM = ("You read articles and answer with one JSON object: "
+                  "{\"title\": string, \"tags\": [string], \"earliest_year\": integer or null}.")
+EXTRACT_USER = ("Give the article below a title of at most six words, two to four lowercase tags, and the earliest "
+                "year it mentions.\n\n{article}")
 GREEDY_PROMPTS = [
     "Explain in two sentences why a key-value cache speeds up autoregressive decoding.",
     "Write a Python function that returns the n-th Fibonacci number iteratively.",
@@ -196,6 +216,26 @@ def fetch_leads(titles):
     return out
 
 
+def fetch_article(title):
+    """(resolved title, revision id, plain text) of a whole article, with
+    section headings as plain lines."""
+    params = {"action": "query", "format": "json", "formatversion": "2", "redirects": "1",
+              "prop": "extracts|revisions", "explaintext": "1", "exsectionformat": "plain", "exlimit": "1",
+              "rvprop": "ids", "titles": title}
+    req = urllib.request.Request("https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(params),
+                                 headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        page = json.load(r)["query"]["pages"][0]
+    return page["title"], page["revisions"][0]["revid"], page["extract"].strip()
+
+
+def cut(text, chars):
+    """The text up to `chars` characters, ending at a paragraph."""
+    if len(text) <= chars:
+        return text
+    return text[:text.rfind("\n", 0, chars)].rstrip()
+
+
 def calibration(args):
     taken = benchmark_articles()
     clash = [t for t in WIKIPEDIA if normalize(t) in taken]
@@ -234,6 +274,9 @@ def calibration(args):
 
 
 def evaluation(args):
+    calibrated = {normalize(urllib.parse.parse_qs(urllib.parse.urlparse(e["source"]).query)["title"][0])
+                  for e in read_jsonl(CALIBRATION) if "wikipedia.org" in e["source"]}
+    taken = benchmark_articles()
     entries = []
     for name, path, start in EVAL_SPANS:
         if path is None:
@@ -242,8 +285,23 @@ def evaluation(args):
         else:
             text = git_show(EVAL_COMMIT, path)[start:start + EVAL_CHARS]
             source = f"sidekick repository at {EVAL_COMMIT}, {path}, characters {start}-{start + len(text)}"
-        entries.append({"id": name, "kind": "teacher-forced", "tokens": EVAL_TOKENS, "text": text, "source": source,
-                        "licence": "MIT"})
+        entries.append({"id": name, "kind": "teacher-forced", "family": "repository", "tokens": EVAL_TOKENS,
+                        "text": text, "source": source, "licence": "MIT"})
+    for name, article, chars, chat in EVAL_ARTICLES:
+        title, revid, text = fetch_article(article)
+        if normalize(title) in calibrated | taken:
+            raise SystemExit(f"{title}: the calibration set or the chat benchmark uses it")
+        url_title = urllib.parse.quote(title.replace(" ", "_"), safe="()_,'-")
+        entry = {"id": name, "kind": "teacher-forced", "family": "prose", "stride": LONG_STRIDE}
+        if chat:
+            entry["messages"] = [{"role": "system", "content": EXTRACT_SYSTEM},
+                                 {"role": "user", "content": EXTRACT_USER.format(article=cut(text, chars))}]
+        else:
+            entry.update(tokens=LONG_TOKENS, text=cut(text, chars))
+        entries.append({**entry, "source": f"https://en.wikipedia.org/w/index.php?title={url_title}&oldid={revid}",
+                        "licence": "CC-BY-SA-4.0",
+                        "attribution": f"Wikipedia contributors, \"{title}\", English Wikipedia (as plain text"
+                                       + (", inside a request written for sidekick" if chat else "") + ")"})
     for i, p in enumerate(GREEDY_PROMPTS, 1):
         entries.append({"id": f"greedy-{i}", "kind": "greedy", "messages": [{"role": "user", "content": p}],
                         "source": "authored (#173)", "licence": "MIT"})
