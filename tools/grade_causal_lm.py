@@ -57,6 +57,8 @@ def main():
                    help="the kv_decoder example binary, signed with a fixed identifier")
     p.add_argument("--timeout", type=float, default=2400.0, help="kill the run after this many seconds")
     p.add_argument("--speed", action="store_true", help="also time one call at three positions and a generation")
+    p.add_argument("--keep-rows", action="store_true",
+                   help="keep the logits rows the decoder wrote (<work>/ane/run_*.f32, about 0.5 MB a position)")
     args = p.parse_args()
     job = L.Job.load(args.work / "job.json")
     refs_dir = args.work / "references"
@@ -118,8 +120,9 @@ def main():
         min(r["cosine"] for r in prompt_rows), sum(r["top1"] for r in prompt_rows), len(prompt_rows)))
     print(f"greedy: {sum(s['identical'] for s in same)}/{len(same)} continuations identical to fp32")
     print(f"build grade: {final}" + ("" if report.get("stable", True) else " (the draws screened differently)"))
-    for f in out.glob("run_*.f32"):          # the rows are graded; they're large
-        f.unlink()
+    if not args.keep_rows:
+        for f in out.glob("run_*.f32"):      # the rows are graded; they're large
+            f.unlink()
 
 
 if __name__ == "__main__":
