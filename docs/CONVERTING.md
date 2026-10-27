@@ -575,31 +575,45 @@ a new model.
 
 - **Calibration** (`calibration.jsonl`, about 115,000 tokens for
   MiniCPM5-2B): spans of this repository's documents and code at a pinned
-  commit, conversations written for the fixture (both MIT), and the lead
-  sections of 149 Wikipedia articles, each pinned to a revision (CC BY-SA
-  4.0, attributed; THIRD_PARTY_NOTICES.md). Each document records its
-  source and licence.
+  commit (27 spans), 48 conversations written for the fixture (both MIT),
+  and the lead sections of 148 Wikipedia articles, each pinned to a
+  revision (CC BY-SA 4.0, attributed; THIRD_PARTY_NOTICES.md). Each
+  document records its source and licence.
 - **Disjoint from what is graded**, checked at every run: no parity-corpus
   text (`core.Calibration`), no run of 32 tokens shared with an evaluation
   text (shorter runs are shared link anchors and signatures, not passages),
-  and no Wikipedia article the chat benchmark draws on.
+  and no Wikipedia article the chat benchmark draws on. The evaluation's
+  articles are in neither.
 - **A draw** is what one conversion calibrates on: the documents in a
   seeded order (numpy's `default_rng(seed).permutation`), packed into
   sequences of exactly 2,048 tokens, each starting at a document, until
-  40,960 tokens. Draws 0 and 1 share about a third of their text.
-- **Evaluation** (`evaluation.jsonl`): #173's set, so grades stay
-  comparable with it: eight texts (this repository's prose, Rust and TOML,
-  a run of numbers), teacher-forced over their first 256 tokens and graded
-  on the logits at positions 127–255 (1,032 positions), and six chat
-  prompts whose greedy continuations are compared with fp32's.
+  40,960 tokens. The build's draw is seed 0. The stability draw (seed 1)
+  reads only documents draw 0 didn't, so the two share no text.
+- **Evaluation** (`evaluation.jsonl`), in two families, graded together and
+  reported apart:
+  - **repository**: #173's set, so grades stay comparable with it: eight
+    texts (this repository's prose, Rust and TOML, a run of numbers),
+    teacher-forced over their first 256 tokens and graded at positions
+    127–255 (1,032 positions);
+  - **prose**: two held-out Wikipedia articles of about 2,000 tokens, one
+    as plain text and one inside a chat request of the kind the route
+    serves (a title, tags and a year to extract), graded at every 8th
+    position from 127 to the end, so the cache's late positions are graded
+    too (470 positions);
+  - and six chat prompts whose greedy continuations are compared with
+    fp32's.
 
 ### Grading
 
 Every grade compares logits rows with the checkpoint's fp32 forward at the
 same positions: per position the cosine of the two rows, and whether their
-top-1 tokens agree. The PyTorch screen runs the quantised model in fp32;
-the ANE grade runs the installed build through `sidekick_coreml::KvDecoder`,
-one token per call (`tools/grade_causal_lm.py`).
+top-1 tokens agree. The PyTorch screen runs the quantised model in fp32.
+The ANE grade runs the installed build through `sidekick_coreml::KvDecoder`
+(`tools/grade_causal_lm.py`) along both of the runtime's paths: one token
+per call, as replies are generated, and T tokens per call, as prompts are
+fed, each graded position read with `sel` at it. The ANE grade is the worse
+of the two; each greedy prompt's T-token prompt row is also compared with
+fp32's last-position logits.
 
 | | A | B | C | D |
 |---|---|---|---|---|
@@ -608,7 +622,12 @@ one token per call (`tools/grade_causal_lm.py`).
 
 - **The grade is the worse of the two letters**, anchored on a percentile
   as D26 anchors classifiers on p99: #173 found the worst position moves
-  with the calibration draw while the first percentile holds.
+  with the calibration draw (in its PyTorch screen, 0.99934 with 40,960
+  calibration tokens and 0.99804 with 80,000) while the first percentile
+  moved far less
+  (0.99964 and 0.99963). The first percentile moves with the draw too:
+  MiniCPM5-2B's draws 0 and 1 screened at 0.99920 and 0.99965 on the
+  repository texts. A grade near a boundary is reported with its numbers.
 - **A wide flip caps it at C:** a position where the build's top-1 differs
   from fp32's and fp32 rates its own top token at least twice as likely as
   the runner-up (a log-probability margin of ln 2 or more), as a decision
@@ -617,35 +636,67 @@ one token per call (`tools/grade_causal_lm.py`).
   cosine and the ideal-fp16 ceiling (`fp16sim`) on the same positions:
   for MiniCPM5-2B, p1 0.99999, top-1 99.90%, worst 0.99998 (A).
 - **Non-finite logits are F.**
+- **Families:** every grade is also given per family, so a weak family
+  shows, but the letter is the pooled one.
 - **The stability check:** the converter also quantises with a second
-  calibration draw (seed 1), screened in PyTorch and never compiled. The
-  two draws' screens must grade alike; a grade that depends on the draw is
-  reported as the lower one.
+  calibration draw (seed 1, disjoint from draw 0), screened in PyTorch and
+  never compiled. The two draws' screens must grade alike; a grade that
+  depends on the draw is reported as the lower one.
 - **The screen gates compiling:** below the recipe's floor (B) nothing is
   compiled.
 - **Gates** before install: the rewrite gate (the rotated, rescaled model in
-  fp32 against the checkpoint, worst cosine at least 0.99999), no forbidden
-  op (the fused attention op, the native `silu`), each chunk's weights under
-  1 GiB, and every operation of every chunk on the ANE in its compute plan:
-  a decoder's state crashes off it.
+  fp32 against the checkpoint at every graded position, worst cosine at
+  least 0.99999), every projection and the head stored as palettes (the
+  palettizer skips a weight it can't store with only a warning), no
+  forbidden op (the fused attention op, the native `silu`), each chunk's
+  weights under 1 GiB, and every operation of every chunk on the ANE in
+  its compute plan: a decoder's state crashes off it.
+
+### The work directory and the install
+
+Every intermediate in `--work` records the inputs it was made from (the
+checkpoint's revision and config, the fixtures' and the tokenizer's
+sha256, the manifest, the recipe, the library versions) in a
+`<name>.key.json` beside it, and is reused only when they match: a changed
+evaluation set recomputes the references and screens and nothing else, a
+changed calibration set the ranges, GPTQ and everything after. Staged
+programs live in `stage-<draw>/`, so one draw's programs are never
+installed as another's.
+
+The install is assembled in a sibling directory (`.<id>.installing`) and
+renamed into place, so a failed run never leaves new programs beside an
+old manifest; the daemon serves from these directories. A chunk whose
+installed bytes equal the staged ones is moved across rather than copied,
+which keeps its compiled ANE program valid (below).
 
 ### The ANE cache
 
 Each compile of a build for the ANE leaves about a copy of its weights in a
 system cache that can't be deleted (docs/design/coreml-cache.md): about
-2.2 GB for MiniCPM5-2B. A build costs two: the compute-plan gate's read of
-each chunk (`--no-plan` skips it) and the first load by the grader. Screen
-recipe changes in PyTorch first, keep the build at one path, and run the
-grader from one `kv_decoder` binary signed with a fixed identifier
-(`codesign -s - -f -i <identifier>`), which a rebuild of the example then
-reuses.
+2.2 GB for MiniCPM5-2B. The cache is keyed by the program's path and file
+identity and by the loading binary's code signature, so:
+- **The compute-plan gate** compiles each chunk once per new program: it
+  reads the plan of the staged program and records it in `<work>/plans/`
+  under a hash of the program's `model.mil` and weights, and a rerun that
+  produces the same bytes reads the record instead (`--no-plan` skips the
+  gate altogether).
+- **The grader's first load** compiles the installed chunks once; it
+  compiles again only when an installed chunk is replaced by different
+  bytes, moved to another path, or loaded by a binary with another
+  signature. Reinstalling unchanged programs keeps them (above).
+- So a new build costs two compiles, and a rerun that changes no program
+  costs none. Screen recipe changes in PyTorch first, keep the build at one
+  path, and run the grader from one `kv_decoder` binary signed with a
+  fixed identifier (`codesign -s - -f -i <identifier>`), which a rebuild of
+  the example then reuses.
 
 ### Reproducing a build
 
 The `[build]` table records everything a rerun needs: the rotation seed,
 the calibration set's sha256, its token count and the draw's seed, the
 palettes' group and k-means seed, GPTQ's order, damping and thread count,
-the residual scale and the head split. K-means runs single-threaded, GPTQ
+the residual scale, the head split, and the versions of torch,
+transformers, scikit-learn, coremltools, numpy and safetensors. K-means runs single-threaded, GPTQ
 in float64 in a fixed order, and every step at the recorded torch thread
 count, so a rerun into a fresh work directory on the same machine and
 library versions gives the same program bytes (`model.mil`,
