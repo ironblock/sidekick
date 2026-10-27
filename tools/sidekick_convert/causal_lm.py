@@ -128,6 +128,7 @@ class Recipe:
     stability_seed: int = 1          # None: no stability draw
     tokens: int = 40960              # calibration tokens per draw
     sequence: int = 2048             # tokens per calibration sequence
+    chat_sequences: int = 8          # of a draw's sequences, how many are long chat requests (draw())
     K: int = None                    # the residual scale; None: calibrated
     palette_group: int = 16
     palette_seed: int = 0
@@ -203,7 +204,24 @@ class Tokens:
             raise TypeError(f"apply_chat_template returned {type(ids[0]).__name__}s, not token ids")
         return ids
 
+    SENTINEL = "\u2063SIDEKICK-DOCUMENTS\u2063"
+
+    def frame(self, e):
+        """A request frame's token ids around the documents a draw puts in
+        it: (prefix, tail). The prefix is the template's rendering up to the
+        end of the instruction and a blank line, where the documents go;
+        the tail closes the user turn and opens the assistant's, as a
+        served request ends."""
+        messages = [dict(m) for m in e["messages"]]
+        messages[-1]["content"] += "\n\n" + self.SENTINEL
+        text = self.hf.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
+                                           **self.template_kwargs)
+        head, tail = text.split(self.SENTINEL)
+        return {"prefix": self.text(head), "tail": self.text(tail)}
+
     def encode_entry(self, e):
+        if e.get("kind") == "frame":
+            return self.frame(e)
         if "messages" in e:
             return self.chat(e["messages"], e["messages"][-1]["role"] == "user")
         ids = self.text(e["text"])
@@ -242,6 +260,16 @@ class Fixture:
     ids: dict                  # {"calibration": {id: ids}, "evaluation": {id: ids}}
     calibration_sha256: str
     tokens_file: Path
+
+    @property
+    def documents(self):
+        """The calibration entries a draw packs (every kind but frames)."""
+        return [e for e in self.calibration if e["kind"] != "frame"]
+
+    @property
+    def frames(self):
+        """The request frames, as {"prefix": ids, "tail": ids}, in fixture order."""
+        return [self.ids["calibration"][e["id"]] for e in self.calibration if e["kind"] == "frame"]
 
     @property
     def teacher_forced(self):
@@ -301,7 +329,10 @@ def load_fixture(src, model_id, tokens=None, report=print):
     graded = set()
     for _, ids in [(e["id"], rec["evaluation"][e["id"]]) for e in ev]:
         graded |= ngrams(ids)
-    shared = [e["id"] for e in cal if ngrams(rec["calibration"][e["id"]]) & graded]
+    def calibration_ids(e):
+        ids = rec["calibration"][e["id"]]
+        return ids["prefix"] + ids["tail"] if e["kind"] == "frame" else ids
+    shared = [e["id"] for e in cal if ngrams(calibration_ids(e)) & graded]
     if shared:
         raise core.GateFailure(f"calibration documents share {SHARED_RUN}-token runs with the evaluation set: "
                                f"{shared[:5]}")
@@ -314,36 +345,67 @@ def load_fixture(src, model_id, tokens=None, report=print):
     clash = [e["id"] for e in ev if wikipedia_title(e["source"]) in bench | calibrated]
     if clash:
         raise core.GateFailure(f"evaluation articles the calibration or the chat benchmark uses: {clash}")
-    n = sum(map(len, rec["calibration"].values()))
-    report(f"fixture: {len(cal)} calibration documents ({n} tokens), {len(ev)} evaluation entries; disjoint")
+    docs = [e for e in cal if e["kind"] != "frame"]
+    n = sum(len(rec["calibration"][e["id"]]) for e in docs)
+    report(f"fixture: {len(docs)} calibration documents ({n} tokens), {len(cal) - len(docs)} request frames, "
+           f"{len(ev)} evaluation entries; disjoint")
     return Fixture(cal, ev, {"calibration": rec["calibration"], "evaluation": rec["evaluation"]},
                    rec["calibration_sha256"], path)
 
 
-def draw(fixture, seed, tokens, sequence, separator, exclude=frozenset()):
+def framed(n, k):
+    """Which of n sequences are chat requests: k of them, spread evenly."""
+    if not 0 <= k <= n:
+        raise ValueError(f"{k} chat sequences of {n}")
+    return sorted({i * n // k for i in range(k)}) if k else []
+
+
+def draw(fixture, seed, tokens, sequence, separator, exclude=frozenset(), chat_sequences=0):
     """A calibration draw: the documents in a seeded order (numpy's
     default_rng(seed).permutation), less those in `exclude`, packed into
-    sequences of exactly `sequence` tokens, each starting at a document:
-    documents are appended, `separator` between them, until the sequence is
-    full, and the rest of the last one is dropped. Returns `tokens /
-    sequence` sequences and the ids of the documents they read."""
+    `tokens / sequence` sequences of exactly `sequence` tokens, each
+    starting at a document: documents are appended, `separator` between
+    them, until the sequence is full, and the rest of the last one is
+    dropped.
+
+    `chat_sequences` of them (framed(), spread evenly) are long chat
+    requests instead: a request frame's prefix (a system prompt and an
+    instruction, in the chat template), then the draw's next documents up
+    to the length that leaves room for the frame's tail, which closes the
+    user turn and opens the assistant's. Frames are taken in a seeded order
+    (default_rng([seed, 1])), and a chat-request document is never put
+    inside one: it waits for the next plain sequence. Returns the sequences
+    and the ids of the documents they read."""
     if tokens % sequence:
         raise ValueError(f"{tokens} calibration tokens aren't a whole number of {sequence}-token sequences")
-    names = [e["id"] for e in fixture.calibration]
-    order = np.random.default_rng(seed).permutation(len(names))
-    out, cur, used = [], [], set()
-    for j in order:
-        if names[j] in exclude:
-            continue
-        cur = cur + (separator if cur else []) + fixture.ids["calibration"][names[j]]
-        used.add(names[j])
-        if len(cur) >= sequence:
-            out.append(cur[:sequence])
-            cur = []
-            if len(out) == tokens // sequence:
-                return out, used
-    raise ValueError(f"the fixture holds too few tokens for {tokens // sequence} sequences of {sequence}"
-                     + (f" outside the {len(exclude)} documents excluded" if exclude else ""))
+    docs = fixture.documents
+    kind = {e["id"]: e["kind"] for e in docs}
+    names = [e["id"] for e in docs]
+    pending = [names[j] for j in np.random.default_rng(seed).permutation(len(names)) if names[j] not in exclude]
+    n = tokens // sequence
+    chat = set(framed(n, chat_sequences))
+    frames = fixture.frames
+    if chat and not frames:
+        raise ValueError("chat sequences asked for, and the fixture has no request frames")
+    frame_order = list(np.random.default_rng([seed, 1]).permutation(len(frames))) if frames else []
+    out, used = [], set()
+    for i in range(n):
+        frame = frames[frame_order[len([c for c in chat if c < i]) % len(frames)]] if i in chat else None
+        budget = sequence - (len(frame["prefix"]) + len(frame["tail"]) if frame else 0)
+        body, kept = [], []
+        while len(body) < budget:
+            if not pending:
+                raise ValueError(f"the fixture holds too few tokens for {n} sequences of {sequence}"
+                                 + (f" outside the {len(exclude)} documents excluded" if exclude else ""))
+            d = pending.pop(0)
+            if frame and kind[d] == "chat":
+                kept.append(d)
+                continue
+            body = body + (separator if body else []) + fixture.ids["calibration"][d]
+            used.add(d)
+        pending = kept + pending
+        out.append(frame["prefix"] + body[:budget] + frame["tail"] if frame else body[:sequence])
+    return out, used
 
 
 def job_draw(job, fixture, seed):
@@ -351,9 +413,9 @@ def job_draw(job, fixture, seed):
     stability draw, which reads only documents the build's draw didn't."""
     r, sep = job.recipe, _separator(job)
     if seed == r.draw_seed:
-        return draw(fixture, seed, r.tokens, r.sequence, sep)[0]
-    _, used = draw(fixture, r.draw_seed, r.tokens, r.sequence, sep)
-    return draw(fixture, seed, r.tokens, r.sequence, sep, exclude=used)[0]
+        return draw(fixture, seed, r.tokens, r.sequence, sep, chat_sequences=r.chat_sequences)[0]
+    _, used = draw(fixture, r.draw_seed, r.tokens, r.sequence, sep, chat_sequences=r.chat_sequences)
+    return draw(fixture, seed, r.tokens, r.sequence, sep, exclude=used, chat_sequences=r.chat_sequences)[0]
 
 
 # ---------------------------------------------------------------- manifest
@@ -420,7 +482,8 @@ def build_toml(job, ranges, fixture, placement=None):
              f"gptq = {{ act_order = {str(r.act_order).lower()}, damp = {r.damp}, threads = {r.threads} }}",
              f"rotation = {{ r1 = true, r2 = {str(r.r2).lower()}, seed = {r.rotation_seed} }}",
              f'calibration = {{ set = "{CALIBRATION.relative_to(REPO)}", sha256 = "{fixture.calibration_sha256}", '
-             f"tokens = {r.tokens}, sequence = {r.sequence}, seed = {r.draw_seed} }}",
+             f"tokens = {r.tokens}, sequence = {r.sequence}, chat_sequences = {r.chat_sequences}, "
+             f"seed = {r.draw_seed} }}",
              f"residual_scale = {ranges['K']}",
              f"head_split = {r.head_split}",
              f"fp16_projections = [{fp16}]",
@@ -475,7 +538,10 @@ def grade(got, refs, families=None):
     top-1 token agrees. The letter is the worse of the first-percentile
     cosine's (on the parity suite's cosine scale) and top-1 agreement's
     (TOP1), capped at C by any flip where fp32's top-two margin is at least
-    WIDE_MARGIN. The worst position is reported, not graded. With
+    WIDE_MARGIN. The worst position is reported, not graded, and so is
+    KL(fp32 || got) per position (mean, p99, max), which weighs the tokens
+    a sampler would pick where the logits' cosine weighs the whole
+    vocabulary alike (they rank positions very differently). With
     `families` ({text: family}), each family is also graded on its own
     texts, under "families"."""
     g = _grade(got, refs)
@@ -489,7 +555,7 @@ def grade(got, refs, families=None):
 
 
 def _grade(got, refs):
-    cos, agree, flips, texts = [], [], [], {}
+    cos, agree, flips, texts, kls = [], [], [], {}, []
     for name in refs:
         a = np.asarray(got[name], dtype=np.float64)
         b = np.asarray(refs[name], dtype=np.float64)
@@ -499,6 +565,9 @@ def _grade(got, refs):
         c = (a * b).sum(1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1))
         c[~finite] = np.nan
         t = a.argmax(1) == b.argmax(1)
+        lb = b - np.logaddexp.reduce(b, axis=1, keepdims=True)
+        la = a - np.logaddexp.reduce(a, axis=1, keepdims=True)
+        kls += (np.exp(lb) * (lb - la)).sum(1).tolist()
         margin = softmax_margin(b)
         for j in np.nonzero(~t)[0]:
             flips.append({"text": name, "row": int(j), "fp32_margin": float(margin[j])})
@@ -517,13 +586,15 @@ def _grade(got, refs):
     return {"positions": len(c), "top1": round(top1, 6), "cos_mean": float(np.nanmean(c)),
             "cos_p1": p1, "cos_min": float(np.min(c)) if not nonfinite else float("nan"),
             "grade": g, "grade_cos_p1": by_cos, "grade_top1": by_top1, "wide_flips": len(wide),
+            "kl_mean": float(np.mean(kls)), "kl_p99": float(np.percentile(kls, 99)), "kl_max": float(np.max(kls)),
             "flips": flips, "texts": texts}
 
 
 def describe(g):
     return (f"grade {g['grade']} (p1 cosine {g['cos_p1']:.5f} {g['grade_cos_p1']}, top-1 {g['top1']:.2%} "
             f"{g['grade_top1']}, {g['wide_flips']} wide flips); mean {g['cos_mean']:.6f}, worst {g['cos_min']:.5f} "
-            f"over {g['positions']} positions")
+            f"over {g['positions']} positions; KL mean {g['kl_mean']:.2e}, p99 {g['kl_p99']:.2e}, "
+            f"max {g['kl_max']:.3f}")
 
 
 def load_refs(job, kind="fp32"):
@@ -577,6 +648,7 @@ def keys(job, seed=None):
     if seed is not None:
         draw_key = {**rotation, "calibration_sha256": i["calibration_sha256"],
                     "tokenizer_sha256": i["tokenizer_sha256"], "tokens": r.tokens, "sequence": r.sequence,
+                    "chat_sequences": r.chat_sequences,
                     "seed": seed, "K": r.K, "disjoint_from": None if seed == r.draw_seed else r.draw_seed}
         out["ranges"] = draw_key
         out["gptq"] = {**draw_key, "palette_group": r.palette_group, "palette_seed": r.palette_seed,

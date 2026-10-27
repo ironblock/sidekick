@@ -15,7 +15,12 @@ calibration see, one document per line, each with its source and licence:
   (CC BY-SA 4.0, attributed to the article's contributors). No article the
   chat benchmark draws on (fixtures/tasks/chat/) is allowed;
 - `chat`: conversations written for this fixture (MIT), kept from the
-  existing file: they are authored here, not generated.
+  existing file: they are authored here, not generated;
+- `frame`: request frames written for this fixture (MIT), kept from the
+  existing file: a system prompt (or none) and an instruction, which a
+  calibration draw fills with its own documents to make a long chat
+  request (sidekick_convert.causal_lm.draw). Their wording is unlike the
+  evaluation's request.
 Fetching reads each article's current revision, so a rebuild picks up newer
 revisions; the committed file, not this tool, is the fixture, and the
 converter records its sha256.
@@ -33,7 +38,8 @@ calibration set or the chat benchmark.
 
 `tokens` writes <model id>.tokens.json: every document's token ids under the
 checkpoint's tokenizer.json (chats through its chat template, with the
-template arguments the model is served with), and the sha256 of the two
+template arguments the model is served with; a frame as the ids before and
+after the documents it will hold), and the sha256 of the two
 text files and of the tokenizer. The converter re-encodes and refuses a
 mismatch, so a changed tokenizer or text can't go unnoticed.
 
@@ -265,7 +271,7 @@ def calibration(args):
                         "licence": "CC-BY-SA-4.0",
                         "attribution": f"Wikipedia contributors, \"{title}\", English Wikipedia (lead section, "
                                        "as plain text)"})
-    chats = [e for e in read_jsonl(args.chats or CALIBRATION) if e["kind"] == "chat"] if (
+    chats = [e for e in read_jsonl(args.chats or CALIBRATION) if e["kind"] in ("chat", "frame")] if (
         args.chats or CALIBRATION.exists()) else []
     if not chats:
         raise SystemExit("no chat entries: pass --chats <jsonl> the first time")
@@ -337,8 +343,9 @@ def tokens(args):
             else:
                 f.write(f" {json.dumps(k)}: {json.dumps(v)}" + ("," if k != keys[-1] else "") + "\n")
         f.write("}\n")
-    n = sum(map(len, out["calibration"].values()))
-    print(f"wrote {path.relative_to(REPO)}: calibration {n} tokens in {len(out['calibration'])} documents")
+    docs = [v for v in out["calibration"].values() if isinstance(v, list)]
+    print(f"wrote {path.relative_to(REPO)}: calibration {sum(map(len, docs))} tokens in {len(docs)} documents "
+          f"and {len(out['calibration']) - len(docs)} request frames")
 
 
 def main():

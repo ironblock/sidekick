@@ -207,9 +207,12 @@ class Gptq(unittest.TestCase):
 
 
 class Draws(unittest.TestCase):
-    def fixture(self, lengths):
-        cal = [{"id": f"d{i}"} for i in range(len(lengths))]
+    def fixture(self, lengths, chats=(), frames=0):
+        cal = [{"id": f"d{i}", "kind": "chat" if i in chats else "wikipedia"} for i in range(len(lengths))]
         ids = {f"d{i}": [1000 * (i + 1) + j for j in range(n)] for i, n in enumerate(lengths)}
+        for f in range(frames):
+            cal.append({"id": f"f{f}", "kind": "frame"})
+            ids[f"f{f}"] = {"prefix": [-10 - f, -20], "tail": [-30, -31]}
         return L.Fixture(cal, [], {"calibration": ids, "evaluation": {}}, "", Path("."))
 
     def test_draws_are_seeded_full_and_start_at_documents(self):
@@ -225,8 +228,8 @@ class Draws(unittest.TestCase):
 
     def test_the_stability_draw_reads_only_documents_the_build_draw_did_not(self):
         fx = self.fixture([30, 7, 12, 50, 9, 3, 40, 22, 18, 5, 33, 41, 26, 17, 60, 8])
-        job = L.Job(model_id="m", src=".", work=".", recipe=L.Recipe(tokens=64, sequence=16, draw_seed=0,
-                                                                      stability_seed=1))
+        job = L.Job(model_id="m", src=".", work=".",
+                    recipe=L.Recipe(tokens=64, sequence=16, chat_sequences=0, draw_seed=0, stability_seed=1))
         saved = L._separator
         L._separator = lambda job: [-1]
         try:
@@ -239,6 +242,30 @@ class Draws(unittest.TestCase):
         owner = {t: d for d, ids in fx.ids["calibration"].items() for t in ids}
         read = {owner[t] for s in second for t in s if t != -1}
         self.assertFalse(read & used0)
+
+    def test_chat_sequences_are_framed_requests_of_the_draws_own_documents(self):
+        lengths = [30, 7, 12, 50, 9, 3, 40, 22, 18, 5, 33, 41, 26, 17, 60, 8, 25, 31]
+        fx = self.fixture(lengths, chats={2, 5, 9}, frames=3)
+        self.assertEqual(L.framed(20, 8), [0, 2, 5, 7, 10, 12, 15, 17])
+        self.assertEqual(L.framed(5, 0), [])
+        seqs, used = L.draw(fx, 0, 96, 16, [-1], chat_sequences=3)
+        self.assertEqual(seqs, L.draw(fx, 0, 96, 16, [-1], chat_sequences=3)[0])
+        owner = {t: d for d, ids in fx.ids["calibration"].items() if isinstance(ids, list) for t in ids}
+        for i, seq in enumerate(seqs):
+            self.assertEqual(len(seq), 16)
+            inside = {owner[t] for t in seq if t in owner}
+            self.assertLessEqual(inside, used)
+            if i in L.framed(6, 3):
+                self.assertIn(seq[0], (-10, -11, -12))
+                self.assertEqual(seq[1], -20)
+                self.assertEqual(seq[-2:], [-30, -31])
+                self.assertFalse(inside & {"d2", "d5", "d9"})     # no chat inside a request
+            else:
+                self.assertNotEqual(seq[-2:], [-30, -31])
+        plain = L.draw(fx, 0, 96, 16, [-1])[0]
+        self.assertNotEqual(plain, seqs)
+        with self.assertRaises(ValueError):
+            L.draw(self.fixture(lengths), 0, 96, 16, [-1], chat_sequences=3)     # no frames
 
     def test_a_draw_too_large_for_the_fixture_fails(self):
         with self.assertRaises(ValueError):
@@ -281,6 +308,18 @@ class Grading(unittest.TestCase):
         got = ref.copy()
         got[0, 4] = 5.5
         self.assertEqual(L.grade({"t": got}, {"t": ref})["wide_flips"], 1)
+
+    def test_kl_is_reported_beside_cosine(self):
+        ref = self.rows()
+        g = L.grade({"t": ref}, {"t": ref})
+        self.assertLess(g["kl_max"], 1e-12)
+        got = ref.copy()
+        got[0] = got[0][::-1]                         # one position badly wrong
+        g = L.grade({"t": got}, {"t": ref})
+        lp = ref[0] - np.logaddexp.reduce(ref[0])
+        lq = got[0] - np.logaddexp.reduce(got[0])
+        self.assertAlmostEqual(g["kl_max"], float((np.exp(lp) * (lp - lq)).sum()), places=9)
+        self.assertAlmostEqual(g["kl_mean"], g["kl_max"] / len(ref), places=9)
 
     def test_families_are_graded_on_their_own_texts(self):
         ref = {"a": self.rows(seed=0), "b": self.rows(seed=1)}
@@ -327,6 +366,8 @@ class WorkDirectory(unittest.TestCase):
         self.assertNotEqual(L.keys(job, 0)["gptq"], a["gptq"])
         self.assertNotEqual(L.keys(job, 1)["ranges"]["disjoint_from"], a["ranges"]["disjoint_from"])
         self.assertNotEqual(a["stage"], L.keys(job, 1)["stage"])
+        job.recipe.chat_sequences = 12
+        self.assertNotEqual(L.keys(job, 0)["gptq"]["chat_sequences"], a["gptq"]["chat_sequences"])
 
     def test_install_is_atomic_and_keeps_unchanged_programs(self):
         with tempfile.TemporaryDirectory() as d:
@@ -380,7 +421,8 @@ class Committed(unittest.TestCase):
             cal = {e["id"] for e in L.read_jsonl(L.CALIBRATION)}
             self.assertEqual(set(rec["calibration"]), cal)
             for ids in list(rec["calibration"].values()) + list(rec["evaluation"].values()):
-                self.assertTrue(ids and all(isinstance(i, int) for i in ids))
+                for part in (ids.values() if isinstance(ids, dict) else [ids]):     # a frame: prefix and tail
+                    self.assertTrue(part and all(isinstance(i, int) for i in part))
 
     def test_every_document_records_its_source_and_licence(self):
         for e in L.read_jsonl(L.CALIBRATION) + L.read_jsonl(L.EVALUATION):
@@ -410,6 +452,7 @@ class Committed(unittest.TestCase):
         self.assertEqual(m["build"]["residual_scale"], 2)
         self.assertEqual(m["build"]["fp16_projections"], ["7.down"])
         self.assertEqual(m["build"]["calibration"]["tokens"], 40960)
+        self.assertEqual(m["build"]["calibration"]["chat_sequences"], 8)
         self.assertEqual(m["placement"]["chunks"]["0"]["ane"], 10)
         self.assertEqual(m["build"]["versions"]["coremltools"], "9.0")
 

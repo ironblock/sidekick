@@ -50,7 +50,9 @@ def main():
     p.add_argument("--no-stability", action="store_true", help="skip the second draw")
     p.add_argument("--tokens", type=int, default=None,
                    help="calibration tokens per draw, a multiple of 2,048 (default: the recipe's); a recipe "
-                        "variant, so give it its own --work and screen it first (--screen-only)")
+                        "variant: screen it first (--screen-only)")
+    p.add_argument("--chat-sequences", type=int, default=None,
+                   help="of each draw's sequences, how many are long chat requests (default: the recipe's)")
     p.add_argument("--screen-only", action="store_true", help="stop after the PyTorch screen: compile nothing")
     p.add_argument("--no-plan", action="store_true",
                    help="skip the compute-plan gate (no ANE compile); for a rebuild compared byte for byte")
@@ -61,6 +63,7 @@ def main():
     model_id = args.install_dir.name
     job = recipes.causal_lm(model_id=model_id, src=args.src, work=args.work, draw=args.draw,
                             stability_draw=-1 if args.no_stability else args.stability_draw, tokens=args.tokens,
+                            chat_sequences=args.chat_sequences,
                             plan=not args.no_plan, screen_only=args.screen_only, keep_packages=args.keep_packages)
     run(job, args.install_dir)
 

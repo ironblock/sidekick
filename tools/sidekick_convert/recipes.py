@@ -130,14 +130,14 @@ CAUSAL_LM = {
     "minicpm5-2b": {},
 }
 """Per-model departures from causal_lm.Recipe's defaults. MiniCPM5-2B takes
-the defaults, which are #173's grade-B recipe: R1 and R2 rotations, GPTQ
-with act-order onto 8-bit palettes per 16 output channels, 40,960
-calibration tokens in 2,048-token sequences, the head as four
+the defaults: R1 and R2 rotations, GPTQ with act-order onto 8-bit
+palettes per 16 output channels, 40,960 calibration tokens in 2,048-token
+sequences of which 8 are long chat requests, the head as four
 convolutions, and no projection left in fp16."""
 
 
-def causal_lm(*, model_id, src, work, draw=None, stability_draw=None, tokens=None, plan=True,
-              screen_only=False, keep_packages=False):
+def causal_lm(*, model_id, src, work, draw=None, stability_draw=None, tokens=None, chat_sequences=None,
+              plan=True, screen_only=False, keep_packages=False):
     """A causal-LM job (causal_lm.run); installs examples/chat/<model_id>/chat.toml
     with its [build] table. `stability_draw` -1 skips the second draw."""
     from .causal_lm import Job, Recipe, manifest_path
@@ -148,6 +148,8 @@ def causal_lm(*, model_id, src, work, draw=None, stability_draw=None, tokens=Non
         recipe.draw_seed = draw
     if tokens is not None:
         recipe.tokens = tokens
+    if chat_sequences is not None:
+        recipe.chat_sequences = chat_sequences
     if stability_draw is not None:
         recipe.stability_seed = None if stability_draw < 0 else stability_draw
     if recipe.stability_seed == recipe.draw_seed:
