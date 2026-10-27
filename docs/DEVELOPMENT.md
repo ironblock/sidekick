@@ -72,6 +72,11 @@ which SDK a binary was built with; after switching Xcode with
   a fixed identifier after each build (`codesign -s - -f -i <identifier>`),
   or a large build's ANE compile is redone and stored again whenever the
   linker's identifier changes ([coreml-cache.md](design/coreml-cache.md#the-cache-key)).
+- `python3 tools/ane_budget_probe.py <scenario.json> <out.json>` times that
+  decoder's calls, phase by phase, while other Neural Engine work runs
+  beside it (a second decoder, sidekickd's ANE embedders, Foundation
+  Models), with each process's ANE footprint and the ANE compiles over the
+  run, under a memory and hang watchdog; its header documents the scenario.
 - `SIDEKICK_ANE_TESTS=1 cargo test -p sidekick-coreml --test kv_decoder`
   runs a small `kv-state-1` decoder, built by
   `tools/make_decoder_test_model.py`, on the Neural Engine. Without the

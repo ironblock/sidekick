@@ -4,6 +4,7 @@
 //! ```sh
 //! cargo run --release -p sidekick-coreml --example kv_decoder -- \
 //!     <model dir> <job.json> <out prefix> [--no-backings] [--hidden-input NAME] [--plan]
+//!     [--call-timeout SECONDS]
 //! ```
 //!
 //! The job is `{"tasks": [...]}`; each task's result goes into
@@ -26,13 +27,23 @@
 //!   to replace it, and a T-token call on it against one on a reused state;
 //! - `{"type": "soak", "calls": 10000, "every": 500}`: one-token calls at
 //!   cycling positions, sampling the process's physical and Neural Engine
-//!   footprints every `every` calls, with the decoder's stall count.
+//!   footprints every `every` calls, with the decoder's stall count;
+//! - `{"type": "loop", "name": …, "ids": [...], "n": 32, "seconds": 600,
+//!   "stop_file": …}`: back-to-back generations (the prompt in T-token
+//!   calls, then `n` greedy tokens) until `seconds` pass or `stop_file`
+//!   exists. Every call is appended to `<out prefix>_<name>_calls.tsv` as
+//!   it happens (the Unix time it ended in seconds, its milliseconds, and
+//!   `prefill` or `decode`), so the timings survive a killed run;
+//!   tools/ane_budget_probe.py reads them.
 //!
 //! `--no-backings` runs without output backings; `--hidden-input` names the
 //! residual stream's input for a build that predates the contract's
 //! `hidden_in` (#173's spike builds call it `hidden`). `--plan` first prints
 //! each chunk's compute plan under `cpu_and_ne`; reading a plan compiles the
 //! program again and keeps another copy of its weights in Core ML's cache.
+//! `--call-timeout` sets how long one prediction may run (60 s by default);
+//! past it the decoder fails and the process exits with status 4, since a
+//! hung ANE prediction can't be cancelled.
 //!
 //! An ANE compile of a large build adds about its weights again to a system
 //! cache that can't be deleted, and the cache key includes this binary's
@@ -66,8 +77,13 @@ fn main() {
             hidden_in: args.remove(i),
         };
     }
+    if let Some(i) = args.iter().position(|a| a == "--call-timeout") {
+        args.remove(i);
+        let secs: f64 = args.remove(i).parse().expect("--call-timeout SECONDS");
+        options.call_timeout = std::time::Duration::from_secs_f64(secs);
+    }
     let [dir, job, out] = <[String; 3]>::try_from(args)
-        .expect("usage: kv_decoder <model dir> <job.json> <out prefix> [--no-backings] [--hidden-input NAME] [--plan]");
+        .expect("usage: kv_decoder <model dir> <job.json> <out prefix> [--no-backings] [--hidden-input NAME] [--plan] [--call-timeout SECONDS]");
     let dir = PathBuf::from(dir);
     let job: Value =
         serde_json::from_str(&std::fs::read_to_string(&job).expect("job")).expect("job json");
@@ -113,6 +129,15 @@ fn main() {
     );
     let shape = decoder.shape().clone();
     let t_tokens = shape.tokens_per_call;
+    // A hung prediction blocks this thread for good: exit from another one.
+    let monitor = decoder.monitor();
+    std::thread::spawn(move || loop {
+        if let Some(reason) = monitor.failed() {
+            eprintln!("decoder failed: {reason}");
+            std::process::exit(4);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    });
 
     println!(
         "ANE share measured at load: {:?} bytes",
@@ -279,6 +304,57 @@ fn main() {
                 r["median_ms"] = json!(med);
                 r["p99_ms"] = json!(pct(&sorted, 0.99));
                 r["max_ms"] = json!(sorted.last());
+            }
+            "loop" => {
+                let prompt = ids(task);
+                let n = task["n"].as_u64().unwrap() as usize;
+                let seconds = task["seconds"].as_f64().unwrap_or(600.0);
+                let stop = task["stop_file"].as_str().map(PathBuf::from);
+                let mut calls = std::io::BufWriter::new(
+                    std::fs::File::create(format!("{out}_{name}_calls.tsv")).expect("calls file"),
+                );
+                // One line per call, flushed at once, so a killed run keeps
+                // every call before it.
+                let log =
+                    |calls: &mut std::io::BufWriter<std::fs::File>, t: Instant, kind: &str| {
+                        let elapsed = ms(t);
+                        let end = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs_f64();
+                        writeln!(calls, "{end:.4}\t{elapsed:.3}\t{kind}").unwrap();
+                        calls.flush().unwrap();
+                        elapsed
+                    };
+                let done = || {
+                    started.elapsed().as_secs_f64() >= seconds
+                        || stop.as_ref().is_some_and(|f| f.exists())
+                };
+                let mut decode = vec![];
+                let mut generations = 0;
+                while !done() {
+                    let mut tok = 0;
+                    for start in (0..prompt.len()).step_by(t_tokens) {
+                        let call = &prompt[start..(start + t_tokens).min(prompt.len())];
+                        let t = Instant::now();
+                        tok = argmax(decoder.step(call, start).expect("call"));
+                        log(&mut calls, t, "prefill");
+                    }
+                    for pos in prompt.len()..prompt.len() + n {
+                        if done() {
+                            break;
+                        }
+                        let t = Instant::now();
+                        tok = argmax(decoder.step(&[tok], pos).expect("step"));
+                        decode.push(log(&mut calls, t, "decode"));
+                    }
+                    generations += 1;
+                }
+                r["generations"] = json!(generations);
+                r["decode_calls"] = json!(decode.len());
+                if !decode.is_empty() {
+                    r["decode_median_ms"] = json!(median(&mut decode));
+                }
             }
             other => panic!("unknown task {other}"),
         }
