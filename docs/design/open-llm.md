@@ -587,7 +587,12 @@ options, such as required-but-nullable) is decided by measurement on the
 benchmark's extraction set, and changes only AFM's mapping. On the open
 path, the benchmark found llguidance made MiniCPM5-1B fill in fields the
 text doesn't state; whether the 2B does is measured before guided
-extraction is recommended on it.
+extraction is recommended on it. A first look (#186): on 24 of the
+extraction items (3 per schema), greedy, the 2B's guided replies held
+the same values as its prompt-only replies on every item, so guidance
+neither dropped nor invented fields there; both left out the same 13
+optional fields the text states. The full set, guided and prompt-only,
+is the release gate's to run.
 
 ### Constrained decoding on the open path
 
@@ -614,26 +619,36 @@ grammar allows; the sampler sets every other logit to −∞.
   each mask computed on another thread while the next ANE call ran. Over
   the chat benchmark's 80 extraction answers walked through MiniCPM5-2B's
   tokenizer (`cargo run -p sidekick-llm --example guided_masks`), a mask
-  took 9 µs on average (p50 3 µs, p99 42 µs, at most 236 µs), against a
-  call's 53 ms; handing it to a scoped thread and back costs 41 µs, more
-  than the mask. So the mask is computed after each call, on the decoder
-  thread. Each reply's log line carries its masks' maximum, so a schema
-  that makes them slow shows.
+  took 12 µs on average (p50 5 µs, p99 55 µs, at most 266 µs), against a
+  call's 53 ms; handing it to a scoped thread and back costs 27–41 µs,
+  more than the mask. Served end to end (#186's PR), a reply's masks
+  averaged 23–214 µs, and the slowest single mask was 8.5 ms, the first
+  of a newly compiled grammar. So the mask is computed after each call,
+  on the decoder thread. Each reply's log line carries its masks' maximum,
+  so a schema that makes them slow shows.
 - **Forced tokens are free.** Where the grammar allows exactly one
-  continuation (`{"name":"`, a closing brace), `compute_ff_tokens`
+  continuation (`{"name": "`, a closing brace), `compute_ff_tokens`
   returns it, and those tokens are fed in the same call as the sampled
   token before them, in slots that call would otherwise pad: a call costs
   about the same for 1 as for 16 tokens. A reply's forced opening follows
   the prompt in its calls, and a reply the grammar forces whole (a `const`)
-  needs no call. Over the extraction answers, 21% of the tokens were forced
-  and a reply took 1.30 tokens a call.
-- **No whitespace.** The grammar allows none between JSON tokens and uses
-  `,` and `:` as separators (`whitespace_flexible: false`), rather than
-  bounding whitespace with a pattern. The reply is then compact JSON with
-  its keys in schema order, as `apple-fm`'s re-serialized reply is
-  ([API.md](../API.md#structured-output), "Key order"), whether streamed
-  or not, and a model can't fill its budget with blank lines. Strings and
-  numbers are as the model writes them, within JSON's grammar.
+  needs no call. Over the extraction answers, 34% of the tokens were forced
+  and a reply took 1.57 tokens a call; served, guided replies decoded at
+  25–83 tokens/s against 18.5 unguided.
+- **One line, spelled as models write it.** The grammar allows no
+  whitespace between JSON tokens except in its separators, `, ` and `: `
+  (`whitespace_flexible: false`), rather than bounding whitespace with a
+  pattern. The reply is one line with its keys in schema order
+  ([API.md](../API.md#structured-output), "Key order"), the same bytes
+  streamed or not, and a model can't fill its budget with blank lines.
+  The separators are the ones MiniCPM5-2B writes unprompted. Compact `,`
+  and `:` split its usual tokens (`": "`), and it wrote
+  `{"name":", "}` for a signature from which, with spaces or unguided, it
+  extracts all five fields. llguidance's default, free whitespace, gave
+  the same values as the spaced separators on #186's requests, at
+  19–25 tokens/s against 25–83, since less of the reply is forced.
+  Strings and numbers are as the model writes them, within JSON's
+  grammar.
 - **The end.** When the JSON is complete and nothing may follow it, the
   reply ends with `finish_reason: "stop"` and no stop token is generated;
   where the JSON could go on (a number at the root), the stop tokens are

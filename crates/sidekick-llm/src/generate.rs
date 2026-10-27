@@ -4,7 +4,7 @@
 //!
 //! A guided request ([`Job::guide`]) samples each token from what its
 //! grammar allows. The mask is computed after each call, on this thread: it
-//! takes microseconds (9 µs on average and 236 µs at most over the chat
+//! takes microseconds (12 µs on average and 266 µs at most over the chat
 //! benchmark's extraction answers on MiniCPM5-2B's 130k vocabulary)
 //! against a call's 53 ms, less than handing it to another thread would
 //! cost. When the grammar allows exactly one continuation, those tokens are
@@ -512,7 +512,7 @@ pub(crate) mod tests {
         let (sink, seen) = collect();
         let (mut j, schema) = guided(record(), 100, Some(sink));
         let g = generate(&mut d, &p, &[257, 259], &mut j).unwrap();
-        let want = r#"{"name":"","n":1,"tags":["blue"]}"#;
+        let want = r#"{"name": "", "n": 1, "tags": ["blue"]}"#;
         assert_eq!((g.content.as_str(), g.finish), (want, FinishReason::Stop));
         assert_eq!(seen.lock().unwrap().concat(), want, "streamed as generated");
         assert_eq!(schema.validate(&serde_json::from_str(&g.content).unwrap()), Ok(()));
@@ -520,13 +520,15 @@ pub(crate) mod tests {
         // stop token.
         assert_eq!(g.completion_tokens, want.len());
         let stats = g.guided.unwrap();
-        assert_eq!(stats.forced as usize, r#"{"name":"|,"n":|"tags":[|lue"|"#.len() - 4);
+        // `{"name": "`, `, "n": ` after the closing quote, ` "tags": [`
+        // after the comma, `lue"` after `b`.
+        assert_eq!(stats.forced as usize, 10 + 7 + 10 + 4);
         // The forced opening follows the prompt; each sampled token then
         // shares its call with the tokens the grammar forces after it.
         let calls = d.calls.lock().unwrap().clone();
-        assert_eq!(&calls[0].1[4..], ids(r#"{"name":""#).as_slice());
+        assert_eq!(&calls[0].1[4..], ids(r#"{"name": ""#).as_slice());
         let fed: Vec<String> = calls[1..].iter().map(|(_, t)| p.decode(t).unwrap()).collect();
-        assert_eq!(fed, ["\",\"n\":", "1", ",\"tags\":[", "\"", "blue\"", "]"]);
+        assert_eq!(fed, [r#"", "n": "#, "1", r#", "tags": ["#, "\"", "blue\"", "]"]);
         assert_eq!(g.calls, 6);
         // Positions run on without a gap.
         let mut pos = calls[0].1.len();
@@ -542,7 +544,7 @@ pub(crate) mod tests {
         let g = generate(&mut d, &p, &[257, 259], &mut j).unwrap();
         assert_eq!(g.content, want);
         let sizes: Vec<usize> = d.calls.lock().unwrap()[1..].iter().map(|(_, t)| t.len()).collect();
-        assert_eq!(sizes, [4, 2, 1, 4, 4, 1, 1, 4, 1, 1]);
+        assert_eq!(sizes, [4, 4, 1, 4, 4, 3, 1, 4, 1, 1]);
     }
 
     #[test]
@@ -571,7 +573,7 @@ pub(crate) mod tests {
         let mut d = Preferring::new(&ids("a"));
         let (mut j, schema) = guided(record(), 12, None);
         let g = generate(&mut d, &p, &[257], &mut j).unwrap();
-        assert_eq!((g.content.as_str(), g.finish, g.completion_tokens), (r#"{"name":"aaa"#, FinishReason::Length, 12));
+        assert_eq!((g.content.as_str(), g.finish, g.completion_tokens), (r#"{"name": "aa"#, FinishReason::Length, 12));
         // Cut short, it isn't JSON: the client sees `length`.
         assert!(serde_json::from_str::<serde_json::Value>(&g.content).is_err());
         assert_eq!(schema.conform(&g.content), g.content);
@@ -621,7 +623,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn sampled_guided_replies_are_valid_compact_json_in_schema_order() {
+    fn sampled_guided_replies_are_valid_one_line_json_in_schema_order() {
         let p = prompter();
         let schema = serde_json::json!({
             "type": "object",
@@ -656,7 +658,7 @@ pub(crate) mod tests {
                 Err(e) => panic!("{e}: {}", g.content),
             };
             assert_eq!(parsed.validate(&value), Ok(()), "{}", g.content);
-            assert!(!g.content.contains([' ', '\n']) || value.to_string().contains([' ', '\n']), "compact: {}", g.content);
+            assert!(!g.content.contains('\n') || value.to_string().contains('\n'), "one line: {}", g.content);
             // Keys in schema order: re-serializing in that order changes
             // nothing but number spelling.
             let reordered: serde_json::Value = serde_json::from_str(&parsed.conform(&g.content)).unwrap();

@@ -303,7 +303,7 @@ async fn guided_output_is_valid_json_in_schema_order() {
     let (status, body) = call(state(4, Duration::ZERO), guided(record(), json!({}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let content = body["choices"][0]["message"]["content"].as_str().unwrap();
-    assert_eq!(content, r#"{"name":"","n":1,"tags":["blue"]}"#);
+    assert_eq!(content, r#"{"name": "", "n": 1, "tags": ["blue"]}"#);
     let schema = sidekick_core::JsonSchema::parse(&record()).unwrap();
     assert_eq!(schema.validate(&serde_json::from_str(content).unwrap()), Ok(()));
     assert_eq!((body["choices"][0]["finish_reason"].as_str(), body["constrained"].as_bool()), (Some("stop"), Some(true)));
@@ -313,7 +313,7 @@ async fn guided_output_is_valid_json_in_schema_order() {
     // Cut by max_tokens: `length`, and the JSON is incomplete.
     let (status, body) = call(state(4, Duration::ZERO), guided(record(), json!({"max_tokens": 10}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["choices"][0]["message"]["content"], r#"{"name":"""#);
+    assert_eq!(body["choices"][0]["message"]["content"], r#"{"name": ""#);
     assert_eq!((body["choices"][0]["finish_reason"].as_str(), body["constrained"].as_bool()), (Some("length"), Some(true)));
 }
 
@@ -330,7 +330,7 @@ async fn guided_output_streams_as_it_is_generated() {
     let chunks: Vec<Value> = data[..data.len() - 1].iter().map(|d| serde_json::from_str(d).unwrap()).collect();
     let deltas: Vec<&str> = chunks.iter().filter_map(|c| c["choices"][0]["delta"]["content"].as_str()).collect();
     assert!(deltas.len() > 5, "sent as generated, not whole: {deltas:?}");
-    assert_eq!(deltas.concat(), r#"{"name":"","n":1,"tags":["blue"]}"#);
+    assert_eq!(deltas.concat(), r#"{"name": "", "n": 1, "tags": ["blue"]}"#);
     let finish = &chunks[chunks.len() - 2];
     assert_eq!((finish["choices"][0]["finish_reason"].as_str(), finish["constrained"].as_bool()), (Some("stop"), Some(true)));
 }

@@ -11,11 +11,15 @@
 //!   Schema for llguidance: properties in the order sent, objects closed,
 //!   nullable properties as an `anyOf` with `null`, descriptions dropped
 //!   (the model sees only the prompt).
-//! - **Compact JSON.** The grammar allows no whitespace between tokens and
-//!   uses `,` and `:` as separators, so a guided reply is compact JSON with
-//!   its keys in schema order, as `apple-fm`'s is (docs/API.md, "Key
-//!   order"). A model can't spend its budget on blank lines, and more of
-//!   the reply is forced.
+//! - **One line of JSON, spelled as models write it.** The grammar allows
+//!   no whitespace between tokens except the separators `, ` and `: `
+//!   (Python's `json.dumps` spelling), so a guided reply is one line with
+//!   its keys in schema order, and identical requests at temperature 0
+//!   give identical bytes. Those separators are the ones a model writes
+//!   unprompted: compact `,` and `:` split its usual tokens (`": "`), and
+//!   MiniCPM5-2B then wrote `{"name":", "}` for a contact it extracts
+//!   correctly with spaces. A model can't spend its budget on blank lines,
+//!   and more of the reply is forced than with free whitespace.
 //! - **One tokenizer bridge per model** ([`Guidance`]): llguidance's token
 //!   trie, built from the model's `tokenizer.json` on its first guided
 //!   request, with the model's stop tokens as end-of-sequence tokens.
@@ -38,9 +42,10 @@ use std::time::{Duration, Instant};
 use tokenizers::Tokenizer;
 
 /// The options every guided grammar is compiled with: no whitespace
-/// between JSON tokens, and compact separators.
+/// between JSON tokens but the separators', which are spelled as a model
+/// writes them.
 fn guidance_options() -> Value {
-    json!({"whitespace_flexible": false, "item_separator": ",", "key_separator": ":"})
+    json!({"whitespace_flexible": false, "item_separator": ", ", "key_separator": ": "})
 }
 
 /// `schema` as the JSON Schema llguidance compiles, with the options
@@ -293,7 +298,7 @@ mod tests {
                 },
                 "required": ["zeta", "kind"],
                 "additionalProperties": false,
-                "x-guidance": {"whitespace_flexible": false, "item_separator": ",", "key_separator": ":"}
+                "x-guidance": {"whitespace_flexible": false, "item_separator": ", ", "key_separator": ": "}
             })
             .to_string()
         );
@@ -343,22 +348,25 @@ mod tests {
         }));
         let mut g = guidance.guide(&s).unwrap();
         assert!(g.stats().compiled);
-        // `{"name":"` is forced from the start.
-        assert_eq!(g.forced(usize::MAX).unwrap().len(), r#"{"name":""#.len());
-        let (ok, forced) = walk(&mut g, r#"Al","n":null}"#);
+        // `{"name": "` is forced from the start.
+        assert_eq!(g.forced(usize::MAX).unwrap().len(), r#"{"name": ""#.len());
+        let (ok, forced) = walk(&mut g, r#"Al", "n": null}"#);
         assert!(ok);
-        // `,"n":` after the string's closing quote, `ull}` after `n`.
-        assert_eq!(forced, r#","n":"#.len() + "ull}".len());
+        // `, "n": ` after the string's closing quote, `ull}` after `n`.
+        assert_eq!(forced, r#", "n": "#.len() + "ull}".len());
         assert!(g.done(), "nothing may follow the root object");
 
-        // Whitespace isn't allowed anywhere.
+        // Whitespace isn't allowed outside the separators.
         let mut g = guidance.guide(&s).unwrap();
         assert!(!g.stats().compiled, "the second request uses the cached grammar");
         g.forced(usize::MAX).unwrap();
-        assert!(!walk(&mut g, r#"Al", "n":1}"#).0);
+        assert!(!walk(&mut g, r#"Al",  "n": 1}"#).0);
         let mut g = guidance.guide(&s).unwrap();
         g.forced(usize::MAX).unwrap();
-        assert!(!walk(&mut g, r#"Al","n":1,"x":2}"#).0, "closed object");
+        assert!(!walk(&mut g, r#"Al","n":1}"#).0, "nor compact separators");
+        let mut g = guidance.guide(&s).unwrap();
+        g.forced(usize::MAX).unwrap();
+        assert!(!walk(&mut g, r#"Al", "n": 1, "x": 2}"#).0, "closed object");
     }
 
     #[test]

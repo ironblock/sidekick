@@ -12,7 +12,8 @@
 //! The model directory holds `chat.toml` (its stop tokens, vocabulary and
 //! T) and the tokenizer it names. Each item of the JSONL file names a
 //! schema of the schemas file (`schema`) and holds its answer (`gold`),
-//! which is written as a guided reply is: compact, in schema order. At each
+//! which is written as a guided reply is: on one line, with `, ` and `: `
+//! between values and its keys in schema order. At each
 //! step the walk takes the longest token the mask allows that matches the
 //! answer's next bytes. The answer's tokens are an upper bound on a real
 //! reply's: a model may write longer tokens than the walk finds.
@@ -60,7 +61,8 @@ fn main() {
             guidance.guide(&schema).unwrap();
             compiles.push((name.to_string(), took, t1.elapsed()));
         }
-        let answer = schema.conform(&item["gold"].to_string());
+        let ordered: Value = serde_json::from_str(&schema.conform(&item["gold"].to_string())).unwrap();
+        let answer = spaced(&ordered);
         let text = answer.as_bytes();
         let mut at = 0;
         // The reply's opening is forced before the prompt's calls.
@@ -145,4 +147,17 @@ fn main() {
         });
     }
     println!("scoped thread spawn + join: {:.0} µs", t.elapsed().as_secs_f64() * 1e6 / reps as f64);
+}
+
+/// `value` on one line with `, ` and `: ` between values, as a guided reply
+/// writes it.
+fn spaced(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let items: Vec<String> = map.iter().map(|(k, v)| format!("{}: {}", Value::from(k.as_str()), spaced(v))).collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        Value::Array(values) => format!("[{}]", values.iter().map(spaced).collect::<Vec<_>>().join(", ")),
+        other => other.to_string(),
+    }
 }

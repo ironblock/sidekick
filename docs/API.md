@@ -172,8 +172,9 @@ runs on the Neural Engine, beside a large model that owns the GPU
 - **`response_format` `json_schema`** is enforced with
   [llguidance](https://github.com/guidance-ai/llguidance): each token is
   sampled from the tokens the schema's grammar allows, so a reply that
-  ends with `finish_reason: "stop"` is JSON that matches the schema:
-  compact, with its keys in schema order. The reply ends when the JSON is
+  ends with `finish_reason: "stop"` is JSON that matches the schema, on
+  one line, with `, ` and `: ` between values and its keys in schema
+  order (`{"name": "Ada", "age": 36}`). The reply ends when the JSON is
   complete, without a stop token, and streams as it is generated. That is
   a guarantee of valid JSON, not of correct values: constraining an open
   model fixed its malformed replies but not its wrong answers (the chat
@@ -286,9 +287,13 @@ leave out, and the reply carries `null` where it did, when the property is
 property's value or `null`: a `required` one is always there, and an
 optional one may be left out.
 
-**Key order.** A guided reply, on either backend, is compact JSON with its
-keys in the order the schema lists them, so identical requests at
-temperature 0 give identical bytes. The model also generates the properties in that order,
+**Key order.** A guided reply, on either backend, is JSON on one line with
+its keys in the order the schema lists them, so identical requests at
+temperature 0 give identical bytes. `apple-fm`'s is compact
+(`{"name":"Ada","age":36}`); an open model's has `, ` and `: ` between
+values (`{"name": "Ada", "age": 36}`), the spelling models write
+unprompted, since forcing compact JSON on one degrades what it writes
+([open-llm.md](design/open-llm.md#constrained-decoding-on-the-open-path)). The model also generates the properties in that order,
 which can change what it writes: put the fields it should decide first
 first.
 
