@@ -156,12 +156,12 @@ async fn main() -> anyhow::Result<()> {
             // Warm what the daemon will serve: scanned as it scans, with the
             // config's compute units and caps.
             if let (Some(id), false) = (installed, fetch.no_warm) {
-                sidekick_server::warm::after_fetch(&sidekick_server::scan(&config)?, &id, &config.warm_skipped());
+                sidekick_server::warm::after_fetch(&sidekick_server::scan_served(&config)?, &id, &config.warm_skipped());
             }
             return Ok(());
         }
         Some(Command::Warm(warm)) => {
-            return sidekick_server::warm::run(&sidekick_server::scan(&config)?, warm, &config.warm_skipped());
+            return sidekick_server::warm::run(&sidekick_server::scan_served(&config)?, warm, &config.warm_skipped());
         }
         None => {}
     }

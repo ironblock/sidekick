@@ -997,6 +997,17 @@ impl ResolvedModel {
     }
 }
 
+/// An open chat model's `chat.toml` resolved against its directory (D53).
+#[derive(Debug, Clone)]
+pub struct ResolvedChat {
+    pub manifest: crate::chat_manifest::ChatManifest,
+    pub dir: PathBuf,
+}
+
+/// The chat model id Foundation Models answers to, which no manifest may
+/// take.
+pub const FOUNDATION_MODELS_ID: &str = "apple-fm";
+
 /// A classifier manifest resolved against its directory.
 #[derive(Debug, Clone)]
 pub struct ResolvedClassifier {
@@ -1345,8 +1356,9 @@ pub const EMBEDDER_MANIFEST: &str = "manifest.toml";
 /// Classifier manifest filename.
 pub const CLASSIFIER_MANIFEST: &str = "classifier.toml";
 
-/// Scans a models directory for `*/manifest.toml` (embedders) and
-/// `*/classifier.toml` (classifiers).
+/// Scans a models directory for `*/manifest.toml` (embedders),
+/// `*/classifier.toml` (classifiers) and `*/chat.toml` (open chat models,
+/// D53).
 ///
 /// [`get`](Self::get), [`ids`](Self::ids) and [`iter`](Self::iter) see
 /// embedders only, which is what the C ABI lists; classifiers have their
@@ -1355,6 +1367,7 @@ pub const CLASSIFIER_MANIFEST: &str = "classifier.toml";
 pub struct ModelRegistry {
     models: BTreeMap<String, ResolvedModel>,
     classifiers: BTreeMap<String, ResolvedClassifier>,
+    chats: BTreeMap<String, ResolvedChat>,
     skipped: Vec<SkippedManifest>,
     /// Operator compute-unit overrides that named no Core ML model (D38).
     unmatched_overrides: Vec<String>,
@@ -1530,6 +1543,36 @@ impl ModelRegistry {
                 Err(reason) => reg.skip(&path, reason),
             }
         }
+        // Open chat models last: an embedder or classifier keeps an id it
+        // shares with one.
+        for dir in &dirs {
+            let path = dir.join(crate::chat_manifest::CHAT_MANIFEST);
+            if !path.is_file() {
+                continue;
+            }
+            let loaded = crate::chat_manifest::ChatManifest::read(&path).and_then(|m| {
+                // The override named this model, whether or not the check
+                // below accepts what it chose.
+                if options.compute_units.contains_key(&m.id) {
+                    applied.push(m.id.clone());
+                }
+                m.check(dir, options)?;
+                m.check_serving(dir)?;
+                if m.id == FOUNDATION_MODELS_ID {
+                    return Err(format!("the id `{FOUNDATION_MODELS_ID}` is Foundation Models'"));
+                }
+                Ok(m)
+            });
+            match loaded {
+                Ok(manifest) => match reg.owner(&manifest.id) {
+                    Some(other) => reg.skip(&path, format!("duplicate model id `{}` (also {})", manifest.id, reg.relative(&other).display())),
+                    None => {
+                        reg.chats.insert(manifest.id.clone(), ResolvedChat { manifest, dir: dir.clone() });
+                    }
+                },
+                Err(reason) => reg.skip(&path, reason),
+            }
+        }
         reg.unmatched_overrides = options.compute_units.keys().filter(|id| !applied.contains(id)).cloned().collect();
         for id in &reg.unmatched_overrides {
             tracing::warn!("the config sets compute units for `{id}`, and no Core ML model has that id");
@@ -1549,6 +1592,7 @@ impl ModelRegistry {
             .get(id)
             .map(|m| m.dir.join(EMBEDDER_MANIFEST))
             .or_else(|| self.classifiers.get(id).map(|c| c.dir.join(CLASSIFIER_MANIFEST)))
+            .or_else(|| self.chats.get(id).map(|c| c.dir.join(crate::chat_manifest::CHAT_MANIFEST)))
     }
 
     /// `path` relative to the models directory.
@@ -1608,6 +1652,27 @@ impl ModelRegistry {
 
     pub fn classifiers(&self) -> impl Iterator<Item = &ResolvedClassifier> {
         self.classifiers.values()
+    }
+
+    /// An open chat model (D53).
+    pub fn chat(&self, id: &str) -> Result<&ResolvedChat> {
+        self.chats.get(id).ok_or_else(|| Error::ModelNotFound(id.to_string()))
+    }
+
+    pub fn chat_ids(&self) -> impl Iterator<Item = &str> {
+        self.chats.keys().map(|s| s.as_str())
+    }
+
+    pub fn chats(&self) -> impl Iterator<Item = &ResolvedChat> {
+        self.chats.values()
+    }
+
+    /// Skip every open chat model, with `reason`: what a daemon built
+    /// without Core ML does with them.
+    pub fn skip_chats(&mut self, reason: &str) {
+        for (_, chat) in std::mem::take(&mut self.chats) {
+            self.skip(&chat.dir.join(crate::chat_manifest::CHAT_MANIFEST), reason.to_string());
+        }
     }
 
     /// Manifests skipped by the scan.

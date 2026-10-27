@@ -43,7 +43,7 @@ addr = "127.0.0.1:8790"        # loopback only by default
 # models_dir = "..."           # default: see "Where things live"
 # api_key = "..."              # require Authorization: Bearer <key> on every route but /health
 session_ttl_secs = 300         # Foundation Models session reuse window
-model_idle_ttl_secs = 900      # model residency (embedders, classifiers) after last use
+model_idle_ttl_secs = 900      # model residency (embedders, classifiers, open chat models) after last use
 request_timeout_secs = 60      # a request's work: generation, or a prediction after any load it waited on (per model: below)
 load_timeout_secs = 900        # how long a request waits on its model's and buckets' first loads
 ignore_ane_weight_cap = false  # load ANE-served models past Core ML's 1 GiB weight limit
@@ -54,6 +54,7 @@ warm_on_start = true           # compile every Core ML bucket at startup, in the
 warm_budget_secs = 1800        # start no warm-up load after this long; 0 for no limit
 # onnx_intra_op_threads = 8    # inference threads for every onnx model (default: fast physical cores, at most 8)
 # onnx_runtime = "..."         # libonnxruntime to load instead of the bundled one (before ORT_DYLIB_PATH)
+ane_budget_mib = 2816          # warn when loading an open chat model takes the Neural Engine past this
 ```
 
 | Key | Default | What it does |
@@ -62,7 +63,7 @@ warm_budget_secs = 1800        # start no warm-up load after this long; 0 for no
 | `models_dir` | per OS, above | The directory scanned for models ([RUNNING.md](RUNNING.md#the-models-directory)). |
 | `api_key` | none | When set, every route except `/health` needs `Authorization: Bearer <key>`; a missing or wrong key is a 401 ([API.md](API.md#authentication)). |
 | `session_ttl_secs` | 300 | How long a Foundation Models session is kept for a conversation's follow-ups. |
-| `model_idle_ttl_secs` | 900 | How long a loaded embedder or classifier stays resident after its last use ([RUNNING.md](RUNNING.md#memory)). |
+| `model_idle_ttl_secs` | 900 | How long a loaded embedder, classifier or open chat model stays resident after its last use ([RUNNING.md](RUNNING.md#memory)). |
 | `request_timeout_secs` | 60 | Bounds a request's work: a generation, streamed or not, or the predictions after any load the request waited on. A request past it is a 504 with code `timeout`. The default for every model; [per-model settings](#per-model-settings) override it. |
 | `load_timeout_secs` | 900 | How long a request waits for its model and buckets to load, compiles included. A load past it is a 504 with code `load_timeout` and continues in the background, so a retry finds it ready. |
 | `ignore_ane_weight_cap` | false | Load models served on the ANE even past Core ML's 1 GiB weight limit ([BACKENDS.md](BACKENDS.md#the-ane-weight-cap)). For experimentation. |
@@ -73,6 +74,7 @@ warm_budget_secs = 1800        # start no warm-up load after this long; 0 for no
 | `warm_budget_secs` | 1800 | Start no startup warm-up load after this many seconds; 0 for no limit. |
 | `onnx_intra_op_threads` | the machine's fast physical cores, at most 8 | Inference threads for every onnx model ([BACKENDS.md](BACKENDS.md#threads)). At least 1. |
 | `onnx_runtime` | none | The ONNX Runtime library to load ([below](#where-onnx-runtime-is-loaded-from)). |
+| `ane_budget_mib` | 2816 | The daemon's Neural Engine budget, in MiB. Loading an open chat model that would take the process's ANE programs past it logs a warning; nothing is refused or evicted. `/health` reports the footprint against it (`chat.lane.ane`). 2.75 GiB is under the 2.79 GiB of active programs measured safe on an M1 Max, past which programs reload on nearly every call ([open-llm.md](design/open-llm.md#memory-budget)). |
 | `models` | none | Per-model settings, below. |
 
 ## Per-model settings
@@ -95,6 +97,9 @@ warm = false                   # leave a Core ML model out of startup and fetch 
 
 [models."apple-fm"]
 request_timeout_secs = 120     # this model's request timeout, over the global one
+
+[models."minicpm5-2b"]
+queue_depth = 4                # an open chat model's queue, before a 503 backend_busy
 ```
 
 | Key | What it does |
@@ -102,6 +107,7 @@ request_timeout_secs = 120     # this model's request timeout, over the global o
 | `compute_units` | A Core ML model's compute units ([D38](DECISIONS.md#d38--the-operator-may-choose-a-models-compute-units)). The ANE weight limit and the CPU and ANE length caps judge it as they would the manifest's choice, and `/v1/models` and `/health` report that the operator chose ([BACKENDS.md](BACKENDS.md#compute-units)). |
 | `intra_op_threads` | An onnx model's inference threads, over `onnx_intra_op_threads`. At least 1. |
 | `warm` | `false` leaves a Core ML model out of the startup warm-up and fetch's; `sidekickd warm <id>` still warms it. |
+| `queue_depth` | An open chat model's queue (default 4): how many requests may wait while one generates. A request past it is a 503 `backend_busy` with `Retry-After`. `apple-fm` and the open chat models share one queue, the ANE chat lane ([API.md](API.md#open-models)), which takes the largest `queue_depth` set for an installed open model. 0 queues nothing: one request at a time, the rest busy. |
 | `request_timeout_secs` | The model's request timeout, in seconds, at least 1: for any model, chat, embedder or classifier. A model's timeout is this, else the model's own default where it names one, else the global `request_timeout_secs`. `/health` reports each chat model's timeout and who chose it, and `request_timeout_overrides` lists the settings applied and those that name no model. |
 
 ## Command-line flags

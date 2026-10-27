@@ -283,6 +283,21 @@ impl From<Error> for ApiError {
                 retry_after_secs,
                 ..Self::new(StatusCode::TOO_MANY_REQUESTS, "rate_limit_exceeded", message)
             },
+            Error::Busy { message, retry_after_secs } => Self {
+                retry_after_secs: Some(retry_after_secs),
+                ..Self::new(StatusCode::SERVICE_UNAVAILABLE, "backend_busy", message)
+            },
+            Error::LoadTimeout { model, secs } => Self {
+                retry_after_secs: Some(deadline::LOAD_RETRY_AFTER_SECS),
+                ..Self::new(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "load_timeout",
+                    format!(
+                        "Model `{model}` was still loading after {secs}s (its first load compiles it for this Mac). \
+                         The load continues in the background; retry later"
+                    ),
+                )
+            },
             Error::Transient(message) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "backend_busy",

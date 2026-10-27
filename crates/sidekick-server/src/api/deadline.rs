@@ -152,7 +152,7 @@ impl Deadline {
 }
 
 /// `Retry-After` on a load timeout: the load is still running.
-const LOAD_RETRY_AFTER_SECS: u64 = 30;
+pub(crate) const LOAD_RETRY_AFTER_SECS: u64 = 30;
 
 /// `60s`, or `0.2s` below a second.
 fn secs(d: Duration) -> String {

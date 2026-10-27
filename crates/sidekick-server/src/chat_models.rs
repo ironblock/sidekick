@@ -3,9 +3,10 @@
 //! `/v1/chat/completions` routes a request by its exact `model` to one of
 //! these: no default, no alias and no fallback between backends. Each entry
 //! is a [`ChatBackend`] with what `/v1/models` and `/health` say about it.
-//! Foundation Models (`apple-fm`) is registered by [`foundation_models`];
-//! another backend registers beside it with [`ChatModels::insert`], and the
-//! handler doesn't change.
+//! Foundation Models (`apple-fm`) is registered by [`foundation_models`],
+//! each open model in the models directory by [`open_model`] (`sidekick-llm`);
+//! when there are open models, they and `apple-fm` share one ANE chat lane
+//! ([`sidekick_llm::ChatLane`]).
 
 use crate::config::RequestTimeouts;
 use serde_json::{Map, Value};
@@ -49,17 +50,52 @@ pub struct ChatModel {
     pub request_timeout: (Duration, &'static str),
     /// Backend-specific facts for `/health`.
     pub health: Map<String, Value>,
+    /// Facts read at each `/health`: an open model's state, queue and
+    /// decoder.
+    live_health: Option<LiveHealth>,
+    /// A fixed `sidekick-model`: an open model's `<id>@<revision>`.
+    fixed_provenance: Option<String>,
     provenance: ProvenanceCache,
 }
 
+/// Reads a chat model's live `/health` facts.
+pub type LiveHealth = Arc<dyn Fn() -> Map<String, Value> + Send + Sync>;
+
 impl ChatModel {
     pub fn new(backend: Arc<dyn ChatBackend>, listing: ChatListing, request_timeout: (Duration, &'static str)) -> Self {
-        Self { backend, listing, request_timeout, health: Map::new(), provenance: Default::default() }
+        Self {
+            backend,
+            listing,
+            request_timeout,
+            health: Map::new(),
+            live_health: None,
+            fixed_provenance: None,
+            provenance: Default::default(),
+        }
     }
 
     /// With backend-specific facts for `/health`.
     pub fn with_health(self, health: Map<String, Value>) -> Self {
         Self { health, ..self }
+    }
+
+    /// With facts `/health` reads live.
+    pub fn with_live_health(self, live: LiveHealth) -> Self {
+        Self { live_health: Some(live), ..self }
+    }
+
+    /// With a fixed `sidekick-model` header.
+    pub fn with_provenance(self, model: String) -> Self {
+        Self { fixed_provenance: Some(model), ..self }
+    }
+
+    /// Every `/health` fact about the model: the fixed ones, then the live.
+    pub fn health_facts(&self) -> Map<String, Value> {
+        let mut facts = self.health.clone();
+        if let Some(live) = &self.live_health {
+            facts.extend(live());
+        }
+        facts
     }
 
     pub fn id(&self) -> &str {
@@ -74,6 +110,9 @@ impl ChatModel {
     /// Foundation Models variant), otherwise the model id. Never waits on
     /// the backend: a stale entry is refreshed by a detached task.
     pub fn provenance_id(self: &Arc<Self>) -> String {
+        if let Some(fixed) = &self.fixed_provenance {
+            return fixed.clone();
+        }
         let (id, refresh) = self.provenance.read();
         if refresh {
             let model = self.clone();
@@ -94,6 +133,9 @@ impl ChatModel {
 #[derive(Default)]
 pub struct ChatModels {
     models: BTreeMap<String, Arc<ChatModel>>,
+    /// The ANE chat lane `apple-fm` and the open models share, when there
+    /// are open models.
+    lane: Option<Arc<sidekick_llm::ChatLane>>,
 }
 
 impl ChatModels {
@@ -120,6 +162,15 @@ impl ChatModels {
 
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.models.keys().map(String::as_str)
+    }
+
+    /// The models' shared ANE chat lane, for `/health`.
+    pub fn lane(&self) -> Option<&Arc<sidekick_llm::ChatLane>> {
+        self.lane.as_ref()
+    }
+
+    pub fn set_lane(&mut self, lane: Arc<sidekick_llm::ChatLane>) {
+        self.lane = Some(lane);
     }
 }
 
@@ -165,6 +216,38 @@ pub fn foundation_models(
     // features are only present when it is 27 or newer.
     health.insert("fm_sdk".into(), Value::from(sidekick_fm::FM_SDK));
     ChatModel::new(backend, listing, timeout).with_health(health)
+}
+
+/// `/v1/models`' listing of an open model (D53).
+pub fn open_listing() -> ChatListing {
+    ChatListing {
+        backend: "coreml",
+        honored_fields: vec!["max_completion_tokens", "max_tokens", "seed", "stop", "temperature", "top_p"],
+        // No guided output until llguidance (#186): `response_format`
+        // json_schema is a 400 on open models.
+        guided_streaming: false,
+        guardrails: false,
+        compute_units: Some(sidekick_core::ComputeUnits::CpuAndNeuralEngine.name()),
+        graded_os: None,
+    }
+}
+
+/// An open model as a chat model: its backend, listing, timeout,
+/// `<id>@<revision>` provenance and live `/health` facts.
+pub fn open_model(
+    model: Arc<sidekick_llm::OpenModel>,
+    revision: Option<&str>,
+    request_timeout: (Duration, &'static str),
+) -> ChatModel {
+    let id = model.id().to_string();
+    let provenance = match revision {
+        Some(rev) => format!("{id}@{rev}"),
+        None => id,
+    };
+    let live = model.clone();
+    ChatModel::new(model, open_listing(), request_timeout)
+        .with_provenance(provenance)
+        .with_live_health(Arc::new(move || live.health()))
 }
 
 /// How long a known variant id is reused before a background refresh. A

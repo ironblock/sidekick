@@ -170,6 +170,13 @@ impl<T> Loads<T> {
     /// sidekickd process (the daemon's warm-up), whose compile it then
     /// finds in the cache. Loads of other keys don't wait.
     pub fn load(&self, key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.load_as(key, label, load)
+    }
+
+    /// [`load`](Self::load) of something other than `T`, under the same
+    /// keys, ledger and lock files: an open chat model's decoder (D53),
+    /// whose chunk programs are its one bucket.
+    pub fn load_as<U>(&self, key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<U> {
         let slot = self.slot(key);
         let _held = lock(&slot.held);
         let (result, _) = self.run(&slot, key, label, false, load);
@@ -182,6 +189,12 @@ impl<T> Loads<T> {
     /// another process; if that one recorded the bucket meanwhile, it isn't
     /// loaded again.
     pub fn warm(&self, key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<T>) -> Result<Warmed> {
+        self.warm_as(key, label, load)
+    }
+
+    /// [`warm`](Self::warm) with a loader of something other than `T`, as
+    /// [`load_as`](Self::load_as).
+    pub fn warm_as<U>(&self, key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<Warmed> {
         let slot = self.slot(key);
         let _held = lock(&slot.held);
         if matches!(*lock(&slot.progress), Progress::Loaded(_)) {
@@ -201,14 +214,14 @@ impl<T> Loads<T> {
     /// One load of `key`, with its slot held, and how long it took: across
     /// processes too, when there is a ledger. `None` when `skip_if_recorded`
     /// and another process recorded the bucket while this one waited for it.
-    fn run(
+    fn run<U>(
         &self,
         slot: &Slot,
         key: &Key,
         label: Label<'_>,
         skip_if_recorded: bool,
-        load: impl FnOnce() -> Result<T>,
-    ) -> (Option<Result<T>>, u64) {
+        load: impl FnOnce() -> Result<U>,
+    ) -> (Option<Result<U>>, u64) {
         let before = std::mem::replace(&mut *lock(&slot.progress), Progress::Loading);
         // Another sidekickd process loading the same bucket holds this lock
         // file: wait for its compile instead of starting a second one.
@@ -503,6 +516,17 @@ mod coreml {
         loads().warm(key, label, || CoremlChain::load(&key.paths, key.units))
     }
 
+    /// Load `key` with `load`, through the process's loads, ledger and
+    /// lock files: see [`Loads::load_as`].
+    pub fn load_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<U> {
+        loads().load_as(key, label, load)
+    }
+
+    /// Warm `key` with `load`: see [`Loads::warm_as`].
+    pub fn warm_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<Warmed> {
+        loads().warm_as(key, label, load)
+    }
+
     /// One bucket's state.
     pub fn status(key: &Key) -> Option<Status> {
         Some(loads().status(key))
@@ -512,7 +536,7 @@ mod coreml {
 #[cfg(all(feature = "coreml", target_os = "macos"))]
 pub(crate) use coreml::load_chain;
 #[cfg(all(feature = "coreml", target_os = "macos"))]
-pub use coreml::{enable, status, warm};
+pub use coreml::{enable, load_with, status, warm, warm_with};
 
 /// Without Core ML there is no cache to keep.
 #[cfg(not(all(feature = "coreml", target_os = "macos")))]
@@ -524,6 +548,20 @@ pub fn enable() -> Option<PathBuf> {
 #[cfg(not(all(feature = "coreml", target_os = "macos")))]
 pub fn warm(key: &Key, label: Label<'_>) -> Result<Warmed> {
     let _ = (key, label);
+    Err(sidekick_core::Error::Unavailable(sidekick_core::UnavailableReason::NotSupportedInBuild))
+}
+
+/// Without Core ML there is no ledger: `load` runs as it is.
+#[cfg(not(all(feature = "coreml", target_os = "macos")))]
+pub fn load_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<U> {
+    let _ = (key, label);
+    load()
+}
+
+/// Without Core ML nothing can be warmed.
+#[cfg(not(all(feature = "coreml", target_os = "macos")))]
+pub fn warm_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<Warmed> {
+    let _ = (key, label, load);
     Err(sidekick_core::Error::Unavailable(sidekick_core::UnavailableReason::NotSupportedInBuild))
 }
 

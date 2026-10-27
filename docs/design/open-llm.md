@@ -8,9 +8,13 @@ routing between the two backends, and how a build is converted, graded and
 published. [D53](../DECISIONS.md#d53--open-llms-on-the-chat-route-a-stateful-ane-decoder-beside-foundation-models)
 records the decision; this note has the detail.
 
-This is a design. Of it, only the decoder chain is implemented
-(`sidekick_coreml::KvDecoder`, #183); the rest isn't yet. Where it states a
-number, the measurement is linked, not repeated:
+Implemented so far: the decoder chain (`sidekick_coreml::KvDecoder`,
+#183), and the loop and the chat route's open-model backend
+(`sidekick-llm`, #185): template, tokenizer, sampling, the wire contract,
+the ANE chat lane and `/health`'s accounting. Structured output on the open
+path (#186) isn't yet; until it is, `response_format` `json_schema` is a
+400 on an open model. Where this note states a number, the measurement is
+linked, not repeated:
 - [#173](https://github.com/ironblock/sidekick/issues/173): the spike that
   ran a 1B and then a 2B decoder on the Neural Engine (ANE), with its KV
   cache in Core ML state. Its comments hold the speeds, grades and Core ML
@@ -318,7 +322,9 @@ stops using backings.
 - **One sequence at a time.** Batching would multiply the cache and change
   the program's static shapes, and a companion model's requests are short
   and few.
-- **A bounded FIFO queue,** `[models."<id>"] queue_depth` (default 4).
+- **A bounded FIFO queue,** `[models."<id>"] queue_depth` (default 4;
+  the lane shared with `apple-fm`, below, takes the largest set for an
+  installed open model).
   A request past it is a 503 `backend_busy` with `Retry-After`, as AFM's
   busy state is. Time in the queue counts against the request's timeout.
 - **A timeout per model.** `request_timeout_secs` bounds a request's whole
@@ -446,11 +452,15 @@ other apps.
   `replace`), which MiniCPM5's template does. Hand-written templates per
   family were rejected: each would be a code change, and would drift from
   the checkpoint's.
-- **Gated against transformers.** The converter commits fixture
-  conversations (system and multi-turn ones included) with the token ids
-  `apply_chat_template` gives for them, and a Rust test renders and
-  tokenizes each and compares. A template the renderer can't reproduce
-  fails the conversion, not the request.
+- **Gated against transformers.** Fixture conversations (system and
+  multi-turn ones included) are committed with the text and token ids
+  `apply_chat_template` gives for them (`fixtures/chat-templates/`, written
+  by `tools/make_chat_template_fixture.py`), and a Rust test
+  (`crates/sidekick-llm/tests/chat_templates.rs`) renders and tokenizes
+  each and compares: the text always, the ids when the checkpoint's
+  tokenizer is in the Hugging Face cache. A template the renderer can't
+  reproduce fails there, not at the request. MiniCPM5-2B's template and
+  SmolLM2's (a second family) reproduce exactly.
 - **What the template gets:** the messages, `add_generation_prompt = true`,
   the manifest's `bos_token` and `eos_token`, and its `template_kwargs`.
   MiniCPM5 renders with `enable_thinking = false`, as the benchmark ran it.

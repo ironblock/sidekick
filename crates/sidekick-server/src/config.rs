@@ -87,6 +87,12 @@ pub struct Config {
     /// one beside sidekickd. For an existing install, and for a daemon
     /// under launchd, which doesn't pass a shell's environment (D40).
     pub onnx_runtime: Option<PathBuf>,
+    /// The daemon's Neural Engine budget, in MiB: loading an open chat
+    /// model past it logs a warning (D53). Nothing is refused or evicted;
+    /// `/health` reports the process's footprint against it. 2,816 (2.75
+    /// GiB) by default, under the 2.79 GiB of active programs measured safe
+    /// on an M1 Max.
+    pub ane_budget_mib: u64,
     /// Per-model settings, by model id (`[models."agent-jev"]`).
     pub models: BTreeMap<String, ModelConfig>,
 }
@@ -108,6 +114,10 @@ pub struct ModelConfig {
     /// This model's request timeout, in seconds, over its manifest's
     /// default and the global `request_timeout_secs`.
     pub request_timeout_secs: Option<u64>,
+    /// An open chat model's queue: how many requests may wait while one
+    /// generates, before a 503 `backend_busy` (default 4). The ANE chat
+    /// lane the open models and `apple-fm` share takes the largest.
+    pub queue_depth: Option<usize>,
 }
 
 /// Each model's request timeout: the operator's for that model
@@ -195,6 +205,7 @@ impl Default for Config {
             warm_budget_secs: 1800,
             onnx_intra_op_threads: None,
             onnx_runtime: None,
+            ane_budget_mib: sidekick_llm::DEFAULT_ANE_BUDGET_MIB,
             models: BTreeMap::new(),
         }
     }
@@ -268,6 +279,16 @@ impl Config {
             }
         }
         Ok(OnnxThreads { configured: self.onnx_intra_op_threads, by_model, cores: sidekick_embed::onnx::detected_cores().cores })
+    }
+
+    /// The ANE chat lane's queue depth: the largest `queue_depth` set for
+    /// any of `open_models`, else the default.
+    pub fn queue_depth<'a>(&self, open_models: impl IntoIterator<Item = &'a str>) -> usize {
+        open_models
+            .into_iter()
+            .filter_map(|id| self.models.get(id)?.queue_depth)
+            .max()
+            .unwrap_or(sidekick_llm::DEFAULT_QUEUE_DEPTH)
     }
 
     pub fn models_dir(&self) -> PathBuf {
@@ -354,6 +375,16 @@ mod tests {
         // A typo is an error, not a silently ignored setting.
         assert!(toml::from_str::<Config>("[models.x]\ncompute_unit = \"cpu_only\"\n").is_err());
         assert!(toml::from_str::<Config>("[models.x]\ncompute_units = \"gpu\"\n").is_err());
+    }
+
+    #[test]
+    fn the_chat_lane_takes_the_largest_queue_depth() {
+        let c: Config = toml::from_str("ane_budget_mib = 3000\n[models.a]\nqueue_depth = 2\n[models.b]\nqueue_depth = 0\n").unwrap();
+        assert_eq!(c.queue_depth(["a", "b"]), 2);
+        assert_eq!(c.queue_depth(["b"]), 0, "no waiting: one at a time, the rest busy");
+        assert_eq!(c.queue_depth(["other"]), 4);
+        assert_eq!(c.ane_budget_mib, 3000);
+        assert_eq!(Config::default().ane_budget_mib, 2816);
     }
 
     #[test]

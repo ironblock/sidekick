@@ -27,8 +27,10 @@ The daemon serves the models in one directory: by default
 `~/.local/share/sidekick/models` on Linux, or `models_dir` in the config
 ([CONFIG.md](CONFIG.md#where-things-live)).
 
-Each embedding model is a directory with a `manifest.toml`, and each
-classifier a directory with a `classifier.toml`:
+Each embedding model is a directory with a `manifest.toml`, each
+classifier a directory with a `classifier.toml`, and each open chat model
+a directory with a `chat.toml` (its decoder's chunk programs, embedding
+and RoPE tables, tokenizer and chat template; [D53](DECISIONS.md#d53--open-llms-on-the-chat-route-a-stateful-ane-decoder-beside-foundation-models)):
 
 ```
 ~/Library/Application Support/sidekick/models/

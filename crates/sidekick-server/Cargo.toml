@@ -17,14 +17,16 @@ path = "src/bin/smoke_test.rs"
 
 [features]
 default = []
-# Enable the Core ML embedding backend (meaningful on macOS only).
-coreml = ["sidekick-embed/coreml"]
+# Enable the Core ML backends: encoders and classifiers, and the open chat
+# models' decoder (meaningful on macOS only).
+coreml = ["sidekick-embed/coreml", "sidekick-llm/coreml"]
 onnx = ["sidekick-embed/onnx"]
 
 [dependencies]
 sidekick-core = { workspace = true }
 sidekick-embed = { workspace = true }
 sidekick-fm = { workspace = true }
+sidekick-llm = { workspace = true }
 
 anyhow = { workspace = true }
 axum = { workspace = true }
@@ -49,3 +51,4 @@ tower = { workspace = true, features = ["util"] }
 tokio = { workspace = true, features = ["test-util"] }
 http-body-util = "0.1"
 safetensors = { workspace = true }
+tokenizers = { workspace = true }

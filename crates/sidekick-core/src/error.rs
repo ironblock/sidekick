@@ -31,6 +31,16 @@ pub enum Error {
     #[error("transient backend failure: {0}")]
     Transient(String),
 
+    /// The model's queue is full (HTTP 503 `backend_busy` with
+    /// `Retry-After`): an open chat model's, which `apple-fm` shares (D53).
+    #[error("busy: {message}")]
+    Busy { message: String, retry_after_secs: u64 },
+
+    /// The model was still loading when the request's load timeout passed
+    /// (HTTP 504 `load_timeout`); the load continues, so a retry finds it.
+    #[error("model `{model}` was still loading after {secs}s")]
+    LoadTimeout { model: String, secs: u64 },
+
     #[error("unsupported language or locale: {0}")]
     UnsupportedLanguage(String),
 
