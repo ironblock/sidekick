@@ -101,6 +101,20 @@ impl OpenModel {
         self.failed.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
+    /// Whether the model has failed, counting a resident decoder whose
+    /// watchdog has just reported a hang: an earlier request's lane-holding
+    /// task records that only at its next check, and a request arriving
+    /// before then would wait on the lane the hung call still holds.
+    fn failed_now(&self) -> Option<String> {
+        if let Some(reason) = self.failed() {
+            return Some(reason);
+        }
+        let (engine, _) = self.lane.resident().filter(|(e, _)| e.model == self.spec.id)?;
+        let reason = engine.facts()?.probe.status().failed?;
+        record_failure(&self.failed, &self.spec.id, &reason);
+        Some(reason)
+    }
+
     fn fail(&self, reason: String) -> Error {
         record_failure(&self.failed, &self.spec.id, &reason);
         unavailable(&self.spec.id, &reason)
@@ -155,7 +169,7 @@ impl OpenModel {
 
     async fn run(&self, req: ChatRequest, sink: Option<DeltaSink>) -> Result<ChatResponse> {
         let started = tokio::time::Instant::now();
-        if let Some(reason) = self.failed() {
+        if let Some(reason) = self.failed_now() {
             return Err(unavailable(&self.spec.id, &reason));
         }
         let (prompt, max_tokens, guide) = self.plan(&req).await?;
