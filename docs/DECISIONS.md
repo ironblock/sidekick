@@ -630,8 +630,8 @@ sidekick can't do now gets a 400:
 The harmless forms that OpenAI SDKs send by default are still accepted:
 `n: 1`, empty tools, `tool_choice` `"auto"`/`"none"`/null, `logprobs:
 false`. Everything else unknown is still ignored on purpose, including
-`seed`, `top_p`, penalties and `user`. Foundation Models' sampling options
-could map `seed`/`top_p` in the future. This is a behavior change for
+penalties and `user` (`seed` and `top_p` were too, until the D53
+amendment below; [API.md](API.md#sampling) has how they are honored). This is a behavior change for
 clients that relied on those parameters being dropped, so it warrants a
 minor version bump when released.
 
@@ -4469,6 +4469,17 @@ on macOS 26 (the first build ships graded on macOS 27, and `/v1/models`
 says so). Whether the ANE budget is per process or system-wide, and whether
 Foundation Models shares it, is to be measured before the registry
 enforces it.
+
+*Amended after #187's measurement (October 2026):* the ANE budget is
+system-wide, and Foundation Models' model (about 2.3 GiB) counts against
+it. Past about 2.8 GiB of programs in active use, programs reload on nearly
+every call: an `apple-fm` request overlapping a generation slowed both
+about 25×. Idle programs cost nothing. So the daemon schedules instead of
+evicting: `apple-fm` and the open chat models share one queue, the
+registry reports the process's measured ANE total and warns past
+`ane_budget_mib` (2.75 GiB by default, measured on an M1 Max), and stalls
+from other apps' use of the ANE are counted and reported, since the daemon
+can't prevent them.
 
 ## Hardware verification status
 

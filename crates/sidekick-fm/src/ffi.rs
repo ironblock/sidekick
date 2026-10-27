@@ -3,6 +3,7 @@
 
 #![allow(unsafe_code)]
 
+use crate::bridge::{self, Sampling};
 use crate::engine::{EngineResponse, RespondOptions, SessionEngine, StreamedResponse};
 use crate::envelope;
 use sidekick_core::{Availability, Error, ModelInfo, Result, UnavailableReason};
@@ -24,6 +25,10 @@ extern "C" {
         schema_json: *const u8,
         schema_len: usize,
         temperature: f64,
+        sampling: i32,
+        probability_threshold: f64,
+        seed: u64,
+        has_seed: i32,
         max_tokens: i64,
         out: *mut *mut u8,
         out_len: *mut usize,
@@ -34,6 +39,10 @@ extern "C" {
         prompt: *const u8,
         prompt_len: usize,
         temperature: f64,
+        sampling: i32,
+        probability_threshold: f64,
+        seed: u64,
+        has_seed: i32,
         max_tokens: i64,
         on_snapshot: SnapshotCallback,
         ctx: *mut c_void,
@@ -178,6 +187,8 @@ impl SessionEngine for FfiEngine {
             let cancelled = !on_snapshot(&response.text);
             return Ok(StreamedResponse { response, cancelled });
         }
+        let (sampling, threshold, seed, has_seed) =
+            Sampling::for_request(opts.temperature, opts.top_p, opts.seed).ffi();
         let mut context = SnapshotContext { callback: on_snapshot, panic: None };
         let mut out: *mut u8 = std::ptr::null_mut();
         let mut out_len: usize = 0;
@@ -188,6 +199,10 @@ impl SessionEngine for FfiEngine {
                 prompt.as_ptr(),
                 prompt.len(),
                 opts.temperature.map(f64::from).unwrap_or(-1.0),
+                sampling,
+                threshold,
+                seed,
+                has_seed,
                 opts.max_tokens.map(i64::from).unwrap_or(0),
                 snapshot_trampoline,
                 &mut context as *mut SnapshotContext<'_> as *mut c_void,
@@ -240,8 +255,10 @@ impl SessionEngine for FfiEngine {
         let schema_text = opts
             .schema
             .as_ref()
-            .map(|s| s.to_string())
+            .map(|s| bridge::schema_json(s).to_string())
             .unwrap_or_default();
+        let (sampling, threshold, seed, has_seed) =
+            Sampling::for_request(opts.temperature, opts.top_p, opts.seed).ffi();
         let mut out: *mut u8 = std::ptr::null_mut();
         let mut out_len: usize = 0;
         let mut err: *mut c_char = std::ptr::null_mut();
@@ -254,6 +271,10 @@ impl SessionEngine for FfiEngine {
                 schema_text.as_ptr(),
                 schema_text.len(),
                 opts.temperature.map(f64::from).unwrap_or(-1.0),
+                sampling,
+                threshold,
+                seed,
+                has_seed,
                 opts.max_tokens.map(i64::from).unwrap_or(0),
                 &mut out,
                 &mut out_len,

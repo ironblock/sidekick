@@ -143,7 +143,11 @@ impl ChatBackend for MockChat {
             });
         }
         let content = if let Some(schema) = &req.schema {
-            format!("{{\"schema_props\": {}}}", schema["properties"].to_string().len())
+            let props = match &schema.root().kind {
+                sidekick_core::schema::Kind::Object { properties } => properties.len(),
+                _ => 0,
+            };
+            format!("{{\"schema_props\": {props}}}")
         } else if !req.stop.is_empty() {
             format!("stops: {}", req.stop.join("|"))
         } else {

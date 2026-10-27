@@ -1,6 +1,6 @@
 use crate::cache::{conversation_key, ConversationCache};
 use crate::engine::{EngineUsage, RespondOptions, SessionEngine};
-use crate::shaping::{shape, Diverged, StreamShaper};
+use sidekick_core::shaping::{shape, Diverged, StreamShaper};
 use sidekick_core::{
     Availability, ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, Error,
     FinishReason, ModelInfo, Result, Role, Usage,
@@ -164,6 +164,8 @@ impl<E: SessionEngine> SessionChatBackend<E> {
         let opts = RespondOptions {
             schema: req.schema,
             temperature: req.temperature,
+            top_p: req.top_p,
+            seed: req.seed,
             max_tokens: req.max_tokens,
         };
 
@@ -181,7 +183,13 @@ impl<E: SessionEngine> SessionChatBackend<E> {
             }
             Err(e) => return Err(e),
         };
-        let shaped = shape(&response.text, &req.stop);
+        // Guided JSON is re-serialized in schema order: Foundation Models'
+        // own key order varies between identical requests (#180).
+        let text = match &opts.schema {
+            Some(schema) => schema.conform(&response.text),
+            None => response.text,
+        };
+        let shaped = shape(&text, &req.stop);
 
         // Keep the session for follow-ups — unless a stop sequence cut the
         // reply: its transcript then holds text the client never saw, so it
@@ -222,6 +230,8 @@ impl<E: SessionEngine> SessionChatBackend<E> {
         let opts = RespondOptions {
             schema: None,
             temperature: req.temperature,
+            top_p: req.top_p,
+            seed: req.seed,
             max_tokens: req.max_tokens,
         };
 
@@ -409,6 +419,7 @@ impl<E: SessionEngine> ChatBackend for SessionChatBackend<E> {
 mod tests {
     use super::*;
     use crate::engine::{EngineResponse, EngineUsage, StreamedResponse};
+    use sidekick_core::JsonSchema;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock engine that records prompts; sessions count their turns. Can be
@@ -446,7 +457,16 @@ mod tests {
             if let Some(err) = self.fail_with.lock().unwrap().pop() {
                 return Err(err);
             }
-            if opts.schema.is_some() {
+            if let Some(schema) = &opts.schema {
+                // Foundation Models' key order varies run to run: answer
+                // in reverse schema order, which the backend must undo.
+                if let sidekick_core::schema::Kind::Object { properties } = &schema.root().kind {
+                    if !properties.is_empty() {
+                        let fields: Vec<String> =
+                            properties.iter().rev().map(|p| format!("\"{}\": \"v\"", p.name)).collect();
+                        return Ok(EngineResponse::text(format!("{{{}}}", fields.join(", "))));
+                    }
+                }
                 Ok(EngineResponse::text(format!("{{\"turns\": {}}}", session.turns)))
             } else {
                 Ok(EngineResponse::text(format!("reply-{}", session.turns)))
@@ -994,19 +1014,37 @@ mod tests {
         let b = backend();
         let (sink, deltas) = collector(true);
         let mut r = req(vec![ChatMessage::new(Role::User, "extract")]);
-        r.schema = Some(serde_json::json!({"type": "object"}));
+        r.schema = Some(JsonSchema::parse(&serde_json::json!({"type": "object"})).unwrap());
         let resp = b.complete_stream(r, sink).await.unwrap();
         assert!(resp.constrained);
-        assert_eq!(*deltas.lock().unwrap(), vec!["{\"turns\": 1}"]);
+        assert_eq!(*deltas.lock().unwrap(), vec!["{\"turns\":1}"]);
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn schema_marks_constrained() {
         let b = backend();
         let mut r = req(vec![ChatMessage::new(Role::User, "extract")]);
-        r.schema = Some(serde_json::json!({"type": "object"}));
+        r.schema = Some(JsonSchema::parse(&serde_json::json!({"type": "object"})).unwrap());
         let resp = b.complete(r).await.unwrap();
         assert!(resp.constrained);
-        assert_eq!(resp.content, "{\"turns\": 1}");
+        assert_eq!(resp.content, "{\"turns\":1}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn guided_replies_come_back_in_schema_order() {
+        let b = backend();
+        let mut r = req(vec![ChatMessage::new(Role::User, "extract")]);
+        r.schema = Some(
+            JsonSchema::parse(&serde_json::json!({
+                "type": "object",
+                "properties": {"title": {"type": "string"}, "author": {"type": "string"},
+                               "year": {"type": ["string", "null"]}},
+                "required": ["title", "author", "year"]
+            }))
+            .unwrap(),
+        );
+        // The mock answers in reverse order; the reply follows the schema.
+        let resp = b.complete(r).await.unwrap();
+        assert_eq!(resp.content, r#"{"title":"v","author":"v","year":"v"}"#);
     }
 }

@@ -145,7 +145,15 @@ pub fn foundation_models(
     debug_assert_eq!(backend.id(), APPLE_FM);
     let listing = ChatListing {
         backend: "foundation_models",
-        honored_fields: vec!["max_completion_tokens", "max_tokens", "response_format", "stop", "temperature"],
+        honored_fields: vec![
+            "max_completion_tokens",
+            "max_tokens",
+            "response_format",
+            "seed",
+            "stop",
+            "temperature",
+            "top_p",
+        ],
         // Guided snapshots aren't prefix-stable, so guided output is sent whole.
         guided_streaming: false,
         guardrails: true,
