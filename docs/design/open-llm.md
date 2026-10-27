@@ -587,12 +587,14 @@ options, such as required-but-nullable) is decided by measurement on the
 benchmark's extraction set, and changes only AFM's mapping. On the open
 path, the benchmark found llguidance made MiniCPM5-1B fill in fields the
 text doesn't state; whether the 2B does is measured before guided
-extraction is recommended on it. A first look (#186): on 24 of the
-extraction items (3 per schema), greedy, the 2B's guided replies held
-the same values as its prompt-only replies on every item, so guidance
-neither dropped nor invented fields there; both left out the same 13
-optional fields the text states. The full set, guided and prompt-only,
-is the release gate's to run.
+extraction is recommended on it. A first look (#186), on 24 of the
+extraction items: guided without the schema in the system message held
+the same values as prompt-only on every item (13 stated optional fields
+left out by both). With it, guided left out 9 with the benchmark's
+prompt and 6 without, so guidance with the schema shown drops fewer
+fields, not more ("Constrained decoding on the open path" has the
+table). The full set, guided and prompt-only, is the release gate's to
+run.
 
 ### Constrained decoding on the open path
 
@@ -634,6 +636,29 @@ grammar allows; the sampler sets every other logit to −∞.
   is written before the prompt is tokenized, so it counts in
   `prompt_tokens` and against the context. `[models."<id>"]
   schema_in_prompt = false` turns it off for a model.
+
+  Measured on MiniCPM5-2B (#186's PR), with 24 of the chat benchmark's
+  extraction items (3 per schema), greedy. Scores are from the
+  benchmark's scorer, with a stand-in schema validator and no stemming,
+  so they compare modes rather than match CHAT-BENCHMARK.md:
+
+  | Prompt | Schema in the system message | Field accuracy | Exact | Stated optional fields left out | Prompt tokens |
+  |---|---|---|---|---|---|
+  | No schema in the user turn | no | 0.680 | 0.042 | 27 | 3,624 |
+  | No schema in the user turn | yes | 0.951 | 0.625 | 6 | 7,314 |
+  | The benchmark's (names the schema) | no | 0.902 | 0.583 | 13 | 7,074 |
+  | The benchmark's (names the schema) | yes | 0.934 | 0.625 | 9 | 10,764 |
+  | The benchmark's, prompt-only (not guided) | no | 0.902 | 0.583 | 13 | 7,074 |
+
+  Every guided reply was valid. Without the schema, a client that puts
+  it only in `response_format` gets a model that guesses at the fields.
+  With it, it does better than the benchmark's own prompt. Writing the
+  schema twice (the client's prompt and the system message) didn't hurt
+  either: 0.934 against 0.902. It costs prefill: the benchmark's
+  requests took 25% longer end to end (78.8 s against 63.1 s for the 24),
+  for 52% more prompt tokens. On the hand-written meeting request ("Let's
+  meet Thursday…", every field required and nullable), the schema in the
+  system message turned `"day": null` into `"day": "Thursday"`.
 - **Cost, measured: the mask doesn't need hiding.** The design first had
   each mask computed on another thread while the next ANE call ran. Over
   the chat benchmark's 80 extraction answers walked through MiniCPM5-2B's
