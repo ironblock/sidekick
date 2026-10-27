@@ -1,12 +1,15 @@
 """Recipes: a backbone, a head and a committed manifest, made into a core.Job.
 
-`embedder()` and `classifier()` are the two shapes every converter so far
+`embedder()` and `classifier()` are the two shapes every encoder converter
 takes. They build the evaluation cases (token ids from tokenizer.json, fp32
 references from the checkpoint's own unpadded forward), check the manifest
 against the checkpoint, and compose the per-bucket wrapper. Anything
 model-specific (gate texts, rewrites, extra ports) stays in the converter or
-its backbone.
+its backbone. `causal_lm()` makes a causal_lm.Job instead, for the
+decoder's own pipeline.
 """
+
+from pathlib import Path
 
 from . import manifest as _manifest
 from . import tokenizer as _tok
@@ -121,3 +124,33 @@ def classifier(*, model_id, src, buckets, backbone, head, tok, texts=None, pairs
                int8_embedding=int8_embedding, ignore_ane_weight_cap=ignore_ane_weight_cap, chunks=chunks,
                chunk_identity_all=chunk_identity_all, shared_weights=shared_weights, backbone=backbone,
                head=head, keep_packages=keep_packages)
+
+
+CAUSAL_LM = {
+    "minicpm5-2b": {},
+}
+"""Per-model departures from causal_lm.Recipe's defaults. MiniCPM5-2B takes
+the defaults, which are #173's grade-B recipe: R1 and R2 rotations, GPTQ
+with act-order onto 8-bit palettes per 16 output channels, 40,960
+calibration tokens in 2,048-token sequences, the head as four
+convolutions, and no projection left in fp16."""
+
+
+def causal_lm(*, model_id, src, work, draw=None, stability_draw=None, tokens=None, plan=True,
+              screen_only=False, keep_packages=False):
+    """A causal-LM job (causal_lm.run); installs examples/chat/<model_id>/chat.toml
+    with its [build] table. `stability_draw` -1 skips the second draw."""
+    from .causal_lm import Job, Recipe, manifest_path
+    if not manifest_path(model_id).exists():
+        raise SystemExit(f"no manifest at {manifest_path(model_id)}: name the install dir after the model id")
+    recipe = Recipe(**CAUSAL_LM.get(model_id, {}))
+    if draw is not None:
+        recipe.draw_seed = draw
+    if tokens is not None:
+        recipe.tokens = tokens
+    if stability_draw is not None:
+        recipe.stability_seed = None if stability_draw < 0 else stability_draw
+    if recipe.stability_seed == recipe.draw_seed:
+        raise SystemExit("the stability draw must differ from the build's draw")
+    return Job(model_id=model_id, src=str(Path(src).resolve()), work=str(Path(work).resolve()), recipe=recipe,
+               plan=plan, screen_only=screen_only, keep_packages=keep_packages)
