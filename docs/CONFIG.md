@@ -100,6 +100,7 @@ request_timeout_secs = 120     # this model's request timeout, over the global o
 
 [models."minicpm5-2b"]
 queue_depth = 4                # an open chat model's queue, before a 503 backend_busy
+schema_in_prompt = true        # write a guided request's schema into an open model's prompt
 ```
 
 | Key | What it does |
@@ -108,6 +109,7 @@ queue_depth = 4                # an open chat model's queue, before a 503 backen
 | `intra_op_threads` | An onnx model's inference threads, over `onnx_intra_op_threads`. At least 1. |
 | `warm` | `false` leaves a Core ML model out of the startup warm-up and fetch's; `sidekickd warm <id>` still warms it. |
 | `queue_depth` | An open chat model's queue (default 4): how many requests may wait while one generates. A request past it is a 503 `backend_busy` with `Retry-After`. `apple-fm` and the open chat models share one queue, the ANE chat lane ([API.md](API.md#open-models)), which takes the largest `queue_depth` set for an installed open model. 0 queues nothing: one request at a time, the rest busy. |
+| `schema_in_prompt` | An open chat model only (default true): write a guided request's schema, with its descriptions, into the model's system message, as Foundation Models puts it in its prompt ([API.md](API.md#open-models)). `false` leaves the prompt as the client sent it, for clients whose prompts already state the schema. |
 | `request_timeout_secs` | The model's request timeout, in seconds, at least 1: for any model, chat, embedder or classifier. A model's timeout is this, else the model's own default where it names one, else the global `request_timeout_secs`. `/health` reports each chat model's timeout and who chose it, and `request_timeout_overrides` lists the settings applied and those that name no model. |
 
 ## Command-line flags

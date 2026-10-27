@@ -5,7 +5,7 @@
 use crate::decoder::{DecoderProbe, DecoderStatus};
 use crate::engine::{DecoderLoader, Engine, Work};
 use crate::generate::{Generated, Job};
-use crate::guided::{Guidance, Guide};
+use crate::guided::{self, Guidance, Guide};
 use crate::lane::{ready, ChatLane, LanePermit, ReadyError};
 use crate::prompt::Prompter;
 use crate::sampler::SamplingParams;
@@ -29,6 +29,9 @@ pub struct OpenModelSpec {
     pub stop_token_ids: Vec<u32>,
     /// The decoder's logits row's width (the manifest's `vocab_size`).
     pub vocab_size: usize,
+    /// Whether a guided request's schema is written into its prompt
+    /// ([`guided::with_schema_in_prompt`]); on by default.
+    pub schema_in_prompt: bool,
     /// The checkpoint's defaults for a request that omits them.
     pub sampling: SamplingSection,
     /// The model's programs' weights: its estimated share of the Neural
@@ -74,11 +77,7 @@ impl OpenModel {
     ) -> Self {
         Self {
             stop_ids: spec.stop_token_ids.clone().into(),
-            guidance: Arc::new(Guidance::new(
-                spec.prompter.tokenizer().clone(),
-                &spec.stop_token_ids,
-                spec.vocab_size,
-            )),
+            guidance: Arc::new(Guidance::new(spec.prompter.clone(), &spec.stop_token_ids, spec.vocab_size)),
             spec,
             lane,
             loader,
@@ -111,30 +110,47 @@ impl OpenModel {
         *self.load_error.lock().unwrap_or_else(PoisonError::into_inner) = error;
     }
 
+    /// Whether this model can guide its output (`response_format`
+    /// `json_schema`); why not when it can't.
+    pub fn guided(&self) -> std::result::Result<(), &str> {
+        self.guidance.available()
+    }
+
     /// The prompt's token ids, how many tokens may follow them, and a
     /// guided request's grammar, made on a blocking thread: a 2 MiB body is
-    /// milliseconds of work, as is compiling a schema.
+    /// milliseconds of work, as is compiling a schema. A guided request's
+    /// schema is written into its prompt first, so it counts against the
+    /// context; the grammar is compiled only once the request fits.
     async fn plan(&self, req: &ChatRequest) -> Result<(Vec<u32>, usize, Option<Guide>)> {
-        let (prompter, messages) = (self.spec.prompter.clone(), req.messages.clone());
-        let (guidance, schema) = (self.guidance.clone(), req.schema.clone());
-        let (prompt, guide) = tokio::task::spawn_blocking(move || -> Result<_> {
+        if let (Some(_), Err(reason)) = (&req.schema, self.guidance.available()) {
+            return Err(Error::InvalidRequest(format!(
+                "`{}` can't guide its output (response_format json_schema): {reason}",
+                self.spec.id
+            )));
+        }
+        let (prompter, guidance) = (self.spec.prompter.clone(), self.guidance.clone());
+        let messages = match (&req.schema, self.spec.schema_in_prompt) {
+            (Some(schema), true) => guided::with_schema_in_prompt(&req.messages, schema),
+            _ => req.messages.clone(),
+        };
+        let (schema, limit, max_tokens) = (req.schema.clone(), self.spec.context_length, req.max_tokens);
+        tokio::task::spawn_blocking(move || -> Result<_> {
+            let prompt = prompter.encode(&messages)?;
+            let n = prompt.len();
+            let max = match max_tokens {
+                Some(m) => m as usize,
+                None => limit.saturating_sub(n),
+            };
+            // The prompt and its completion fit the context, with room for
+            // at least one generated token (OpenAI's and vLLM's 400).
+            if n + max.max(1) > limit {
+                return Err(Error::ContextOverflow { limit, actual: Some(n + max.max(1)) });
+            }
             let guide = schema.map(|s| guidance.guide(&s)).transpose()?;
-            Ok((prompter.encode(&messages)?, guide))
+            Ok((prompt, max, guide))
         })
         .await
-        .map_err(|e| Error::Other(format!("tokenizing task failed: {e}")))??;
-        let limit = self.spec.context_length;
-        let n = prompt.len();
-        let max = match req.max_tokens {
-            Some(m) => m as usize,
-            None => limit.saturating_sub(n),
-        };
-        // The prompt and its completion fit the context, with room for at
-        // least one generated token (OpenAI's and vLLM's 400).
-        if n + max.max(1) > limit {
-            return Err(Error::ContextOverflow { limit, actual: Some(n + max.max(1)) });
-        }
-        Ok((prompt, max, guide))
+        .map_err(|e| Error::Other(format!("tokenizing task failed: {e}")))?
     }
 
     async fn run(&self, req: ChatRequest, sink: Option<DeltaSink>) -> Result<ChatResponse> {
@@ -270,6 +286,8 @@ impl OpenModel {
         m.insert("resident".into(), json!(resident.is_some()));
         m.insert("idle_secs".into(), json!(resident.map(|(_, at)| at.elapsed().as_secs())));
         m.insert("queue_depth".into(), json!(self.spec.queue_depth));
+        m.insert("guided".into(), self.guidance.health());
+        m.insert("schema_in_prompt".into(), json!(self.spec.schema_in_prompt));
         m.insert("lane_queue_depth".into(), json!(self.lane.options().queue_depth));
         m.insert("requests".into(), json!(self.requests.load(Ordering::Relaxed)));
         m.insert("loads".into(), json!(self.loads.load(Ordering::Relaxed)));
@@ -513,6 +531,8 @@ mod tests {
         watchdog: Duration,
         alive: Arc<AtomicUsize>,
         most_alive: Arc<AtomicUsize>,
+        /// Leave guided requests' schemas out of their prompts.
+        no_schema_in_prompt: bool,
     }
 
     fn model(id: &str, lane: &Arc<ChatLane>, reply: &str, delay: Duration, timeout: Duration) -> (OpenModel, Setup) {
@@ -546,6 +566,7 @@ mod tests {
             prompter: Arc::new(prompter()),
             stop_token_ids: vec![257, 259],
             vocab_size: 300,
+            schema_in_prompt: !knobs.no_schema_in_prompt,
             sampling: SamplingSection { temperature: 0.0, top_p: 1.0 },
             estimated_ane_bytes: 1000,
             queue_depth: 4,
@@ -604,10 +625,26 @@ mod tests {
         assert!(matches!(err, Error::ContextOverflow { limit: 64, actual: Some(_) }), "{err}");
         let err = m.complete(ask(&"x".repeat(80), None)).await.unwrap_err();
         assert!(matches!(err, Error::ContextOverflow { limit: 64, .. }), "{err}");
-        // Guided output: an empty object's grammar forces all of it.
+        // Guided output: the schema written into the prompt counts against
+        // the context (64 tokens here, one a byte).
         let schema = sidekick_core::JsonSchema::parse(&serde_json::json!({"type": "object", "properties": {}})).unwrap();
-        let r = m.complete(ChatRequest { schema: Some(schema), ..ask("Hi", None) }).await.unwrap();
+        let guided = |text: &str| ChatRequest { schema: Some(schema.clone()), ..ask(text, None) };
+        let err = m.complete(guided("Hi")).await.unwrap_err();
+        let unguided = prompter().encode(&ask("Hi", None).messages).unwrap().len();
+        let with_schema = prompter()
+            .encode(&crate::guided::with_schema_in_prompt(&ask("Hi", None).messages, &schema))
+            .unwrap()
+            .len();
+        assert!(matches!(err, Error::ContextOverflow { limit: 64, actual: Some(a) } if a == with_schema + 1), "{err}");
+        assert!(with_schema > unguided + crate::guided::schema_instruction(&schema).len() - 8);
+        // Without it, an empty object's grammar forces the whole reply.
+        let knobs = Knobs { no_schema_in_prompt: true, ..Default::default() };
+        let (m, _) = model_with("m2", &lane, "a b", Duration::ZERO, Duration::from_secs(10), knobs);
+        let r = m.complete(guided("Hi")).await.unwrap();
         assert_eq!((r.content.as_str(), r.finish, r.usage.completion_tokens, r.constrained), ("{}", FinishReason::Stop, 2, true));
+        assert_eq!(r.usage.prompt_tokens as usize, unguided);
+        assert_eq!(m.health()["schema_in_prompt"], false);
+        assert_eq!(m.health()["guided"]["grammars"], 1);
     }
 
     #[tokio::test]
@@ -811,6 +848,7 @@ mod tests {
             prompter: Arc::new(prompter()),
             stop_token_ids: vec![257],
             vocab_size: 300,
+            schema_in_prompt: true,
             sampling: SamplingSection::default(),
             estimated_ane_bytes: 0,
             queue_depth: 4,

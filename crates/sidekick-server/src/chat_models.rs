@@ -218,22 +218,19 @@ pub fn foundation_models(
     ChatModel::new(backend, listing, timeout).with_health(health)
 }
 
-/// `/v1/models`' listing of an open model (D53).
-pub fn open_listing() -> ChatListing {
+/// `/v1/models`' listing of an open model (D53). `guided` is whether its
+/// tokenizer lets llguidance constrain its output (#186).
+pub fn open_listing(guided: bool) -> ChatListing {
+    let mut honored_fields = vec!["max_completion_tokens", "max_tokens", "seed", "stop", "temperature", "top_p"];
+    if guided {
+        honored_fields.insert(2, "response_format");
+    }
     ChatListing {
         backend: "coreml",
-        honored_fields: vec![
-            "max_completion_tokens",
-            "max_tokens",
-            "response_format",
-            "seed",
-            "stop",
-            "temperature",
-            "top_p",
-        ],
+        honored_fields,
         // Guided output is generated token by token under its grammar, so
-        // it streams as it is generated (#186).
-        guided_streaming: true,
+        // it streams as it is generated.
+        guided_streaming: guided,
         guardrails: false,
         compute_units: Some(sidekick_core::ComputeUnits::CpuAndNeuralEngine.name()),
         graded_os: None,
@@ -253,7 +250,8 @@ pub fn open_model(
         None => id,
     };
     let live = model.clone();
-    ChatModel::new(model, open_listing(), request_timeout)
+    let listing = open_listing(model.guided().is_ok());
+    ChatModel::new(model, listing, request_timeout)
         .with_provenance(provenance)
         .with_live_health(Arc::new(move || live.health()))
 }

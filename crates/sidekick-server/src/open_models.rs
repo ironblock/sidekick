@@ -93,6 +93,7 @@ pub fn build(
             prompter,
             stop_token_ids: section.stop_token_ids.clone(),
             vocab_size: m.decoder.vocab_size,
+            schema_in_prompt: config.models.get(&m.id).and_then(|c| c.schema_in_prompt).unwrap_or(true),
             sampling: m.sampling,
             estimated_ane_bytes: m.decoder.program_weight_bytes(&chat.dir),
             queue_depth: config.models.get(&m.id).and_then(|c| c.queue_depth).unwrap_or(sidekick_llm::DEFAULT_QUEUE_DEPTH),

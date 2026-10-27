@@ -34,10 +34,10 @@ fn main() {
     let manifest = ChatManifest::read(&dir.join("chat.toml")).expect("chat.toml");
     let chat = manifest.chat.as_ref().expect("[chat]");
     let tokenizer_path = dir.join(&manifest.tokenizer);
-    let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path).expect("tokenizer");
+    let prompter = sidekick_llm::Prompter::open(dir, &manifest.tokenizer, chat).expect("tokenizer and template");
     let token_bytes = toktrie_hf_tokenizers::ByteTokenizer::from_file(&tokenizer_path).expect("bytes").token_bytes();
     let per_call = manifest.decoder.tokens_per_call;
-    let guidance = Guidance::new(tokenizer, &chat.stop_token_ids, manifest.decoder.vocab_size);
+    let guidance = Guidance::new(std::sync::Arc::new(prompter), &chat.stop_token_ids, manifest.decoder.vocab_size);
 
     let schemas: Value = serde_json::from_str(&std::fs::read_to_string(schemas).unwrap()).unwrap();
     let started = Instant::now();
@@ -62,7 +62,7 @@ fn main() {
             compiles.push((name.to_string(), took, t1.elapsed()));
         }
         let ordered: Value = serde_json::from_str(&schema.conform(&item["gold"].to_string())).unwrap();
-        let answer = spaced(&ordered);
+        let answer = sidekick_llm::guided::spaced_json(&ordered);
         let text = answer.as_bytes();
         let mut at = 0;
         // The reply's opening is forced before the prompt's calls.
@@ -147,17 +147,4 @@ fn main() {
         });
     }
     println!("scoped thread spawn + join: {:.0} µs", t.elapsed().as_secs_f64() * 1e6 / reps as f64);
-}
-
-/// `value` on one line with `, ` and `: ` between values, as a guided reply
-/// writes it.
-fn spaced(value: &Value) -> String {
-    match value {
-        Value::Object(map) => {
-            let items: Vec<String> = map.iter().map(|(k, v)| format!("{}: {}", Value::from(k.as_str()), spaced(v))).collect();
-            format!("{{{}}}", items.join(", "))
-        }
-        Value::Array(values) => format!("[{}]", values.iter().map(spaced).collect::<Vec<_>>().join(", ")),
-        other => other.to_string(),
-    }
 }

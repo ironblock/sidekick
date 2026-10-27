@@ -138,7 +138,7 @@ impl Prefers {
 
 impl Decoder for Prefers {
     fn spec(&self) -> DecoderSpec {
-        DecoderSpec { tokens_per_call: 16, context_length: 200, vocab_size: 260 }
+        DecoderSpec { tokens_per_call: 16, context_length: 1024, vocab_size: 260 }
     }
     fn prefill(&mut self, _: &[u32]) -> Result<&[f32]> {
         Ok(&self.logits)
@@ -174,6 +174,7 @@ fn state(queue_depth: usize, delay: Duration) -> AppState {
         prompter: Arc::new(Prompter::new(tokenizer(), TEMPLATE, &section_tiny).unwrap()),
         stop_token_ids: section_tiny.stop_token_ids.clone(),
         vocab_size: VOCAB.len(),
+        schema_in_prompt: true,
         sampling: SamplingSection { temperature: 0.0, top_p: 1.0 },
         estimated_ane_bytes: 1 << 20,
         queue_depth,
@@ -185,10 +186,11 @@ fn state(queue_depth: usize, delay: Duration) -> AppState {
     let section_bytes = section(257);
     let spec = OpenModelSpec {
         id: "bytes".into(),
-        context_length: 200,
+        context_length: 1024,
         prompter: Arc::new(Prompter::new(byte_tokenizer(), TEMPLATE, &section_bytes).unwrap()),
         stop_token_ids: section_bytes.stop_token_ids.clone(),
         vocab_size: 260,
+        schema_in_prompt: true,
         sampling: SamplingSection { temperature: 0.0, top_p: 1.0 },
         estimated_ane_bytes: 1 << 20,
         queue_depth,
@@ -309,6 +311,16 @@ async fn guided_output_is_valid_json_in_schema_order() {
     assert_eq!((body["choices"][0]["finish_reason"].as_str(), body["constrained"].as_bool()), (Some("stop"), Some(true)));
     // Every token counted, forced or sampled; the JSON's end is the reply's.
     assert_eq!(body["usage"]["completion_tokens"], content.len());
+    // The schema is written into the prompt (one token a byte here), as a
+    // system message: the guided prompt is longer by at least its text.
+    let (_, plain) = call(state(4, Duration::ZERO), post_json("/v1/chat/completions", json!({
+        "model": "bytes", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 1
+    })))
+    .await;
+    let schema = sidekick_core::JsonSchema::parse(&record()).unwrap();
+    let instruction = sidekick_llm::guided::schema_instruction(&schema);
+    let grew = body["usage"]["prompt_tokens"].as_u64().unwrap() - plain["usage"]["prompt_tokens"].as_u64().unwrap();
+    assert!(grew as usize >= instruction.len(), "{grew} < {}", instruction.len());
 
     // Cut by max_tokens: `length`, and the JSON is incomplete.
     let (status, body) = call(state(4, Duration::ZERO), guided(record(), json!({"max_tokens": 10}))).await;
@@ -426,8 +438,12 @@ async fn models_and_health_report_the_open_model() {
     assert_eq!(tiny["context_length"], 48);
     assert_eq!(tiny["guardrails"], false);
     assert!(tiny["honored_fields"].as_array().unwrap().contains(&json!("seed")));
-    assert!(tiny["honored_fields"].as_array().unwrap().contains(&json!("response_format")));
-    assert_eq!(tiny["guided_streaming"], true);
+    // `tiny`'s word-level tokenizer can't be guided; `bytes`' can.
+    assert!(!tiny["honored_fields"].as_array().unwrap().contains(&json!("response_format")));
+    assert_eq!(tiny["guided_streaming"], false);
+    let bytes = models["data"].as_array().unwrap().iter().find(|m| m["id"] == "bytes").expect("listed");
+    assert!(bytes["honored_fields"].as_array().unwrap().contains(&json!("response_format")));
+    assert_eq!(bytes["guided_streaming"], true);
 
     let (status, _) = call(state.clone(), ask(json!({}))).await;
     assert_eq!(status, StatusCode::OK);
@@ -437,6 +453,7 @@ async fn models_and_health_report_the_open_model() {
     assert_eq!((tiny["state"].as_str(), tiny["resident"].as_bool()), (Some("ready"), Some(true)));
     assert_eq!((tiny["queue_depth"].as_u64(), tiny["lane_queue_depth"].as_u64(), tiny["requests"].as_u64()), (Some(3), Some(3), Some(1)));
     assert_eq!(tiny["ane"]["estimated_bytes"], 1 << 20);
+    assert_eq!((tiny["guided"]["available"].as_bool(), tiny["schema_in_prompt"].as_bool()), (Some(false), Some(true)));
     assert_eq!(tiny["request_timeout_secs"], 30);
     let lane = &health["chat"]["lane"];
     assert_eq!(lane["resident"]["model"], "tiny");

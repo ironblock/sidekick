@@ -121,8 +121,9 @@ the standard `response_format`; for example, a session title:
 
 The schema is enforced by the model's constrained decoding (Foundation
 Models' guided generation, or llguidance on an [open model](#open-models)),
-not asked for in the prompt, and must be in the
-[supported subset](#structured-output). Check `finish_reason`: a reply cut
+and both backends also show it to the model: Foundation Models puts it in
+its prompt, and an open model's system message carries it. It must be in
+the [supported subset](#structured-output). Check `finish_reason`: a reply cut
 by `max_tokens` reports `"length"`, and for constrained output that means
 the JSON is incomplete: on `apple-fm` it may be missing properties, and on
 an open model it stops mid-value and won't parse.
@@ -178,9 +179,18 @@ runs on the Neural Engine, beside a large model that owns the GPU
   complete, without a stop token, and streams as it is generated. That is
   a guarantee of valid JSON, not of correct values: constraining an open
   model fixed its malformed replies but not its wrong answers (the chat
-  benchmark's [findings](CHAT-BENCHMARK.md#findings)). The model doesn't
-  see the schema's `description`s, so describe the fields in the prompt
-  too. The first guided request a model serves after sidekickd starts
+  benchmark's [findings](CHAT-BENCHMARK.md#findings)). The grammar only
+  forces what may come next, so the model also reads the schema: it is
+  written, with its `description`s, required properties and enum
+  choices, into the system message (after any system text the request
+  sent, under a `# Response format` heading), where the model's template
+  puts tool definitions, and counts in `prompt_tokens` and against the
+  context. `[models."<id>"] schema_in_prompt = false`
+  ([CONFIG.md](CONFIG.md#per-model-settings)) leaves the prompt as sent,
+  for a client whose prompt already states the schema. Integers and
+  numbers are as long as the model writes them: JSON allows exponents
+  past what a double holds. The first guided request a model serves after
+  sidekickd starts
   builds its tokenizer's index for the grammar engine first (about 0.4 s
   for MiniCPM5-2B). (`json_object` asks for JSON in the prompt, as on
   `apple-fm`.)
@@ -266,7 +276,7 @@ either way: output is always constrained.
 | `enum`, `const` | Strings only (and `null` in a nullable enum) |
 | `items`, `minItems`, `maxItems` | `items` is required on an array, and is one schema |
 | `anyOf` | Only as a nullable union: one schema and `{"type": "null"}` |
-| `description` | Passed to `apple-fm`'s model as guidance; an open model sees only the prompt |
+| `description` | Shown to the model with the schema: in Foundation Models' prompt, and in an open model's system message |
 | `title`, `$schema`, `examples`, `default` | Accepted and ignored |
 
 Refused, among others: `anyOf` of anything else, `oneOf`, `allOf`, `not`,

@@ -554,7 +554,7 @@ directly.
 | `enum` of strings; `const` string | yes | `anyOf` strings | llguidance |
 | nullable: `type: [T, "null"]`, or `anyOf` of one schema and `{"type": "null"}` | yes | an optional property; the layer writes `null` where it is absent | llguidance |
 | `items`, `minItems`, `maxItems` | yes | `arrayOf` with bounds | llguidance |
-| `description`, `title`, `$schema`, `examples`, `default` | accepted; `description` is passed to AFM | a guide | none: the model sees only the prompt |
+| `description`, `title`, `$schema`, `examples`, `default` | accepted; `description` is passed to AFM | a guide | written with the schema into the system message (#186; the measurement is under "Constrained decoding on the open path") |
 | `anyOf` (other), `oneOf`, `allOf`, `$ref`/`$defs`, `enum` of non-strings | 400 | — | — |
 | `minimum`, `maximum`, `pattern`, `format`, `minLength`, `maxLength`, `patternProperties` | 400 | — | — |
 
@@ -611,10 +611,29 @@ grammar allows; the sampler sets every other logit to −∞.
   benchmark's extraction schemas); a `Matcher` then gives `compute_mask`,
   `consume_token` and `compute_ff_tokens` each step. A model keeps its 32
   most recently used grammars, keyed by the schema written out, and a
-  request starts from a copy. A schema the layer accepts but llguidance
-  can't compile is a 400 `unsupported_schema`, and a tokenizer llguidance
-  can't read (one that isn't byte-level or byte-fallback BPE) a 400 for
-  guided requests to that model.
+  request starts from a clone, which shares the entry's lexer state; a
+  grammar that errors during a request is evicted, so the next request
+  compiles it afresh, and two requests compiling one schema at once keep
+  one entry. `/health` reports the cache (`chat.models.<id>.guided`). A
+  schema the layer accepts but llguidance can't compile is a 400
+  `unsupported_schema`. A tokenizer llguidance can't read (one that isn't
+  byte-level or byte-fallback BPE) is found at startup: the model's
+  listing leaves `response_format` out of its `honored_fields`, and guided
+  requests to it are a 400.
+- **The schema is in the prompt too.** The grammar only forces what may
+  come next: it can't tell the model which fields exist, which are
+  optional, what an enum offers or what a description asks, so a model
+  that met the schema only through the grammar would meet each field name
+  as it is forced. Foundation Models, by default, puts the schema in its
+  prompt as well. So a guided request's schema, written out as JSON Schema
+  with its descriptions (`guided::prompt_schema`, on one line as
+  `json.dumps` writes it), goes into the system message under a
+  `# Response format` heading, after any system text the request sent and
+  a blank line, or as a system message of its own. That is where
+  MiniCPM5's template puts tool definitions, in the same one-line JSON. It
+  is written before the prompt is tokenized, so it counts in
+  `prompt_tokens` and against the context. `[models."<id>"]
+  schema_in_prompt = false` turns it off for a model.
 - **Cost, measured: the mask doesn't need hiding.** The design first had
   each mask computed on another thread while the next ANE call ran. Over
   the chat benchmark's 80 extraction answers walked through MiniCPM5-2B's

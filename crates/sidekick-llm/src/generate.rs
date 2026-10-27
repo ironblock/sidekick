@@ -484,7 +484,7 @@ pub(crate) mod tests {
 
     fn guided(schema: serde_json::Value, max_tokens: usize, sink: Option<DeltaSink>) -> (Job, JsonSchema) {
         let schema = JsonSchema::parse(&schema).unwrap();
-        let guidance = Guidance::new(crate::prompt::tests::byte_tokenizer(), &[257, 259], 300);
+        let guidance = Guidance::new(Arc::new(prompter()), &[257, 259], 300);
         let mut j = job(max_tokens, &[], sink);
         j.guide = Some(guidance.guide(&schema).unwrap());
         (j, schema)

@@ -118,6 +118,9 @@ pub struct ModelConfig {
     /// generates, before a 503 `backend_busy` (default 4). The ANE chat
     /// lane the open models and `apple-fm` share takes the largest.
     pub queue_depth: Option<usize>,
+    /// `false` leaves a guided request's schema out of an open chat
+    /// model's prompt; it is written into the system message by default.
+    pub schema_in_prompt: Option<bool>,
 }
 
 /// Each model's request timeout: the operator's for that model
