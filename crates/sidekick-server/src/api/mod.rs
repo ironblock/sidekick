@@ -336,7 +336,11 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         // The one choke point every ApiError passes through — log here so
         // failures are visible server-side, not just in the client's body.
-        if self.status.is_server_error() {
+        if self.code == "backend_busy" {
+            // A full queue is load, not a fault: one line per request under
+            // load shouldn't read as an error.
+            tracing::warn!(status = %self.status, code = self.code, message = %self.message, "request refused");
+        } else if self.status.is_server_error() {
             tracing::error!(status = %self.status, code = self.code, message = %self.message, "request failed");
         } else if self.status == StatusCode::UNAUTHORIZED {
             tracing::warn!(status = %self.status, code = self.code, "request rejected");
