@@ -1,0 +1,21 @@
+id = "tiny-kv-decoder"
+task = "text-generation"
+interface = "kv-state-1"
+compute_units = "cpu_and_ne"
+tokenizer = "tokenizer.json"
+
+[decoder]
+artifact = "decoder.{chunk}.mlmodelc"
+chunks = 2
+tokens_per_call = 64
+cache_capacity = 256
+context_length = 193
+hidden_size = 256
+head_dim = 64
+kv_heads = 2
+layers = [2, 2]
+vocab_size = 1024
+
+[decoder.host]
+embedding = "embedding.safetensors"
+rope = "rope.safetensors"

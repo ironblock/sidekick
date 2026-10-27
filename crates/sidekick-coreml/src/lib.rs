@@ -1,14 +1,20 @@
 //! Minimal safe wrapper over Core ML.
 //!
-//! Scope is deliberately tiny: load a compiled model with a chosen compute
+//! Scope is deliberately small: load a compiled model with a chosen compute
 //! unit preference, run batch-1 predictions with int32/float inputs, read
 //! float outputs. Everything sidekick needs for encoder models on the ANE,
-//! and nothing else.
+//! and a stateful decoder chain for open causal LMs (`KvDecoder`, D53):
+//! chunk programs on the ANE that keep their KV cache in Core ML state.
 //!
-//! On non-macOS targets this crate compiles to an empty stub so that the
-//! workspace builds and tests everywhere; `sidekick-embed` gates its Core ML
-//! backend on `target_os = "macos"` accordingly.
+//! On non-macOS targets this crate compiles to a stub, holding only the
+//! decoder's platform-neutral bookkeeping, so that the workspace builds and
+//! tests everywhere; `sidekick-embed` gates its Core ML backend on
+//! `target_os = "macos"` accordingly.
 
+#[cfg(target_os = "macos")]
+mod decoder;
+mod decoder_health;
+mod kv_contract;
 #[cfg(target_os = "macos")]
 mod model;
 #[cfg(target_os = "macos")]
@@ -19,6 +25,14 @@ pub use model::{input_shapes, interface, load_verdict, CoremlChain, CoremlModel,
 pub use plan::{compute_plan, has_neural_engine};
 #[cfg(target_os = "macos")]
 pub use model::{cache_home, signing_identifier};
+#[cfg(target_os = "macos")]
+pub use decoder::{AneCheck, DecoderOptions, KvDecoder, PAD_TOKEN};
+pub use decoder_health::{DecoderHealth, DecoderMonitor, Watchdog, DEFAULT_CALL_TIMEOUT, STALL_FACTOR};
+pub use kv_contract::{check_program, DecoderShape, Dtype, ProgramDecl, ProgramNames, TensorDecl};
+#[cfg(target_os = "macos")]
+mod usage;
+#[cfg(target_os = "macos")]
+pub use usage::{process_memory, ProcessMemory};
 
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;

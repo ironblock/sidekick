@@ -19,7 +19,7 @@ clean, are in [AGENTS.md](../AGENTS.md). Converting models is in
 | Crate | What it is |
 |---|---|
 | `sidekick-core` | Backend-neutral traits and types: `ChatBackend`, `Embedder`, `Classifier`, availability states, model manifests and registry; the chat route's JSON Schema layer and stop-sequence shaper, shared by every chat backend. No Apple dependencies. |
-| `sidekick-coreml` | Small safe wrapper over `objc2-core-ml`: load, compute units, int32-in/float-out predictions. macOS only; empty stub elsewhere. |
+| `sidekick-coreml` | Small safe wrapper over `objc2-core-ml`: load, compute units, int32-in/float-out predictions, and the stateful decoder chain open chat models run on (`KvDecoder`, [D53](DECISIONS.md#d53--open-llms-on-the-chat-route-a-stateful-ane-decoder-beside-foundation-models)). macOS only; empty stub elsewhere. |
 | `sidekick-onnx` | ONNX Runtime on the CPU: finds and loads `libonnxruntime` at run time, runs a graph in a session, and sets inference threads from the machine's fast cores. `ort` comes in only with its `runtime` feature, which `sidekick-embed`'s `onnx` feature turns on. |
 | `sidekick-fm` | Foundation Models backend: Swift C-ABI shim built by `build.rs` (macOS 26.4+ SDK; 27 SDK for the macOS 27 features), guided generation from the schema layer's validated schema, TTL'd session reuse keyed by conversation prefix. Stub elsewhere. |
 | `sidekick-embed` | Encoder pipelines: Core ML/ANE embedders and classifiers (feature `coreml`, over `sidekick-coreml`), ONNX Runtime CPU embedders (feature `onnx`, over `sidekick-onnx`), laya's input format, and the static floor tier. |
@@ -64,6 +64,19 @@ which SDK a binary was built with; after switching Xcode with
   from Core ML's compute plan, without running it, then checks pad
   invariance on the ANE and CPU paths; its header documents the arguments
   ([MODELS.md](MODELS.md) has the method).
+- `cargo run --release -p sidekick-coreml --example kv_decoder -- <model
+  dir> <job.json> <out prefix>` drives a `chat.toml` decoder through a job
+  of measurements (call speed, greedy continuations, teacher-forced logits,
+  a long run's memory); its header documents the job. Sign the binary with
+  a fixed identifier after each build (`codesign -s - -f -i <identifier>`),
+  or a large build's ANE compile is redone and stored again whenever the
+  linker's identifier changes ([coreml-cache.md](design/coreml-cache.md#the-cache-key)).
+- `SIDEKICK_ANE_TESTS=1 cargo test -p sidekick-coreml --test kv_decoder`
+  runs a small `kv-state-1` decoder, built by
+  `tools/make_decoder_test_model.py`, on the Neural Engine. Without the
+  variable, and on a Mac whose Core ML lists no Neural Engine (a CI virtual
+  machine), the tests skip: they compile programs for the ANE and want it
+  to themselves.
 - The parity suite (`crates/sidekick-embed/examples/parity`,
   [D26](DECISIONS.md#d26--a-parity-suite-grades-every-model-on-every-compute-path))
   grades every model on every compute path against its reference;
@@ -92,6 +105,7 @@ Read by tests and examples, never by the daemon:
 
 | Variable | |
 |---|---|
+| `SIDEKICK_ANE_TESTS` | `1` runs `sidekick-coreml`'s decoder tests on the Neural Engine (`tests/kv_decoder.rs`); they skip otherwise. |
 | `SIDEKICK_REQUIRE_ONNX` | `1` fails the ONNX tests instead of skipping them when `ORT_DYLIB_PATH` isn't set. |
 | `SIDEKICK_CLASSIFY_FIXTURES` | The classifier token fixtures (default: `fixtures/classify`). |
 | `SIDEKICK_MODELS_DIR` | The models directory the classifier fixture test reads. |

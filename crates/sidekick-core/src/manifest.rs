@@ -1264,7 +1264,7 @@ fn check_ane_weights(
 /// 1.115 GiB of weights, past Core ML's 1 GiB limit for running a program on
 /// the ANE (MAX_ANE_PROGRAM_WEIGHT_BYTES)". Each `{seq}` bucket, and each
 /// `{chunk}` of a chained one, is its own program and is checked on its own.
-fn over_ane_weight_limit(dir: &Path, artifact: &str, buckets: &[usize], chunks: usize) -> Option<String> {
+pub(crate) fn over_ane_weight_limit(dir: &Path, artifact: &str, buckets: &[usize], chunks: usize) -> Option<String> {
     let mut names: Vec<String> = buckets.iter().flat_map(|&b| artifact_files(artifact, b, chunks)).collect();
     names.dedup();
     names.into_iter().find_map(|name| {
@@ -1286,7 +1286,7 @@ fn over_ane_weight_limit(dir: &Path, artifact: &str, buckets: &[usize], chunks: 
 /// directory being a symlink is fine, as are hard links. A Hugging Face
 /// cache snapshot holds every file as a symlink into its blob store, so a
 /// program served from one in place would quietly leave the ANE.
-fn symlinked_program_file(dir: &Path, artifact: &str, buckets: &[usize], chunks: usize) -> Option<String> {
+pub(crate) fn symlinked_program_file(dir: &Path, artifact: &str, buckets: &[usize], chunks: usize) -> Option<String> {
     fn walk(root: &Path, dir: &Path) -> Option<PathBuf> {
         for entry in std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok()) {
             let path = entry.path();

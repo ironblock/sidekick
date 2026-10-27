@@ -8,7 +8,7 @@ use crate::{
     shape_verdict, ComputeUnits, InputShape, Int32Input, ModelInterface, ShapeConstraint,
     ShapeVerdict,
 };
-use objc2::rc::Retained;
+use objc2::rc::{autoreleasepool, Retained};
 use objc2::runtime::ProtocolObject;
 use objc2::{available, AnyThread};
 use objc2_core_ml::{
@@ -70,6 +70,11 @@ impl CoremlModel {
     /// process with an Objective-C exception Rust can't catch (D27). Other
     /// flexible-shape models load with a warning; they run on the CPU.
     pub fn load(path: &Path, units: ComputeUnits) -> Result<Self> {
+        // The description reads autorelease too; drained here, as `open`'s are.
+        autoreleasepool(|_| Self::load_in_pool(path, units))
+    }
+
+    fn load_in_pool(path: &Path, units: ComputeUnits) -> Result<Self> {
         let model = open(path, units)?;
         match load_verdict(&read_input_shapes(&model)) {
             ShapeVerdict::Static => {}
@@ -101,10 +106,19 @@ impl CoremlModel {
 
     /// Run a prediction with named int32 inputs, returning the named float
     /// output. Fails if the output is missing or not a multiarray.
+    ///
+    /// Runs in an autorelease pool of its own: Core ML autoreleases each
+    /// prediction's outputs, and a Rust thread has no pool that drains
+    /// between calls, so without one they would pile up for the thread's
+    /// life (#173 measured a decoder loop's footprint reaching 19.7 GB).
     pub fn predict_int32(&self, inputs: &[Int32Input<'_>], output: &str) -> Result<OutputTensor> {
-        let features =
-            inputs.iter().map(|i| Ok((NSString::from_str(i.name), int32_value(i)?))).collect::<Result<Vec<_>>>()?;
-        read_output(&*self.run(features)?, output)
+        autoreleasepool(|_| {
+            let features = inputs
+                .iter()
+                .map(|i| Ok((NSString::from_str(i.name), int32_value(i)?)))
+                .collect::<Result<Vec<_>>>()?;
+            read_output(&*self.run(features)?, output)
+        })
     }
 
     /// One prediction from named feature values.
@@ -287,7 +301,17 @@ impl CoremlChain {
         Ok((out, trace))
     }
 
+    /// In an autorelease pool, as [`CoremlModel::predict_int32`] is.
     fn predict(
+        &self,
+        inputs: &[Int32Input<'_>],
+        output: &str,
+        trace: Option<&mut Vec<(usize, usize)>>,
+    ) -> Result<OutputTensor> {
+        autoreleasepool(|_| self.predict_in_pool(inputs, output, trace))
+    }
+
+    fn predict_in_pool(
         &self,
         inputs: &[Int32Input<'_>],
         output: &str,
@@ -375,8 +399,9 @@ pub fn cache_home() -> std::path::PathBuf {
 /// This process's code-signing identifier (`codesign -dv` shows it), which
 /// Core ML's ANE cache entries depend on: the same executable under another
 /// identifier recompiles every ANE program. A plain `cargo build` signs ad
-/// hoc with an identifier that changes with every build. `None` when the
-/// process isn't signed or Security can't say.
+/// hoc as cargo's name for the build, `<name>-<hash>`, whose hash changes
+/// with the package version, features or profile. `None` when the process
+/// isn't signed or Security can't say.
 ///
 /// Through the Security framework's public code-signing API:
 /// `SecCodeCopySelf`, then `kSecCodeInfoIdentifier` from
@@ -430,8 +455,15 @@ pub fn signing_identifier() -> Option<String> {
     }
 }
 
-/// Compile if needed, then load with the given compute units.
-fn open(path: &Path, units: ComputeUnits) -> Result<Retained<MLModel>> {
+/// Compile if needed, then load with the given compute units. In an
+/// autorelease pool: Core ML autoreleases objects while it loads, the model
+/// among them, and left to a Rust thread's pool they would keep the model,
+/// and its programs on the ANE, alive after its owner drops it.
+pub(crate) fn open(path: &Path, units: ComputeUnits) -> Result<Retained<MLModel>> {
+    autoreleasepool(|_| open_in_pool(path, units))
+}
+
+fn open_in_pool(path: &Path, units: ComputeUnits) -> Result<Retained<MLModel>> {
     let is_compiled = path
         .extension()
         .map(|e| e == "mlmodelc")
@@ -469,7 +501,7 @@ fn open(path: &Path, units: ComputeUnits) -> Result<Retained<MLModel>> {
 /// description. Per-bucket artifacts built by coremltools report
 /// `.enumerated` with exactly one shape, so the number of shapes is what
 /// tells a flexible model apart, not the constraint type.
-fn read_input_shapes(model: &MLModel) -> Vec<InputShape> {
+pub(crate) fn read_input_shapes(model: &MLModel) -> Vec<InputShape> {
     let description = unsafe { model.modelDescription() };
     let (names, features) = unsafe { description.inputDescriptionsByName() }.to_vecs();
     let mut inputs: Vec<InputShape> = names

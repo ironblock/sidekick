@@ -11,6 +11,7 @@
 //! anywhere.
 
 pub mod chat;
+pub mod chat_manifest;
 pub mod classify;
 pub mod embed;
 pub mod error;
