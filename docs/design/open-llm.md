@@ -372,7 +372,8 @@ For MiniCPM5-2B at C = 2,048 (the formulas carry to other builds):
 | Tokenizer, token trie, grammars | tens of MB, to be measured | host |
 
 **The ANE's budget is shared by the whole machine.** #187 measured it on
-an M1 Max (macOS 27) beside the 2B build:
+an M1 Max (macOS 27) beside the 2B build, with `tools/ane_budget_probe.py`
+(re-measure with it on other hardware or builds):
 - **It is system-wide.** A second process running the same build slowed
   both decoders about 21×, as #173 saw from 4.2 GiB in one process.
 - **Foundation Models counts against it.** Its model takes about 2.3 GiB.
