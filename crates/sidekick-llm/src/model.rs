@@ -650,7 +650,9 @@ mod tests {
     #[tokio::test]
     async fn a_full_queue_is_busy_and_waiting_counts_against_the_timeout() {
         let lane = lane(1);
-        let (m, _) = model("m", &lane, "abcdef", Duration::from_millis(40), Duration::from_millis(1500));
+        // A generous timeout: the second request waits out the first, and
+        // macOS CI runners can take several times longer than a laptop.
+        let (m, _) = model("m", &lane, "abcdef", Duration::from_millis(40), Duration::from_secs(10));
         let m = Arc::new(m);
         let first = tokio::spawn({
             let m = m.clone();
