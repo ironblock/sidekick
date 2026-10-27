@@ -170,6 +170,13 @@ impl<T> Loads<T> {
     /// sidekickd process (the daemon's warm-up), whose compile it then
     /// finds in the cache. Loads of other keys don't wait.
     pub fn load(&self, key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.load_as(key, label, load)
+    }
+
+    /// [`load`](Self::load) of something other than `T`, under the same
+    /// keys, ledger and lock files: an open chat model's decoder (D53),
+    /// whose chunk programs are its one bucket.
+    pub fn load_as<U>(&self, key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<U> {
         let slot = self.slot(key);
         let _held = lock(&slot.held);
         let (result, _) = self.run(&slot, key, label, false, load);
@@ -182,6 +189,12 @@ impl<T> Loads<T> {
     /// another process; if that one recorded the bucket meanwhile, it isn't
     /// loaded again.
     pub fn warm(&self, key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<T>) -> Result<Warmed> {
+        self.warm_as(key, label, load)
+    }
+
+    /// [`warm`](Self::warm) with a loader of something other than `T`, as
+    /// [`load_as`](Self::load_as).
+    pub fn warm_as<U>(&self, key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<Warmed> {
         let slot = self.slot(key);
         let _held = lock(&slot.held);
         if matches!(*lock(&slot.progress), Progress::Loaded(_)) {
@@ -201,14 +214,14 @@ impl<T> Loads<T> {
     /// One load of `key`, with its slot held, and how long it took: across
     /// processes too, when there is a ledger. `None` when `skip_if_recorded`
     /// and another process recorded the bucket while this one waited for it.
-    fn run(
+    fn run<U>(
         &self,
         slot: &Slot,
         key: &Key,
         label: Label<'_>,
         skip_if_recorded: bool,
-        load: impl FnOnce() -> Result<T>,
-    ) -> (Option<Result<T>>, u64) {
+        load: impl FnOnce() -> Result<U>,
+    ) -> (Option<Result<U>>, u64) {
         let before = std::mem::replace(&mut *lock(&slot.progress), Progress::Loading);
         // Another sidekickd process loading the same bucket holds this lock
         // file: wait for its compile instead of starting a second one.
@@ -242,6 +255,20 @@ impl<T> Loads<T> {
 
     fn recorded(&self, key: &Key) -> Option<u64> {
         lock(&self.ledger).as_mut().and_then(|l| l.recorded(key))
+    }
+
+    /// Record that a strict check refused `key` (an open chat model's
+    /// decoder whose programs weren't confirmed on the Neural Engine), so
+    /// that every process loading this build refuses it too.
+    pub fn refuse(&self, key: &Key, label: Label<'_>, reason: &str) {
+        if let Some(ledger) = lock(&self.ledger).as_mut() {
+            ledger.refuse(key, label, reason);
+        }
+    }
+
+    /// Why a strict check refused `key`, if one did.
+    pub fn refusal(&self, key: &Key) -> Option<String> {
+        lock(&self.ledger).as_mut().and_then(|l| l.refusal(key))
     }
 
     /// `key`'s state: this process's last load of it, else the ledger's
@@ -396,7 +423,9 @@ impl Ledger {
     fn record(&mut self, key: &Key, label: Label<'_>, load_ms: u64) {
         let Some(hash) = self.hash(key) else { return };
         self.refresh();
-        if self.entries.contains_key(&hash) {
+        // A load replaces a refusal (a strict check another process made),
+        // never another load's record.
+        if self.entries.get(&hash).is_some_and(|e| e.get("load_ms").is_some()) {
             return;
         }
         let build = self.build.clone();
@@ -430,6 +459,34 @@ impl Ledger {
         std::fs::rename(&tmp, &self.file)?;
         self.read_at = self.modified();
         Ok(())
+    }
+
+    /// Record a strict check's refusal of `key`.
+    fn refuse(&mut self, key: &Key, label: Label<'_>, reason: &str) {
+        let Some(hash) = self.hash(key) else { return };
+        self.refresh();
+        let at = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
+        self.entries.insert(
+            hash,
+            serde_json::json!({
+                "model": label.model,
+                "bucket": label.bucket,
+                "compute_units": key.units.name(),
+                "macos_build": self.build,
+                "refused": reason,
+                "recorded_at": at,
+            }),
+        );
+        if let Err(e) = self.write() {
+            tracing::debug!("couldn't write {}: {e}", self.file.display());
+        }
+    }
+
+    /// The refusal recorded for `key`, if any.
+    fn refusal(&mut self, key: &Key) -> Option<String> {
+        let hash = self.hash(key)?;
+        self.refresh();
+        Some(self.entries.get(&hash)?.get("refused")?.as_str()?.to_string())
     }
 
     fn lock_path(&mut self, key: &Key) -> Option<PathBuf> {
@@ -503,6 +560,27 @@ mod coreml {
         loads().warm(key, label, || CoremlChain::load(&key.paths, key.units))
     }
 
+    /// Load `key` with `load`, through the process's loads, ledger and
+    /// lock files: see [`Loads::load_as`].
+    pub fn load_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<U> {
+        loads().load_as(key, label, load)
+    }
+
+    /// Warm `key` with `load`: see [`Loads::warm_as`].
+    pub fn warm_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<Warmed> {
+        loads().warm_as(key, label, load)
+    }
+
+    /// See [`Loads::refuse`].
+    pub fn refuse(key: &Key, label: Label<'_>, reason: &str) {
+        loads().refuse(key, label, reason)
+    }
+
+    /// See [`Loads::refusal`].
+    pub fn refusal(key: &Key) -> Option<String> {
+        loads().refusal(key)
+    }
+
     /// One bucket's state.
     pub fn status(key: &Key) -> Option<Status> {
         Some(loads().status(key))
@@ -512,7 +590,7 @@ mod coreml {
 #[cfg(all(feature = "coreml", target_os = "macos"))]
 pub(crate) use coreml::load_chain;
 #[cfg(all(feature = "coreml", target_os = "macos"))]
-pub use coreml::{enable, status, warm};
+pub use coreml::{enable, load_with, refusal, refuse, status, warm, warm_with};
 
 /// Without Core ML there is no cache to keep.
 #[cfg(not(all(feature = "coreml", target_os = "macos")))]
@@ -525,6 +603,33 @@ pub fn enable() -> Option<PathBuf> {
 pub fn warm(key: &Key, label: Label<'_>) -> Result<Warmed> {
     let _ = (key, label);
     Err(sidekick_core::Error::Unavailable(sidekick_core::UnavailableReason::NotSupportedInBuild))
+}
+
+/// Without Core ML there is no ledger: `load` runs as it is.
+#[cfg(not(all(feature = "coreml", target_os = "macos")))]
+pub fn load_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<U> {
+    let _ = (key, label);
+    load()
+}
+
+/// Without Core ML nothing can be warmed.
+#[cfg(not(all(feature = "coreml", target_os = "macos")))]
+pub fn warm_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<Warmed> {
+    let _ = (key, label, load);
+    Err(sidekick_core::Error::Unavailable(sidekick_core::UnavailableReason::NotSupportedInBuild))
+}
+
+/// Without Core ML there is no ledger to record a refusal in.
+#[cfg(not(all(feature = "coreml", target_os = "macos")))]
+pub fn refuse(key: &Key, label: Label<'_>, reason: &str) {
+    let _ = (key, label, reason);
+}
+
+/// Without Core ML nothing was refused.
+#[cfg(not(all(feature = "coreml", target_os = "macos")))]
+pub fn refusal(key: &Key) -> Option<String> {
+    let _ = key;
+    None
 }
 
 /// Without Core ML a bucket has no state.
@@ -722,6 +827,34 @@ mod tests {
         let entries = file["entries"].as_object().unwrap();
         assert_eq!(entries.len(), 1, "{entries:?}");
         assert_eq!(entries.values().next().unwrap()["macos_build"], "26B2");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_strict_refusal_binds_every_process_until_a_load_replaces_it() {
+        let dir = tmp("refusal");
+        let cache = dir.join("cache");
+        let key = program(&dir, "decoder.0.mlmodelc");
+        let (exe, home) = (Path::new("/bin/sidekickd"), Path::new("/homes/a"));
+        let child: Loads<String> = Loads::default();
+        child.set_ledger(Ledger::open(&cache, exe, home, "26A1"));
+        let daemon: Loads<String> = Loads::default();
+        daemon.set_ledger(Ledger::open(&cache, exe, home, "26A1"));
+        assert_eq!(daemon.refusal(&key), None);
+        std::thread::sleep(Duration::from_millis(5));
+        child.refuse(&key, LABEL, "its programs aren't confirmed on the Neural Engine");
+        assert_eq!(daemon.refusal(&key).as_deref(), Some("its programs aren't confirmed on the Neural Engine"));
+        assert_eq!(daemon.status(&key).state, State::Cold, "a refusal isn't a load");
+        // Another macOS build doesn't see it, nor does another build of the
+        // program (its files' fingerprints differ).
+        let other: Loads<String> = Loads::default();
+        other.set_ledger(Ledger::open(&cache, exe, home, "26A2"));
+        assert_eq!(other.refusal(&key), None);
+        // A load that succeeds replaces it.
+        std::thread::sleep(Duration::from_millis(5));
+        child.load(&key, LABEL, || Ok("loaded".into())).unwrap();
+        assert_eq!(daemon.refusal(&key), None);
+        assert_eq!(daemon.status(&key).state, State::Warm);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

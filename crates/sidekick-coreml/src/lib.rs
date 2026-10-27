@@ -26,7 +26,7 @@ pub use plan::{compute_plan, has_neural_engine};
 #[cfg(target_os = "macos")]
 pub use model::{cache_home, signing_identifier};
 #[cfg(target_os = "macos")]
-pub use decoder::{AneCheck, DecoderOptions, KvDecoder, PAD_TOKEN};
+pub use decoder::{is_placement_refusal, AneCheck, DecoderOptions, KvDecoder, PAD_TOKEN, PLACEMENT_REFUSAL};
 pub use decoder_health::{DecoderHealth, DecoderMonitor, Watchdog, DEFAULT_CALL_TIMEOUT, STALL_FACTOR};
 pub use kv_contract::{check_program, DecoderShape, Dtype, ProgramDecl, ProgramNames, TensorDecl};
 #[cfg(target_os = "macos")]

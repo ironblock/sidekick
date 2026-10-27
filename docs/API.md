@@ -25,7 +25,7 @@ Two design documents hold the full contracts of classification
 
 | Route | What it serves |
 |---|---|
-| `POST /v1/chat/completions` | Chat models, by `model`: Apple Foundation Models (`apple-fm`) on Apple silicon, macOS 26+, Apple Intelligence on ([BACKENDS.md](BACKENDS.md#foundation-models)) |
+| `POST /v1/chat/completions` | Chat models, by `model`: Apple Foundation Models (`apple-fm`) on Apple silicon, macOS 26+, Apple Intelligence on ([BACKENDS.md](BACKENDS.md#foundation-models)), and open models from the models directory on the Neural Engine ([below](#open-models)) |
 | `POST /v1/embeddings` | Embedders, OpenAI's shape |
 | `POST /v2/embed` | The embedders, in Cohere's v2 shape |
 | `POST /v1/classify` | Classifiers, including zero-shot and NLI: vLLM's `/classify` (Core ML, macOS) |
@@ -61,8 +61,8 @@ Every error, malformed JSON included, is OpenAI's shape:
 | 404 | `model_not_found` | No model by that id is served |
 | 413 | | A body over 2 MiB |
 | 429 | `rate_limit_exceeded` | Foundation Models is rate-limiting; `Retry-After` says when to retry |
-| 503 | `backend_unavailable` | A backend this machine or build doesn't have, with the reason, which `/health` reports too. Never a hang. |
-| 503 | `backend_busy` | Foundation Models is busy; retry |
+| 503 | `backend_unavailable` | A backend this machine or build doesn't have, or an open model whose decoder has failed (a hung Neural Engine call; a restart recovers), with the reason, which `/health` reports too. Never a hang. |
+| 503 | `backend_busy` | Foundation Models is busy, or the ANE chat lane's queue is full ([Open models](#open-models)); retry, after `Retry-After` when it is set |
 | 504 | `timeout` | The request's work ran past its model's request timeout ([CONFIG.md](CONFIG.md#per-model-settings)) |
 | 504 | `load_timeout` | Its model's or buckets' first load ran past `load_timeout_secs`. `Retry-After` is set: the load continues, so a retry finds it ready |
 
@@ -93,8 +93,9 @@ Every inference response carries provenance headers. They follow OpenAI's
 ## Chat
 
 `POST /v1/chat/completions` serves each chat model `/v1/models` lists with
-`task: "text-generation"`; today that is Apple's Foundation Models as
-`apple-fm`. A request goes to the model its `model` names, exactly: there
+`task: "text-generation"`: Apple's Foundation Models as `apple-fm`, and
+each open model installed in the models directory, by its id
+([Open models](#open-models)). A request goes to the model its `model` names, exactly: there
 is no default, no alias and no fallback from one model to another. An id
 another route serves (an embedder, a classifier) is a 400 naming the route
 that serves it; any other id is a 404 `model_not_found`.
@@ -133,6 +134,66 @@ cached tokens when a follow-up reuses its session. `/health` reports which
 Foundation Models variant the Mac has and its context size. Over-long
 prompts are a proper 400 ([D21](DECISIONS.md#d21--macos-27-real-usage-and-model-facts-typed-errors-the-shim-stays)).
 
+### Open models
+
+An open causal language model (the first is MiniCPM5-2B, as `minicpm5-2b`)
+answers the same request and returns the same shapes as `apple-fm`. It
+runs on the Neural Engine, beside a large model that owns the GPU
+([D53](DECISIONS.md#d53--open-llms-on-the-chat-route-a-stateful-ane-decoder-beside-foundation-models);
+[open-llm.md](design/open-llm.md) has the design). Where it differs:
+
+- **The prompt** is the checkpoint's own chat template, rendered as
+  transformers renders it, with thinking off. `system` and `developer`
+  messages are the system role. The text of the model's special tokens is
+  rewritten in message content (`<|im_start|>` becomes `<¦im_start¦>`, and
+  others get a zero-width word joiner after their first character), so a
+  message can't forge a turn. Text that still tokenizes as a special token
+  (one the tokenizer's normalizer forms, such as full-width brackets) is a
+  400.
+- **The context** (`context_length` in `/v1/models`) is the prompt plus
+  the completion. A prompt plus `max_tokens` (or `max_completion_tokens`)
+  past it is a 400 `context_length_exceeded`; `max_tokens` omitted means
+  the rest of the context.
+- **`usage` is exact:** `prompt_tokens` counts the rendered template,
+  `completion_tokens` every generated token, the stop token included;
+  `cached_tokens` is 0.
+- **The reply** ends at one of the model's stop tokens
+  (`finish_reason: "stop"`), at a `stop` sequence (the reply ends before
+  it; `"stop"`), or at `max_tokens` or the end of the context
+  (`"length"`). It is the model's text as generated: the leading
+  `Assistant:` label that `apple-fm`'s replies are cleared of isn't
+  removed.
+- **Streaming** sends text as it is generated, as whole UTF-8 characters,
+  holding back only text that could still become a `stop` sequence.
+- **`response_format` `json_schema`** isn't supported yet: a 400.
+  (`json_object` asks for JSON in the prompt, as on `apple-fm`.)
+- **No guardrails:** an open model never answers `content_filter`.
+- **One request at a time, shared with `apple-fm`.** Open models and
+  `apple-fm` take turns on the Neural Engine in arrival order, since a
+  Foundation Models request overlapping a generation slows both about
+  25×. One open model is loaded at a time: a request for another waits
+  its turn, then unloads it. Requests past the queue (`queue_depth`,
+  default 4, [CONFIG.md](CONFIG.md#per-model-settings)) are a 503
+  `backend_busy` with `Retry-After: 5`, for `apple-fm` too. Time in the
+  queue counts against the request's timeout (`request_timeout_secs`;
+  120 s for MiniCPM5-2B, from its manifest), including time spent behind
+  another request's model load. A load the request itself waits for, once
+  its turn has come, doesn't count, and is bounded by
+  `load_timeout_secs`. A request whose time ran out in the queue doesn't
+  start. A streamed request whose client leaves while it waits gives up its
+  place.
+- **Provenance:** `sidekick-model` is `<id>@<revision>` and
+  `sidekick-compute-units` is `cpu_and_ne`.
+
+**What changes for `apple-fm` when an open model is installed.** Without
+one, `apple-fm` runs as before. With one, `apple-fm` shares the open
+models' queue:
+- its requests run one at a time, in arrival order with the open models';
+- past the queue, a request is a 503 `backend_busy` with `Retry-After: 5`;
+- its timeout counts time spent in the queue;
+- a request that timed out keeps its turn until Foundation Models has
+  actually stopped generating, so the next request doesn't overlap it.
+
 ### Guardrail refusals
 
 A model with guardrails (`guardrails: true` in `/v1/models`;
@@ -159,9 +220,9 @@ can retry without `response_format`, or with another model:
 
 | Field | Meaning |
 |---|---|
-| `temperature` | 0 is greedy decoding: the most likely token every step, so a request repeats byte for byte on the same Mac and macOS. Above 0, sampling at that temperature. Omitted, the model's default. |
-| `top_p` | Nucleus sampling, 0 to 1: Foundation Models' random sampling mode with that probability threshold. 0 is greedy. Outside 0–1 is a 400. |
-| `seed` | A non-negative integer that makes sampling at a temperature above 0 repeatable. With `seed` and no `top_p`, sampling covers the whole distribution (`top_p` 1). |
+| `temperature` | 0 to 2 (outside is a 400). 0 is greedy decoding: the most likely token every step, so a request repeats byte for byte on the same Mac and macOS. Above 0, sampling at that temperature. Omitted, the model's default. On an open model, ties go to the lower token id, and the default is the checkpoint's (`generation_config.json`; MiniCPM5-2B: 1.0), so greedy isn't the default. |
+| `top_p` | Nucleus sampling, 0 to 1: Foundation Models' random sampling mode with that probability threshold; on an open model, sampling from the most likely tokens whose probabilities first add up to `top_p`. 0 is greedy. Outside 0–1 is a 400. Omitted on an open model, the checkpoint's (MiniCPM5-2B: 0.95). |
+| `seed` | A non-negative integer that makes sampling at a temperature above 0 repeatable. With `seed` and no `top_p`, `apple-fm` samples the whole distribution (`top_p` 1). |
 
 A request with neither `top_p` nor `seed` samples as Foundation Models
 does by default. Other sampling fields (penalties, `logit_bias`) and
@@ -479,8 +540,9 @@ shape: `input_type` (`search_query` / `search_document`, or `none`) or
 sidekick's fields beside it: for every model its task and backend; for a
 chat model its `context_length` (prompt and completion together), the
 optional request fields it honors (`honored_fields`), whether guided
-output streams as it is generated (`guided_streaming`), and whether it
-has guardrails (`guardrails`); for an embedder its `max_seq_len`, `buckets`, `dims`, `matryoshka`, `prompts`
+output streams as it is generated (`guided_streaming`), whether it
+has guardrails (`guardrails`), and for an open model its `compute_units`
+and its decoder's `compile_cache` state; for an embedder its `max_seq_len`, `buckets`, `dims`, `matryoshka`, `prompts`
 and `named_prompts`; for a classifier its labels or `max_labels`,
 `max_batch`, `extensions`, `required` fields and calibration; for a Core
 ML model its `compute_units`, any `seq_cap`, and each bucket's
@@ -489,7 +551,17 @@ Nothing is loaded to answer.
 
 `GET /health` reports availability per backend and why anything is
 unavailable: each chat model's state and the reason it is unavailable,
-variant, context size and request timeout, by id (`chat.models`); the
+variant, context size and request timeout, by id (`chat.models`), and
+for an open model its state (`unloaded`, `loading`, `ready`, `failed`
+with the reason: its decoder hung, and a restart recovers it; or
+`load_failed`, its last load's error in `load_error`, which the next request
+retries), its own `queue_depth` and the lane's (`lane_queue_depth`), loads,
+its decoder's calls, stalls (calls past
+five times the warm median: other work on the Neural Engine) and warm
+median, and its Neural Engine share (`ane`: measured at its load, and
+estimated from its weights before); the ANE chat lane (`chat.lane`: the
+request running, those waiting, the resident open model, and the
+process's Neural Engine footprint against `ane_budget_mib`); the
 backends the build serves (`backends`: `coreml`, `onnx`, `static`); the
 models resident; each manifest skipped, with the reason (`skipped_models`);
 length caps, compute-unit overrides and compute plans; and ONNX Runtime's

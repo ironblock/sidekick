@@ -12,10 +12,17 @@
 //! arithmetic, the compute units, the ANE length cap (D48), the program
 //! files and the per-program ANE weight limit (D32). Whether the programs
 //! declare the inputs, outputs and state shapes the table describes is
-//! checked when they load (`sidekick_coreml::KvDecoder`). The `[chat]`,
-//! `[sampling]`, `[serving]` and `[build]` tables belong to the loop that
-//! drives the decoder and aren't read here.
+//! checked when they load (`sidekick_coreml::KvDecoder`).
+//!
+//! The `[chat]`, `[sampling]` and `[serving]` tables are the loop's
+//! (`sidekick-llm`): the chat template and stop tokens, the checkpoint's
+//! sampling defaults and the model's request timeout. They are parsed here
+//! so that the registry can skip a model whose tables are wrong, with the
+//! reason, before anything loads ([`ChatManifest::check_serving`]); the
+//! decoder alone doesn't need them. `[build]` and `[placement]` are the
+//! converter's provenance and aren't read.
 
+use crate::classify::Source;
 use crate::manifest::{
     ane_seq_cap, artifact_files, artifact_weight_bytes, over_ane_weight_limit,
     symlinked_program_file, ComputeUnits, ScanOptions,
@@ -61,10 +68,14 @@ pub mod kv_names {
     pub const V_CACHE: &str = "v_cache";
 }
 
-/// A `chat.toml`, as far as the decoder needs it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// A `chat.toml`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ChatManifest {
     pub id: String,
+    /// Where the checkpoint came from, for provenance
+    /// (`sidekick-model: id@revision`).
+    #[serde(default)]
+    pub source: Option<Source>,
     /// Always [`TEXT_GENERATION_TASK`].
     pub task: String,
     /// The program contract; this daemon runs [`KV_STATE_INTERFACE`] and
@@ -80,6 +91,75 @@ pub struct ChatManifest {
     #[serde(default)]
     pub ane_max_seq_len: Option<usize>,
     pub decoder: DecoderSection,
+    /// `[chat]`: the template and the stop tokens. Required to serve the
+    /// model ([`check_serving`](Self::check_serving)); the decoder alone
+    /// runs without it.
+    #[serde(default)]
+    pub chat: Option<ChatSection>,
+    /// `[sampling]`: the checkpoint's defaults, for a request that omits
+    /// them.
+    #[serde(default)]
+    pub sampling: SamplingSection,
+    /// `[serving]`.
+    #[serde(default)]
+    pub serving: ServingSection,
+}
+
+/// `[chat]`: how a conversation becomes a prompt, and which tokens end a
+/// reply.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatSection {
+    /// The checkpoint's Jinja chat template, relative to the model
+    /// directory.
+    pub template: String,
+    /// Extra variables the template is rendered with (MiniCPM5's
+    /// `enable_thinking = false`).
+    #[serde(default)]
+    pub template_kwargs: toml::Table,
+    /// `bos_token` and `eos_token` as the template sees them: the
+    /// checkpoint's `tokenizer_config.json` values.
+    #[serde(default)]
+    pub bos_token: Option<String>,
+    #[serde(default)]
+    pub eos_token: Option<String>,
+    /// Tokens that end a reply (`generation_config.json`'s
+    /// `eos_token_id`): `finish_reason: "stop"`.
+    pub stop_token_ids: Vec<u32>,
+}
+
+/// `[sampling]`: the checkpoint's `generation_config.json` values, used
+/// when a request omits them. Absent, a model samples the whole
+/// distribution at temperature 1, as transformers does. A key this daemon
+/// can't honor (`top_k`, a penalty) is refused, so that a model never
+/// samples differently from its checkpoint without saying so.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SamplingSection {
+    #[serde(default = "one")]
+    pub temperature: f32,
+    #[serde(default = "one")]
+    pub top_p: f32,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+impl Default for SamplingSection {
+    fn default() -> Self {
+        Self { temperature: 1.0, top_p: 1.0 }
+    }
+}
+
+/// `[serving]`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingSection {
+    /// The model's request timeout, over the daemon's global one; a
+    /// `[models."<id>"] request_timeout_secs` overrides it.
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
 }
 
 /// `[decoder]`: the chunk programs and the shapes they share.
@@ -154,7 +234,50 @@ impl ChatManifest {
         if self.tokenizer.is_empty() {
             return Err("`tokenizer` is empty".into());
         }
-        self.decoder.validate()
+        self.decoder.validate()?;
+        if let Some(chat) = &self.chat {
+            self.validate_chat(chat)?;
+        }
+        let s = &self.sampling;
+        if !(s.temperature.is_finite() && s.temperature >= 0.0) {
+            return Err(format!("`[sampling] temperature` {} must be 0 or more", s.temperature));
+        }
+        if !(s.top_p > 0.0 && s.top_p <= 1.0) {
+            return Err(format!("`[sampling] top_p` {} must be above 0 and at most 1", s.top_p));
+        }
+        if self.serving.request_timeout_secs == Some(0) {
+            return Err("`[serving] request_timeout_secs` must be at least 1".into());
+        }
+        Ok(())
+    }
+
+    fn validate_chat(&self, chat: &ChatSection) -> Result<(), String> {
+        if chat.template.is_empty() {
+            return Err("`[chat] template` is empty".into());
+        }
+        if chat.stop_token_ids.is_empty() {
+            return Err("`[chat] stop_token_ids` is empty: nothing would end a reply but its length".into());
+        }
+        let vocab = self.decoder.vocab_size;
+        if let Some(bad) = chat.stop_token_ids.iter().find(|&&t| t as usize >= vocab) {
+            return Err(format!("`[chat] stop_token_ids` has {bad}, past the vocabulary ({vocab})"));
+        }
+        Ok(())
+    }
+
+    /// What serving the model needs beyond the decoder: the `[chat]` table
+    /// and the tokenizer and template files in `dir`. Expects a
+    /// [`validate`](Self::validate)d manifest.
+    pub fn check_serving(&self, dir: &Path) -> Result<&ChatSection, String> {
+        let chat = self.chat.as_ref().ok_or_else(|| {
+            "`[chat]` is missing: serving the model needs its chat template and stop tokens".to_string()
+        })?;
+        for name in [&self.tokenizer, &chat.template] {
+            if !dir.join(name).is_file() {
+                return Err(format!("`{name}` is missing"));
+            }
+        }
+        Ok(chat)
     }
 
     /// Whether this Mac and this daemon's options can serve the model from
@@ -378,8 +501,44 @@ weights = "palette8"
         assert_eq!(m.decoder.chunk_files()[3], "decoder.3.mlmodelc");
         assert_eq!(m.decoder.usable_context(), 2033);
         assert_eq!(m.compute_units, Some(ComputeUnits::CpuAndNeuralEngine));
-        // The loop's tables are someone else's to read.
-        assert!(edit("[chat]", "[chat]\nnot_read_here = 1").is_ok());
+        let chat = m.chat.as_ref().unwrap();
+        assert_eq!((chat.template.as_str(), chat.stop_token_ids.as_slice()), ("chat_template.jinja", &[1, 130073][..]));
+        assert_eq!((m.sampling.temperature, m.sampling.top_p), (1.0, 0.95));
+        assert_eq!(m.serving.request_timeout_secs, Some(120));
+        assert_eq!(m.source.as_ref().and_then(|s| s.revision.as_deref()), Some("0123abc"));
+        // The converter's provenance tables aren't read.
+        assert!(edit("[build]", "[build]\nanything = 1").is_ok());
+    }
+
+    #[test]
+    fn the_serving_tables_are_checked() {
+        // A key the loop doesn't know is refused, not ignored.
+        let err = edit("[chat]", "[chat]\nnot_read_here = 1").unwrap_err();
+        assert!(err.contains("not_read_here"), "{err}");
+        let err = edit("top_p = 0.95", "top_p = 0.95\ntop_k = 20").unwrap_err();
+        assert!(err.contains("top_k"), "{err}");
+        assert!(edit("top_p = 0.95", "top_p = 0").unwrap_err().contains("top_p"));
+        assert!(edit("temperature = 1.0", "temperature = -1.0").unwrap_err().contains("temperature"));
+        assert!(edit("request_timeout_secs = 120", "request_timeout_secs = 0").is_err());
+        assert!(edit("stop_token_ids = [1, 130073]", "stop_token_ids = []").unwrap_err().contains("stop_token_ids"));
+        assert!(edit("stop_token_ids = [1, 130073]", "stop_token_ids = [130560]").unwrap_err().contains("vocabulary"));
+        // Absent tables: the decoder still runs; sampling defaults to the
+        // whole distribution at temperature 1.
+        let bare = MANIFEST.split("[chat]").next().unwrap().to_string();
+        let m = parse(&bare).unwrap();
+        assert!(m.chat.is_none());
+        assert_eq!((m.sampling.temperature, m.sampling.top_p), (1.0, 1.0));
+        assert_eq!(m.serving.request_timeout_secs, None);
+        let dir = model_dir("serving", 10);
+        let err = m.check_serving(&dir).unwrap_err();
+        assert!(err.contains("[chat]"), "{err}");
+        let m = parse(MANIFEST).unwrap();
+        assert!(m.check_serving(&dir).unwrap_err().contains("tokenizer.json"));
+        std::fs::write(dir.join("tokenizer.json"), "{}").unwrap();
+        assert!(m.check_serving(&dir).unwrap_err().contains("chat_template.jinja"));
+        std::fs::write(dir.join("chat_template.jinja"), "").unwrap();
+        assert_eq!(m.check_serving(&dir).unwrap().stop_token_ids, [1, 130073]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -582,5 +741,42 @@ weights = "palette8"
             "{err}"
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_registry_scans_chat_models() {
+        use crate::ModelRegistry;
+        let root = std::env::temp_dir().join(format!("sk-chat-registry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let install = |name: &str, manifest: &str| {
+            let dir = model_dir(&format!("reg-{name}"), 10);
+            std::fs::write(dir.join("tokenizer.json"), "{}").unwrap();
+            std::fs::write(dir.join("chat_template.jinja"), "").unwrap();
+            std::fs::write(dir.join(CHAT_MANIFEST), manifest).unwrap();
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::rename(&dir, root.join(name)).unwrap();
+        };
+        install("good", MANIFEST);
+        install("bare", &MANIFEST.split("[chat]").next().unwrap().replace("minicpm5-2b", "bare"));
+        install("afm", &MANIFEST.replace("\"minicpm5-2b\"", "\"apple-fm\""));
+        install("twin", MANIFEST);
+        let options = ScanOptions {
+            compute_units: [("minicpm5-2b".to_string(), ComputeUnits::CpuAndNeuralEngine)].into(),
+            ..Default::default()
+        };
+        let reg = ModelRegistry::scan_with(&root, &options).unwrap();
+        assert_eq!(reg.chat_ids().collect::<Vec<_>>(), ["minicpm5-2b"]);
+        assert_eq!(reg.chat("minicpm5-2b").unwrap().dir, root.join("good"));
+        assert!(reg.unmatched_overrides().is_empty(), "the override named the chat model");
+        let reasons: Vec<String> = reg.skipped().iter().map(|s| format!("{}: {}", s.path.display(), s.reason)).collect();
+        assert_eq!(reasons.len(), 3, "{reasons:?}");
+        assert!(reasons.iter().any(|r| r.starts_with("afm/chat.toml") && r.contains("Foundation Models")), "{reasons:?}");
+        assert!(reasons.iter().any(|r| r.starts_with("bare/chat.toml") && r.contains("[chat]")), "{reasons:?}");
+        assert!(reasons.iter().any(|r| r.starts_with("twin/chat.toml") && r.contains("duplicate")), "{reasons:?}");
+        let mut reg = reg;
+        reg.skip_chats("no Core ML in this build");
+        assert_eq!(reg.chat_ids().count(), 0);
+        assert!(reg.skipped().iter().any(|s| s.reason == "no Core ML in this build"));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

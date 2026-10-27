@@ -200,7 +200,9 @@ impl StreamMeta {
 /// forwarded as they arrive; a failure mid-stream becomes an
 /// `{"error": ...}` event. When the client disconnects, the stream (and with
 /// it the channel receiver) is dropped, the backend's sink starts returning
-/// false, and generation stops.
+/// false, and generation stops. The backend's task is aborted then too, so
+/// a request the client gave up on while it waited in a queue, or for a
+/// load, gives up its place rather than running for nobody.
 async fn stream_completion(
     chat: Arc<dyn ChatBackend>,
     req: ChatRequest,
@@ -212,6 +214,9 @@ async fn stream_completion(
     let sink: DeltaSink = Box::new(move |delta: &str| tx.send(delta.to_string()).is_ok());
     let mut task: JoinHandle<Result<ChatResponse, Error>> =
         tokio::spawn(async move { chat.complete_stream(req, sink).await });
+    // Aborts the backend's task if the client goes before it is done: while
+    // this handler waits for the first delta, or while the stream is sent.
+    let abort = AbortOnDrop(task.abort_handle());
 
     let first = tokio::select! {
         biased;
@@ -229,7 +234,7 @@ async fn stream_completion(
         Start::Finished(result) => (None, Some(result)),
     };
 
-    let state = SseState { meta, queue, rx, task, finished, done: false };
+    let state = SseState { meta, queue, rx, task, finished, done: false, _abort: abort };
     let events = futures::stream::unfold(state, |mut st| async move {
         loop {
             if let Some(event) = st.queue.pop_front() {
@@ -262,7 +267,17 @@ enum Start {
     Finished(Result<ChatResponse, Error>),
 }
 
+/// Aborts a task when dropped; a finished task is unaffected.
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 struct SseState {
+    _abort: AbortOnDrop,
     meta: StreamMeta,
     queue: VecDeque<SseItem>,
     rx: UnboundedReceiver<String>,
@@ -381,6 +396,10 @@ fn to_core_request(req: &ChatCompletionRequest) -> Result<ChatRequest, ApiError>
     if req.top_p.is_some_and(|p| !(0.0..=1.0).contains(&p)) {
         return Err(ApiError::invalid("`top_p` must be between 0 and 1"));
     }
+    // OpenAI's range.
+    if req.temperature.is_some_and(|t| !(0.0..=2.0).contains(&t)) {
+        return Err(ApiError::invalid("`temperature` must be between 0 and 2"));
+    }
 
     Ok(ChatRequest {
         messages,
@@ -390,6 +409,8 @@ fn to_core_request(req: &ChatCompletionRequest) -> Result<ChatRequest, ApiError>
         max_tokens,
         schema,
         stop,
+        deadline: None,
+        hold: None,
     })
 }
 

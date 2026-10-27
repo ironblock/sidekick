@@ -34,11 +34,28 @@ pub struct Target {
     pub model: String,
     pub bucket: usize,
     pub key: Key,
+    /// An open chat model's directory: its decoder's chunks are the
+    /// bucket, listed under its cache capacity, and load as a decoder.
+    pub decoder: Option<PathBuf>,
 }
 
 impl Target {
     fn label(&self) -> Label<'_> {
         Label { model: &self.model, bucket: self.bucket }
+    }
+
+    /// Load the bucket once and release it.
+    fn warm(&self) -> sidekick_core::Result<Warmed> {
+        warm_one(&self.key, self.label(), self.decoder.as_deref())
+    }
+}
+
+/// Warm one bucket, or an open chat model's decoder when `decoder` names
+/// its directory.
+fn warm_one(key: &Key, label: Label<'_>, decoder: Option<&std::path::Path>) -> sidekick_core::Result<Warmed> {
+    match decoder {
+        Some(dir) => crate::open_models::warm(dir, key, label),
+        None => warm::warm(key, label),
     }
 }
 
@@ -55,15 +72,20 @@ pub fn targets(registry: &ModelRegistry) -> Vec<Target> {
         let units = m.compute_units.unwrap_or_default();
         for &bucket in &m.buckets {
             let key = Key::bucket(&r.dir, &m.artifact, bucket, m.chunks(), units);
-            out.push(Target { model: m.id.clone(), bucket, key });
+            out.push(Target { model: m.id.clone(), bucket, key, decoder: None });
         }
     }
     for c in registry.classifiers().filter(|_| sidekick_embed::CLASSIFIERS_SUPPORTED) {
         let m = &c.manifest;
         for &bucket in &m.buckets {
             let key = Key::bucket(&c.dir, &m.artifact, bucket, m.chunks(), m.compute_units);
-            out.push(Target { model: m.id.clone(), bucket, key });
+            out.push(Target { model: m.id.clone(), bucket, key, decoder: None });
         }
+    }
+    for c in registry.chats() {
+        let m = &c.manifest;
+        let (key, bucket) = (crate::open_models::key(&c.dir, m), crate::open_models::bucket(m));
+        out.push(Target { model: m.id.clone(), bucket, key, decoder: Some(c.dir.clone()) });
     }
     out
 }
@@ -72,6 +94,7 @@ pub fn targets(registry: &ModelRegistry) -> Vec<Target> {
 fn is_core_ml(registry: &ModelRegistry, id: &str) -> bool {
     registry.get(id).is_ok_and(|r| r.manifest.backend == EmbeddingBackendKind::Coreml)
         || (sidekick_embed::CLASSIFIERS_SUPPORTED && registry.classifier(id).is_ok())
+        || registry.chat(id).is_ok()
 }
 
 /// The order to warm `targets` in: buckets not known warm first, since
@@ -167,6 +190,9 @@ struct ChildTarget {
     bucket: usize,
     units: ComputeUnits,
     paths: Vec<PathBuf>,
+    /// An open chat model's directory, when the bucket is its decoder.
+    #[serde(default)]
+    decoder: Option<PathBuf>,
 }
 
 /// What the warm-up process reports on its stdout, one JSON object a line.
@@ -259,7 +285,13 @@ impl Warmup {
             .spawn()?;
         let targets: Vec<ChildTarget> = todo
             .iter()
-            .map(|t| ChildTarget { model: t.model.clone(), bucket: t.bucket, units: t.key.units, paths: t.key.paths.clone() })
+            .map(|t| ChildTarget {
+                model: t.model.clone(),
+                bucket: t.bucket,
+                units: t.key.units,
+                paths: t.key.paths.clone(),
+                decoder: t.decoder.clone(),
+            })
             .collect();
         let mut stdin = child.stdin.take().expect("piped");
         let stdout = child.stdout.take().expect("piped");
@@ -436,7 +468,7 @@ pub struct WarmArgs {
 /// registry's Core ML models but `skip`'s when it names none) and buckets.
 pub fn chosen(registry: &ModelRegistry, args: &WarmArgs, skip: &BTreeSet<String>) -> anyhow::Result<Vec<Target>> {
     for id in &args.models {
-        let known = registry.get(id).is_ok() || registry.classifier(id).is_ok();
+        let known = registry.get(id).is_ok() || registry.classifier(id).is_ok() || registry.chat(id).is_ok();
         anyhow::ensure!(known, "no model `{id}` is served from the models directory");
         anyhow::ensure!(is_core_ml(registry, id), "`{id}` isn't a Core ML model: it has no compile cache to warm");
     }
@@ -490,7 +522,7 @@ fn load_all(todo: &[Target], budget: Option<Duration>) -> usize {
         }
         let before = status(t).map_or(State::Cold, |s| s.state);
         let line = format!("{:<32} {:>6}  {:<11}", t.model, t.bucket, t.key.units.name());
-        match warm::warm(&t.key, t.label()) {
+        match t.warm() {
             Ok(Warmed::Loaded { load_ms, .. }) => println!("{line} {} -> warm  {}", before.name(), secs(load_ms)),
             Ok(Warmed::AlreadyLoaded | Warmed::LoadedElsewhere) => println!("{line} warm (loaded by another process)"),
             Err(e) => {
@@ -540,7 +572,7 @@ pub fn run_child(budget: Option<Duration>) -> anyhow::Result<()> {
         let (model, bucket) = (t.model.clone(), t.bucket);
         say(Event::Start { model: model.clone(), bucket })?;
         let key = Key { paths: t.paths.clone(), units: t.units };
-        let event = match warm::warm(&key, Label { model: &model, bucket }) {
+        let event = match warm_one(&key, Label { model: &model, bucket }, t.decoder.as_deref()) {
             Ok(Warmed::Loaded { load_ms, recorded }) => {
                 tracing::info!(
                     model = %model,

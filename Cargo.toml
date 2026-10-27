@@ -4,6 +4,7 @@ members = [
     "crates/sidekick-core",
     "crates/sidekick-coreml",
     "crates/sidekick-fm",
+    "crates/sidekick-llm",
     "crates/sidekick-embed",
     "crates/sidekick-embed-ffi",
     "crates/sidekick-onnx",
@@ -20,6 +21,7 @@ repository = "https://github.com/ironblock/sidekick"
 sidekick-core = { path = "crates/sidekick-core" }
 sidekick-coreml = { path = "crates/sidekick-coreml" }
 sidekick-fm = { path = "crates/sidekick-fm" }
+sidekick-llm = { path = "crates/sidekick-llm" }
 sidekick-embed = { path = "crates/sidekick-embed" }
 sidekick-onnx = { path = "crates/sidekick-onnx" }
 

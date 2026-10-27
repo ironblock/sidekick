@@ -283,6 +283,21 @@ impl From<Error> for ApiError {
                 retry_after_secs,
                 ..Self::new(StatusCode::TOO_MANY_REQUESTS, "rate_limit_exceeded", message)
             },
+            Error::Busy { message, retry_after_secs } => Self {
+                retry_after_secs: Some(retry_after_secs),
+                ..Self::new(StatusCode::SERVICE_UNAVAILABLE, "backend_busy", message)
+            },
+            Error::LoadTimeout { model, secs } => Self {
+                retry_after_secs: Some(deadline::LOAD_RETRY_AFTER_SECS),
+                ..Self::new(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "load_timeout",
+                    format!(
+                        "Model `{model}` was still loading after {secs}s (its first load compiles it for this Mac). \
+                         The load continues in the background; retry later"
+                    ),
+                )
+            },
             Error::Transient(message) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "backend_busy",
@@ -321,7 +336,11 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         // The one choke point every ApiError passes through — log here so
         // failures are visible server-side, not just in the client's body.
-        if self.status.is_server_error() {
+        if self.code == "backend_busy" {
+            // A full queue is load, not a fault: one line per request under
+            // load shouldn't read as an error.
+            tracing::warn!(status = %self.status, code = self.code, message = %self.message, "request refused");
+        } else if self.status.is_server_error() {
             tracing::error!(status = %self.status, code = self.code, message = %self.message, "request failed");
         } else if self.status == StatusCode::UNAUTHORIZED {
             tracing::warn!(status = %self.status, code = self.code, "request rejected");

@@ -37,6 +37,17 @@ use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// In the error of a load refused because its programs weren't confirmed
+/// on the Neural Engine ([`AneCheck`]); see [`is_placement_refusal`].
+pub const PLACEMENT_REFUSAL: &str = "its programs aren't confirmed on the Neural Engine";
+
+/// Whether `e` refused a decoder because its programs weren't confirmed on
+/// the Neural Engine: a verdict on the build, on this Mac, that a strict
+/// load in a process with nothing else on the ANE makes conclusively.
+pub fn is_placement_refusal(e: &Error) -> bool {
+    e.to_string().contains(PLACEMENT_REFUSAL)
+}
+
 /// The token whose embedding pads a call's unused slots. Their keys and
 /// values land at cache positions no real query attends to, and the next
 /// call's real tokens overwrite them ("One call, T tokens").
@@ -293,8 +304,8 @@ impl KvDecoder {
             }
             Placement::Off => {
                 return Err(refuse(format!(
-                    "Core ML didn't place its programs on the Neural Engine (this process holds no ANE program \
-                     after a call), and a `{KV_STATE_INTERFACE}` decoder runs only there"
+                    "{PLACEMENT_REFUSAL}: Core ML didn't place them there (this process holds no ANE program after \
+                     a call), and a `{KV_STATE_INTERFACE}` decoder runs only there"
                 )))
             }
             Placement::Unconfirmed { grew } => {
@@ -307,8 +318,8 @@ impl KvDecoder {
                 match options.ane_check {
                     AneCheck::Strict => {
                         return Err(refuse(format!(
-                            "{reason}. Load it where nothing else is on the ANE to confirm it (on the Neural \
-                             Engine or not), then with `AneCheck::Lenient`"
+                            "{PLACEMENT_REFUSAL}: {reason}. Load it where nothing else is on the ANE to confirm it \
+                             (on the Neural Engine or not), then with `AneCheck::Lenient`"
                         )))
                     }
                     AneCheck::Lenient => tracing::warn!(model = %id, "{reason}; loading it anyway"),

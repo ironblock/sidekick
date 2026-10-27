@@ -22,7 +22,7 @@ pub mod shaping;
 
 pub use chat::{
     ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, FinishReason, ModelInfo, Role,
-    Usage,
+    Usage, WorkHold,
 };
 pub use classify::{
     activate, check_hypothesis_template, nli_value, ClassifyParams, ClassifyTask, Classifier, NliPair, NliPairs, PairParams,
@@ -35,7 +35,7 @@ pub use manifest::{
     ane_seq_cap, ane_weight_refusal, artifact_files, calibration_key, capped_as, cpu_seq_cap, seq_len_cap, Chunking, AneWeightLimit, ClassifierManifest, ClassifyFormat, ComputeUnits,
     ComputeUnitsSource, EmbeddingBackendKind,
     ModelManifest, OptionRendering, ScanOptions, DEFAULT_ANE_MAX_SEQ, MAX_ANE_PROGRAM_WEIGHT_BYTES, MAX_CPU_INVARIANT_SEQ,
-    ModelRegistry, Pooling, ResolvedClassifier,
+    ModelRegistry, Pooling, ResolvedChat, ResolvedClassifier, FOUNDATION_MODELS_ID,
 };
 
 use serde::{Deserialize, Serialize};

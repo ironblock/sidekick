@@ -14,6 +14,10 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
     let created = now_unix();
     let mut data: Vec<ModelObject> = Vec::new();
 
+    // Each Core ML bucket's state in Core ML's compile cache (D52); an
+    // open chat model's decoder is one bucket, under its cache capacity.
+    let warm_targets = crate::warm::targets(&state.registry);
+
     // A chat model is listed whenever it could plausibly serve requests;
     // /health carries the detailed availability story.
     let availability = futures::future::join_all(state.chat.iter().map(|m| m.backend().availability())).await;
@@ -33,12 +37,11 @@ pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
             guardrails: Some(l.guardrails),
             compute_units: l.compute_units,
             graded_os: l.graded_os.clone(),
+            compile_cache: state.warmup.compile_cache(&warm_targets, m.id()),
             ..ModelObject::new(m.id().to_string(), created, "text-generation")
         });
     }
 
-    // Each Core ML bucket's state in Core ML's compile cache (D52).
-    let warm_targets = crate::warm::targets(&state.registry);
     for id in state.registry.ids() {
         let r = state.registry.get(id).ok();
         let m = r.map(|r| &r.manifest);
@@ -263,11 +266,18 @@ async fn chat_health(state: &AppState) -> Value {
             // What the underlying model supports; this daemon serves text.
             "model_capabilities": info.capabilities,
         });
-        v.as_object_mut().unwrap().extend(m.health.clone());
+        v.as_object_mut().unwrap().extend(m.health_facts());
         (m.id().to_string(), v)
     }))
     .await;
-    json!({"models": models.into_iter().collect::<Map<String, Value>>()})
+    json!({
+        "models": models.into_iter().collect::<Map<String, Value>>(),
+        // The ANE chat lane `apple-fm` and the open models share (D53):
+        // its queue, the resident open model, and the process's Neural
+        // Engine footprint against `ane_budget_mib`. Null without open
+        // models.
+        "lane": state.chat.lane().map(|l| l.health()),
+    })
 }
 
 /// `/health`'s `request_timeout_overrides`: each `[models."<id>"]

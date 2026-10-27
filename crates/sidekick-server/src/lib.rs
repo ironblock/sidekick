@@ -5,7 +5,9 @@
 //! Endpoints:
 //! - `POST /v1/chat/completions` — chat models by exact `model` id: Apple
 //!   Foundation Models as `apple-fm` (streaming and non-streaming,
-//!   `response_format: json_schema` via guided generation)
+//!   `response_format: json_schema` via guided generation), and open causal
+//!   LMs from the models directory on the Neural Engine (`sidekick-llm`,
+//!   D53)
 //! - `POST /v1/embeddings` — registry models (Core ML/ANE encoders, ONNX
 //!   Runtime CPU encoders, static floor tier), with Matryoshka `dimensions`
 //!   and base64 support
@@ -22,6 +24,7 @@ pub mod api;
 pub mod chat_models;
 pub mod config;
 pub mod fetch;
+pub mod open_models;
 pub mod pool;
 pub mod state;
 pub mod warm;
@@ -54,12 +57,24 @@ pub fn scan(config: &Config) -> anyhow::Result<ModelRegistry> {
     Ok(ModelRegistry::scan_with(&config.models_dir(), &scan_options(config))?)
 }
 
+/// The models directory as [`scan`] reads it, less what this build can't
+/// serve: the open chat models without Core ML.
+pub fn scan_served(config: &Config) -> anyhow::Result<ModelRegistry> {
+    let mut registry = scan(config)?;
+    if !sidekick_llm::SUPPORTED {
+        registry.skip_chats(open_models::UNSUPPORTED);
+    }
+    Ok(registry)
+}
+
 /// Assemble state from config, with Foundation Models as the chat model
-/// `apple-fm`. Tests inject their own chat models via `AppState` directly.
+/// `apple-fm` and the models directory's open chat models beside it.
+/// Tests inject their own chat models via `AppState` directly.
 pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
     let onnx_threads = config.onnx_threads()?;
     let request_timeouts = config.request_timeouts()?;
-    let mut registry = scan(config)?;
+    let mut registry = scan_served(config)?;
+    let prompters = open_models::prompters(&mut registry);
     // ONNX Runtime loads only for an onnx model, and then at startup, so a
     // missing runtime skips the onnx models with its reason in /health
     // right away. Without one, it's never loaded (D40).
@@ -77,9 +92,23 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         );
     }
     let mut chat = ChatModels::default();
+    let open = open_models::build(config, &registry, prompters, &request_timeouts, &scan_options(config))?;
+    // With open models, `apple-fm` takes its turn in their ANE chat lane:
+    // an overlap slows both about 25× (#187).
+    let lane = open.as_ref().map(|(lane, _)| lane.clone());
     chat.insert(chat_models::foundation_models(&request_timeouts, |timeout| {
-        Arc::new(sidekick_fm::fm_backend(config.session_ttl(), timeout)) as Arc<dyn ChatBackend>
+        let fm = Arc::new(sidekick_fm::fm_backend(config.session_ttl(), timeout)) as Arc<dyn ChatBackend>;
+        match &lane {
+            Some(lane) => Arc::new(sidekick_llm::LanedChat::new(fm, lane.clone(), timeout)) as Arc<dyn ChatBackend>,
+            None => fm,
+        }
     }))?;
+    if let Some((lane, models)) = open {
+        for model in models {
+            chat.insert(model)?;
+        }
+        chat.set_lane(lane);
+    }
     Ok(AppState {
         chat: Arc::new(chat),
         embedders: Arc::new(EmbedderPool::embedders_with(registry.clone(), config.model_idle_ttl(), onnx_threads.clone())),

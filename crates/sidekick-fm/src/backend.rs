@@ -309,10 +309,21 @@ impl<E: SessionEngine> SessionChatBackend<E> {
         })
     }
 
+    /// When `req`'s work must be done: its own deadline (the time a queue
+    /// left it), else the request timeout from now.
+    fn deadline(&self, req: &ChatRequest) -> tokio::time::Instant {
+        req.deadline
+            .map(tokio::time::Instant::from_std)
+            .unwrap_or_else(|| tokio::time::Instant::now() + self.request_timeout)
+    }
+
     /// Run a streamed turn on a blocking thread, bounded by the request
     /// timeout. On timeout the generation is told to stop at its next
-    /// snapshot (it can't be interrupted before the first one).
+    /// snapshot (it can't be interrupted before the first one). The request
+    /// (and its `hold`) goes with the blocking thread, so it lives until the
+    /// generation has really stopped.
     async fn stream(&self, req: ChatRequest, sink: DeltaSink) -> Result<ChatResponse> {
+        let deadline = self.deadline(&req);
         let engine = self.engine.clone();
         let cache = self.cache.clone();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -321,7 +332,7 @@ impl<E: SessionEngine> SessionChatBackend<E> {
             let mut sink = sink;
             Self::run_stream_sync(&engine, &cache, req, &mut *sink, &flag)
         });
-        match tokio::time::timeout(self.request_timeout, task).await {
+        match tokio::time::timeout_at(deadline, task).await {
             Ok(joined) => {
                 joined.map_err(|e| Error::Other(format!("blocking task failed: {e}")))?
             }
@@ -387,6 +398,7 @@ impl<E: SessionEngine> ChatBackend for SessionChatBackend<E> {
         if !req.stop.is_empty() && req.schema.is_none() {
             return self.stream(req, Box::new(|_| true)).await;
         }
+        let deadline = self.deadline(&req);
         let engine = self.engine.clone();
         let cache = self.cache.clone();
         let task = tokio::task::spawn_blocking(move || Self::run_sync(&engine, &cache, req));
@@ -394,8 +406,9 @@ impl<E: SessionEngine> ChatBackend for SessionChatBackend<E> {
         // (and the Swift task behind it) runs to completion and its session
         // is dropped when it finishes. That leaks a blocking-pool thread for
         // the duration of the hung call, which is bounded and preferable to
-        // hanging the request forever.
-        match tokio::time::timeout(self.request_timeout, task).await {
+        // hanging the request forever. The request, and its `hold`, live
+        // until then.
+        match tokio::time::timeout_at(deadline, task).await {
             Ok(joined) => {
                 joined.map_err(|e| Error::Other(format!("blocking task failed: {e}")))?
             }

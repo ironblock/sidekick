@@ -1,0 +1,494 @@
+{
+ "format": 1,
+ "model": "minicpm5-2b",
+ "source": {
+  "repo": "openbmb/MiniCPM5-2B",
+  "revision": "f97400052a43d642bbc6e9975e2397e3ae6a6b52"
+ },
+ "versions": {
+  "transformers": "4.57.6",
+  "tokenizers": "0.22.2",
+  "jinja2": "3.1.6"
+ },
+ "tokenizer_sha256": "3e065a558a034185fe299917b398685c1facd0169a9eea1e629eb30c171fed81",
+ "template": "{{- bos_token }}{%- if tools %}\n    {%- set tool_definitions %}\n        {{- \"# Tools\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>\" }}\n        {%- for tool in tools %}\n            {{- \"\\n\" }}\n            {{- tool | tojson(ensure_ascii=False) }}\n        {%- endfor %}\n        {{- '\\n</tools>\\n\\nTool usage guidelines:\\n- You may call zero or more functions. If no function calls are needed, just answer normally and do not include any <function ... </function>.\\n- When calling a function, return an XML object within <function ... </function> using:\\n<function name=\"function-name\"><param name=\"param-name\">param-value</param></function>\\n- param-value may be multi-line. If it contains <, & or newline characters, wrap it in a CDATA block: <param name=\"param-name\"><![CDATA[...multi-line value...]]></param>' }}\n    {%- endset %}\n    \n    {{- '<|im_start|>system\\n' }}\n    {%- if messages[0].role == 'system' %}\n        {%- if '<tool_def_sep>' in messages[0].content %}\n            {{- messages[0].content.replace('<tool_def_sep>', tool_definitions) }}\n        {%- else %}\n            {{- messages[0].content + '\\n\\n' + tool_definitions }}\n        {%- endif %}\n    {%- else %}\n        {{- tool_definitions.lstrip() }}\n    {%- endif %}\n    {{- '<|im_end|>\\n' }}\n{%- else %}\n    {%- if messages[0].role == 'system' %}\n        {{- '<|im_start|>system\\n' + messages[0].content + '<|im_end|>\\n' }}\n    {%- endif %}\n{%- endif %}\n{%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) %}\n{%- for message in messages[::-1] %}\n    {%- set index = (messages|length - 1) - loop.index0 %}\n    {%- if ns.multi_step_tool and message.role == \"user\" and message.content is string and not(message.content.startswith('<tool_response>') and message.content.endswith('</tool_response>')) %}\n        {%- set ns.multi_step_tool = false %}\n        {%- set ns.last_query_index = index %}\n    {%- endif %}\n{%- endfor %}\n{%- for message in messages %}\n    {%- if message.content is string %}\n        {%- set content = message.content %}\n    {%- else %}\n        {%- set content = '' %}\n    {%- endif %}\n    {%- if (message.role == \"user\") or (message.role == \"system\" and not loop.first) %}\n        {{- '<|im_start|>' + message.role + '\\n' + content + '<|im_end|>' + '\\n' }}\n    {%- elif message.role == \"assistant\" %}\n        {%- set reasoning_content = '' %}\n        {%- if message.reasoning_content is string %}\n            {%- set reasoning_content = message.reasoning_content %}\n        {%- else %}\n            {%- if '</think>' in content %}\n                {%- set reasoning_content = content.split('</think>')[0].rstrip('\\n').split('<think>')[-1].lstrip('\\n') %}\n                {%- set content = content.split('</think>')[-1].lstrip('\\n') %}\n            {%- endif %}\n        {%- endif %}\n        \n        {%- if reasoning_content %}\n            {{- '<|im_start|>' + message.role + '\\n<think>\\n' + reasoning_content.strip('\\n') + '\\n</think>\\n\\n' + content.lstrip('\\n') }}\n        {%- elif '<think>' not in content and '</think>' not in content %}\n            {{- '<|im_start|>' + message.role + '\\n<think>\\n\\n</think>\\n\\n' + content.lstrip('\\n') }}\n        {%- else %}\n            {{- '<|im_start|>' + message.role + '\\n' + content }}\n        {%- endif %}\n        \n        {%- if message.tool_calls %}\n            {%- for tool_call in message.tool_calls %}\n                {%- if (loop.first and content) or (not loop.first) %}\n                    {{- '\\n' }}\n                {%- endif %}\n                {%- if tool_call.function %}\n                    {%- set tool_call = tool_call.function %}\n                {%- endif %}\n                {{- '<function name=\"' ~ tool_call.name ~ '\">' }}\n                {%- if tool_call.arguments %}\n                    {%- set args_dict = tool_call.arguments %}\n                    {%- for param_name, param_value in args_dict.items() %}\n                        {{- '<param name=\"' ~ param_name ~ '\">' }}\n                        {%- if param_value is string and ('<' in param_value or '&' in param_value or '\\n' in param_value) %}\n                            {{- '<![CDATA[' + param_value + ']]>' }}\n                        {%- else %}\n                            {{- param_value }}\n                        {%- endif %}\n                        {{- '</param>' }}\n                    {%- endfor %}\n                {%- endif %}\n                {{- '</function>' }}\n            {%- endfor %}\n        {%- endif %}\n        {{- '<|im_end|>\\n' }}\n    {%- elif message.role == \"tool\" %}\n        {%- if loop.first or (messages[loop.index0 - 1].role != \"tool\") %}\n            {{- '<|im_start|>user' }}\n        {%- endif %}\n        {{- '\\n<tool_response>\\n' }}\n        {%- if message.content is string %}\n            {{- content }}\n        {%- else %}\n            {{- message.content | tojson(ensure_ascii=False) }}\n        {%- endif %}\n        {{- '\\n</tool_response>' }}\n        {%- if loop.last or (messages[loop.index0 + 1].role != \"tool\") %}\n            {{- '<|im_end|>\\n' }}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- '<|im_start|>assistant\\n' }}\n    {%- if enable_thinking is defined %}\n        {%- if enable_thinking is false %}\n            {{- '<think>\\n\\n</think>\\n\\n' }}\n        {%- elif enable_thinking is true %}\n            {{- '<think>\\n' }}\n        {%- endif %}\n    {%- endif %}\n{%- endif %}\n",
+ "bos_token": "<s>",
+ "eos_token": "</s>",
+ "template_kwargs": {
+  "enable_thinking": false
+ },
+ "cases": [
+  {
+   "id": "one-user-turn",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Title this session in five words or fewer."
+    }
+   ],
+   "text": "<s><|im_start|>user\nTitle this session in five words or fewer.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+   "ids": [
+    0,
+    130072,
+    8448,
+    220,
+    23497,
+    533,
+    12221,
+    310,
+    3772,
+    2812,
+    448,
+    15027,
+    35,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063
+   ]
+  },
+  {
+   "id": "system-and-user",
+   "messages": [
+    {
+     "role": "system",
+     "content": "You write short titles. Reply with the title only."
+    },
+    {
+     "role": "user",
+     "content": "We fixed the queue's timeout and added a test for it."
+    }
+   ],
+   "text": "<s><|im_start|>system\nYou write short titles. Reply with the title only.<|im_end|>\n<|im_start|>user\nWe fixed the queue's timeout and added a test for it.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+   "ids": [
+    0,
+    130072,
+    17261,
+    220,
+    2311,
+    4900,
+    2871,
+    21426,
+    35,
+    66603,
+    401,
+    285,
+    6046,
+    950,
+    35,
+    130073,
+    220,
+    130072,
+    8448,
+    220,
+    1741,
+    5494,
+    285,
+    28473,
+    468,
+    75712,
+    316,
+    4948,
+    280,
+    1812,
+    374,
+    411,
+    35,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063
+   ]
+  },
+  {
+   "id": "multi-turn",
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are terse."
+    },
+    {
+     "role": "user",
+     "content": "What is 2 + 2?"
+    },
+    {
+     "role": "assistant",
+     "content": "4"
+    },
+    {
+     "role": "user",
+     "content": "And times 3?"
+    }
+   ],
+   "text": "<s><|im_start|>system\nYou are terse.<|im_end|>\n<|im_start|>user\nWhat is 2 + 2?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n4<|im_end|>\n<|im_start|>user\nAnd times 3?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+   "ids": [
+    0,
+    130072,
+    17261,
+    220,
+    2311,
+    457,
+    127409,
+    35,
+    130073,
+    220,
+    130072,
+    8448,
+    220,
+    2928,
+    357,
+    242,
+    39,
+    663,
+    242,
+    39,
+    52,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063,
+    41,
+    130073,
+    220,
+    130072,
+    8448,
+    220,
+    2959,
+    2739,
+    242,
+    40,
+    52,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063
+   ]
+  },
+  {
+   "id": "assistant-with-reasoning",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Pick a colour."
+    },
+    {
+     "role": "assistant",
+     "content": "<think>\nAny will do.\n</think>\n\nBlue."
+    },
+    {
+     "role": "user",
+     "content": "Another?"
+    }
+   ],
+   "text": "<s><|im_start|>user\nPick a colour.<|im_end|>\n<|im_start|>assistant\n<think>\nAny will do.\n</think>\n\nBlue.<|im_end|>\n<|im_start|>user\nAnother?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+   "ids": [
+    0,
+    130072,
+    8448,
+    220,
+    41964,
+    280,
+    12461,
+    35,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    220,
+    14837,
+    727,
+    634,
+    350,
+    9,
+    130063,
+    31688,
+    35,
+    130073,
+    220,
+    130072,
+    8448,
+    220,
+    11214,
+    52,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063
+   ]
+  },
+  {
+   "id": "second-system-message",
+   "messages": [
+    {
+     "role": "system",
+     "content": "Rule one."
+    },
+    {
+     "role": "user",
+     "content": "Hi."
+    },
+    {
+     "role": "system",
+     "content": "Rule two."
+    },
+    {
+     "role": "user",
+     "content": "Hi again."
+    }
+   ],
+   "text": "<s><|im_start|>system\nRule one.<|im_end|>\n<|im_start|>user\nHi.<|im_end|>\n<|im_start|>system\nRule two.<|im_end|>\n<|im_start|>user\nHi again.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+   "ids": [
+    0,
+    130072,
+    17261,
+    220,
+    36553,
+    678,
+    35,
+    130073,
+    220,
+    130072,
+    8448,
+    220,
+    19301,
+    35,
+    130073,
+    220,
+    130072,
+    17261,
+    220,
+    36553,
+    947,
+    35,
+    130073,
+    220,
+    130072,
+    8448,
+    220,
+    19301,
+    1293,
+    35,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063
+   ]
+  },
+  {
+   "id": "unicode-and-whitespace",
+   "messages": [
+    {
+     "role": "user",
+     "content": "  Résumé — naïve café 東京 🚀\n\n\ttabs, trailing spaces   \n\nand a final newline\n"
+    }
+   ],
+   "text": "<s><|im_start|>user\n  Résumé — naïve café 東京 🚀\n\n\ttabs, trailing spaces   \n\nand a final newline\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+   "ids": [
+    0,
+    130072,
+    8448,
+    220,
+    242,
+    47649,
+    2222,
+    858,
+    3604,
+    125640,
+    44589,
+    242,
+    54087,
+    28698,
+    270,
+    244,
+    130063,
+    87481,
+    6951,
+    33,
+    46050,
+    9783,
+    770,
+    220,
+    430,
+    280,
+    4202,
+    1071,
+    1424,
+    220,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063
+   ]
+  },
+  {
+   "id": "code-and-json",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Extract the fields:\n```json\n{\"name\": \"Ada\", \"tags\": [\"a\", \"b\"]}\n```\nfn main() { println!(\"{}\", 1); }"
+    }
+   ],
+   "text": "<s><|im_start|>user\nExtract the fields:\n```json\n{\"name\": \"Ada\", \"tags\": [\"a\", \"b\"]}\n```\nfn main() { println!(\"{}\", 1); }<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+   "ids": [
+    0,
+    130072,
+    8448,
+    220,
+    14908,
+    1158,
+    285,
+    6116,
+    990,
+    1746,
+    39310,
+    220,
+    4945,
+    2075,
+    977,
+    458,
+    54,
+    1478,
+    923,
+    458,
+    42978,
+    977,
+    21903,
+    86,
+    923,
+    458,
+    87,
+    9288,
+    1534,
+    2755,
+    18367,
+    1903,
+    3079,
+    319,
+    4792,
+    7532,
+    22,
+    1321,
+    49472,
+    923,
+    242,
+    38,
+    1314,
+    324,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063
+   ]
+  },
+  {
+   "id": "empty-user-turn",
+   "messages": [
+    {
+     "role": "user",
+     "content": ""
+    }
+   ],
+   "text": "<s><|im_start|>user\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+   "ids": [
+    0,
+    130072,
+    8448,
+    220,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063
+   ]
+  },
+  {
+   "id": "ends-with-assistant",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Say hi."
+    },
+    {
+     "role": "assistant",
+     "content": "Hi!"
+    }
+   ],
+   "text": "<s><|im_start|>user\nSay hi.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nHi!<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+   "ids": [
+    0,
+    130072,
+    8448,
+    220,
+    52774,
+    37463,
+    35,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063,
+    19301,
+    22,
+    130073,
+    220,
+    130072,
+    130071,
+    220,
+    8,
+    130063,
+    9,
+    130063
+   ]
+  }
+ ]
+}

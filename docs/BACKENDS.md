@@ -3,11 +3,12 @@
 What runs each kind of model, and the limits of each. A model's manifest
 names its backend (`backend = "coreml"`, the default for an embedder,
 `"onnx"` or `"static"`); classifiers and rerankers are Core ML models;
-chat is Apple's Foundation Models.
+chat is Apple's Foundation Models, and open chat models are Core ML
+decoders on the Neural Engine.
 
 | Backend | Serves | Where |
 |---|---|---|
-| [Core ML](#core-ml) | embedders, classifiers, rerankers | macOS: the Neural Engine, GPU or CPU on Apple silicon; the GPU or CPU on Intel |
+| [Core ML](#core-ml) | embedders, classifiers, rerankers; open chat models ([API.md](API.md#open-models)) | macOS: the Neural Engine, GPU or CPU on Apple silicon; the GPU or CPU on Intel. Open chat models: the Neural Engine only, so not on an Intel Mac |
 | [ONNX Runtime](#onnx-runtime-on-the-cpu) | embedders | the CPU, on macOS and Linux |
 | [Static](#the-static-tier) | embedders | the CPU, anywhere |
 | [Foundation Models](#foundation-models) | chat | Apple silicon, macOS 26+, Apple Intelligence on |

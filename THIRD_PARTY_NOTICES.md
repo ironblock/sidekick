@@ -38,6 +38,13 @@ sidekick is MIT-licensed (see `LICENSE`). It includes, or is derived from, the f
 
 `tools/classifier_reference.py` imports `modeling_fev.py`, `modeling_nandi.py` and their configuration modules from a local copy of the checkpoint at the same revision, after checking their sha256. It doesn't vendor them. `fixtures/classify/lumma-fev-0.1b.tokens.json` holds token ids that `modeling_fev.py` produced.
 
+## MiniCPM5-2B and SmolLM2-135M-Instruct chat templates
+
+- **Source:** [openbmb/MiniCPM5-2B](https://huggingface.co/openbmb/MiniCPM5-2B), revision `f97400052a43d642bbc6e9975e2397e3ae6a6b52` (`chat_template.jinja`), and [HuggingFaceTB/SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct), revision `12fd25f77366fa6b3b4b768ec3050bf629380bac` (the `chat_template` in `tokenizer_config.json`)
+- **License:** Apache License 2.0 (full text below)
+- **What sidekick uses:** `fixtures/chat-templates/minicpm5-2b.json` and `fixtures/chat-templates/smollm2-135m-instruct.json` hold each checkpoint's chat template verbatim, with the text and token ids transformers' `apply_chat_template` produced for a set of conversations, written by `tools/make_chat_template_fixture.py`. `crates/sidekick-llm/tests/chat_templates.rs` checks sidekick's renderer against them. The templates aren't compiled into `sidekickd`: it reads a model's template from its installed directory.
+- **Changes:** none.
+
 ## ONNX Runtime
 
 - **Source:** [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime), the prebuilt `onnxruntime-<platform>-<version>.tgz` archives: release v1.28.3 (`osx-arm64`, `linux-x64` and `linux-aarch64`) in the `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` release archives, and release v1.23.2 (`osx-x86_64`, the last Intel macOS build Microsoft published) in the `x86_64-apple-darwin` release archive

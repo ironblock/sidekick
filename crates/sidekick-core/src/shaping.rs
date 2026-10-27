@@ -12,6 +12,11 @@
 //! [`shape`] applies them to a complete reply; [`StreamShaper`] applies the
 //! same rules to a stream of cumulative snapshots, emitting only text that
 //! no later snapshot can change.
+//!
+//! The first rule is Foundation Models' workaround for its replayed
+//! transcripts. An open model renders history through its own chat
+//! template and never sees a transcript, so its replies are shaped
+//! [`verbatim`](StreamShaper::verbatim): rules 2 and 3 only.
 
 /// Strip one leading `assistant` speaker label (ASCII case-insensitive,
 /// optional spaces before the colon), at the start of the reply only.
@@ -47,7 +52,16 @@ pub struct Shaped {
 
 /// Shape a complete reply.
 pub fn shape(text: &str, stop: &[String]) -> Shaped {
-    let text = strip_assistant_label(text);
+    shape_with(text, stop, true)
+}
+
+/// [`shape`] without the leading-label rule.
+pub fn shape_verbatim(text: &str, stop: &[String]) -> Shaped {
+    shape_with(text, stop, false)
+}
+
+fn shape_with(text: &str, stop: &[String], strip_label: bool) -> Shaped {
+    let text = if strip_label { strip_assistant_label(text) } else { text };
     let (text, stop_hit) = match find_stop(text, stop) {
         Some(end) => (&text[..end], true),
         None => (text, false),
@@ -119,6 +133,7 @@ pub struct Diverged;
 #[derive(Debug)]
 pub struct StreamShaper<'a> {
     stop: &'a [String],
+    strip_label: bool,
     holdback: usize,
     emitted: String,
     stop_hit: bool,
@@ -127,7 +142,13 @@ pub struct StreamShaper<'a> {
 impl<'a> StreamShaper<'a> {
     pub fn new(stop: &'a [String]) -> Self {
         let longest = stop.iter().map(String::len).max().unwrap_or(0);
-        Self { stop, holdback: longest.saturating_sub(1), emitted: String::new(), stop_hit: false }
+        Self { stop, strip_label: true, holdback: longest.saturating_sub(1), emitted: String::new(), stop_hit: false }
+    }
+
+    /// Without the leading-label rule ([`shape_verbatim`]): stop sequences
+    /// and U+FFFD only.
+    pub fn verbatim(stop: &'a [String]) -> Self {
+        Self { strip_label: false, ..Self::new(stop) }
     }
 
     /// Text sent to the client so far.
@@ -146,8 +167,10 @@ impl<'a> StreamShaper<'a> {
         if self.stop_hit {
             return String::new();
         }
-        let LabelDecision::ContentAt(start) = label_decision(snapshot) else {
-            return String::new();
+        let start = match (self.strip_label, label_decision(snapshot)) {
+            (false, _) => 0,
+            (true, LabelDecision::ContentAt(start)) => start,
+            (true, LabelDecision::Undecided) => return String::new(),
         };
         let content = &snapshot[start..];
         if !content.starts_with(self.emitted.as_str()) {
@@ -173,7 +196,7 @@ impl<'a> StreamShaper<'a> {
         if self.stop_hit {
             return Ok(String::new());
         }
-        let shaped = shape(final_text, self.stop);
+        let shaped = shape_with(final_text, self.stop, self.strip_label);
         if !shaped.text.starts_with(self.emitted.as_str()) {
             return Err(Diverged);
         }
@@ -361,5 +384,17 @@ mod tests {
         assert_agrees(&["a", "ab", "abc"], &["zz"]);
         assert_agrees(&["x"], &[]);
         assert_agrees(&["Assistant: STOP now"], &["STOP"]);
+    }
+
+    #[test]
+    fn verbatim_keeps_a_leading_label() {
+        let stop = stops(&["END"]);
+        assert_eq!(shape_verbatim("Assistant: hi END x", &stop).text, "Assistant: hi ");
+        let mut sh = StreamShaper::verbatim(&stop);
+        // Nothing is held back for a label that might come.
+        assert_eq!(sh.push("Assist"), "Assi");
+        assert_eq!(sh.push("Assistant: hi EN"), "stant: hi ");
+        assert_eq!(sh.finish("Assistant: hi ENd").unwrap(), "ENd");
+        assert_eq!(sh.emitted(), "Assistant: hi ENd");
     }
 }
