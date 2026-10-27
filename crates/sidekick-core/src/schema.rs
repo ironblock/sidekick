@@ -160,6 +160,60 @@ impl JsonSchema {
             Err(_) => reply.to_string(),
         }
     }
+
+    /// Check that `value` matches this schema, as a guided reply must: an
+    /// error names the first mismatch and its JSON pointer.
+    pub fn validate(&self, value: &Value) -> std::result::Result<(), String> {
+        validate_node(&self.root, value, "")
+    }
+}
+
+fn validate_node(node: &Node, value: &Value, at: &str) -> std::result::Result<(), String> {
+    let fail = |what: String| Err(format!("{}: {what}", if at.is_empty() { "the root" } else { at }));
+    match (&node.kind, value) {
+        (Kind::Object { properties }, Value::Object(map)) => {
+            if let Some(key) = map.keys().find(|k| !properties.iter().any(|p| &p.name == *k)) {
+                return fail(format!("`{key}` isn't one of the object's properties"));
+            }
+            for p in properties {
+                match map.get(&p.name) {
+                    None if p.required => return fail(format!("the required property `{}` is missing", p.name)),
+                    None => {}
+                    Some(Value::Null) if p.nullable => {}
+                    Some(v) => validate_node(&p.schema, v, &child(at, &p.name))?,
+                }
+            }
+            Ok(())
+        }
+        (Kind::Array { items, min_items, max_items }, Value::Array(values)) => {
+            let n = values.len() as u64;
+            if min_items.is_some_and(|m| n < m) || max_items.is_some_and(|m| n > m) {
+                return fail(format!("{n} items, outside minItems {min_items:?} and maxItems {max_items:?}"));
+            }
+            for (i, v) in values.iter().enumerate() {
+                validate_node(items, v, &child(at, &i.to_string()))?;
+            }
+            Ok(())
+        }
+        (Kind::String, Value::String(_)) | (Kind::Number, Value::Number(_)) | (Kind::Boolean, Value::Bool(_)) => Ok(()),
+        (Kind::Enum(choices), Value::String(s)) if choices.contains(s) => Ok(()),
+        (Kind::Integer, Value::Number(n)) if n.is_i64() || n.is_u64() || n.as_f64().is_some_and(|f| f.fract() == 0.0) => {
+            Ok(())
+        }
+        (kind, value) => fail(format!("{value} doesn't match {}", kind_name(kind))),
+    }
+}
+
+fn kind_name(kind: &Kind) -> String {
+    match kind {
+        Kind::Object { .. } => "an object".into(),
+        Kind::Array { .. } => "an array".into(),
+        Kind::String => "a string".into(),
+        Kind::Enum(choices) => format!("one of {choices:?}"),
+        Kind::Integer => "an integer".into(),
+        Kind::Number => "a number".into(),
+        Kind::Boolean => "a boolean".into(),
+    }
 }
 
 const NULLABLE_ONLY_AS_PROPERTY: &str =
@@ -815,5 +869,30 @@ mod tests {
         );
         // Not JSON (cut short): untouched.
         assert_eq!(schema.conform(r#"{"title":"t"#), r#"{"title":"t"#);
+    }
+
+    #[test]
+    fn validate_checks_types_bounds_and_closed_objects() {
+        let schema = JsonSchema::parse(&json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "n": {"type": ["integer", "null"]},
+                "tags": {"type": "array", "items": {"enum": ["a", "b"]}, "maxItems": 2},
+                "ok": {"type": "boolean"}
+            },
+            "required": ["name", "n"]
+        }))
+        .unwrap();
+        let ok = |v: Value| schema.validate(&v);
+        assert_eq!(ok(json!({"name": "x", "n": null})), Ok(()));
+        assert_eq!(ok(json!({"name": "x", "n": 3, "tags": ["a", "b"], "ok": true})), Ok(()));
+        assert!(ok(json!({"name": "x"})).unwrap_err().contains("`n` is missing"));
+        assert!(ok(json!({"name": "x", "n": 1.5})).unwrap_err().contains("/n"));
+        assert!(ok(json!({"name": "x", "n": 1, "tags": ["c"]})).unwrap_err().contains("/tags/0"));
+        assert!(ok(json!({"name": "x", "n": 1, "tags": ["a", "a", "a"]})).unwrap_err().contains("maxItems"));
+        assert!(ok(json!({"name": "x", "n": 1, "extra": 1})).unwrap_err().contains("`extra`"));
+        assert!(ok(json!({"name": null, "n": 1})).is_err(), "only nullable properties may be null");
+        assert!(ok(json!([])).unwrap_err().starts_with("the root"));
     }
 }

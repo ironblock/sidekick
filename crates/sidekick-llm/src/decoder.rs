@@ -30,8 +30,11 @@ pub trait Decoder: Send {
     /// The prompt, from position 0: returns its last token's logits.
     fn prefill(&mut self, tokens: &[u32]) -> Result<&[f32]>;
 
-    /// One generated token at cache position `pos`: returns its logits.
-    fn step(&mut self, token: u32, pos: usize) -> Result<&[f32]>;
+    /// One call: `tokens` (1 to T of them) at cache positions `pos`,
+    /// `pos + 1`, …: returns the last one's logits. Generation feeds one
+    /// sampled token a call, followed by any tokens a grammar forces after
+    /// it, which fill the call's padding slots at no extra cost.
+    fn step(&mut self, tokens: &[u32], pos: usize) -> Result<&[f32]>;
 
     /// The decoder's health, readable from any thread while it runs.
     fn probe(&self) -> Arc<dyn DecoderProbe>;

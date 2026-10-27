@@ -119,16 +119,21 @@ the standard `response_format`; for example, a session title:
 }
 ```
 
-The schema is enforced by the on-device model's constrained decoding
-(guided generation), not asked for in the prompt, and must be in the
-[supported subset](#structured-output). Check `finish_reason`: a reply cut by `max_tokens` reports `"length"`, and
-for constrained output that means the JSON may be missing properties.
+The schema is enforced by the model's constrained decoding (Foundation
+Models' guided generation, or llguidance on an [open model](#open-models)),
+and both backends also show it to the model: Foundation Models puts it in
+its prompt, and an open model's system message carries it. It must be in
+the [supported subset](#structured-output). Check `finish_reason`: a reply cut
+by `max_tokens` reports `"length"`, and for constrained output that means
+the JSON is incomplete: on `apple-fm` it may be missing properties, and on
+an open model it stops mid-value and won't parse.
 
 `stop` (one string or up to four) is supported, except together with
 `json_schema`.
 
-Chat streams for real: `stream: true` sends text as the model generates it
-(schema-constrained replies arrive whole). On macOS 27 (built with Xcode 27)
+Chat streams for real: `stream: true` sends text as the model generates it.
+Schema-constrained replies arrive whole on `apple-fm`, and as they are
+generated on an open model (`guided_streaming` in `/v1/models`). On macOS 27 (built with Xcode 27)
 chat reports real token usage, including
 cached tokens when a follow-up reuses its session. `/health` reports which
 Foundation Models variant the Mac has and its context size. Over-long
@@ -165,8 +170,30 @@ runs on the Neural Engine, beside a large model that owns the GPU
   removed.
 - **Streaming** sends text as it is generated, as whole UTF-8 characters,
   holding back only text that could still become a `stop` sequence.
-- **`response_format` `json_schema`** isn't supported yet: a 400.
-  (`json_object` asks for JSON in the prompt, as on `apple-fm`.)
+- **`response_format` `json_schema`** is enforced with
+  [llguidance](https://github.com/guidance-ai/llguidance): each token is
+  sampled from the tokens the schema's grammar allows, so a reply that
+  ends with `finish_reason: "stop"` is JSON that matches the schema, on
+  one line, with `, ` and `: ` between values and its keys in schema
+  order (`{"name": "Ada", "age": 36}`). The reply ends when the JSON is
+  complete, without a stop token, and streams as it is generated. That is
+  a guarantee of valid JSON, not of correct values: constraining an open
+  model fixed its malformed replies but not its wrong answers (the chat
+  benchmark's [findings](CHAT-BENCHMARK.md#findings)). The grammar only
+  forces what may come next, so the model also reads the schema: it is
+  written, with its `description`s, required properties and enum
+  choices, into the system message (after any system text the request
+  sent, under a `# Response format` heading), where the model's template
+  puts tool definitions, and counts in `prompt_tokens` and against the
+  context. `[models."<id>"] schema_in_prompt = false`
+  ([CONFIG.md](CONFIG.md#per-model-settings)) leaves the prompt as sent,
+  for a client whose prompt already states the schema. Integers and
+  numbers are as long as the model writes them: JSON allows exponents
+  past what a double holds. The first guided request a model serves after
+  sidekickd starts
+  builds its tokenizer's index for the grammar engine first (about 0.4 s
+  for MiniCPM5-2B). (`json_object` asks for JSON in the prompt, as on
+  `apple-fm`.)
 - **No guardrails:** an open model never answers `content_filter`.
 - **One request at a time, shared with `apple-fm`.** Open models and
   `apple-fm` take turns on the Neural Engine in arrival order, since a
@@ -249,7 +276,7 @@ either way: output is always constrained.
 | `enum`, `const` | Strings only (and `null` in a nullable enum) |
 | `items`, `minItems`, `maxItems` | `items` is required on an array, and is one schema |
 | `anyOf` | Only as a nullable union: one schema and `{"type": "null"}` |
-| `description` | Passed to the model as guidance |
+| `description` | Shown to the model with the schema: in Foundation Models' prompt, and in an open model's system message |
 | `title`, `$schema`, `examples`, `default` | Accepted and ignored |
 
 Refused, among others: `anyOf` of anything else, `oneOf`, `allOf`, `not`,
@@ -266,11 +293,17 @@ array's items). Foundation Models generates such a property as one it may
 leave out, and the reply carries `null` where it did, when the property is
 `required`; an optional nullable property it leaves out stays absent. So a
 `required` nullable property is the way to ask for every field, with
-`null` for what the text doesn't state.
+`null` for what the text doesn't state. An open model writes a nullable
+property's value or `null`: a `required` one is always there, and an
+optional one may be left out.
 
-**Key order.** A guided reply is compact JSON with its keys in the order
-the schema lists them, so identical requests at temperature 0 give
-identical bytes. The model also generates the properties in that order,
+**Key order.** A guided reply, on either backend, is JSON on one line with
+its keys in the order the schema lists them, so identical requests at
+temperature 0 give identical bytes. `apple-fm`'s is compact
+(`{"name":"Ada","age":36}`); an open model's has `, ` and `: ` between
+values (`{"name": "Ada", "age": 36}`), the spelling models write
+unprompted, since forcing compact JSON on one degrades what it writes
+([open-llm.md](design/open-llm.md#constrained-decoding-on-the-open-path)). The model also generates the properties in that order,
 which can change what it writes: put the fields it should decide first
 first.
 

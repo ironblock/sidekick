@@ -9,11 +9,10 @@ published. [D53](../DECISIONS.md#d53--open-llms-on-the-chat-route-a-stateful-ane
 records the decision; this note has the detail.
 
 Implemented so far: the decoder chain (`sidekick_coreml::KvDecoder`,
-#183), and the loop and the chat route's open-model backend
-(`sidekick-llm`, #185): template, tokenizer, sampling, the wire contract,
-the ANE chat lane and `/health`'s accounting. Structured output on the open
-path (#186) isn't yet; until it is, `response_format` `json_schema` is a
-400 on an open model. Where this note states a number, the measurement is
+#183), the loop and the chat route's open-model backend (`sidekick-llm`,
+#185): template, tokenizer, sampling, the wire contract, the ANE chat lane
+and `/health`'s accounting; and constrained decoding on the open path with
+llguidance (#186). Where this note states a number, the measurement is
 linked, not repeated:
 - [#173](https://github.com/ironblock/sidekick/issues/173): the spike that
   ran a 1B and then a 2B decoder on the Neural Engine (ANE), with its KV
@@ -555,7 +554,7 @@ directly.
 | `enum` of strings; `const` string | yes | `anyOf` strings | llguidance |
 | nullable: `type: [T, "null"]`, or `anyOf` of one schema and `{"type": "null"}` | yes | an optional property; the layer writes `null` where it is absent | llguidance |
 | `items`, `minItems`, `maxItems` | yes | `arrayOf` with bounds | llguidance |
-| `description`, `title`, `$schema`, `examples`, `default` | accepted; `description` is passed to AFM | a guide | none: the model sees only the prompt |
+| `description`, `title`, `$schema`, `examples`, `default` | accepted; `description` is passed to AFM | a guide | written with the schema into the system message (#186; the measurement is under "Constrained decoding on the open path") |
 | `anyOf` (other), `oneOf`, `allOf`, `$ref`/`$defs`, `enum` of non-strings | 400 | — | — |
 | `minimum`, `maximum`, `pattern`, `format`, `minLength`, `maxLength`, `patternProperties` | 400 | — | — |
 
@@ -588,37 +587,122 @@ options, such as required-but-nullable) is decided by measurement on the
 benchmark's extraction set, and changes only AFM's mapping. On the open
 path, the benchmark found llguidance made MiniCPM5-1B fill in fields the
 text doesn't state; whether the 2B does is measured before guided
-extraction is recommended on it.
+extraction is recommended on it. A first look (#186), on 24 of the
+extraction items: guided without the schema in the system message held
+the same values as prompt-only on every item (13 stated optional fields
+left out by both). With it, guided left out 9 with the benchmark's
+prompt and 6 without, so guidance with the schema shown drops fewer
+fields, not more ("Constrained decoding on the open path" has the
+table). The full set, guided and prompt-only, is the release gate's to
+run.
 
 ### Constrained decoding on the open path
 
 [llguidance](https://github.com/guidance-ai/llguidance) (MIT; Rust; 1.9.1 is
 the version the benchmark used) computes, per step, the set of tokens the
 grammar allows; the sampler sets every other logit to −∞.
-- **API.** One `ParserFactory` per loaded model, built from the tokenizer
+- **API.** One `ParserFactory` per model, built from its tokenizer
   through `toktrie_hf_tokenizers` (which depends on `tokenizers` 0.21 with
-  the pure-Rust regex, as the workspace does). Per request, the schema
+  the pure-Rust regex, as the workspace does), with the model's stop tokens
+  as its end-of-sequence tokens. It is built on the model's first guided
+  request (about 0.4 s for MiniCPM5-2B's 130k vocabulary), not at startup,
+  so a model never asked for JSON costs nothing. Per request, the schema
   layer's representation is written back out as JSON Schema with the
-  `x-guidance` options and compiled with
-  `TopLevelGrammar::from_json_schema`; a `Matcher` then gives
-  `compute_mask`, `consume_token` and `compute_ff_tokens` each step.
-  Compiled grammars are cached by the normalized schema's hash.
-- **Cost.** llguidance's own figures for a 128k vocabulary are about 50 µs
-  of one core per mask typically, about 1.5 ms for a full mask, and under
-  30 ms in the worst case it has seen, against a decode step of about
-  54 ms (18.6 tokens/s, #173). The mask for the next step depends only on
-  the token just sampled, as the next ANE call does, so the two run
-  concurrently and the mask is hidden behind the call.
+  `x-guidance` options (`sidekick_llm::guided::grammar_schema`) and
+  compiled with `TopLevelGrammar::from_json_schema` (under 1 ms for the
+  benchmark's extraction schemas); a `Matcher` then gives `compute_mask`,
+  `consume_token` and `compute_ff_tokens` each step. A model keeps its 32
+  most recently used grammars, keyed by the schema written out, and a
+  request starts from a clone, which shares the entry's lexer state; a
+  grammar that errors during a request is evicted, so the next request
+  compiles it afresh, and two requests compiling one schema at once keep
+  one entry. `/health` reports the cache (`chat.models.<id>.guided`). A
+  schema the layer accepts but llguidance can't compile is a 400
+  `unsupported_schema`. A tokenizer llguidance can't read (one that isn't
+  byte-level or byte-fallback BPE) is found at startup: the model's
+  listing leaves `response_format` out of its `honored_fields`, and guided
+  requests to it are a 400.
+- **The schema is in the prompt too.** The grammar only forces what may
+  come next: it can't tell the model which fields exist, which are
+  optional, what an enum offers or what a description asks, so a model
+  that met the schema only through the grammar would meet each field name
+  as it is forced. Foundation Models, by default, puts the schema in its
+  prompt as well. So a guided request's schema, written out as JSON Schema
+  with its descriptions (`guided::prompt_schema`, on one line as
+  `json.dumps` writes it), goes into the system message under a
+  `# Response format` heading, after any system text the request sent and
+  a blank line, or as a system message of its own. That is where
+  MiniCPM5's template puts tool definitions, in the same one-line JSON. It
+  is written before the prompt is tokenized, so it counts in
+  `prompt_tokens` and against the context. `[models."<id>"]
+  schema_in_prompt = false` turns it off for a model.
+
+  Measured on MiniCPM5-2B (#186's PR), with 24 of the chat benchmark's
+  extraction items (3 per schema), greedy. Scores are from the
+  benchmark's scorer, with a stand-in schema validator and no stemming,
+  so they compare modes rather than match CHAT-BENCHMARK.md:
+
+  | Prompt | Schema in the system message | Field accuracy | Exact | Stated optional fields left out | Prompt tokens |
+  |---|---|---|---|---|---|
+  | No schema in the user turn | no | 0.680 | 0.042 | 27 | 3,624 |
+  | No schema in the user turn | yes | 0.951 | 0.625 | 6 | 7,314 |
+  | The benchmark's (names the schema) | no | 0.902 | 0.583 | 13 | 7,074 |
+  | The benchmark's (names the schema) | yes | 0.934 | 0.625 | 9 | 10,764 |
+  | The benchmark's, prompt-only (not guided) | no | 0.902 | 0.583 | 13 | 7,074 |
+
+  Every guided reply was valid. Without the schema, a client that puts
+  it only in `response_format` gets a model that guesses at the fields.
+  With it, it does better than the benchmark's own prompt. Writing the
+  schema twice (the client's prompt and the system message) didn't hurt
+  either: 0.934 against 0.902. It costs prefill: the benchmark's
+  requests took 25% longer end to end (78.8 s against 63.1 s for the 24),
+  for 52% more prompt tokens. On the hand-written meeting request ("Let's
+  meet Thursday…", every field required and nullable), the schema in the
+  system message turned `"day": null` into `"day": "Thursday"`.
+- **Cost, measured: the mask doesn't need hiding.** The design first had
+  each mask computed on another thread while the next ANE call ran. Over
+  the chat benchmark's 80 extraction answers walked through MiniCPM5-2B's
+  tokenizer (`cargo run -p sidekick-llm --example guided_masks`), a mask
+  took 12 µs on average (p50 5 µs, p99 55 µs, at most 266 µs), against a
+  call's 53 ms; handing it to a scoped thread and back costs 27–41 µs,
+  more than the mask. Served end to end (#186's PR), a reply's masks
+  averaged 23–214 µs, and the slowest single mask was 8.5 ms, the first
+  of a newly compiled grammar. So the mask is computed after each call,
+  on the decoder thread. Each reply's log line carries its masks' maximum,
+  so a schema that makes them slow shows.
 - **Forced tokens are free.** Where the grammar allows exactly one
   continuation (`{"name": "`, a closing brace), `compute_ff_tokens`
-  returns it, and those tokens fill the next call's padding slots: a call
-  costs about the same for 1 as for 16 tokens. Guided JSON can take fewer
-  calls than its token count.
-- **Whitespace is bounded** with `x-guidance`'s `whitespace_pattern`, so a
-  model can't fill its budget with blank lines inside a valid object. The
-  exact bound is measured against llguidance's default on the benchmark's
-  extraction and tag sets.
-- **`constrained` is true** on every guided open-model reply.
+  returns it, and those tokens are fed in the same call as the sampled
+  token before them, in slots that call would otherwise pad: a call costs
+  about the same for 1 as for 16 tokens. A reply's forced opening follows
+  the prompt in its calls, and a reply the grammar forces whole (a `const`)
+  needs no call. Over the extraction answers, 34% of the tokens were forced
+  and a reply took 1.57 tokens a call; served, guided replies decoded at
+  25–83 tokens/s against 18.5 unguided.
+- **One line, spelled as models write it.** The grammar allows no
+  whitespace between JSON tokens except in its separators, `, ` and `: `
+  (`whitespace_flexible: false`), rather than bounding whitespace with a
+  pattern. The reply is one line with its keys in schema order
+  ([API.md](../API.md#structured-output), "Key order"), the same bytes
+  streamed or not, and a model can't fill its budget with blank lines.
+  The separators are the ones MiniCPM5-2B writes unprompted. Compact `,`
+  and `:` split its usual tokens (`": "`), and it wrote
+  `{"name":", "}` for a signature from which, with spaces or unguided, it
+  extracts all five fields. llguidance's default, free whitespace, gave
+  the same values as the spaced separators on #186's requests, at
+  19–25 tokens/s against 25–83, since less of the reply is forced.
+  Strings and numbers are as the model writes them, within JSON's
+  grammar.
+- **The end.** When the JSON is complete and nothing may follow it, the
+  reply ends with `finish_reason: "stop"` and no stop token is generated;
+  where the JSON could go on (a number at the root), the stop tokens are
+  allowed once it is complete. `max_tokens` before the end is `"length"`
+  with the JSON cut off, as `apple-fm` reports it. A grammar that allows no
+  token of the vocabulary, or an llguidance error mid-reply, fails the
+  request (500), and is logged.
+- **`constrained` is true** on every guided open-model reply, and each
+  reply's log line carries its forced tokens and its masks' mean and
+  maximum time.
 
 ### What the benchmark implies
 
