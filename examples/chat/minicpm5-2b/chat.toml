@@ -1,0 +1,58 @@
+# openbmb/MiniCPM5-2B (a Llama-architecture causal LM: 42 layers, hidden
+# 2,048, 16 heads over 2 KV heads, Apache-2.0) as a `kv-state-1` decoder for
+# the chat route on the Neural Engine (docs/DECISIONS.md D53;
+# docs/design/open-llm.md).
+#
+# Produce the artifacts with tools/convert_causal_lm.py, which copies this
+# file into the build and adds what the build measured: the [build] table
+# (rotation, calibration draw, residual scale, palettes) and the compute
+# plan each chunk was read with ([placement]). docs/CONVERTING.md, "Causal
+# language models", describes the recipe and its grading.
+#
+# Reviewed decisions here:
+# - four chunks of 14, 14, 10 and 4 layers, the last with the final norm and
+#   the head: each under the ANE's 1 GiB per-program weight limit (D32,
+#   D37) with 8-bit palettes, 2.12 GiB in all (#173);
+# - one 16-token function (T) over a 2,048-position cache (C, the ANE length
+#   cap, D48), so the usable context is C - T + 1 = 2,033;
+# - the chat template renders with thinking off, as the chat benchmark ran
+#   the model (docs/CHAT-BENCHMARK.md); stop tokens and sampling defaults
+#   are generation_config.json's; the converter checks every value it can
+#   against the checkpoint.
+
+id = "minicpm5-2b"
+task = "text-generation"
+source = { repo = "openbmb/MiniCPM5-2B", revision = "f97400052a43d642bbc6e9975e2397e3ae6a6b52" }
+interface = "kv-state-1"
+compute_units = "cpu_and_ne"
+tokenizer = "tokenizer.json"
+
+[decoder]
+artifact = "decoder.{chunk}.mlmodelc"
+chunks = 4
+tokens_per_call = 16
+cache_capacity = 2048
+context_length = 2033
+hidden_size = 2048
+head_dim = 128
+kv_heads = 2
+layers = [14, 14, 10, 4]
+vocab_size = 130560
+
+[decoder.host]
+embedding = "embedding.safetensors"
+rope = "rope.safetensors"
+
+[chat]
+template = "chat_template.jinja"
+template_kwargs = { enable_thinking = false }
+bos_token = "<s>"
+eos_token = "</s>"
+stop_token_ids = [1, 130073]
+
+[sampling]
+temperature = 1.0
+top_p = 0.95
+
+[serving]
+request_timeout_secs = 120

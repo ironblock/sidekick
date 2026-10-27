@@ -28,6 +28,7 @@ each rule exists (entries cited as Dnn).
 - [Manifests](#manifests)
 - [Converters](#converters)
 - [ONNX export](#onnx-export)
+- [Causal language models](#causal-language-models)
 - [Shared weights across buckets](#shared-weights-across-buckets)
 - [Recording the build](#recording-the-build)
 - [Reproducing a published build](#reproducing-a-published-build)
@@ -382,6 +383,7 @@ committed one over it, which would drop its `[placement]` table.
 | `convert_gliner2.py` | DeBERTa-v3, relative shift | GLiNER2's per-token classifier, read at the label markers | zero-shot `format = "gliner2"`; needs the gliner2 package for the gate inputs |
 | `convert_fev.py` | Nandi causal decoder | fev's pointer head | zero-shot `format = "fev"`; the checkpoint's own code is the fp32 reference |
 | `convert_agentjev.py` | Qwen3 decoder, tree mask, bucket-invariant softmax | AgentJev's set transformer and scorer | zero-shot `format = "agentjev"`; chunked by default (D37) |
+| `convert_causal_lm.py` | LlamaForCausalLM, channels first, rotated, GPTQ onto 8-bit palettes (`llama_causal`) | the final norm and head on the last chunk, one row chosen by `sel` | a `kv-state-1` decoder for the chat route; its own pipeline ([Causal language models](#causal-language-models)) |
 
 Every converter takes `<hf-model-dir> <install-dir> [buckets...]`, plus
 `--time` and its own flags; the embedder converters also take `--format
@@ -507,6 +509,226 @@ suite's worker result for the same model, which `parity --external
 result.json` grades beside the native run. An int8 build fails the floors
 by design. `tools/bench_onnx.py` measures load time, resident memory and
 latency per length, batch size and thread count.
+
+## Causal language models
+
+An open chat model (D53; docs/design/open-llm.md) converts to a
+`kv-state-1` decoder: chunk programs over contiguous runs of layers, each
+one static function taking T tokens per call and owning its layers' KV
+cache as Core ML state, plus the host's embedding and RoPE tables. Its
+pipeline is its own (`sidekick_convert/causal_lm.py`), since it has no
+buckets, its inputs are fp16 and its weights are quantised, but it uses the
+library's layers: a backbone (`backbones.llama_causal`), a technique
+(`techniques.gptq`), the cosine scale, the compute plan, `core.Calibration`'s
+guard and the tokenizer rule.
+
+    python tools/convert_causal_lm.py <hf-model-dir> <models dir>/minicpm5-2b --work <work dir>
+    python tools/grade_causal_lm.py <models dir>/minicpm5-2b --work <work dir> --decoder <kv_decoder binary>
+
+The manifest is `examples/chat/<id>/chat.toml`, reviewed like the others:
+the converter checks it against the checkpoint (shapes, the layer split
+summing to the model's layers, context = C − T + 1, C under the ANE length
+cap, the stop tokens and sampling defaults from `generation_config.json`,
+the template's bos and eos from `tokenizer_config.json`) and installs it
+with two tables added: `[build]`, the recipe and the measured residual
+scale, and `[placement]`, each chunk's compute plan.
+
+**The recipe** (`recipes.causal_lm`; #173 found it):
+- the channels-first rewrite of the backbone: 1x1 convolutions on a
+  [1, D, 1, T] residual stream, explicit attention under a finite mask
+  (D25), StableSilu (D39), RMSNorm inputs pre-scaled by a power of two so
+  their squares stay in fp16 range, and the residual stream at 1/K when a
+  projection's output would cross the ANE linear's 2^15 (K = 1 for
+  MiniCPM5-2B, whose rotated outputs stay under 200);
+- R1 and R2 Hadamard rotations folded into the weights, which spread the
+  massive activations over every channel: the largest RMSNorm input falls
+  from about 5,500 to about 226, and the weights' outliers to what Gaussian
+  weights give;
+- GPTQ with act-order onto 8-bit palettes, one palette per 16 output
+  channels, fixed beforehand by k-means as coremltools computes it, stored
+  with the palettizer's `unique` mode so GPTQ's values survive exactly.
+  Per-channel grids only: the ANE runs per-block int8 on the CPU without
+  saying so, and per-block int4 doesn't load. 4-bit is ruled out for this
+  model (87% top-1 at best);
+- chunks at layer boundaries, as the manifest's `layers` gives them (each
+  under the 1 GiB per-program limit, D32), with the head split into four
+  convolutions on the last.
+
+**Steps.** Each heavy step runs in its own process and leaves its result
+in the work directory, where a rerun reuses it: the fp32 references (the
+checkpoint's own teacher-forced logits, its greedy continuations, the
+ideal-fp16 ceiling), the range calibration and the rewrite gate per
+calibration draw, the palettes, GPTQ per draw, the PyTorch screen per draw,
+then one conversion per chunk. Only the references hold the whole model in
+fp32 (about 10 GB for a 2B model); every other step reads the checkpoint
+tensor by tensor and holds one layer in fp32.
+
+### Calibration and evaluation sets
+
+Both are committed under `fixtures/causal-lm/`, with the token ids each
+model's tokenizer gives them in `<model id>.tokens.json`. The converter
+checks the text files' sha256 and the tokenizer's against that file and
+re-encodes every document, so a changed text, tokenizer or template fails
+the run instead of changing the build.
+`tools/make_causal_lm_fixture.py` built them, and builds the token file for
+a new model.
+
+- **Calibration** (`calibration.jsonl`, about 115,000 tokens for
+  MiniCPM5-2B): spans of this repository's documents and code at a pinned
+  commit (27 spans), 48 conversations written for the fixture (both MIT),
+  and the lead sections of 148 Wikipedia articles, each pinned to a
+  revision (CC BY-SA 4.0, attributed; THIRD_PARTY_NOTICES.md). Each
+  document records its source and licence. Twelve request frames, also
+  written for the fixture, hold a system prompt (or none) and an
+  instruction, worded unlike the evaluation's request.
+- **Disjoint from what is graded**, checked at every run: no parity-corpus
+  text (`core.Calibration`), no run of 32 tokens shared with an evaluation
+  text (shorter runs are shared link anchors and signatures, not passages),
+  and no Wikipedia article the chat benchmark draws on. The evaluation's
+  articles are in neither.
+- **A draw** is what one conversion calibrates on: the documents in a
+  seeded order (numpy's `default_rng(seed).permutation`), packed into 20
+  sequences of exactly 2,048 tokens (40,960 tokens), each starting at a
+  document. **Eight of the 20 are long chat requests** (`chat_sequences`,
+  recorded in `[build]`): a frame, in a seeded order, then the draw's own
+  next documents, then the template's end of the user turn and start of
+  the assistant's, as a served request ends; a conversation from the
+  fixture never goes inside one. Served requests are long,
+  instruction-framed user turns, and calibration without them left GPTQ's
+  early layers blind to them: with plain packing (no chat sequences) no
+  calibration chat turn passed 104 tokens, and the evaluation's chat-framed
+  article graded C while the same kind of plain article stayed in B (#184). The build's
+  draw is seed 0. The stability draw (seed 1) reads only documents draw 0
+  didn't, so the two share no text.
+- **Evaluation** (`evaluation.jsonl`), in two families, graded together and
+  reported apart:
+  - **repository**: #173's set, so grades stay comparable with it: eight
+    texts (this repository's prose, Rust and TOML, a run of numbers),
+    teacher-forced over their first 256 tokens and graded at positions
+    127–255 (1,032 positions);
+  - **prose**: two held-out Wikipedia articles of about 2,000 tokens, one
+    as plain text and one inside a chat request of the kind the route
+    serves (a title, tags and a year to extract), graded at every 8th
+    position from 127 to the end, so the cache's late positions are graded
+    too (470 positions);
+  - and six chat prompts whose greedy continuations are compared with
+    fp32's.
+
+### Grading
+
+Every grade compares logits rows with the checkpoint's fp32 forward at the
+same positions: per position the cosine of the two rows, and whether their
+top-1 tokens agree. The PyTorch screen runs the quantised model in fp32.
+The ANE grade runs the installed build through `sidekick_coreml::KvDecoder`
+(`tools/grade_causal_lm.py`) along both of the runtime's paths: one token
+per call, as replies are generated, and T tokens per call, as prompts are
+fed, each graded position read with `sel` at it. The ANE grade is the worse
+of the two; each greedy prompt's T-token prompt row is also compared with
+fp32's last-position logits.
+
+| | A | B | C | D |
+|---|---|---|---|---|
+| first-percentile cosine, at least (the parity suite's cosine scale) | 0.9999 | 0.999 | 0.985 | below |
+| top-1 agreement, at least | 99.5% | 98.0% | 95.0% | below |
+
+- **The grade is the worse of the two letters**, anchored on a percentile
+  as D26 anchors classifiers on p99: #173 found the worst position moves
+  with the calibration draw (in its PyTorch screen, 0.99934 with 40,960
+  calibration tokens and 0.99804 with 80,000) while the first percentile
+  moved far less
+  (0.99964 and 0.99963). The first percentile moves with the draw too:
+  MiniCPM5-2B's draws 0 and 1 screened at 0.99920 and 0.99965 on the
+  repository texts. A grade near a boundary is reported with its numbers.
+- **A wide flip caps it at C:** a position where the build's top-1 differs
+  from fp32's and fp32 rates its own top token at least twice as likely as
+  the runner-up (a log-probability margin of ln 2 or more), as a decision
+  flip caps a classifier. Flips between near-ties are counted, not capped.
+- **The worst position is reported, not graded**, and so are the mean
+  cosine and the ideal-fp16 ceiling (`fp16sim`) on the same positions:
+  for MiniCPM5-2B, p1 0.99999, top-1 99.90%, worst 0.99998 (A).
+- **KL divergence is reported beside cosine**, not graded: KL(fp32 ‖
+  build) per position, its mean, p99 and maximum, overall and per family.
+  The logits' cosine weighs the whole vocabulary alike, KL the tokens a
+  sampler would pick, and they rank positions very differently (rank
+  correlation 0.08 on MiniCPM5-2B's first ANE build, where a cosine of
+  0.89 came with a KL of 0.003). It is reported for chat models only; the
+  encoders' and classifiers' grading is unchanged.
+- **Non-finite logits are F.**
+- **Families:** every grade is also given per family, so a weak family
+  shows, but the letter is the pooled one.
+- **The stability check:** the converter also quantises with a second
+  calibration draw (seed 1, disjoint from draw 0), screened in PyTorch and
+  never compiled. The two draws' screens must grade alike; a grade that
+  depends on the draw is reported as the lower one.
+- **The screen gates compiling:** below the recipe's floor (B) nothing is
+  compiled.
+- **Gates** before install: the rewrite gate (the rotated, rescaled model in
+  fp32 against the checkpoint at every graded position, worst cosine at
+  least 0.99999), every projection and the head stored as palettes (the
+  palettizer skips a weight it can't store with only a warning), no
+  forbidden op (the fused attention op, the native `silu`), each chunk's
+  weights under 1 GiB, and every operation of every chunk on the ANE in
+  its compute plan: a decoder's state crashes off it.
+
+### The work directory and the install
+
+Every intermediate in `--work` records the inputs it was made from (the
+checkpoint's revision and config, the fixtures' and the tokenizer's
+sha256, the manifest, the recipe, the library versions) in a
+`<name>.key.json` beside it, and is reused only when they match: a changed
+evaluation set recomputes the references and screens and nothing else, a
+changed calibration set the ranges, GPTQ and everything after. Staged
+programs live in `stage-<draw>/`, so one draw's programs are never
+installed as another's.
+
+The install is assembled in a sibling directory (`.<id>.installing`) and
+renamed into place, so a failed run never leaves new programs beside an
+old manifest; the daemon serves from these directories. A chunk whose
+installed bytes equal the staged ones is moved across rather than copied,
+which keeps its compiled ANE program valid (below).
+
+### The ANE cache
+
+Each compile of a build for the ANE leaves about a copy of its weights in a
+system cache that can't be deleted (docs/design/coreml-cache.md): about
+2.2 GB for MiniCPM5-2B. The cache is keyed by the program's path and file
+identity and by the loading binary's code signature, so:
+- **The compute-plan gate** compiles each chunk once per new program: it
+  reads the plan of the staged program and records it in `<work>/plans/`
+  under a hash of the program's `model.mil` and weights, and a rerun that
+  produces the same bytes reads the record instead (`--no-plan` skips the
+  gate altogether).
+- **The grader's first load** compiles the installed chunks once; it
+  compiles again only when an installed chunk is replaced by different
+  bytes, moved to another path, or loaded by a binary with another
+  signature. Reinstalling unchanged programs keeps them (above).
+- So a new build costs two compiles, and a rerun that changes no program
+  costs none. Screen recipe changes in PyTorch first, keep the build at one
+  path, and run the grader from one `kv_decoder` binary signed with a
+  fixed identifier (`codesign -s - -f -i <identifier>`), which a rebuild of
+  the example then reuses.
+
+### Reproducing a build
+
+The `[build]` table records everything a rerun needs: the rotation seed,
+the calibration set's sha256, its token count and the draw's seed, the
+palettes' group and k-means seed, GPTQ's order, damping and thread count,
+the residual scale, the head split, and the versions of torch,
+transformers, scikit-learn, coremltools, numpy and safetensors. K-means runs single-threaded, GPTQ
+in float64 in a fixed order, and every step at the recorded torch thread
+count, so a rerun into a fresh work directory on the same machine and
+library versions gives the same program bytes (`model.mil`,
+`weights/weight.bin` and `metadata.json` of every chunk), host tables and
+chat.toml; `coremldata.bin` differs per compile, as it does for every
+converter ([the acceptance method](#refactoring-a-converter-the-acceptance-method)).
+Two MiniCPM5-2B builds from empty work directories matched this way (#184).
+
+### Requirements
+
+The converters' environment ([Converters](#converters)), plus
+scikit-learn and threadpoolctl (the palettes' k-means) and safetensors.
+transformers 4.57.6 reads MiniCPM5-2B, a plain Llama, although the
+checkpoint was saved with 5.6.
 
 ## Shared weights across buckets
 
@@ -1180,8 +1402,10 @@ recompile, from throwaway homes too (docs/design/coreml-cache.md).
 The logic that decides artifacts has torch-only unit tests (no Core ML), in
 `tools/sidekick_convert/tests`: the calibration guard, the tokenizer rule,
 masks, one-hots, the blocked max, the K choice, activations, pooling, the
-manifest rules, the ideal-fp16 simulation, and the gates' prediction
-inputs. The shared-weights tests also re-export two tiny programs built
+manifest rules, the ideal-fp16 simulation, the gates' prediction inputs,
+and the causal-LM converter (on a tiny random Llama: the rewrites against
+transformers, the chunk contract called T tokens at a time, GPTQ, the
+draws, the grades and the committed fixtures). The shared-weights tests also re-export two tiny programs built
 with coremltools' MIL builder, and are skipped without coremltools and
 Xcode's `coremlcompiler`. From the repository root:
 
