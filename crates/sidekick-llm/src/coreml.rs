@@ -8,7 +8,7 @@ use sidekick_core::{Result, ScanOptions};
 use std::path::Path;
 use std::sync::Arc;
 
-pub use sidekick_coreml::AneCheck;
+pub use sidekick_coreml::{is_placement_refusal, AneCheck};
 
 /// A loaded `kv-state-1` decoder.
 pub struct CoremlDecoder(KvDecoder);

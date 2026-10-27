@@ -74,6 +74,7 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
     let onnx_threads = config.onnx_threads()?;
     let request_timeouts = config.request_timeouts()?;
     let mut registry = scan_served(config)?;
+    let prompters = open_models::prompters(&mut registry);
     // ONNX Runtime loads only for an onnx model, and then at startup, so a
     // missing runtime skips the onnx models with its reason in /health
     // right away. Without one, it's never loaded (D40).
@@ -91,7 +92,7 @@ pub fn build_state(config: &Config) -> anyhow::Result<AppState> {
         );
     }
     let mut chat = ChatModels::default();
-    let open = open_models::build(config, &registry, &request_timeouts, &scan_options(config))?;
+    let open = open_models::build(config, &registry, prompters, &request_timeouts, &scan_options(config))?;
     // With open models, `apple-fm` takes its turn in their ANE chat lane:
     // an overlap slows both about 25× (#187).
     let lane = open.as_ref().map(|(lane, _)| lane.clone());

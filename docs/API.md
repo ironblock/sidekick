@@ -147,7 +147,9 @@ runs on the Neural Engine, beside a large model that owns the GPU
   messages are the system role. The text of the model's special tokens is
   rewritten in message content (`<|im_start|>` becomes `<¦im_start¦>`, and
   others get a zero-width word joiner after their first character), so a
-  message can't forge a turn.
+  message can't forge a turn. Text that still tokenizes as a special token
+  (one the tokenizer's normalizer forms, such as full-width brackets) is a
+  400.
 - **The context** (`context_length` in `/v1/models`) is the prompt plus
   the completion. A prompt plus `max_tokens` (or `max_completion_tokens`)
   past it is a 400 `context_length_exceeded`; `max_tokens` omitted means
@@ -174,10 +176,23 @@ runs on the Neural Engine, beside a large model that owns the GPU
   default 4, [CONFIG.md](CONFIG.md#per-model-settings)) are a 503
   `backend_busy` with `Retry-After: 5`, for `apple-fm` too. Time in the
   queue counts against the request's timeout (`request_timeout_secs`;
-  120 s for MiniCPM5-2B, from its manifest); a first load doesn't, and is
-  bounded by `load_timeout_secs`.
+  120 s for MiniCPM5-2B, from its manifest), including time spent behind
+  another request's model load. A load the request itself waits for, once
+  its turn has come, doesn't count, and is bounded by
+  `load_timeout_secs`. A request whose time ran out in the queue doesn't
+  start. A streamed request whose client leaves while it waits gives up its
+  place.
 - **Provenance:** `sidekick-model` is `<id>@<revision>` and
   `sidekick-compute-units` is `cpu_and_ne`.
+
+**What changes for `apple-fm` when an open model is installed.** Without
+one, `apple-fm` runs as before. With one, `apple-fm` shares the open
+models' queue:
+- its requests run one at a time, in arrival order with the open models';
+- past the queue, a request is a 503 `backend_busy` with `Retry-After: 5`;
+- its timeout counts time spent in the queue;
+- a request that timed out keeps its turn until Foundation Models has
+  actually stopped generating, so the next request doesn't overlap it.
 
 ### Guardrail refusals
 
@@ -205,7 +220,7 @@ can retry without `response_format`, or with another model:
 
 | Field | Meaning |
 |---|---|
-| `temperature` | 0 is greedy decoding: the most likely token every step, so a request repeats byte for byte on the same Mac and macOS. Above 0, sampling at that temperature. Omitted, the model's default. On an open model, ties go to the lower token id, and the default is the checkpoint's (`generation_config.json`; MiniCPM5-2B: 1.0), so greedy isn't the default. |
+| `temperature` | 0 to 2 (outside is a 400). 0 is greedy decoding: the most likely token every step, so a request repeats byte for byte on the same Mac and macOS. Above 0, sampling at that temperature. Omitted, the model's default. On an open model, ties go to the lower token id, and the default is the checkpoint's (`generation_config.json`; MiniCPM5-2B: 1.0), so greedy isn't the default. |
 | `top_p` | Nucleus sampling, 0 to 1: Foundation Models' random sampling mode with that probability threshold; on an open model, sampling from the most likely tokens whose probabilities first add up to `top_p`. 0 is greedy. Outside 0–1 is a 400. Omitted on an open model, the checkpoint's (MiniCPM5-2B: 0.95). |
 | `seed` | A non-negative integer that makes sampling at a temperature above 0 repeatable. With `seed` and no `top_p`, `apple-fm` samples the whole distribution (`top_p` 1). |
 
@@ -537,8 +552,11 @@ Nothing is loaded to answer.
 `GET /health` reports availability per backend and why anything is
 unavailable: each chat model's state and the reason it is unavailable,
 variant, context size and request timeout, by id (`chat.models`), and
-for an open model its state (`unloaded`, `loading`, `ready` or `failed`,
-with the reason), queue, loads, its decoder's calls, stalls (calls past
+for an open model its state (`unloaded`, `loading`, `ready`, `failed`
+with the reason: its decoder hung, and a restart recovers it; or
+`load_failed`, its last load's error in `load_error`, which the next request
+retries), its own `queue_depth` and the lane's (`lane_queue_depth`), loads,
+its decoder's calls, stalls (calls past
 five times the warm median: other work on the Neural Engine) and warm
 median, and its Neural Engine share (`ane`: measured at its load, and
 estimated from its weights before); the ANE chat lane (`chat.lane`: the

@@ -20,7 +20,7 @@ tokenizers = { workspace = true }
 regex = { workspace = true }
 # The checkpoint's own chat template, rendered as transformers renders it:
 # Jinja with Python's string methods (pycompat).
-minijinja = { version = "3", features = ["serde", "json", "loop_controls"] }
+minijinja = { version = "3", features = ["serde", "json", "loop_controls", "preserve_order"] }
 minijinja-contrib = { version = "3", features = ["pycompat"] }
 # `seed`: a ChaCha generator, seeded by the request or by the OS.
 rand_chacha = "0.9"
@@ -29,6 +29,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true }
+# localtime_r, for the templates' `strftime_now` (unix).
+libc = "0.2"
 async-trait = { workspace = true }
 tracing = { workspace = true }
 

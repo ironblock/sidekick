@@ -31,6 +31,9 @@ pub struct OpenModelSpec {
     /// The model's programs' weights: its estimated share of the Neural
     /// Engine before it loads.
     pub estimated_ane_bytes: u64,
+    /// The model's own `queue_depth`, for `/health`; the lane it shares
+    /// takes the largest of the installed models'.
+    pub queue_depth: usize,
 }
 
 /// An open chat model.
@@ -42,7 +45,11 @@ pub struct OpenModel {
     request_timeout: Duration,
     load_timeout: Duration,
     /// Why the model can't serve: its decoder hung. Recovery is a restart.
-    failed: Mutex<Option<String>>,
+    /// Shared with requests' in-flight guards, which can find the hang
+    /// after their request has timed out.
+    failed: Arc<Mutex<Option<String>>>,
+    /// Why the last load failed, until a load succeeds.
+    load_error: Mutex<Option<String>>,
     /// The decoder's health as of its last request, for `/health` once it
     /// is unloaded.
     last_status: Mutex<Option<DecoderStatus>>,
@@ -67,7 +74,8 @@ impl OpenModel {
             loader,
             request_timeout,
             load_timeout,
-            failed: Mutex::new(None),
+            failed: Arc::default(),
+            load_error: Mutex::new(None),
             last_status: Mutex::new(None),
             ane_bytes: Mutex::new(None),
             loads: AtomicU64::new(0),
@@ -85,13 +93,18 @@ impl OpenModel {
     }
 
     fn fail(&self, reason: String) -> Error {
-        tracing::error!(model = %self.spec.id, "open chat model failed: {reason}; restart sidekickd to recover");
-        *self.failed.lock().unwrap_or_else(PoisonError::into_inner) = Some(reason.clone());
+        record_failure(&self.failed, &self.spec.id, &reason);
         unavailable(&self.spec.id, &reason)
     }
 
-    /// The prompt's token ids and how many tokens may follow them.
-    fn plan(&self, req: &ChatRequest) -> Result<(Vec<u32>, usize)> {
+    fn set_load_error(&self, error: Option<String>) {
+        *self.load_error.lock().unwrap_or_else(PoisonError::into_inner) = error;
+    }
+
+    /// The prompt's token ids and how many tokens may follow them, rendered
+    /// and tokenized on a blocking thread: a 2 MiB body is milliseconds of
+    /// work.
+    async fn plan(&self, req: &ChatRequest) -> Result<(Vec<u32>, usize)> {
         if req.schema.is_some() {
             return Err(Error::InvalidRequest(format!(
                 "`{}` doesn't support response_format json_schema yet; ask for JSON in the prompt, or use \
@@ -99,7 +112,10 @@ impl OpenModel {
                 self.spec.id
             )));
         }
-        let prompt = self.spec.prompter.encode(&req.messages)?;
+        let (prompter, messages) = (self.spec.prompter.clone(), req.messages.clone());
+        let prompt = tokio::task::spawn_blocking(move || prompter.encode(&messages))
+            .await
+            .map_err(|e| Error::Other(format!("tokenizing task failed: {e}")))??;
         let limit = self.spec.context_length;
         let n = prompt.len();
         let max = match req.max_tokens {
@@ -119,7 +135,7 @@ impl OpenModel {
         if let Some(reason) = self.failed() {
             return Err(unavailable(&self.spec.id, &reason));
         }
-        let (prompt, max_tokens) = self.plan(&req)?;
+        let (prompt, max_tokens) = self.plan(&req).await?;
         let sampling = SamplingParams {
             temperature: req.temperature.unwrap_or(self.spec.sampling.temperature),
             top_p: req.top_p.unwrap_or(self.spec.sampling.top_p),
@@ -131,11 +147,14 @@ impl OpenModel {
             return Err(unavailable(&self.spec.id, &reason));
         }
 
-        let engine = self.lane.engine(&permit, &self.spec.id, || {
-            self.lane.check_budget(&self.spec.id, self.spec.estimated_ane_bytes);
-            self.loads.fetch_add(1, Ordering::Relaxed);
-            Engine::start(&self.spec.id, self.loader.clone(), self.spec.prompter.clone(), self.stop_ids.clone())
-        })?;
+        let engine = self
+            .lane
+            .engine(&permit, &self.spec.id, || {
+                self.lane.check_budget(&self.spec.id, self.spec.estimated_ane_bytes);
+                self.loads.fetch_add(1, Ordering::Relaxed);
+                Engine::start(&self.spec.id, self.loader.clone(), self.spec.prompter.clone(), self.stop_ids.clone())
+            })
+            .await?;
         let ready = match ready(&engine, self.load_timeout).await {
             Ok(r) => r,
             Err(ReadyError::Timeout) => {
@@ -143,9 +162,13 @@ impl OpenModel {
             }
             Err(ReadyError::Failed(reason)) => {
                 self.lane.forget(&self.spec.id);
+                self.set_load_error(Some(reason.clone()));
                 return Err(Error::Inference(format!("`{}` failed to load: {reason}", self.spec.id)));
             }
         };
+        // A model's idle time starts when its load completes.
+        self.lane.touch(&self.spec.id);
+        self.set_load_error(None);
         if let Some(facts) = engine.facts() {
             *self.ane_bytes.lock().unwrap_or_else(PoisonError::into_inner) = facts.ane_bytes;
             self.last_load_ms.store(facts.load.as_millis() as u64, Ordering::Relaxed);
@@ -165,15 +188,27 @@ impl OpenModel {
             return Err(self.fail(reason));
         }
 
+        // A request whose time ran out in the queue doesn't start.
+        if tokio::time::Instant::now() >= deadline {
+            return Err(Error::Timeout { secs: self.request_timeout.as_secs() });
+        }
+
         let cancel = Arc::new(AtomicBool::new(false));
         let (reply, result) = oneshot::channel();
         let job = Job { prompt, max_tokens, sampling, stop: req.stop, cancel: cancel.clone(), sink };
-        if engine.submit(Work { job, reply }).is_err() {
+        if !engine.submit(Work { job, reply }) {
             self.lane.forget(&self.spec.id);
             return Err(Error::Inference(format!("`{}`'s decoder thread is gone", self.spec.id)));
         }
         self.requests.fetch_add(1, Ordering::Relaxed);
-        let mut flight = InFlight { permit: Some(permit), result: Some(result), cancel, probe: ready.probe.clone() };
+        let mut flight = InFlight {
+            permit: Some(permit),
+            result: Some(result),
+            cancel,
+            probe: ready.probe.clone(),
+            failed: self.failed.clone(),
+            model: self.spec.id.clone(),
+        };
         let outcome = tokio::time::timeout_at(deadline, flight.result.as_mut().expect("set above")).await;
         let generated = match outcome {
             Ok(Ok(result)) => {
@@ -212,18 +247,22 @@ impl OpenModel {
         let resident = self.lane.resident().filter(|(e, _)| e.model == self.spec.id);
         let live = resident.as_ref().and_then(|(e, _)| e.facts()).map(|f| f.probe.status());
         let status = live.clone().or_else(|| self.last_status.lock().unwrap_or_else(PoisonError::into_inner).clone());
-        let state = match (self.failed(), &resident) {
-            (Some(_), _) => "failed",
-            (None, Some((e, _))) => e.state_name(),
-            (None, None) => "unloaded",
+        let load_error = self.load_error.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let state = match (self.failed(), &resident, &load_error) {
+            (Some(_), _, _) => "failed",
+            (None, Some((e, _)), _) => e.state_name(),
+            (None, None, Some(_)) => "load_failed",
+            (None, None, None) => "unloaded",
         };
         let measured = *self.ane_bytes.lock().unwrap_or_else(PoisonError::into_inner);
         let mut m = Map::new();
         m.insert("state".into(), json!(state));
         m.insert("failed".into(), json!(self.failed()));
+        m.insert("load_error".into(), json!(load_error));
         m.insert("resident".into(), json!(resident.is_some()));
         m.insert("idle_secs".into(), json!(resident.map(|(_, at)| at.elapsed().as_secs())));
-        m.insert("queue_depth".into(), json!(self.lane.options().queue_depth));
+        m.insert("queue_depth".into(), json!(self.spec.queue_depth));
+        m.insert("lane_queue_depth".into(), json!(self.lane.options().queue_depth));
         m.insert("requests".into(), json!(self.requests.load(Ordering::Relaxed)));
         m.insert("loads".into(), json!(self.loads.load(Ordering::Relaxed)));
         let last_load = self.last_load_ms.load(Ordering::Relaxed);
@@ -258,6 +297,15 @@ impl OpenModel {
     }
 }
 
+/// Record that `id`'s decoder has failed; the first reason sticks.
+fn record_failure(failed: &Mutex<Option<String>>, id: &str, reason: &str) {
+    let mut failed = failed.lock().unwrap_or_else(PoisonError::into_inner);
+    if failed.is_none() {
+        tracing::error!(model = %id, "open chat model failed: {reason}; restart sidekickd to recover");
+        *failed = Some(reason.to_string());
+    }
+}
+
 fn unavailable(id: &str, reason: &str) -> Error {
     Error::Unavailable(UnavailableReason::Other(format!(
         "`{id}` has failed and can't serve until sidekickd restarts: {reason}"
@@ -282,12 +330,16 @@ fn log(id: &str, g: &Generated) {
 /// A job on the decoder thread. The lane stays taken until the thread has
 /// finished it: when the request stops waiting first (a timeout, or a
 /// client that went away), the job is told to stop and a task keeps the
-/// lane until it has, or until its decoder is found to have failed.
+/// lane until it has, or until its decoder is found to have failed, which
+/// it records on the model: the hang outlives the request that met it, and
+/// an idle unload of the model.
 struct InFlight {
     permit: Option<LanePermit>,
     result: Option<oneshot::Receiver<Result<Generated>>>,
     cancel: Arc<AtomicBool>,
     probe: Arc<dyn DecoderProbe>,
+    failed: Arc<Mutex<Option<String>>>,
+    model: String,
 }
 
 impl InFlight {
@@ -301,7 +353,7 @@ impl Drop for InFlight {
     fn drop(&mut self) {
         let (Some(mut result), Some(permit)) = (self.result.take(), self.permit.take()) else { return };
         self.cancel.store(true, Ordering::Relaxed);
-        let probe = self.probe.clone();
+        let (probe, failed, model) = (self.probe.clone(), self.failed.clone(), self.model.clone());
         let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
         runtime.spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(250));
@@ -309,7 +361,8 @@ impl Drop for InFlight {
                 tokio::select! {
                     _ = &mut result => break,
                     _ = tick.tick() => {
-                        if probe.status().failed.is_some() {
+                        if let Some(reason) = probe.status().failed {
+                            record_failure(&failed, &model, &reason);
                             break;
                         }
                     }
@@ -365,7 +418,17 @@ mod tests {
         prompt_len: usize,
         logits: Vec<f32>,
         hang: Arc<AtomicBool>,
+        /// How long after a hang starts the watchdog reports it.
+        watchdog: Duration,
         probe: Arc<FakeProbe>,
+        /// Decoders alive at once, across the models sharing it.
+        alive: Arc<AtomicUsize>,
+    }
+
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            self.alive.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 
     #[derive(Default)]
@@ -389,7 +452,11 @@ mod tests {
             self.probe.calls.fetch_add(1, Ordering::SeqCst);
             std::thread::sleep(self.delay);
             if self.hang.load(Ordering::SeqCst) {
-                *self.probe.failed.lock().unwrap() = Some("a call hung".into());
+                let (probe, after) = (self.probe.clone(), self.watchdog);
+                std::thread::spawn(move || {
+                    std::thread::sleep(after);
+                    *probe.failed.lock().unwrap() = Some("a call hung".into());
+                });
                 std::thread::sleep(Duration::from_secs(3600));
             }
             self.logits.fill(0.0);
@@ -423,20 +490,38 @@ mod tests {
         hang: Arc<AtomicBool>,
     }
 
+    /// More of a fake model's behavior.
+    #[derive(Clone, Default)]
+    struct Knobs {
+        load_delay: Duration,
+        watchdog: Duration,
+        alive: Arc<AtomicUsize>,
+        most_alive: Arc<AtomicUsize>,
+    }
+
     fn model(id: &str, lane: &Arc<ChatLane>, reply: &str, delay: Duration, timeout: Duration) -> (OpenModel, Setup) {
+        model_with(id, lane, reply, delay, timeout, Knobs::default())
+    }
+
+    fn model_with(id: &str, lane: &Arc<ChatLane>, reply: &str, delay: Duration, timeout: Duration, knobs: Knobs) -> (OpenModel, Setup) {
         let loads = Arc::new(AtomicUsize::new(0));
         let hang = Arc::new(AtomicBool::new(false));
         let setup = Setup { loads: loads.clone(), hang: hang.clone() };
         let reply = bytes(reply);
         let loader: DecoderLoader = Arc::new(move || {
             loads.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(knobs.load_delay);
+            let now = knobs.alive.fetch_add(1, Ordering::SeqCst) + 1;
+            knobs.most_alive.fetch_max(now, Ordering::SeqCst);
             Ok(Box::new(Fake {
                 reply: reply.clone(),
                 delay,
                 prompt_len: 0,
                 logits: vec![0.0; 300],
                 hang: hang.clone(),
+                watchdog: knobs.watchdog,
                 probe: Arc::default(),
+                alive: knobs.alive.clone(),
             }) as Box<dyn Decoder>)
         });
         let spec = OpenModelSpec {
@@ -446,6 +531,7 @@ mod tests {
             stop_token_ids: vec![257, 259],
             sampling: SamplingSection { temperature: 0.0, top_p: 1.0 },
             estimated_ane_bytes: 1000,
+            queue_depth: 4,
         };
         (OpenModel::new(spec, lane.clone(), loader, timeout, Duration::from_secs(30)), setup)
     }
@@ -602,6 +688,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_model_switch_waits_for_the_old_decoder_to_go() {
+        let lane = lane(4);
+        // Decoders drop slowly: each call sleeps, and the old one finishes
+        // its job before the switch.
+        let knobs = Knobs { load_delay: Duration::from_millis(30), ..Default::default() };
+        let (a, _) = model_with("a", &lane, "A", Duration::from_millis(20), Duration::from_secs(10), knobs.clone());
+        let (b, _) = model_with("b", &lane, "B", Duration::from_millis(20), Duration::from_secs(10), knobs.clone());
+        for m in [&a, &b, &a, &b] {
+            m.complete(ask("x", None)).await.unwrap();
+        }
+        assert_eq!(knobs.most_alive.load(Ordering::SeqCst), 1, "never two decoders at once");
+        lane.unload_idle_now();
+        until(|| knobs.alive.load(Ordering::SeqCst) == 0).await;
+    }
+
+    #[tokio::test]
+    async fn a_model_still_loading_isnt_idle() {
+        let lane = ChatLane::new(LaneOptions { idle_ttl: Duration::from_millis(20), ..Default::default() });
+        let knobs = Knobs { load_delay: Duration::from_millis(300), ..Default::default() };
+        let (m, setup) = model_with("m", &lane, "ok", Duration::ZERO, Duration::from_secs(10), knobs);
+        // The sweep runs every 10 ms through the load; unloading it then
+        // would stop its thread before the job arrives.
+        assert_eq!(m.complete(ask("x", None)).await.unwrap().content, "ok");
+        assert_eq!(setup.loads.load(Ordering::SeqCst), 1);
+        // Idle after its request, it goes.
+        until(|| m.health()["state"] == "unloaded").await;
+    }
+
+    #[tokio::test]
+    async fn a_hang_found_after_the_request_timed_out_still_fails_the_model() {
+        let lane = ChatLane::new(LaneOptions { idle_ttl: Duration::from_millis(50), ..Default::default() });
+        // The request times out at 200 ms; the watchdog reports at 600 ms.
+        let knobs = Knobs { watchdog: Duration::from_millis(600), ..Default::default() };
+        let (m, setup) = model_with("m", &lane, "abc", Duration::ZERO, Duration::from_millis(200), knobs);
+        setup.hang.store(true, Ordering::SeqCst);
+        let err = m.complete(ask("x", None)).await.unwrap_err();
+        assert!(matches!(err, Error::Timeout { .. }), "{err}");
+        assert_eq!(m.health()["state"], "ready", "not known yet");
+        until(|| m.health()["state"] == "failed").await;
+        // The failure outlives the model's unloading.
+        lane.unload_idle_now();
+        assert_eq!(m.health()["state"], "failed");
+        let err = m.complete(ask("x", None)).await.unwrap_err();
+        assert!(matches!(&err, Error::Unavailable(UnavailableReason::Other(r)) if r.contains("hung")), "{err}");
+    }
+
+    /// A backend whose work outlives its reply, as Foundation Models'
+    /// blocking thread outlives a timeout: it keeps the request's `hold`
+    /// for `linger` after answering.
+    struct Lingering {
+        linger: Duration,
+        deadlines: Arc<Mutex<Vec<bool>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatBackend for Lingering {
+        fn id(&self) -> &str {
+            "apple-fm"
+        }
+        async fn availability(&self) -> Availability {
+            Availability::Available
+        }
+        async fn complete(&self, req: ChatRequest) -> Result<ChatResponse> {
+            self.deadlines.lock().unwrap().push(req.deadline.is_some());
+            let (hold, linger) = (req.hold, self.linger);
+            std::thread::spawn(move || {
+                std::thread::sleep(linger);
+                drop(hold);
+            });
+            Err(Error::Timeout { secs: 1 })
+        }
+    }
+
+    #[tokio::test]
+    async fn apple_fm_holds_the_lane_until_its_work_has_stopped() {
+        let lane = lane(4);
+        let deadlines = Arc::new(Mutex::new(Vec::new()));
+        let afm = LanedChat::new(
+            Arc::new(Lingering { linger: Duration::from_millis(400), deadlines: deadlines.clone() }),
+            lane.clone(),
+            Duration::from_secs(10),
+        );
+        let (m, _) = model("m", &lane, "ok", Duration::ZERO, Duration::from_secs(10));
+        let started = std::time::Instant::now();
+        assert!(afm.complete(ask("y", None)).await.is_err());
+        assert_eq!(*deadlines.lock().unwrap(), [true], "the backend is given the lane's deadline");
+        // The open model waits for apple-fm's abandoned work to finish.
+        assert_eq!(m.complete(ask("x", None)).await.unwrap().content, "ok");
+        assert!(started.elapsed() >= Duration::from_millis(400), "{:?}", started.elapsed());
+    }
+
+    #[tokio::test]
     async fn a_failed_load_is_reported_and_retried() {
         let lane = lane(4);
         let tries = Arc::new(AtomicUsize::new(0));
@@ -617,12 +795,16 @@ mod tests {
             stop_token_ids: vec![257],
             sampling: SamplingSection::default(),
             estimated_ane_bytes: 0,
+            queue_depth: 4,
         };
         let m = OpenModel::new(spec, lane.clone(), loader, Duration::from_secs(5), Duration::from_secs(5));
+        assert_eq!(m.health()["queue_depth"], 4);
         let err = m.complete(ask("x", None)).await.unwrap_err();
         assert!(matches!(&err, Error::Inference(msg) if msg.contains("not on the ANE")), "{err}");
         assert!(m.complete(ask("x", None)).await.is_err());
         assert_eq!(tries.load(Ordering::SeqCst), 2);
-        assert_eq!(m.health()["state"], "unloaded");
+        let h = m.health();
+        assert_eq!(h["state"], "load_failed");
+        assert!(h["load_error"].as_str().unwrap().contains("not on the ANE"), "{h:?}");
     }
 }

@@ -1667,6 +1667,14 @@ impl ModelRegistry {
         self.chats.values()
     }
 
+    /// Skip one open chat model, with `reason`: one whose tokenizer or
+    /// template the daemon can't use.
+    pub fn skip_chat(&mut self, id: &str, reason: &str) {
+        if let Some(chat) = self.chats.remove(id) {
+            self.skip(&chat.dir.join(crate::chat_manifest::CHAT_MANIFEST), reason.to_string());
+        }
+    }
+
     /// Skip every open chat model, with `reason`: what a daemon built
     /// without Core ML does with them.
     pub fn skip_chats(&mut self, reason: &str) {

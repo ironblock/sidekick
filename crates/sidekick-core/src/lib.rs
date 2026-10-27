@@ -22,7 +22,7 @@ pub mod shaping;
 
 pub use chat::{
     ChatBackend, ChatMessage, ChatRequest, ChatResponse, DeltaSink, FinishReason, ModelInfo, Role,
-    Usage,
+    Usage, WorkHold,
 };
 pub use classify::{
     activate, check_hypothesis_template, nli_value, ClassifyParams, ClassifyTask, Classifier, NliPair, NliPairs, PairParams,

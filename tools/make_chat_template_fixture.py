@@ -4,7 +4,8 @@ renders and tokenizes for a fixed set of conversations, with the checkpoint's
 template and tokenizer.
 
     tools/make_chat_template_fixture.py <model id> <checkpoint dir> \
-        --repo <org/name> --revision <sha> [--kwargs '{"enable_thinking": false}']
+        --repo <org/name> --revision <sha> [--kwargs '{"enable_thinking": false}'] \
+        [--template <file.jinja>]
 
 writes `fixtures/chat-templates/<model id>.json`. `crates/sidekick-llm/tests/
 chat_templates.rs` renders every case with sidekick's renderer (minijinja,
@@ -13,7 +14,10 @@ always, and the token ids when the checkpoint's tokenizer is in the Hugging
 Face cache. A template the renderer can't reproduce fails there.
 
 The fixture holds the template's text, so the comparison of rendered text
-needs nothing else. The checkpoint directory is read for the template and the
+needs nothing else. `--template` renders a template of one's own with the
+checkpoint's tokenizer, in place of its own: `tools/chat_template_fixtures/`
+holds hand-written ones that exercise what transformers adds to jinja2
+(`strftime_now`, `tojson`'s arguments, `{% generation %}`). The checkpoint directory is read for the template and the
 tokenizer only (no weights): a Hugging Face snapshot, or a sidekick model
 directory with `tokenizer.json`, `tokenizer_config.json` and the template.
 
@@ -106,6 +110,7 @@ def main():
     ap.add_argument("--repo", required=True)
     ap.add_argument("--revision", required=True)
     ap.add_argument("--kwargs", default="{}", help="template kwargs, as the manifest's [chat] template_kwargs")
+    ap.add_argument("--template", type=pathlib.Path, default=None, help="a template to use instead of the checkpoint's")
     ap.add_argument("--out", type=pathlib.Path, default=None)
     args = ap.parse_args()
 
@@ -120,6 +125,8 @@ def main():
 
     kwargs = json.loads(args.kwargs)
     tok = AutoTokenizer.from_pretrained(str(args.checkpoint))
+    if args.template is not None:
+        tok.chat_template = args.template.read_text()
     template = tok.chat_template
     if not isinstance(template, str):
         sys.exit("the checkpoint has no single chat template")

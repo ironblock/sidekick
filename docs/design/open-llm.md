@@ -434,7 +434,11 @@ other apps.
   conclusively: the warm-up child (D52) is where the check holds, and the
   serving process can load with the lenient check, which refuses only a
   process holding no ANE program at all. The growth is the decoder's share
-  of the ANE budget.
+  of the ANE budget. A strict refusal is recorded in the warm-up ledger for
+  that build, and the daemon then refuses the build too, with the reason;
+  the daemon itself loads with the strict check whenever it holds nothing
+  on the ANE, as after a model switch, which waits for the old decoder's
+  thread to exit.
 - **Idle unloading** (`model_idle_ttl_secs`) applies, which also frees the
   ANE's resident budget for other models.
 - **Where it doesn't run** — an Intel Mac, a Mac without an ANE, a manifest
@@ -459,8 +463,11 @@ other apps.
   (`crates/sidekick-llm/tests/chat_templates.rs`) renders and tokenizes
   each and compares: the text always, the ids when the checkpoint's
   tokenizer is in the Hugging Face cache. A template the renderer can't
-  reproduce fails there, not at the request. MiniCPM5-2B's template and
-  SmolLM2's (a second family) reproduce exactly.
+  reproduce fails there, not at the request. MiniCPM5-2B's template,
+  SmolLM2's (a second family) and a hand-written Llama 3 style template
+  (`tools/chat_template_fixtures/`: `tojson`'s arguments and
+  `{% generation %}`) reproduce exactly. A model whose tokenizer or template
+  can't be used is skipped at startup with the reason.
 - **What the template gets:** the messages, `add_generation_prompt = true`,
   the manifest's `bos_token` and `eos_token`, and its `template_kwargs`.
   MiniCPM5 renders with `enable_thinking = false`, as the benchmark ran it.
@@ -469,8 +476,18 @@ other apps.
   special tokens parsed, so a message containing `<|im_start|>` could forge
   a turn. Before rendering, the text of every special token the tokenizer
   defines is rewritten in message content so it no longer matches, as the
-  fev format does for its delimiters (`<|name|>` → `<¦name¦>`). Ordinary
-  text tokenizes exactly as transformers tokenizes it.
+  fev format does for its delimiters (`<|name|>` → `<¦name¦>`; any other
+  special token gets a word joiner after its first character, and a
+  tokenizer with a one-character special token is refused). Ordinary text
+  tokenizes exactly as transformers tokenizes it. As a second line, a
+  prompt holding any special token more or fewer times than the template
+  alone writes it is a 400: text a normalizer turns into a special token,
+  or one formed across a message's edge.
+- **What transformers adds to jinja2** is reproduced: `raise_exception`,
+  `strftime_now` (local time), a `tojson` that writes Python's
+  `json.dumps` with its arguments and no HTML escaping, and the
+  `{% generation %}` block, which renders its body. Mappings keep their
+  keys' order, as Python's dicts do.
 - **Roles:** `system` and `developer` are the system role, as on the AFM
   path; text-only content parts, as today.
 

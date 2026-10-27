@@ -59,7 +59,7 @@ pub fn generate(decoder: &mut dyn Decoder, prompter: &Prompter, stop_ids: &[u32]
     }
     let mut sampler = Sampler::new(job.sampling);
     let mut shaper = StreamShaper::verbatim(&job.stop);
-    let mut reply: Vec<u32> = Vec::new();
+    let mut reply = Detokenizer::default();
     let mut generated = 0;
     let mut token = sampler.sample(decoder.prefill(&job.prompt)?);
     let first_token = started.elapsed();
@@ -68,8 +68,7 @@ pub fn generate(decoder: &mut dyn Decoder, prompter: &Prompter, stop_ids: &[u32]
         if stop_ids.contains(&token) {
             break FinishReason::Stop;
         }
-        reply.push(token);
-        let delta = shaper.push(&prompter.decode(&reply)?);
+        let delta = shaper.push(reply.push(prompter, token)?);
         if !delta.is_empty() {
             if let Some(sink) = &mut job.sink {
                 if !sink(&delta) {
@@ -89,7 +88,7 @@ pub fn generate(decoder: &mut dyn Decoder, prompter: &Prompter, stop_ids: &[u32]
         token = sampler.sample(decoder.step(token, n + generated - 1)?);
     };
     if !shaper.stop_hit() {
-        let tail = shaper.finish(&prompter.decode(&reply)?).map_err(|_| {
+        let tail = shaper.finish(&reply.finish(prompter)?).map_err(|_| {
             Error::Inference("the reply's text changed after part of it was sent".into())
         })?;
         if let (false, Some(sink)) = (tail.is_empty(), &mut job.sink) {
@@ -104,6 +103,55 @@ pub fn generate(decoder: &mut dyn Decoder, prompter: &Prompter, stop_ids: &[u32]
         first_token,
         decode: started.elapsed() - first_token,
     })
+}
+
+/// Incremental detokenizing, as text-generation-inference does it: each
+/// token decodes only the tokens since the last complete text, with those
+/// before it as context (some decoders treat a sequence's first token
+/// differently), so a reply costs time linear in its length. Text ending
+/// in an incomplete UTF-8 character (U+FFFD) waits for the next token.
+#[derive(Default)]
+pub struct Detokenizer {
+    ids: Vec<u32>,
+    /// Where the context of the next decode starts.
+    prefix: usize,
+    /// The tokens before this are in `text`.
+    read: usize,
+    text: String,
+}
+
+impl Detokenizer {
+    /// Add `id`; returns the reply's complete text so far.
+    pub fn push(&mut self, prompter: &Prompter, id: u32) -> Result<&str> {
+        self.ids.push(id);
+        let before = prompter.decode(&self.ids[self.prefix..self.read])?;
+        let now = prompter.decode(&self.ids[self.prefix..])?;
+        if now.len() > before.len() && !now.ends_with('\u{FFFD}') {
+            match now.strip_prefix(before.as_str()) {
+                Some(delta) => self.text.push_str(delta),
+                // A decoder whose text isn't prefix-stable here: decode the
+                // whole reply.
+                None => self.text = prompter.decode(&self.ids)?,
+            }
+            self.prefix = self.read;
+            self.read = self.ids.len();
+        }
+        Ok(&self.text)
+    }
+
+    /// The whole reply's text, an incomplete last character included (as
+    /// U+FFFD, which the shaper drops).
+    pub fn finish(&self, prompter: &Prompter) -> Result<String> {
+        if self.read == self.ids.len() {
+            return Ok(self.text.clone());
+        }
+        let before = prompter.decode(&self.ids[self.prefix..self.read])?;
+        let now = prompter.decode(&self.ids[self.prefix..])?;
+        Ok(match now.strip_prefix(before.as_str()) {
+            Some(tail) => format!("{}{tail}", self.text),
+            None => prompter.decode(&self.ids)?,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -238,6 +286,29 @@ pub(crate) mod tests {
         let mut d = Scripted::new(bytes("a東"));
         let g = generate(&mut d, &p, &[257], &mut job(3, &[], None)).unwrap();
         assert_eq!((g.content.as_str(), g.finish), ("a", FinishReason::Length));
+    }
+
+    #[test]
+    fn incremental_detokenizing_matches_decoding_the_whole_reply() {
+        let p = prompter();
+        for text in ["plain ascii", "né 東京 🚀!", "\u{FFFD} kept", "é", ""] {
+            let ids = bytes(text);
+            let mut d = Detokenizer::default();
+            for (i, &id) in ids.iter().enumerate() {
+                let so_far = d.push(&p, id).unwrap().to_string();
+                let whole = p.decode(&ids[..=i]).unwrap();
+                assert!(whole.starts_with(&so_far), "{text:?} at {i}: {so_far:?} vs {whole:?}");
+                assert!(!so_far.ends_with('\u{FFFD}') || text.contains("\u{FFFD} "), "{so_far:?}");
+            }
+            assert_eq!(d.finish(&p).unwrap(), p.decode(&ids).unwrap(), "{text:?}");
+        }
+        // A cut character is in the final text as U+FFFD, for the shaper.
+        let mut d = Detokenizer::default();
+        let ids = bytes("a東");
+        for &id in &ids[..2] {
+            d.push(&p, id).unwrap();
+        }
+        assert_eq!(d.finish(&p).unwrap(), "a\u{FFFD}");
     }
 
     #[test]

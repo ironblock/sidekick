@@ -24,6 +24,7 @@
 pub mod decoder;
 mod engine;
 pub mod generate;
+mod jinja;
 pub mod lane;
 pub mod model;
 pub mod prompt;

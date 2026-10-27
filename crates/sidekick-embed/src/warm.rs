@@ -257,6 +257,20 @@ impl<T> Loads<T> {
         lock(&self.ledger).as_mut().and_then(|l| l.recorded(key))
     }
 
+    /// Record that a strict check refused `key` (an open chat model's
+    /// decoder whose programs weren't confirmed on the Neural Engine), so
+    /// that every process loading this build refuses it too.
+    pub fn refuse(&self, key: &Key, label: Label<'_>, reason: &str) {
+        if let Some(ledger) = lock(&self.ledger).as_mut() {
+            ledger.refuse(key, label, reason);
+        }
+    }
+
+    /// Why a strict check refused `key`, if one did.
+    pub fn refusal(&self, key: &Key) -> Option<String> {
+        lock(&self.ledger).as_mut().and_then(|l| l.refusal(key))
+    }
+
     /// `key`'s state: this process's last load of it, else the ledger's
     /// record, else cold.
     pub fn status(&self, key: &Key) -> Status {
@@ -409,7 +423,9 @@ impl Ledger {
     fn record(&mut self, key: &Key, label: Label<'_>, load_ms: u64) {
         let Some(hash) = self.hash(key) else { return };
         self.refresh();
-        if self.entries.contains_key(&hash) {
+        // A load replaces a refusal (a strict check another process made),
+        // never another load's record.
+        if self.entries.get(&hash).is_some_and(|e| e.get("load_ms").is_some()) {
             return;
         }
         let build = self.build.clone();
@@ -443,6 +459,34 @@ impl Ledger {
         std::fs::rename(&tmp, &self.file)?;
         self.read_at = self.modified();
         Ok(())
+    }
+
+    /// Record a strict check's refusal of `key`.
+    fn refuse(&mut self, key: &Key, label: Label<'_>, reason: &str) {
+        let Some(hash) = self.hash(key) else { return };
+        self.refresh();
+        let at = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
+        self.entries.insert(
+            hash,
+            serde_json::json!({
+                "model": label.model,
+                "bucket": label.bucket,
+                "compute_units": key.units.name(),
+                "macos_build": self.build,
+                "refused": reason,
+                "recorded_at": at,
+            }),
+        );
+        if let Err(e) = self.write() {
+            tracing::debug!("couldn't write {}: {e}", self.file.display());
+        }
+    }
+
+    /// The refusal recorded for `key`, if any.
+    fn refusal(&mut self, key: &Key) -> Option<String> {
+        let hash = self.hash(key)?;
+        self.refresh();
+        Some(self.entries.get(&hash)?.get("refused")?.as_str()?.to_string())
     }
 
     fn lock_path(&mut self, key: &Key) -> Option<PathBuf> {
@@ -527,6 +571,16 @@ mod coreml {
         loads().warm_as(key, label, load)
     }
 
+    /// See [`Loads::refuse`].
+    pub fn refuse(key: &Key, label: Label<'_>, reason: &str) {
+        loads().refuse(key, label, reason)
+    }
+
+    /// See [`Loads::refusal`].
+    pub fn refusal(key: &Key) -> Option<String> {
+        loads().refusal(key)
+    }
+
     /// One bucket's state.
     pub fn status(key: &Key) -> Option<Status> {
         Some(loads().status(key))
@@ -536,7 +590,7 @@ mod coreml {
 #[cfg(all(feature = "coreml", target_os = "macos"))]
 pub(crate) use coreml::load_chain;
 #[cfg(all(feature = "coreml", target_os = "macos"))]
-pub use coreml::{enable, load_with, status, warm, warm_with};
+pub use coreml::{enable, load_with, refusal, refuse, status, warm, warm_with};
 
 /// Without Core ML there is no cache to keep.
 #[cfg(not(all(feature = "coreml", target_os = "macos")))]
@@ -563,6 +617,19 @@ pub fn load_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U
 pub fn warm_with<U>(key: &Key, label: Label<'_>, load: impl FnOnce() -> Result<U>) -> Result<Warmed> {
     let _ = (key, label, load);
     Err(sidekick_core::Error::Unavailable(sidekick_core::UnavailableReason::NotSupportedInBuild))
+}
+
+/// Without Core ML there is no ledger to record a refusal in.
+#[cfg(not(all(feature = "coreml", target_os = "macos")))]
+pub fn refuse(key: &Key, label: Label<'_>, reason: &str) {
+    let _ = (key, label, reason);
+}
+
+/// Without Core ML nothing was refused.
+#[cfg(not(all(feature = "coreml", target_os = "macos")))]
+pub fn refusal(key: &Key) -> Option<String> {
+    let _ = key;
+    None
 }
 
 /// Without Core ML a bucket has no state.
@@ -760,6 +827,34 @@ mod tests {
         let entries = file["entries"].as_object().unwrap();
         assert_eq!(entries.len(), 1, "{entries:?}");
         assert_eq!(entries.values().next().unwrap()["macos_build"], "26B2");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_strict_refusal_binds_every_process_until_a_load_replaces_it() {
+        let dir = tmp("refusal");
+        let cache = dir.join("cache");
+        let key = program(&dir, "decoder.0.mlmodelc");
+        let (exe, home) = (Path::new("/bin/sidekickd"), Path::new("/homes/a"));
+        let child: Loads<String> = Loads::default();
+        child.set_ledger(Ledger::open(&cache, exe, home, "26A1"));
+        let daemon: Loads<String> = Loads::default();
+        daemon.set_ledger(Ledger::open(&cache, exe, home, "26A1"));
+        assert_eq!(daemon.refusal(&key), None);
+        std::thread::sleep(Duration::from_millis(5));
+        child.refuse(&key, LABEL, "its programs aren't confirmed on the Neural Engine");
+        assert_eq!(daemon.refusal(&key).as_deref(), Some("its programs aren't confirmed on the Neural Engine"));
+        assert_eq!(daemon.status(&key).state, State::Cold, "a refusal isn't a load");
+        // Another macOS build doesn't see it, nor does another build of the
+        // program (its files' fingerprints differ).
+        let other: Loads<String> = Loads::default();
+        other.set_ledger(Ledger::open(&cache, exe, home, "26A2"));
+        assert_eq!(other.refusal(&key), None);
+        // A load that succeeds replaces it.
+        std::thread::sleep(Duration::from_millis(5));
+        child.load(&key, LABEL, || Ok("loaded".into())).unwrap();
+        assert_eq!(daemon.refusal(&key), None);
+        assert_eq!(daemon.status(&key).state, State::Warm);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

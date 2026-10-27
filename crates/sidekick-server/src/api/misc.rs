@@ -274,7 +274,7 @@ async fn chat_health(state: &AppState) -> Value {
         "models": models.into_iter().collect::<Map<String, Value>>(),
         // The ANE chat lane `apple-fm` and the open models share (D53):
         // its queue, the resident open model, and the process's Neural
-        // Engine footprint against `ane_budget_mib`. Absent without open
+        // Engine footprint against `ane_budget_mib`. Null without open
         // models.
         "lane": state.chat.lane().map(|l| l.health()),
     })

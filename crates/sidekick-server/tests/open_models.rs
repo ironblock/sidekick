@@ -97,6 +97,7 @@ fn state(queue_depth: usize, delay: Duration) -> AppState {
         stop_token_ids: section.stop_token_ids.clone(),
         sampling: SamplingSection { temperature: 0.0, top_p: 1.0 },
         estimated_ane_bytes: 1 << 20,
+        queue_depth,
     };
     let loader: DecoderLoader =
         Arc::new(move || Ok(Box::new(Fake { delay, prompt: 0, logits: vec![0.0; VOCAB.len()] }) as Box<dyn Decoder>));
@@ -207,6 +208,44 @@ async fn a_full_lane_is_busy_for_open_models_and_apple_fm_alike() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_client_that_leaves_while_queued_gives_up_its_place() {
+    let state = state(1, Duration::from_millis(300));
+    let router = build_router(state.clone());
+    let lane = state.chat.lane().unwrap().clone();
+    let running = tokio::spawn(router.clone().oneshot(ask(json!({}))));
+    let started = std::time::Instant::now();
+    while lane.health()["running"].is_null() {
+        assert!(started.elapsed() < Duration::from_secs(10));
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // A streamed request queues behind it; its client gives up before the
+    // first delta.
+    let queued = router.clone().oneshot(ask(json!({"stream": true})));
+    assert!(tokio::time::timeout(Duration::from_millis(100), queued).await.is_err());
+    // Its place in the queue is given back at once, not when its turn comes.
+    let started = std::time::Instant::now();
+    while lane.health()["waiting"] != 0 {
+        assert!(started.elapsed() < Duration::from_secs(10), "{}", lane.health());
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(running.await.unwrap().unwrap().status(), StatusCode::OK);
+    // And it never ran.
+    let (_, health) = call(state, Request::get("/health").body(Body::empty()).unwrap()).await;
+    assert_eq!(health["chat"]["models"]["tiny"]["requests"], 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn temperature_is_checked_at_the_route() {
+    for t in [-0.1, 2.5] {
+        let (status, body) = call(state(4, Duration::ZERO), ask(json!({"temperature": t}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{t}");
+        assert!(body["error"]["message"].as_str().unwrap().contains("temperature"), "{body}");
+    }
+    let (status, _) = call(state(4, Duration::ZERO), ask(json!({"temperature": 2.0}))).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn models_and_health_report_the_open_model() {
     let state = state(3, Duration::ZERO);
     let (_, models) = call(state.clone(), Request::get("/v1/models").body(Body::empty()).unwrap()).await;
@@ -223,7 +262,7 @@ async fn models_and_health_report_the_open_model() {
     let tiny = &health["chat"]["models"]["tiny"];
     assert_eq!(tiny["backend"], "coreml");
     assert_eq!((tiny["state"].as_str(), tiny["resident"].as_bool()), (Some("ready"), Some(true)));
-    assert_eq!((tiny["queue_depth"].as_u64(), tiny["requests"].as_u64()), (Some(3), Some(1)));
+    assert_eq!((tiny["queue_depth"].as_u64(), tiny["lane_queue_depth"].as_u64(), tiny["requests"].as_u64()), (Some(3), Some(3), Some(1)));
     assert_eq!(tiny["ane"]["estimated_bytes"], 1 << 20);
     assert_eq!(tiny["request_timeout_secs"], 30);
     let lane = &health["chat"]["lane"];

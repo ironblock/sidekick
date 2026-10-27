@@ -13,7 +13,7 @@
 use crate::decoder::{DecoderProbe, DecoderSpec};
 use crate::engine::{Engine, LoadState};
 use serde_json::{json, Value};
-use sidekick_core::{Availability, ChatBackend, ChatRequest, ChatResponse, DeltaSink, Error, ModelInfo, Result};
+use sidekick_core::{Availability, ChatBackend, ChatRequest, ChatResponse, DeltaSink, Error, ModelInfo, Result, WorkHold};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -21,6 +21,10 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// `Retry-After` on a full queue, in seconds: about one short reply.
 pub const BUSY_RETRY_AFTER_SECS: u64 = 5;
+
+/// How long past its deadline [`LanedChat`] waits for a backend that
+/// should have timed itself out.
+const DEADLINE_GRACE: Duration = Duration::from_secs(1);
 
 /// The default `queue_depth`.
 pub const DEFAULT_QUEUE_DEPTH: usize = 4;
@@ -162,22 +166,28 @@ impl ChatLane {
         Ok(LanePermit { _slot: slot, lane: self.clone() })
     }
 
-    /// The resident engine for `model`, starting it (and unloading another
-    /// model's) if needed. Call with the lane's permit held, so that no
-    /// other request is using the decoder being unloaded.
-    pub(crate) fn engine(&self, _permit: &LanePermit, model: &str, start: impl FnOnce() -> Result<Engine>) -> Result<Engine> {
-        let mut resident = lock(&self.resident);
-        if let Some(r) = resident.as_mut() {
-            if r.engine.model == model {
-                r.last_used = Instant::now();
-                return Ok(r.engine.clone());
+    /// The resident engine for `model`, starting it if needed. Another
+    /// model's is stopped first, and its thread waited for, so that its
+    /// programs have left the Neural Engine before this one's load is
+    /// measured. Call with the lane's permit held, so that no other request
+    /// is using the decoder being unloaded.
+    pub(crate) async fn engine(&self, _permit: &LanePermit, model: &str, start: impl FnOnce() -> Result<Engine>) -> Result<Engine> {
+        let old = {
+            let mut resident = lock(&self.resident);
+            if let Some(r) = resident.as_mut() {
+                if r.engine.model == model {
+                    r.last_used = Instant::now();
+                    return Ok(r.engine.clone());
+                }
             }
-        }
-        if let Some(old) = resident.take() {
+            resident.take()
+        };
+        if let Some(old) = old {
             tracing::info!(model = %old.engine.model, next = %model, "unloading the resident open chat model: one is resident at a time");
+            unload(&old.engine).await;
         }
         let engine = start()?;
-        *resident = Some(Resident { engine: engine.clone(), last_used: Instant::now() });
+        *lock(&self.resident) = Some(Resident { engine: engine.clone(), last_used: Instant::now() });
         Ok(engine)
     }
 
@@ -192,7 +202,9 @@ impl ChatLane {
     pub(crate) fn forget(&self, model: &str) {
         let mut resident = lock(&self.resident);
         if resident.as_ref().is_some_and(|r| r.engine.model == model) {
-            *resident = None;
+            if let Some(r) = resident.take() {
+                r.engine.stop();
+            }
         }
     }
 
@@ -202,13 +214,30 @@ impl ChatLane {
     }
 
     /// Unload the resident model if it has been idle past the TTL and no
-    /// request holds the lane.
+    /// request holds the lane. A model still loading isn't idle: its idle
+    /// time starts when its load completes.
     pub fn unload_idle(&self) {
         let Ok(_slot) = self.slot.clone().try_acquire_owned() else { return };
         let mut resident = lock(&self.resident);
-        if resident.as_ref().is_some_and(|r| r.last_used.elapsed() >= self.options.idle_ttl) {
+        let idle = resident
+            .as_ref()
+            .is_some_and(|r| !r.engine.loading() && r.last_used.elapsed() >= self.options.idle_ttl);
+        if idle {
             let r = resident.take().expect("checked");
+            r.engine.stop();
             tracing::info!(model = %r.engine.model, "unloaded idle open chat model");
+        }
+    }
+
+    /// Unload the resident model now, whatever its idle time, unless a
+    /// request holds the lane or it is still loading.
+    #[cfg(test)]
+    pub(crate) fn unload_idle_now(&self) {
+        let Ok(_slot) = self.slot.clone().try_acquire_owned() else { return };
+        let mut resident = lock(&self.resident);
+        if resident.as_ref().is_some_and(|r| !r.engine.loading()) {
+            let r = resident.take().expect("checked");
+            r.engine.stop();
         }
     }
 
@@ -266,6 +295,13 @@ impl ChatLane {
 
 /// A chat backend that takes the lane for each request: `apple-fm` when
 /// open chat models are installed. Its wait counts against its timeout.
+///
+/// The inner backend times the request out itself, at the request's
+/// `deadline`, so that its own cancel path runs; and the lane's turn rides
+/// in the request's `hold`, which the backend keeps alive until its work
+/// has really finished (Foundation Models' blocking thread outlives a
+/// timeout). So an abandoned `apple-fm` request still holds the lane while
+/// it runs, and no open model starts beside it.
 pub struct LanedChat {
     inner: Arc<dyn ChatBackend>,
     lane: Arc<ChatLane>,
@@ -277,15 +313,19 @@ impl LanedChat {
         Self { inner, lane, timeout }
     }
 
-    /// Run `work` in the lane, its wait and its work bounded together by
-    /// the timeout.
-    async fn laned<F>(&self, work: impl FnOnce() -> F) -> Result<ChatResponse>
+    /// Run `work` on `req` in the lane: its wait and its work bounded
+    /// together by the timeout, the deadline passed to the backend.
+    async fn laned<F>(&self, mut req: ChatRequest, work: impl FnOnce(ChatRequest) -> F) -> Result<ChatResponse>
     where
         F: std::future::Future<Output = Result<ChatResponse>>,
     {
         let deadline = tokio::time::Instant::now() + self.timeout;
-        let _permit = self.lane.acquire(self.inner.id(), deadline, self.timeout).await?;
-        tokio::time::timeout_at(deadline, work())
+        let permit = self.lane.acquire(self.inner.id(), deadline, self.timeout).await?;
+        req.deadline = Some(deadline.into_std());
+        req.hold = Some(WorkHold(Arc::new(permit)));
+        // A backend that ignores the deadline is still bounded; one that
+        // honors it times out first, through its own path.
+        tokio::time::timeout_at(deadline + DEADLINE_GRACE, work(req))
             .await
             .unwrap_or(Err(Error::Timeout { secs: self.timeout.as_secs() }))
     }
@@ -310,11 +350,33 @@ impl ChatBackend for LanedChat {
     }
 
     async fn complete(&self, req: ChatRequest) -> Result<ChatResponse> {
-        self.laned(|| self.inner.complete(req)).await
+        self.laned(req, |req| self.inner.complete(req)).await
     }
 
     async fn complete_stream(&self, req: ChatRequest, sink: DeltaSink) -> Result<ChatResponse> {
-        self.laned(|| self.inner.complete_stream(req, sink)).await
+        self.laned(req, |req| self.inner.complete_stream(req, sink)).await
+    }
+}
+
+/// How long a model switch waits for the old decoder's thread to exit: a
+/// call in progress finishes first (about 54 ms on the 2B build), and a
+/// load in progress, which can't be stopped, completes.
+const UNLOAD_WAIT: Duration = Duration::from_secs(120);
+
+/// Stop `engine` and wait for its thread to exit, unless its decoder has
+/// failed: a thread stuck in a hung call never exits.
+async fn unload(engine: &Engine) {
+    engine.stop();
+    if engine.facts().is_some_and(|f| f.probe.status().failed.is_some()) {
+        tracing::warn!(model = %engine.model, "not waiting for a failed decoder's thread to exit");
+        return;
+    }
+    if !engine.exited(UNLOAD_WAIT).await {
+        tracing::warn!(
+            model = %engine.model,
+            "the unloaded model's decoder thread hasn't exited after {}s; loading the next one anyway",
+            UNLOAD_WAIT.as_secs()
+        );
     }
 }
 

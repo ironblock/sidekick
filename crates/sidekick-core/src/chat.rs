@@ -42,6 +42,27 @@ pub struct ChatRequest {
     /// Stop sequences (OpenAI semantics): the reply ends before the earliest
     /// occurrence of any of them, which is not included.
     pub stop: Vec<String>,
+    /// When the request's work must be done by, if earlier than the
+    /// backend's own timeout would make it: a request that waited in a
+    /// queue first (the ANE chat lane, D53). A backend that honors it times
+    /// out at the deadline through its own timeout and cancel path.
+    pub deadline: Option<std::time::Instant>,
+    /// Kept alive until the backend's work on this request has actually
+    /// finished, not just until the backend stops waiting for it: a backend
+    /// moves the request into the thread that does the work. The ANE chat
+    /// lane puts its turn here, so that the next request doesn't start on
+    /// the Neural Engine while an abandoned one still runs.
+    pub hold: Option<WorkHold>,
+}
+
+/// Something a [`ChatRequest`] keeps alive while its work runs.
+#[derive(Clone)]
+pub struct WorkHold(pub std::sync::Arc<dyn std::any::Any + Send + Sync>);
+
+impl std::fmt::Debug for WorkHold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WorkHold")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
