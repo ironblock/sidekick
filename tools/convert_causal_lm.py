@@ -53,6 +53,10 @@ def main():
                         "variant: screen it first (--screen-only)")
     p.add_argument("--chat-sequences", type=int, default=None,
                    help="of each draw's sequences, how many are long chat requests (default: the recipe's)")
+    p.add_argument("--fp16-projections", default=None,
+                   help="projections to leave unquantised, as layer.proj (3.down,3.up) or a whole layer (3.*); "
+                        "each adds its fp16 size over its 8-bit palette to the ANE's weights (default: the "
+                        "recipe's). Find them with tools/screen_fp16_projections.py")
     p.add_argument("--screen-only", action="store_true", help="stop after the PyTorch screen: compile nothing")
     p.add_argument("--no-plan", action="store_true",
                    help="skip the compute-plan gate (no ANE compile); for a rebuild compared byte for byte")
@@ -63,7 +67,7 @@ def main():
     model_id = args.install_dir.name
     job = recipes.causal_lm(model_id=model_id, src=args.src, work=args.work, draw=args.draw,
                             stability_draw=-1 if args.no_stability else args.stability_draw, tokens=args.tokens,
-                            chat_sequences=args.chat_sequences,
+                            chat_sequences=args.chat_sequences, fp16_projections=args.fp16_projections,
                             plan=not args.no_plan, screen_only=args.screen_only, keep_packages=args.keep_packages)
     run(job, args.install_dir)
 

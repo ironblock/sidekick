@@ -137,7 +137,7 @@ convolutions, and no projection left in fp16."""
 
 
 def causal_lm(*, model_id, src, work, draw=None, stability_draw=None, tokens=None, chat_sequences=None,
-              plan=True, screen_only=False, keep_packages=False):
+              fp16_projections=None, plan=True, screen_only=False, keep_packages=False):
     """A causal-LM job (causal_lm.run); installs examples/chat/<model_id>/chat.toml
     with its [build] table. `stability_draw` -1 skips the second draw."""
     from .causal_lm import Job, Recipe, manifest_path
@@ -150,6 +150,13 @@ def causal_lm(*, model_id, src, work, draw=None, stability_draw=None, tokens=Non
         recipe.tokens = tokens
     if chat_sequences is not None:
         recipe.chat_sequences = chat_sequences
+    if fp16_projections is not None:
+        names = []
+        for item in filter(None, fp16_projections.split(",")):
+            layer, proj = item.strip().split(".")
+            names += [f"{layer}.{p}" for p in ("q", "k", "v", "o", "gate", "up", "down")] if proj == "*" else [
+                f"{int(layer)}.{proj}"]
+        recipe.fp16_projections = tuple(names)
     if stability_draw is not None:
         recipe.stability_seed = None if stability_draw < 0 else stability_draw
     if recipe.stability_seed == recipe.draw_seed:
