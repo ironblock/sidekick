@@ -4578,7 +4578,9 @@ screens. Each cell is mean KL / p99 KL / top-1, worst family first:
   ANE,** knowing only an earlier build's ANE numbers, which the PR
   disclosed; the ANE adds divergence beyond the PyTorch screen on the
   chat-framed text. *Amended by D55:* two precision rewrites cut that
-  excess from 3.1 to 1.5 times the screen's, and the build grades B.
+  excess from 3.1 to 1.4 times the screen's, and the rebuilt build grades
+  B (prose 1.28e-3 / 1.17e-2 / 99.57%, repository 2.89e-4 / 2.07e-3 /
+  98.93%).
 
 **Rejected.**
 - **Keeping the cosine rubric and loosening the wide-flip cap:** it would
@@ -4636,26 +4638,25 @@ The staged programs' key carries `PROGRAM_REVISION`, the range
 calibration's key and precision's caps; the range calibration's carries
 `RANGES_REVISION`. A rerun recalibrates and recompiles.
 
-**Result.** The same draw-0 build with chunk 0 rebuilt (chunks 1-3, where
-the rewrites change little, unchanged):
+**Result.** The draw-0 build rebuilt with both rewrites in all four
+chunks (same GPTQ weights; both draws screen B, so the stability check
+holds) grades **B** on the ANE, on the generation and prompt paths alike:
 
 | family | ANE before: mean / p99 / top-1 | after | grade |
 |---|---|---|---|
-| repository | 3.56e-4 / 3.02e-3 / 98.74% | 3.00e-4 / 2.34e-3 / 99.03% | B |
-| prose | 2.68e-3 / 2.47e-2 / 98.30% | 1.31e-3 / 1.24e-2 / 99.36% | C → B |
+| repository | 3.56e-4 / 3.02e-3 / 98.74% | 2.89e-4 / 2.07e-3 / 98.93% | B |
+| prose | 2.68e-3 / 2.47e-2 / 98.30% | 1.28e-3 / 1.17e-2 / 99.57% | C → B |
 
-Per text, the ANE's KL is now 1.1 to 1.5 times the screen's (the
-chat-framed text 3.1 → 1.5). The task check passes as before, with more
-replies identical to fp32's (extraction 88% → 92%, instructions 85% →
-90%).
+Per text, the ANE's KL is now 1.0 to 1.4 times the screen's (the
+chat-framed text 3.1 → 1.4). Every operation of every chunk is on the ANE.
+The task check passes as before, with more replies identical to fp32's
+(extraction 88% → 92%, instructions 85% → 90%).
 
 **Known limitations.**
 - **The chat-framed text's mean rests on a few positions.** With the
   value-matmul rewrite alone, three high-entropy positions carried 86% of
   its mean and one rose from 0.26 to 1.19 while the text's median fell;
   the grade can move with errors at that handful of positions.
-- **The graded build rebuilt chunk 0 only.** A full rebuild applies both
-  rewrites to every chunk.
 
 **Rejected.**
 - **Dividing the weights instead of an explicit descale:** small weights
