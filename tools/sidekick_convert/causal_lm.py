@@ -584,13 +584,16 @@ def _grade(got, refs):
         t = a.argmax(1) == b.argmax(1)
         lb = b - np.logaddexp.reduce(b, axis=1, keepdims=True)
         la = a - np.logaddexp.reduce(a, axis=1, keepdims=True)
-        kls += (np.exp(lb) * (lb - la)).sum(1).tolist()
+        kl_text = (np.exp(lb) * (lb - la)).sum(1)
+        kls += kl_text.tolist()
         margin = softmax_margin(b)
         for j in np.nonzero(~t)[0]:
             flips.append({"text": name, "row": int(j), "fp32_margin": float(margin[j])})
         cos += c.tolist()
         agree += t.tolist()
-        texts[name] = {"top1": round(float(t.mean()), 4), "cos_min": round(float(np.min(c)), 6)}
+        texts[name] = {"top1": round(float(t.mean()), 4), "cos_min": round(float(np.min(c)), 6),
+                       "kl_mean": float(np.mean(kl_text)), "kl_p99": float(np.percentile(kl_text, 99)),
+                       "kl_max": float(np.max(kl_text))}
     c = np.array(cos)
     nonfinite = not np.isfinite(c).all()
     top1 = float(np.mean(agree))

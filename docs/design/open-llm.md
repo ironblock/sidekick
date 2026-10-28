@@ -82,7 +82,7 @@ by the small model's own latency second.
 | Sampling | Greedy at temperature 0; temperature and top-p; `seed` honored | Penalties, `n` > 1, `logprobs` (deferred) |
 | Structured output | One JSON Schema layer for both backends; llguidance masks each step's logits on the open path | Per-backend schema handling (today's drift: #179, #180) |
 | Routing | By the request's `model`, exactly; no fallback between backends | Silent or configured fallback on a guardrail refusal |
-| Grading | Teacher-forced top-1 and logit cosine against fp32, anchored on a percentile, with a calibration-stability check; a #174 task slice in the release gate | Grading on the worst position alone (moves with the calibration draw) |
+| Grading | Teacher-forced KL divergence from fp32 (mean and p99) with top-1 as a floor, the worst evaluation family's letter, both calibration draws in one band, and a task check against fp32 (D54); a #174 task slice in the release gate | The logit cosine and wide-flip cap the encoders use (a few low-confidence positions decided it); grading on the worst position alone |
 
 ## The model format
 
@@ -799,24 +799,22 @@ The spike's converter (`llama_ane.py`, `convert.py`, `gptq.py`) moves into
 
 ### Grading a causal LM
 
+D54 replaced this note's first rubric (a first-percentile logit cosine with
+a wide-flip cap, as classifiers are graded); the rubric, its bands and the
+anchors they come from are in
+[CONVERTING.md](../CONVERTING.md#grading). In short:
 - **Teacher-forced** over a fixed evaluation set against the fp32
-  checkpoint: top-1 agreement per position, and the logits' cosine per
-  position, with the fp16 ceiling (`fp16sim`) beside them; plus greedy
-  continuations of fixed prompts compared with fp32's.
-- **Anchored on a percentile, as D26 anchors classifiers on p99.** #173
-  found the worst-position cosine moves with the calibration draw (the
-  same recipe on 80k tokens fell from B to C), while the first-percentile
-  cosine held at about 0.9996 across the draws. The grade is set on the
-  first-percentile cosine and top-1 agreement; the worst position is
-  reported, not graded. A top-1 flip where fp32's top-two margin is wide
-  caps the grade, as a decision flip does for a classifier.
-- **A stability check:** the acceptance run also converts with a second,
-  seeded calibration draw (screened in PyTorch, not compiled), and the two
-  must grade alike. A grade that depends on the draw is reported as the
-  lower one.
-- **Thresholds** for A to D are fixed with the converter, from the spike's
-  grading and the ceiling, and recorded in CONVERTING.md as the other
-  grades are.
+  checkpoint: per position the KL divergence of the build's next-token
+  distribution from fp32's, and top-1 agreement; plus greedy continuations
+  of fixed prompts compared with fp32's.
+- **Graded on KL** (mean and p99) with top-1 as a floor, per evaluation
+  family, the build earning its worst family's letter. The logits' cosine
+  and wide flips are reported, not graded: a chat model samples a
+  distribution, and a flip where fp32 itself is unsure is noise.
+- **A stability check:** a second, seeded calibration draw (screened in
+  PyTorch, not compiled) must land in the same band.
+- **A task check:** the build served by sidekickd against fp32 on a seeded
+  sample of the chat benchmark, within per-family tolerances.
 
 ### The release gate
 
@@ -891,8 +889,8 @@ None remain. Settled while this note was reviewed:
   (#187): the daemon serializes its ANE chat models and warns, rather
   than evicting ([Memory budget](#memory-budget)).
 
-- **Grading** is anchored on the first-percentile cosine and top-1, with
-  the stability check ([Grading a causal LM](#grading-a-causal-lm)).
+- **Grading** is by KL divergence and a task check, with the stability
+  check (D54; [Grading a causal LM](#grading-a-causal-lm)).
 - **Default sampling** is the checkpoint's
   ([Sampling and the wire contract](#sampling-and-the-wire-contract)).
 - **macOS 26.** The first build ships graded on macOS 27, and

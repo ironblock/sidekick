@@ -616,50 +616,57 @@ a new model.
 
 ### Grading
 
-Every grade compares logits rows with the checkpoint's fp32 forward at the
-same positions: per position the cosine of the two rows, and whether their
-top-1 tokens agree. The PyTorch screen runs the quantised model in fp32.
-The ANE grade runs the installed build through `sidekick_coreml::KvDecoder`
-(`tools/grade_causal_lm.py`) along both of the runtime's paths: one token
-per call, as replies are generated, and T tokens per call, as prompts are
-fed, each graded position read with `sel` at it. The ANE grade is the worse
-of the two; each greedy prompt's T-token prompt row is also compared with
-fp32's last-position logits.
+Chat models have their own rubric (D54): KL divergence and a task check,
+not the encoders' and classifiers' logit cosine (D26). Every grade compares
+logits rows with the checkpoint's fp32 forward at the same positions: per
+position the KL divergence of the build's next-token distribution from
+fp32's, KL(fp32 ‖ build), and whether the top-1 tokens agree. The PyTorch
+screen runs the quantised model in fp32. The ANE grade runs the installed
+build through `sidekick_coreml::KvDecoder` (`tools/grade_causal_lm.py`)
+along both of the runtime's paths: one token per call, as replies are
+generated, and T tokens per call, as prompts are fed, each graded position
+read with `sel` at it. The ANE grade is the worse of the two; each greedy
+prompt's T-token prompt row is also compared with fp32's last-position
+logits. Reports give KL per text as well as per family.
 
-| | A | B | C | D |
+| per family | A | B | C | D |
 |---|---|---|---|---|
-| first-percentile cosine, at least (the parity suite's cosine scale) | 0.9999 | 0.999 | 0.985 | below |
-| top-1 agreement, at least | 99.5% | 98.0% | 95.0% | below |
+| mean KL, at most | 1e-4 | 2.5e-3 | 2e-2 | above |
+| p99 KL, at most | 1e-3 | 3e-2 | 0.25 | above |
+| top-1 agreement, at least | 99.5% | 98% | 95% | below |
 
-- **The grade is the worse of the two letters**, anchored on a percentile
-  as D26 anchors classifiers on p99: #173 found the worst position moves
-  with the calibration draw (in its PyTorch screen, 0.99934 with 40,960
-  calibration tokens and 0.99804 with 80,000) while the first percentile
-  moved far less
-  (0.99964 and 0.99963). The first percentile moves with the draw too:
-  MiniCPM5-2B's draws 0 and 1 screened at 0.99920 and 0.99965 on the
-  repository texts. A grade near a boundary is reported with its numbers.
-- **A wide flip caps it at C:** a position where the build's top-1 differs
-  from fp32's and fp32 rates its own top token at least twice as likely as
-  the runner-up (a log-probability margin of ln 2 or more), as a decision
-  flip caps a classifier. Flips between near-ties are counted, not capped.
-- **The worst position is reported, not graded**, and so are the mean
-  cosine and the ideal-fp16 ceiling (`fp16sim`) on the same positions:
-  for MiniCPM5-2B, p1 0.99999, top-1 99.90%, worst 0.99998 (A).
-- **KL divergence is reported beside cosine**, not graded: KL(fp32 ‖
-  build) per position, its mean, p99 and maximum, overall and per family.
-  The logits' cosine weighs the whole vocabulary alike, KL the tokens a
-  sampler would pick, and they rank positions very differently (rank
-  correlation 0.08 on MiniCPM5-2B's first ANE build, where a cosine of
-  0.89 came with a KL of 0.003). It is reported for chat models only; the
-  encoders' and classifiers' grading is unchanged.
+- **Each evaluation family earns the worst of its three letters, and the
+  build its worst family's,** so a family the build handles badly can't
+  hide in pooled numbers (the repository family has 1,032 positions, the
+  prose family 470). Pooled numbers are reported.
+- **The bands come from measured anchors,** D54 has them and the rule each
+  band follows: A is the ideal-fp16 class, B the 8-bit class (its mean
+  limit is the log-midpoint between 8-bit GPTQ's worst family and the same
+  palettes rounded to nearest), C the 4-bit class. For another model
+  family, measure the anchors again (`--palette-bits 4`, `--rounding
+  nearest` and the fp16 ceiling build them) and set the bands by the same
+  rule.
+- **Reported, not graded:** the logits' cosine per position (first
+  percentile, mean, worst), the wide flips (top-1 flips where fp32 rated
+  its token at least twice the runner-up), and the letter the encoders'
+  rubric would give. A logit vector's cosine weighs every vocabulary entry
+  alike, and on MiniCPM5-2B it ranked positions almost unrelated to KL
+  (rank correlation 0.08; a cosine of 0.89 came with a KL of 0.003). The
+  ideal-fp16 ceiling (`fp16sim`) is reported on the same positions.
 - **Non-finite logits are F.**
-- **Families:** every grade is also given per family, so a weak family
-  shows, but the letter is the pooled one.
+- **The task check:** the build served by sidekickd and the checkpoint in
+  fp32 on the CPU (`tools/chat_bench/serve_ref.py --dtype float32 --device
+  cpu`) answer the same seeded sample of the chat benchmark (`run.py
+  --sample extraction=24,titles=20,tags_vocab=20,instructions=20 --seed
+  184`), greedy and prompt-only. `tools/chat_bench/task_check.py` passes a
+  family when the build is no worse than fp32 by more than: 2 points of
+  extraction field accuracy (item mean), 3 points of title ROUGE-L, 3
+  points of fixed-vocabulary tag F1, and 1 instruction item passing every
+  check. Never run the fp32 reference while sidekickd holds the build.
 - **The stability check:** the converter also quantises with a second
   calibration draw (seed 1, disjoint from draw 0), screened in PyTorch and
-  never compiled. The two draws' screens must grade alike; a grade that
-  depends on the draw is reported as the lower one.
+  never compiled. The two draws' screens must land in the same band; a
+  grade that depends on the draw is reported as the lower one.
 - **The screen gates compiling:** below the recipe's floor (B) nothing is
   compiled.
 - **Gates** before install: the rewrite gate (the rotated, rescaled model in

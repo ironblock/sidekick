@@ -4494,6 +4494,100 @@ and rejected: they split the model's usual tokens and it wrote wrong
 values (docs/design/open-llm.md, "Constrained decoding on the open
 path").
 
+*Amended by D54:* a chat model's build is graded by KL divergence and a
+task check, not by the first-percentile logit cosine and wide flips.
+
+## D54 — Chat models are graded by KL divergence and a task check
+D53 graded an open chat model's build as the parity suite grades a
+classifier (D26): teacher-forced against the checkpoint in fp32, by the
+first-percentile cosine of the logits and top-1 agreement, capped at C by
+a "wide" top-1 flip (fp32 at least twice as sure of its token as of the
+runner-up). On MiniCPM5-2B that rubric failed in a way that says more
+about the rubric than the build (#184):
+- **A chat model samples a distribution.** A logit vector's cosine weighs
+  all 130,560 vocabulary entries alike, most of them tokens no sampler
+  would ever pick. On the ANE, one position's cosine was 0.89 while fp32
+  and the build both gave the same token 0.99+ and the divergence between
+  their distributions was 0.003 nats. Over every graded position, the
+  rank correlation between 1 − cosine and KL divergence was 0.08: the two
+  measure different things.
+- **The flip that decided every failing grade was noise.** Every C from
+  #184's PyTorch screens came from a single position of one evaluation
+  text where fp32 itself was unsure: it gave its top token 0.31 and the
+  runner-up 0.14. Calibration draws, chat-request calibration sequences
+  and fp16 projections only moved that flip from one draw to the other.
+  For a classifier a flip is a wrong decision; for a sampled reply at a
+  position the reference holds at 31%, it is not.
+
+**Decision.**
+- **The grade is the KL divergence of the build's next-token distribution
+  from fp32's,** per graded position: its mean and its 99th percentile,
+  with top-1 agreement as a floor, per evaluation family. A family earns
+  the worst of the three letters; **the build earns its worst family's**,
+  so a weak family can't hide in pooled numbers. The bands are in
+  docs/CONVERTING.md ("Grading"), their one home. Non-finite logits are F.
+- **Both calibration draws must land in the same band** (D53's stability
+  check, unchanged); otherwise the lower stands.
+- **A task check beside the bands:** the build served by sidekickd and the
+  checkpoint in fp32 on the CPU answer the same seeded sample of the chat
+  benchmark (docs/CHAT-BENCHMARK.md), greedy and prompt-only, and each
+  family's headline score may fall short of fp32's by at most a fixed
+  tolerance (tools/chat_bench/task_check.py; docs/CONVERTING.md). It
+  checks what a client sees, which logits can't show.
+- **The logits' cosine, the worst position and the wide flips stay in
+  every report,** with the letter the encoders' rubric would give, so a
+  change in them is still visible. They don't decide a chat grade.
+- **The encoders' and classifiers' rubric is unchanged** (D26): a pooled
+  embedding or a decision really is judged by its vector or its argmax.
+
+**How the bands were set, so a new model family can re-anchor them.**
+Measured with the same grader, on the same evaluation set (#173's eight
+repository texts and two held-out ~2,000-token Wikipedia articles, one
+inside a chat request; 1,502 positions), on MiniCPM5-2B, as PyTorch
+screens. Each cell is mean KL / p99 KL / top-1, worst family first:
+
+| Build | Worst family | Other family |
+|---|---|---|
+| ideal fp16 (fp16sim) | prose 5.3e-5 / 7.1e-4 / 99.79% | repository 9.6e-6 / 5.3e-5 / 99.90% |
+| 8-bit palettes, GPTQ, draw 0 | prose 9.5e-4 / 1.0e-2 / 99.79% | repository 2.6e-4 / 2.1e-3 / 99.13% |
+| 8-bit palettes, GPTQ, draw 1 | prose 1.7e-3 / 1.2e-2 / 98.51% | repository 2.4e-4 / 1.2e-3 / 99.03% |
+| 8-bit palettes, rounded to nearest | prose 3.8e-3 / 8.8e-2 / 98.94% | repository 9.7e-4 / 6.0e-3 / 97.67% |
+| 4-bit palettes, GPTQ | prose 0.26 / 4.6 / 83.8% | repository 0.067 / 0.47 / 86.7% |
+
+- **A** is the fp16 class: limits a little above the ideal fp16 ceiling.
+- **B** is the 8-bit class. Its mean limit is the log-midpoint between the
+  GPTQ build's worst family (1.7e-3) and the same palettes rounded to
+  nearest (3.8e-3): 2.5e-3. Its p99 limit sits between the two (1.2e-2
+  and 8.8e-2), and its top-1 floor below both GPTQ draws. This agrees with
+  llama.cpp's KL-divergence figures for 8-bit quantisation (mean ≲ 1e-3).
+- **C** is the 4-bit class as llama.cpp reports it (mean ~1e-2); this
+  model's 4-bit build is far worse and grades D.
+- **D** is anything worse.
+- For another family, rerun these anchors and set each band by the same
+  rule rather than reusing the numbers: the limits are properties of how
+  KL behaves under each quantisation class, which a different vocabulary
+  or depth can shift.
+
+**Known limitations.**
+- **The prose family is two texts,** and one dominates it: the article
+  inside a chat request carries most of its divergence (on an earlier
+  build's ANE run, a mean of 1.0e-2 against 5.9e-4 for the plain
+  article). More long chat-format evaluation texts are the follow-up,
+  which needs the fixture to grow and the references to be rerun.
+- **The bands were fixed before the build they grade was measured on the
+  ANE,** knowing only an earlier build's ANE numbers, which the PR
+  disclosed; the ANE adds divergence beyond the PyTorch screen on the
+  chat-framed text.
+
+**Rejected.**
+- **Keeping the cosine rubric and loosening the wide-flip cap:** it would
+  still decide on a few low-confidence positions, and the cosine still
+  weighs tokens no one samples.
+- **Pooled KL alone:** the repository family's 1,032 positions would
+  outweigh the prose family's 470, which is where the build is weakest.
+- **A task check alone:** it is coarse (tens of items per family) and
+  can't see a distribution shift until it changes greedy text.
+
 ## Hardware verification status
 
 Verified on Apple Silicon (macOS 26.5.1, Xcode 26.6, July 2026), via
