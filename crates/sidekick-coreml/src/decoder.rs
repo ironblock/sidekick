@@ -457,6 +457,68 @@ impl KvDecoder {
         self.call(pos, sel)
     }
 
+    /// One chunk alone, for localizing a build's error by chunk: chunk `i`
+    /// runs at `pos` on `hidden` (the call's T rows of D fp16 values as
+    /// bits, token-major, as [`step_hidden`](Self::step_hidden) takes
+    /// them) and writes its own KV state. Returns its output: the next
+    /// chunk's input as T rows of D values, token-major, or the last
+    /// chunk's logits at `sel`. Needs output backings, since a chunk after
+    /// the first reads its input from the previous chunk's backing.
+    pub fn step_chunk(
+        &mut self,
+        i: usize,
+        hidden: &[u16],
+        pos: usize,
+        sel: usize,
+    ) -> Result<Vec<f32>> {
+        let (t, d, n) = (
+            self.shape.tokens_per_call,
+            self.shape.hidden_size,
+            self.chunks.len(),
+        );
+        if i >= n || hidden.len() != t * d || sel >= t {
+            return Err(Error::InvalidRequest(format!(
+                "chunk {i} of {n}, {} values for a [{t}, {d}] call, `sel` {sel}",
+                hidden.len()
+            )));
+        }
+        if i > 0 && (self.backings.is_empty() || self.chunks[i].provider.is_none()) {
+            return Err(Error::InvalidRequest(
+                "running a chunk alone needs output backings".into(),
+            ));
+        }
+        self.check_position(pos, 1)?;
+        if let Some(reason) = self.monitor.failed() {
+            return Err(self.failed(&reason));
+        }
+        let input = match i {
+            0 => self.inputs.hidden.clone(),
+            _ => self.backings[i - 1].clone(),
+        };
+        // SAFETY: as in `step_select`; the backing was allocated by this
+        // decoder, [1, D, 1, T] fp16 and contiguous.
+        let dst = unsafe { slice_mut::<u16>(&input, d * t) };
+        for s in 0..t {
+            for j in 0..d {
+                dst[j * t + s] = hidden[s * d + j];
+            }
+        }
+        self.write_position_inputs(pos, sel);
+        let result = autoreleasepool(|_| -> Result<Vec<f32>> {
+            match self.run_chain(pos, i..i + 1)? {
+                Some(out) => read_f16_hidden(&out, d, t),
+                None => Ok(self.logits.clone()),
+            }
+        });
+        if let Some(reason) = self.monitor.failed() {
+            return Err(self.failed(&reason));
+        }
+        if result.is_err() {
+            self.reset_state();
+        }
+        result
+    }
+
     /// Replace every chunk's KV state with a fresh one (`newState`). A call
     /// that fails, or returns a non-finite logit, does this itself.
     pub fn reset_state(&mut self) {
@@ -493,7 +555,8 @@ impl KvDecoder {
         // objects. A Rust thread has no pool that drains between calls, so
         // without this one they pile up for the thread's whole life (#173's
         // loop reached a 19.7 GB footprint).
-        let result = autoreleasepool(|_| self.run_chain(pos));
+        let n = self.chunks.len();
+        let result = autoreleasepool(|_| self.run_chain(pos, 0..n).map(|_| ()));
         let elapsed = started.elapsed();
         if let Some(reason) = self.monitor.failed() {
             return Err(self.failed(&reason));
@@ -540,10 +603,18 @@ impl KvDecoder {
         }
     }
 
-    fn run_chain(&mut self, pos: usize) -> Result<()> {
+    /// Run `chunks` of the chain in order. The last chunk's logits go to
+    /// `self.logits`; a range that stops before it returns its last
+    /// chunk's `hidden_out`.
+    fn run_chain(
+        &mut self,
+        pos: usize,
+        chunks: std::ops::Range<usize>,
+    ) -> Result<Option<Retained<MLMultiArray>>> {
         let n = self.chunks.len();
+        let end = chunks.end;
         let mut carried: Option<Retained<MLMultiArray>> = None;
-        for i in 0..n {
+        for i in chunks {
             let built;
             let provider = match (&self.chunks[i].provider, carried.take()) {
                 (Some(p), _) => p,
@@ -603,7 +674,10 @@ impl KvDecoder {
                 None => carried = Some(hidden),
             }
         }
-        Ok(())
+        if end == n {
+            return Ok(None);
+        }
+        Ok(carried.or_else(|| self.backings.get(end - 1).cloned()))
     }
 
     /// Stop using output backings: Core ML's own outputs from now on, and
@@ -798,6 +872,36 @@ fn output(
         .ok_or_else(|| {
             Error::Inference(format!("the prediction has no multi-array output `{name}`"))
         })
+}
+
+/// A `[1, D, 1, T]` fp16 hidden state as T rows of D values, token-major,
+/// through the array's strides.
+fn read_f16_hidden(array: &MLMultiArray, d: usize, t: usize) -> Result<Vec<f32>> {
+    let strides: Vec<usize> = unsafe { array.strides() }
+        .iter()
+        .map(|n| n.as_usize())
+        .collect();
+    if unsafe { array.dataType() } != MLMultiArrayDataType::Float16 || strides.len() != 4 {
+        return Err(Error::Inference(
+            "the hidden state isn't [1, D, 1, T] fp16".into(),
+        ));
+    }
+    let (sd, st) = (strides[1], strides[3]);
+    // SAFETY: the array holds its shape's elements at its strides, alive
+    // while `array` is.
+    let src = unsafe {
+        std::slice::from_raw_parts(
+            array.dataPointer().as_ptr().cast::<u16>(),
+            (d - 1) * sd + (t - 1) * st + 1,
+        )
+    };
+    let mut out = vec![0.0; t * d];
+    for s in 0..t {
+        for j in 0..d {
+            out[s * d + j] = f16::from_bits(src[j * sd + s * st]).to_f32();
+        }
+    }
+    Ok(out)
 }
 
 /// A `[1, V]` fp16 row into `dst`, through the array's strides.
