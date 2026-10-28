@@ -80,15 +80,25 @@ as #173 graded: every graded position has at least 127 tokens of context."""
 
 GREEDY_TOKENS = 96
 
+KL_MEAN = {"A": 1e-4, "B": 2.5e-3, "C": 2e-2}
+"""Mean KL(fp32 || build) per position, at most, for each letter (D54;
+docs/CONVERTING.md, "Grading"). Applied to every evaluation family."""
+
+KL_P99 = {"A": 1e-3, "B": 3e-2, "C": 0.25}
+"""The 99th percentile of KL(fp32 || build) over a family's positions, at most."""
+
 TOP1 = {"A": 0.995, "B": 0.98, "C": 0.95}
-"""Top-1 agreement with fp32 for each letter, at least. The ideal-fp16
-ceiling of MiniCPM5-2B agrees at 99.7% (#173), so A allows about that."""
+"""Top-1 agreement with fp32 for each letter, at least: a floor beside the
+KL bands. The ideal-fp16 ceiling of MiniCPM5-2B agrees at 99.7-99.9%, so A
+allows about that."""
 
 WIDE_MARGIN = math.log(2.0)
-"""A top-1 flip caps the grade at C where fp32 prefers its top token by at
-least this much in log-probability (twice as likely as the runner-up), as
-a classifier's decision flip caps its grade (D26). Flips between
-near-ties are counted, not capped."""
+"""A top-1 flip where fp32 prefers its top token by at least this much in
+log-probability (twice as likely as the runner-up). Reported, with the
+first-percentile logit cosine, as the encoders' and classifiers' rubric
+(D26) would judge them; for chat models they don't decide the grade (D54):
+a chat model samples a distribution, and a flip at a position fp32 itself
+is unsure of moves with the calibration draw."""
 
 ANE_SEQ_CAP = 2048
 """DEFAULT_ANE_MAX_SEQ (D48): the cache capacity's limit unless the manifest
@@ -132,6 +142,8 @@ class Recipe:
     K: int = None                    # the residual scale; None: calibrated
     palette_group: int = 16
     palette_seed: int = 0
+    palette_bits: int = 8            # entries per palette: 2 ** palette_bits
+    rounding: str = "gptq"           # "gptq", or "nearest" (each weight to its nearest entry; a reference only)
     act_order: bool = True
     damp: float = 0.01
     head_split: int = 4              # the head as this many convolutions, concatenated
@@ -477,8 +489,8 @@ def build_toml(job, ranges, fixture, placement=None):
     r = job.recipe
     fp16 = ", ".join(f'"{p}"' for p in r.fp16_projections)
     lines = ["", "[build]",
-             'weights = "palette8"',
-             f"palettes = {{ group = {r.palette_group}, kmeans_seed = {r.palette_seed} }}",
+             f'weights = "palette{r.palette_bits}"',
+             f"palettes = {{ group = {r.palette_group}, bits = {r.palette_bits}, kmeans_seed = {r.palette_seed} }}",
              f"gptq = {{ act_order = {str(r.act_order).lower()}, damp = {r.damp}, threads = {r.threads} }}",
              f"rotation = {{ r1 = true, r2 = {str(r.r2).lower()}, seed = {r.rotation_seed} }}",
              f'calibration = {{ set = "{CALIBRATION.relative_to(REPO)}", sha256 = "{fixture.calibration_sha256}", '
@@ -534,16 +546,19 @@ def softmax_margin(ref):
 
 def grade(got, refs, families=None):
     """Teacher-forced grade of `got` ({text: logits rows}) against the fp32
-    `refs` (the same rows): per position the logits' cosine and whether the
-    top-1 token agrees. The letter is the worse of the first-percentile
-    cosine's (on the parity suite's cosine scale) and top-1 agreement's
-    (TOP1), capped at C by any flip where fp32's top-two margin is at least
-    WIDE_MARGIN. The worst position is reported, not graded, and so is
-    KL(fp32 || got) per position (mean, p99, max), which weighs the tokens
-    a sampler would pick where the logits' cosine weighs the whole
-    vocabulary alike (they rank positions very differently). With
-    `families` ({text: family}), each family is also graded on its own
-    texts, under "families"."""
+    `refs` (the same rows), by the chat rubric (D54): per position
+    KL(fp32 || got), and whether the top-1 token agrees. A group of
+    positions earns the worst of its mean KL's letter (KL_MEAN), its p99
+    KL's (KL_P99) and its top-1 agreement's (TOP1); with `families`
+    ({text: family}) each family is graded on its own texts, under
+    "families", and the grade is the worst family's, so a weak family
+    can't hide in the pooled numbers. Non-finite logits are F.
+
+    Reported beside it, not deciding: the logits' cosine per position (its
+    first percentile, mean and worst), the wide flips, and the letter the
+    encoders' rubric would give (`cosine_grade`: the first-percentile
+    cosine on the parity suite's scale and top-1, capped at C by a wide
+    flip)."""
     g = _grade(got, refs)
     if families:
         g["families"] = {}
@@ -551,6 +566,8 @@ def grade(got, refs, families=None):
             names = [n for n in refs if families.get(n) == fam]
             sub = _grade({n: got[n] for n in names}, {n: refs[n] for n in names})
             g["families"][fam] = {k: v for k, v in sub.items() if k not in ("flips", "texts")}
+        g["pooled_grade"] = g["grade"]
+        g["grade"] = worse(*(f["grade"] for f in g["families"].values()))
     return g
 
 
@@ -580,21 +597,29 @@ def _grade(got, refs):
     p1 = float("nan") if nonfinite else float(np.percentile(c, 1))
     wide = [f for f in flips if f["fp32_margin"] >= WIDE_MARGIN]
     by_cos, by_top1 = letter(p1, cosine_scale()), letter(top1, TOP1)
-    g = "F" if nonfinite else worse(by_cos, by_top1)
-    if wide and g in ("A", "B"):
-        g = "C"
-    return {"positions": len(c), "top1": round(top1, 6), "cos_mean": float(np.nanmean(c)),
-            "cos_p1": p1, "cos_min": float(np.min(c)) if not nonfinite else float("nan"),
-            "grade": g, "grade_cos_p1": by_cos, "grade_top1": by_top1, "wide_flips": len(wide),
-            "kl_mean": float(np.mean(kls)), "kl_p99": float(np.percentile(kls, 99)), "kl_max": float(np.max(kls)),
+    cosine_grade = "F" if nonfinite else worse(by_cos, by_top1)
+    if wide and cosine_grade in ("A", "B"):
+        cosine_grade = "C"
+    kl = np.array(kls)
+    kl_mean = float("nan") if nonfinite else float(np.mean(kl))
+    kl_p99 = float("nan") if nonfinite else float(np.percentile(kl, 99))
+    by_mean, by_p99 = letter(kl_mean, KL_MEAN, higher=False), letter(kl_p99, KL_P99, higher=False)
+    g = "F" if nonfinite else worse(by_mean, by_p99, by_top1)
+    return {"positions": len(c), "top1": round(top1, 6), "kl_mean": kl_mean, "kl_p99": kl_p99,
+            "kl_max": float(np.max(kl)) if not nonfinite else float("nan"),
+            "grade": g, "grade_kl_mean": by_mean, "grade_kl_p99": by_p99, "grade_top1": by_top1,
+            "cos_mean": float(np.nanmean(c)), "cos_p1": p1,
+            "cos_min": float(np.min(c)) if not nonfinite else float("nan"),
+            "cosine_grade": cosine_grade, "grade_cos_p1": by_cos, "wide_flips": len(wide),
             "flips": flips, "texts": texts}
 
 
 def describe(g):
-    return (f"grade {g['grade']} (p1 cosine {g['cos_p1']:.5f} {g['grade_cos_p1']}, top-1 {g['top1']:.2%} "
-            f"{g['grade_top1']}, {g['wide_flips']} wide flips); mean {g['cos_mean']:.6f}, worst {g['cos_min']:.5f} "
-            f"over {g['positions']} positions; KL mean {g['kl_mean']:.2e}, p99 {g['kl_p99']:.2e}, "
-            f"max {g['kl_max']:.3f}")
+    pooled = f", pooled {g['pooled_grade']}" if "pooled_grade" in g else ""
+    return (f"grade {g['grade']}{pooled} (KL mean {g['kl_mean']:.2e} {g['grade_kl_mean']}, p99 {g['kl_p99']:.2e} "
+            f"{g['grade_kl_p99']}, top-1 {g['top1']:.2%} {g['grade_top1']}; KL max {g['kl_max']:.3f}) over "
+            f"{g['positions']} positions; reported: cosine p1 {g['cos_p1']:.5f}, worst {g['cos_min']:.5f}, "
+            f"{g['wide_flips']} wide flips (the encoders' rubric: {g['cosine_grade']})")
 
 
 def load_refs(job, kind="fp32"):
@@ -652,12 +677,13 @@ def keys(job, seed=None):
                     "seed": seed, "K": r.K, "disjoint_from": None if seed == r.draw_seed else r.draw_seed}
         out["ranges"] = draw_key
         out["gptq"] = {**draw_key, "palette_group": r.palette_group, "palette_seed": r.palette_seed,
+                       "palette_bits": r.palette_bits, "rounding": r.rounding,
                        "scikit_learn": i["versions"]["scikit_learn"], "act_order": r.act_order, "damp": r.damp,
                        "fp16_projections": list(r.fp16_projections)}
         out["screen"] = {"gptq": out["gptq"], "references": references}
         out["stage"] = {"gptq": out["gptq"], "manifest_sha256": i["manifest_sha256"], "head_split": r.head_split,
                         "coremltools": i["versions"]["coremltools"]}
-    out["palettes"] = lambda K: {**rotation, "K": K, "palette_group": r.palette_group,
+    out["palettes"] = lambda K: {**rotation, "K": K, "palette_group": r.palette_group, "palette_bits": r.palette_bits,
                                  "palette_seed": r.palette_seed, "scikit_learn": i["versions"]["scikit_learn"]}
     return out
 
@@ -730,7 +756,7 @@ def run(job, install_dir):
         k = keys(job, seed)
         _cached(job, job.path(f"ranges-{seed}.json"), k["ranges"], "ranges", seed)
         K = json.loads(job.path(f"ranges-{seed}.json").read_text())["ranges"]["K"]
-        _cached(job, job.path(f"palettes-{r.rotation_seed}-K{K}.pt"), keys(job)["palettes"](K), "palettes", K)
+        _cached(job, palettes_path(job, K), keys(job)["palettes"](K), "palettes", K)
         _cached(job, job.path(f"gptq-{seed}"), k["gptq"], "gptq", seed)
         _cached(job, job.path(f"screen-{seed}.json"), k["screen"], "screen", seed)
         screens[seed] = json.loads(job.path(f"screen-{seed}.json").read_text())
@@ -960,12 +986,34 @@ def step_palettes(job, K):
         t0 = time.time()
         layer = LC.build_layer(ck, i, rot, ranges)
         for p in LC.PROJECTIONS:
-            out[f"{i}.{p}"] = G.kmeans_palettes(LC.weight_of(getattr(layer, p)), r.palette_group, seed=r.palette_seed)
+            out[f"{i}.{p}"] = G.kmeans_palettes(LC.weight_of(getattr(layer, p)), r.palette_group,
+                                                2 ** r.palette_bits, seed=r.palette_seed)
         print(f"palettes, layer {i}: {time.time() - t0:.0f} s", flush=True)
     t0 = time.time()
-    out["head"] = G.kmeans_palettes(LC.head_weight(ck, rot), r.palette_group, seed=r.palette_seed)
+    out["head"] = G.kmeans_palettes(LC.head_weight(ck, rot), r.palette_group, 2 ** r.palette_bits,
+                                    seed=r.palette_seed)
     print(f"palettes, head: {time.time() - t0:.0f} s", flush=True)
-    torch.save(out, job.path(f"palettes-{r.rotation_seed}-K{K}.pt"))
+    torch.save(out, palettes_path(job, K))
+
+
+def palettes_path(job, K):
+    """The palettes of one rotation, residual scale and palette size (the
+    8-bit ones keep their original name)."""
+    r = job.recipe
+    bits = "" if r.palette_bits == 8 else f"-{r.palette_bits}bit"
+    return job.path(f"palettes-{r.rotation_seed}-K{K}{bits}.pt")
+
+
+def round_weights(r, W, H, grid):
+    """W onto its palettes: GPTQ, or each weight to its nearest entry (a
+    deliberately worse reference build)."""
+    import torch
+    from .techniques import gptq as G
+    if r.rounding == "gptq":
+        return G.gptq(W, H, grid, r.damp, act_order=r.act_order)
+    if r.rounding == "nearest":
+        return grid.nearest(W.double()).to(torch.uint8), grid.palettes.float()
+    raise ValueError(f"unknown rounding {r.rounding!r}")
 
 
 def _keep_fp16(job, i, p):
@@ -981,7 +1029,7 @@ def step_gptq(job, seed):
     ck = LC.Checkpoint(job.src)
     rot = LC.Rotation(r.rotation_seed, r.r2).bind(ck)
     ranges = _ranges(LC, job, seed)
-    palettes = torch.load(job.path(f"palettes-{r.rotation_seed}-K{ranges.K}.pt"))
+    palettes = torch.load(palettes_path(job, ranges.K))
     out = job.path(f"gptq-{seed}")
     out.mkdir(parents=True, exist_ok=True)
     seqs = job_draw(job, fixture, seed)
@@ -1009,7 +1057,7 @@ def step_gptq(job, seed):
                 continue
             H = hess[inputs[p]].mean()
             grid = G.Palette(W, palettes[f"{i}.{p}"], r.palette_group)
-            codes, pal = G.gptq(W, H, grid, r.damp, act_order=r.act_order)
+            codes, pal = round_weights(r, W, H, grid)
             Wq = G.dequantize(codes, pal, r.palette_group)
             st[p] = {"gptq": G.output_error(Wq, W, H), "rtn": G.output_error(grid.round_to_nearest(W), W, H)}
             res[p] = (codes, pal)
@@ -1027,7 +1075,7 @@ def step_gptq(job, seed):
         H.add(norm(h))
     W = LC.head_weight(ck, rot)
     grid = G.Palette(W, palettes["head"], r.palette_group)
-    codes, pal = G.gptq(W, H.mean(), grid, r.damp, act_order=r.act_order)
+    codes, pal = round_weights(r, W, H.mean(), grid)
     torch.save({"head": (codes, pal)}, out / "head.pt")
     print(f"gptq, head: {time.time() - t0:.0f} s", flush=True)
     (out / "meta.json").write_text(json.dumps({"seed": seed, "tokens": sum(map(len, seqs)), "stats": stats},

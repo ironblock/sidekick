@@ -53,6 +53,10 @@ def main():
                         "variant: screen it first (--screen-only)")
     p.add_argument("--chat-sequences", type=int, default=None,
                    help="of each draw's sequences, how many are long chat requests (default: the recipe's)")
+    p.add_argument("--palette-bits", type=int, default=None,
+                   help="palette size in bits (default: the recipe's 8); 4 makes a deliberately worse reference")
+    p.add_argument("--rounding", choices=("gptq", "nearest"), default=None,
+                   help="how weights take their palette entry (default: gptq); nearest makes a worse reference")
     p.add_argument("--screen-only", action="store_true", help="stop after the PyTorch screen: compile nothing")
     p.add_argument("--no-plan", action="store_true",
                    help="skip the compute-plan gate (no ANE compile); for a rebuild compared byte for byte")
@@ -63,7 +67,8 @@ def main():
     model_id = args.install_dir.name
     job = recipes.causal_lm(model_id=model_id, src=args.src, work=args.work, draw=args.draw,
                             stability_draw=-1 if args.no_stability else args.stability_draw, tokens=args.tokens,
-                            chat_sequences=args.chat_sequences,
+                            chat_sequences=args.chat_sequences, palette_bits=args.palette_bits,
+                            rounding=args.rounding,
                             plan=not args.no_plan, screen_only=args.screen_only, keep_packages=args.keep_packages)
     run(job, args.install_dir)
 

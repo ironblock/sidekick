@@ -134,3 +134,25 @@ think_tags = ["<ifm|think>", "</ifm|think>"]
 reasoning_budget = 512
 extra_max_tokens = 520
 json = "prompt"
+
+# The causal-LM task check (tools/chat_bench/task_check.py, D54): a converted
+# build served by sidekickd against the checkpoint itself in fp32 on the CPU,
+# on the same seeded sample, prompt-only JSON on both, greedy on both.
+[[row]]
+id = "minicpm5-2b-ane"
+label = "MiniCPM5-2B, sidekick's kv-state-1 build on the ANE"
+server = "sidekick"
+model = "minicpm5-2b"
+json = "prompt"
+
+[[row]]
+id = "minicpm5-2b-fp32"
+label = "MiniCPM5-2B, fp32 transformers on the CPU (the conversion's reference)"
+server = "serve_ref"
+backend = "torch"
+dtype = "float32"
+device = "cpu"
+repo = "openbmb/MiniCPM5-2B"
+revision = "f97400052a43d642bbc6e9975e2397e3ae6a6b52"
+chat_template_args = { enable_thinking = false }
+json = "prompt"
