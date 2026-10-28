@@ -11,7 +11,9 @@ in CI. Run it under tools/chat_bench/watchdog.py.
     python tools/chat_bench/run.py minicpm5-1b --port 8811 --out <runs dir>
 
 Rows are defined in tools/chat_bench/rows.toml. `--limit N` runs the first N
-requests of each family, as a check of the request shapes.
+requests of each family, as a check of the request shapes. `--sample
+family=N,... --seed S` runs a seeded sample of each named family's items
+instead (the causal-LM task check, tools/chat_bench/task_check.py).
 
 Every request streams (`stream: true`, with usage), at temperature 0, with
 a per-request timeout; a timeout or an HTTP error other than a model's own
@@ -179,12 +181,16 @@ def start_server(row: dict, port: int, log: Path) -> tuple[subprocess.Popen, dic
             cmd += ["--prefill", row["prefill"]]
         if row.get("constrained"):
             cmd += ["--constrained"]
+        if row.get("dtype"):
+            cmd += ["--dtype", row["dtype"]]
+        if row.get("device"):
+            cmd += ["--device", row["device"]]
         stack = {"server": "tools/chat_bench/serve_ref.py", "backend": row["backend"], "greedy": "argmax"}
         if row["backend"] == "torch":
             import torch
             import transformers
             stack |= {"torch": torch.__version__, "transformers": transformers.__version__,
-                      "device": "mps", "dtype": "bf16"}
+                      "device": row.get("device", "mps"), "dtype": row.get("dtype", "bfloat16")}
         else:
             import mlx_lm
             stack |= {"mlx_lm": mlx_lm.__version__, "mlx": __import__("mlx.core", fromlist=["x"]).__version__,
@@ -227,6 +233,22 @@ def build_body(row: dict, r: dict, model: str, temperature: float) -> dict:
     return body
 
 
+def sample(reqs: list[dict], spec: str, seed: int) -> list[dict]:
+    """N requests of each family in `spec` ("extraction=24,titles=20"),
+    drawn with random.Random(seed) from the family's items in task-set
+    order, kept in that order."""
+    import random
+    out = []
+    for part in spec.split(","):
+        family, n = part.split("=")
+        fam = [r for r in reqs if r["family"] == family]
+        if int(n) > len(fam):
+            raise SystemExit(f"--sample asks for {n} {family} requests; the row has {len(fam)}")
+        keep = set(random.Random(f"{seed}:{family}").sample(range(len(fam)), int(n)))
+        out += [r for i, r in enumerate(fam) if i in keep]
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("row")
@@ -236,6 +258,8 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=180, help="seconds per request")
     ap.add_argument("--ready-timeout", type=float, default=600)
     ap.add_argument("--limit", type=int, help="first N requests of each family")
+    ap.add_argument("--sample", help="a seeded sample per family, as family=N,family=N (only those families)")
+    ap.add_argument("--seed", type=int, default=184, help="the --sample seed")
     ap.add_argument("--suffix", default="", help="appended to the run file's name (a repeat run)")
     a = ap.parse_args()
 
@@ -244,6 +268,8 @@ def main() -> int:
     reqs = [r for r in tasks.requests() if r["family"] in row.get("families", tasks.FAMILIES)]
     if a.limit:
         reqs = [r for f in tasks.FAMILIES for r in [q for q in reqs if q["family"] == f][:a.limit]]
+    if a.sample:
+        reqs = sample(reqs, a.sample, a.seed)
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -302,7 +328,7 @@ def main() -> int:
     run = {"schema": RUN_SCHEMA, "row": row, "task_set": tasks.task_set_lock(), "model": prov,
            "stack": stack, "machine": machine(), "request_shape": shape,
            "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "timeout_s": a.timeout,
-           "limit": a.limit, "records": records}
+           "limit": a.limit, "sample": a.sample and {"spec": a.sample, "seed": a.seed}, "records": records}
     path = out_dir / f"{a.row}{a.suffix}.json"
     path.write_text(json.dumps(run, ensure_ascii=False, indent=1) + "\n")
     print(f"wrote {path} ({len(records)} requests)")

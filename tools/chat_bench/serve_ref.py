@@ -57,15 +57,15 @@ def stop_ids(tokenizer, model_dir: Path) -> set[int]:
 
 
 class TorchLM:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, dtype: str = "bfloat16", device: str | None = None):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
         self.torch = torch
-        self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self.device = device or ("mps" if torch.backends.mps.is_available() else "cpu")
         self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         self.model = AutoModelForCausalLM.from_pretrained(
-            path, dtype=torch.bfloat16, trust_remote_code=True).to(self.device).eval()
-        self.dtype = "bfloat16"
+            path, dtype=getattr(torch, dtype), trust_remote_code=True).to(self.device).eval()
+        self.dtype = dtype
         self.backend = f"transformers {__import__('transformers').__version__}, torch {torch.__version__}, {self.device}"
 
     def start(self, ids: list[int]):
@@ -129,7 +129,7 @@ class Generator:
         if not path.exists():
             path = Path(snapshot_download(a.model, revision=a.revision))
         self.model_dir = path
-        self.lm = TorchLM(path) if a.backend == "torch" else MlxLM(path)
+        self.lm = TorchLM(path, a.dtype, a.device) if a.backend == "torch" else MlxLM(path)
         self.tok = self.lm.tokenizer
         self.stops = stop_ids(self.tok, path)
         self.template_args = json.loads(a.chat_template_args) if a.chat_template_args else {}
@@ -302,6 +302,9 @@ def main() -> int:
     ap.add_argument("--reasoning-budget", type=int)
     ap.add_argument("--prefill")
     ap.add_argument("--constrained", action="store_true")
+    ap.add_argument("--dtype", choices=["bfloat16", "float32"], default="bfloat16",
+                    help="torch backend: the weights' dtype (float32: the reference a conversion is graded against)")
+    ap.add_argument("--device", choices=["mps", "cpu"], help="torch backend (default: mps when available)")
     a = ap.parse_args()
     gen = Generator(a)
     print(f"serve_ref: {gen.lm.backend}; stop ids {sorted(gen.stops)}", flush=True)

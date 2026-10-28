@@ -278,15 +278,18 @@ class Grading(unittest.TestCase):
     def rows(self, n=200, v=50, seed=0):
         return np.random.default_rng(seed).normal(size=(n, v)) * 3
 
-    def test_letters_follow_p1_cosine_and_top1(self):
+    def test_letters_follow_kl_and_top1(self):
         ref = self.rows()
         self.assertEqual(L.grade({"t": ref}, {"t": ref})["grade"], "A")
-        noisy = ref + np.random.default_rng(1).normal(size=ref.shape) * 0.05
-        g = L.grade({"t": noisy}, {"t": ref})
-        self.assertEqual(g["grade_cos_p1"], L.letter(g["cos_p1"], L.cosine_scale()))
-        self.assertEqual(g["grade"], L.worse(g["grade_cos_p1"], g["grade_top1"]))
+        for scale in (0.02, 0.1, 0.4, 1.5):
+            noisy = ref + np.random.default_rng(1).normal(size=ref.shape) * scale
+            g = L.grade({"t": noisy}, {"t": ref})
+            self.assertEqual(g["grade_kl_mean"], L.letter(g["kl_mean"], L.KL_MEAN, higher=False))
+            self.assertEqual(g["grade_kl_p99"], L.letter(g["kl_p99"], L.KL_P99, higher=False))
+            self.assertEqual(g["grade"], L.worse(g["grade_kl_mean"], g["grade_kl_p99"], g["grade_top1"]))
+            self.assertEqual(g["grade_cos_p1"], L.letter(g["cos_p1"], L.cosine_scale()))      # reported
 
-    def test_a_wide_flip_caps_the_grade_at_c(self):
+    def test_a_wide_flip_is_reported_and_does_not_decide(self):
         ref = self.rows(v=10)
         ref[0] = 0.0
         ref[0, 3], ref[0, 4] = 5.0, 5.0 - L.WIDE_MARGIN - 0.01        # fp32 prefers token 3, clearly
@@ -294,7 +297,8 @@ class Grading(unittest.TestCase):
         got[0, 4] = 5.5                                                 # the build flips it
         g = L.grade({"t": got}, {"t": ref})
         self.assertEqual(g["wide_flips"], 1)
-        self.assertEqual(g["grade"], "C")
+        self.assertEqual(g["cosine_grade"], "C")                       # the encoders' rubric would cap it
+        self.assertEqual(g["grade"], L.worse(g["grade_kl_mean"], g["grade_kl_p99"], g["grade_top1"]))
         near = ref.copy()
         near[0, 4] = 4.999                                             # a near-tie flip isn't capped
         near_ref = near.copy()
@@ -328,6 +332,8 @@ class Grading(unittest.TestCase):
         self.assertEqual(g["families"]["repository"]["grade"], "A")
         self.assertEqual(g["families"]["prose"]["positions"], 200)
         self.assertEqual(g["families"]["prose"]["grade"], L._grade({"b": got["b"]}, {"b": ref["b"]})["grade"])
+        self.assertEqual(g["grade"], L.worse(g["families"]["repository"]["grade"], g["families"]["prose"]["grade"]))
+        self.assertEqual(g["pooled_grade"], L._grade(got, ref)["grade"])
 
     def test_non_finite_output_is_f(self):
         ref = self.rows()
