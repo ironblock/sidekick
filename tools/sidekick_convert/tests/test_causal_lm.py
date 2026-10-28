@@ -8,6 +8,7 @@ round to nearest; calibration draws, grading and the committed fixtures and
 manifest follow their rules. No Core ML and no download.
 """
 
+import dataclasses
 import json
 import math
 import tempfile
@@ -21,6 +22,7 @@ import torch
 from sidekick_convert import causal_lm as L
 from sidekick_convert.backbones import llama_causal as LC
 from sidekick_convert.techniques import gptq as G
+from sidekick_convert.techniques import precision
 
 
 def tiny_llama(dirname, seed=0, layers=3, **overrides):
@@ -82,6 +84,29 @@ class Rewrites(unittest.TestCase):
         self.assertSameLogits(self.rewritten(rot, ranges))
         forced = LC.Ranges(K=2, norm_scale=[0.25] * (2 * self.ck.layers + 1), norm_max=[], linear_out_max=[])
         self.assertSameLogits(self.rewritten(rot, forced))
+
+    def test_the_value_matmul_and_output_projection_scales_are_exact(self):
+        rot = LC.Rotation(seed=3).bind(self.ck)
+        ranges = LC.calibrate_ranges(self.ck, self.ids, rot, report=lambda *_: None)
+        self.assertEqual(len(ranges.in_scale), self.ck.layers)
+        for (so, sd), ((o_rms, o_max), (d_rms, d_max)) in zip(ranges.in_scale, ranges.in_stats):
+            for s, rms, mx in ((so, o_rms, o_max), (sd, d_rms, d_max)):
+                self.assertGreaterEqual(s, 1.0)
+                self.assertEqual(math.log2(s), round(math.log2(s)))
+                self.assertTrue(s == 1.0 or mx * s <= precision.IN_MAX)
+        forced = dataclasses.replace(ranges, in_scale=[[8.0, 16.0]] * self.ck.layers)
+        h = LC.embed(LC.embedding_table(self.ck, rot), self.ids[0])
+        scaled = LC.run_layer(LC.build_layer(self.ck, 0, rot, forced), h, self.ck)
+        saved = LC.PV_SCALE
+        try:
+            LC.PV_SCALE = 1.0
+            plain = LC.run_layer(LC.build_layer(self.ck, 0, rot, dataclasses.replace(ranges, in_scale=None)), h,
+                                 self.ck)
+        finally:
+            LC.PV_SCALE = saved
+        self.assertGreater(saved, 1.0)
+        self.assertEqual(math.log2(saved), round(math.log2(saved)))
+        self.assertTrue(torch.equal(scaled, plain))
 
     def test_the_rotation_spreads_the_massive_activation(self):
         plain = LC.calibrate_ranges(self.ck, self.ids, None, report=lambda *_: None)

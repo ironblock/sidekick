@@ -106,6 +106,16 @@ sets ane_max_seq_len."""
 
 FORBID_OPS = frozenset({core.FUSED_ATTENTION, "silu"})
 
+PROGRAM_REVISION = 2
+"""The chunk programs' graph, as the backbone writes it: part of the staged
+programs' key, so a change to the graph (2: the value matmul's input scale,
+llama_causal.PV_SCALE, and the output projections' input scales) recompiles
+them. Bump it with any change to what llama_causal traces."""
+
+RANGES_REVISION = 2
+"""What the range calibration records (2: the output projections' input
+statistics and scales): part of its key, so a new statistic recalibrates."""
+
 
 def cosine_scale():
     """The cosine letter scale, from the one definition the parity suite
@@ -678,14 +688,14 @@ def keys(job, seed=None):
                     "tokenizer_sha256": i["tokenizer_sha256"], "tokens": r.tokens, "sequence": r.sequence,
                     "chat_sequences": r.chat_sequences,
                     "seed": seed, "K": r.K, "disjoint_from": None if seed == r.draw_seed else r.draw_seed}
-        out["ranges"] = draw_key
+        out["ranges"] = {**draw_key, "ranges": RANGES_REVISION}
         out["gptq"] = {**draw_key, "palette_group": r.palette_group, "palette_seed": r.palette_seed,
                        "palette_bits": r.palette_bits, "rounding": r.rounding,
                        "scikit_learn": i["versions"]["scikit_learn"], "act_order": r.act_order, "damp": r.damp,
                        "fp16_projections": list(r.fp16_projections)}
         out["screen"] = {"gptq": out["gptq"], "references": references}
         out["stage"] = {"gptq": out["gptq"], "manifest_sha256": i["manifest_sha256"], "head_split": r.head_split,
-                        "coremltools": i["versions"]["coremltools"]}
+                        "coremltools": i["versions"]["coremltools"], "program": PROGRAM_REVISION}
     out["palettes"] = lambda K: {**rotation, "K": K, "palette_group": r.palette_group, "palette_bits": r.palette_bits,
                                  "palette_seed": r.palette_seed, "scikit_learn": i["versions"]["scikit_learn"]}
     return out
@@ -1174,12 +1184,14 @@ def step_convert(job, index):
         inputs.append(ct.TensorType("sel", (T,), np.float16))
     traced = torch.jit.trace(chunk, tuple(example), check_trace=False)
     shape = tuple(chunk.k_cache.shape)
+    pipeline = ct.PassPipeline.DEFAULT
+    pipeline.remove_passes([LC.DESCALE_PASS])
     ml = ct.convert(traced, inputs=inputs,
                     outputs=[ct.TensorType(name="logits" if last else "hidden_out", dtype=np.float16)],
                     states=[ct.StateType(ct.TensorType(shape=shape, dtype=np.float16), name="k_cache"),
                             ct.StateType(ct.TensorType(shape=shape, dtype=np.float16), name="v_cache")],
                     minimum_deployment_target=ct.target.macOS15, compute_precision=ct.precision.FLOAT16,
-                    compute_units=ct.ComputeUnit.CPU_AND_NE, skip_model_load=True)
+                    compute_units=ct.ComputeUnit.CPU_AND_NE, skip_model_load=True, pass_pipeline=pipeline)
     del traced, chunk, layers
     # the const names the trace gives each projection: layers_<index in chunk>_<proj>_weight_to_fp16
     consts = {op.name for fn in ml._mil_program.functions.values() for op in fn.operations if op.op_type == "const"}
