@@ -69,21 +69,17 @@ fp16's 65,504 with a margin."""
 
 PV_SCALE = 2.0 ** 8
 """The attention probabilities' power-of-two scale into the value matmul,
-undone right after it. The ANE's matmul has the linear's absolute precision
-floor on its input (techniques.precision), and probabilities spread over a
-long context are small: on MiniCPM5-2B the value matmul's error grew with
-the position, from 2e-3 at 128 to 3.6e-2 at 1,984, which made the first
-chunk the source of the ANE's added divergence on 2,000-token texts. At
-2^8 the error is 2e-4 at every position. Exact in fp32 (a power of two);
-the matmul's output is at most PV_SCALE x max |v|, and calibrate_ranges
-checks it against the ANE's 2^15."""
+undone right after it, against the ANE's small-input floor on the matmul's
+input, which grows with the context as the probabilities shrink (D55).
+Exact in fp32; the matmul's output is at most PV_SCALE x max |v|, which
+calibrate_ranges checks against the ANE's 2^15."""
 
 DESCALE_PASS = "common::fuse_conv_scale"
 """coremltools' pass that folds a multiply after a convolution into its
-weights. It would fold an output projection's descale back, and the ANE then
-loses as much as without the input scale (measured on MiniCPM5-2B's layer 1:
-the layer's error 7.3e-3 either way, 1.6e-3 with the multiply kept), so the
-conversion runs without it."""
+weights. It would fold an output projection's descale back into a plain
+weight, which undoes its input scale on the ANE (D55), so these programs are
+converted and palettized without it, and the converter checks that every
+descale survived."""
 
 PROJECTIONS = ("q", "k", "v", "o", "gate", "up", "down")
 HF_NAMES = {"q": "self_attn.q_proj", "k": "self_attn.k_proj", "v": "self_attn.v_proj", "o": "self_attn.o_proj",
@@ -233,6 +229,7 @@ class Layer(nn.Module):
         self.act = StableSilu()
         self.in_scale = {"o": 1.0, "down": 1.0}   # output projections' input scales (apply_ranges)
         self.istat = None           # range calibration: o and down inputs' [sum x^2, count, max |x|]
+        self.vstat = None           # range calibration: max |v out|
         self.ostat = None           # range calibration: [max |q,k,v,gate,up out|, max |o,down out|]
 
     def _track_in(self, which, x):
@@ -251,6 +248,8 @@ class Layer(nn.Module):
         x = self.n1(h)
         q, k, v = self.q(x), self.k(x), self.v(x)
         self._track(0, q, k, v)
+        if self.vstat is not None:
+            self.vstat = max(self.vstat, float(v.abs().max()))
         q = q.view(H, Dh, S).transpose(1, 2)
         k = k.view(KVH, Dh, S).transpose(1, 2)
         v = v.view(KVH, Dh, S).transpose(1, 2)
@@ -404,6 +403,7 @@ class Ranges:
     norm_max: list
     linear_out_max: list           # per layer: [max |q,k,v,gate,up out|, max |o,down out|]
     in_scale: list = None          # per layer: [o's input scale, down's input scale]
+    v_out_max: list = None         # per layer: max |v out|, what the value matmul reads
     in_stats: list = None          # per layer: [[rms, max] of o's input, [rms, max] of down's input]
 
     def to_json(self):
@@ -534,9 +534,10 @@ def calibrate_ranges(ck, sequences, rot=None, K=None, report=print):
     cur = {}
 
     ins = [None] * L
+    vmax = [0.0] * L
 
     def on_layer(i, layer):
-        layer.n1.stat, layer.n2.stat, layer.ostat = 0.0, 0.0, [0.0, 0.0]
+        layer.n1.stat, layer.n2.stat, layer.ostat, layer.vstat = 0.0, 0.0, [0.0, 0.0], 0.0
         layer.istat = {"o": [0.0, 0, 0.0], "down": [0.0, 0, 0.0]}
         cur["layer"] = layer
 
@@ -544,12 +545,13 @@ def calibrate_ranges(ck, sequences, rot=None, K=None, report=print):
         lay = cur["layer"]
         nmax[i], nmax[L + i], lin[i] = lay.n1.stat, lay.n2.stat, list(lay.ostat)
         ins[i] = [[math.sqrt(st[0] / st[1]), st[2]] for st in (lay.istat["o"], lay.istat["down"])]
+        vmax[i] = lay.vstat
 
     table = embedding_table(ck, rot)
     hs = stream(ck, sequences, lambda i: build_layer(ck, i, rot), table, on_layer, on_hidden)
     nmax[2 * L] = max(float(h.abs().max()) for h in hs)
     fixed, scaled = max(x[0] for x in lin), max(x[1] for x in lin)
-    saturation.check({"the value matmul at PV_SCALE": PV_SCALE * fixed})
+    saturation.check({"the value matmul at PV_SCALE": PV_SCALE * max(vmax)})
     if K is None:
         K, _ = saturation.choose_k(fixed, scaled)
     scales = []
@@ -566,7 +568,7 @@ def calibrate_ranges(ck, sequences, rot=None, K=None, report=print):
            f"{sum(s != 1.0 for x in in_scale for s in x)}/{2 * L} output projections' inputs scaled "
            f"(up to {max(s for x in in_scale for s in x):.0f})")
     return Ranges(K=int(K), norm_scale=scales, norm_max=[m / K for m in nmax], linear_out_max=lin,
-                  in_scale=in_scale, in_stats=ins)
+                  in_scale=in_scale, in_stats=ins, v_out_max=vmax)
 
 
 @dataclasses.dataclass

@@ -112,9 +112,10 @@ programs' key, so a change to the graph (2: the value matmul's input scale,
 llama_causal.PV_SCALE, and the output projections' input scales) recompiles
 them. Bump it with any change to what llama_causal traces."""
 
-RANGES_REVISION = 2
+RANGES_REVISION = 3
 """What the range calibration records (2: the output projections' input
-statistics and scales): part of its key, so a new statistic recalibrates."""
+statistics and scales; 3: max |v| for the value matmul's check): part of
+its key, so a new statistic recalibrates."""
 
 
 def cosine_scale():
@@ -675,6 +676,7 @@ def keys(job, seed=None):
     when its recorded key equals the current one, so a changed fixture,
     tokenizer, checkpoint, manifest, library or recipe recomputes what it
     touches and nothing else."""
+    from .techniques import precision
     r, i = job.recipe, job.inputs
     ck = {"revision": i["revision"], "config_sha256": i["config_sha256"]}
     references = {**ck, "evaluation_sha256": i["evaluation_sha256"], "tokenizer_sha256": i["tokenizer_sha256"],
@@ -694,8 +696,10 @@ def keys(job, seed=None):
                        "scikit_learn": i["versions"]["scikit_learn"], "act_order": r.act_order, "damp": r.damp,
                        "fp16_projections": list(r.fp16_projections)}
         out["screen"] = {"gptq": out["gptq"], "references": references}
-        out["stage"] = {"gptq": out["gptq"], "manifest_sha256": i["manifest_sha256"], "head_split": r.head_split,
-                        "coremltools": i["versions"]["coremltools"], "program": PROGRAM_REVISION}
+        # the programs bake in the calibrated scales, chosen under precision's caps
+        out["stage"] = {"gptq": out["gptq"], "ranges": out["ranges"], "manifest_sha256": i["manifest_sha256"],
+                        "head_split": r.head_split, "coremltools": i["versions"]["coremltools"],
+                        "program": PROGRAM_REVISION, "precision_caps": [precision.IN_MAX, precision.OUT_MAX]}
     out["palettes"] = lambda K: {**rotation, "K": K, "palette_group": r.palette_group, "palette_bits": r.palette_bits,
                                  "palette_seed": r.palette_seed, "scikit_learn": i["versions"]["scikit_learn"]}
     return out
@@ -1153,6 +1157,86 @@ def step_screen(job, seed):
     job.path(f"screen-{seed}.json").write_text(json.dumps(g, indent=1))
 
 
+def _without_descale_pass():
+    import coremltools as ct
+    from .backbones import llama_causal as LC
+    pipeline = ct.PassPipeline.DEFAULT
+    pipeline.remove_passes([LC.DESCALE_PASS])
+    return pipeline
+
+
+def to_mlprogram(chunk, example, inputs, last):
+    """A traced Chunk as an fp16 ML program with its KV state, converted
+    without the pass that would fold the output projections' descales into
+    their weights (llama_causal.DESCALE_PASS)."""
+    import coremltools as ct
+    import torch
+    traced = torch.jit.trace(chunk, tuple(example), check_trace=False)
+    shape = tuple(chunk.k_cache.shape)
+    return ct.convert(traced, inputs=inputs,
+                      outputs=[ct.TensorType(name="logits" if last else "hidden_out", dtype=np.float16)],
+                      states=[ct.StateType(ct.TensorType(shape=shape, dtype=np.float16), name="k_cache"),
+                              ct.StateType(ct.TensorType(shape=shape, dtype=np.float16), name="v_cache")],
+                      minimum_deployment_target=ct.target.macOS15, compute_precision=ct.precision.FLOAT16,
+                      compute_units=ct.ComputeUnit.CPU_AND_NE, skip_model_load=True,
+                      pass_pipeline=_without_descale_pass())
+
+
+def palettize(ml, config):
+    """coremltools' palettize_weights, reconverted without
+    llama_causal.DESCALE_PASS: palettize_weights itself reruns the default
+    passes, which would fold a descale into a projection kept in fp16."""
+    from coremltools.converters.mil.converter import mil_convert
+    from coremltools.converters.mil.mil.passes.graph_pass import PassOption
+    from coremltools.converters.mil.mil.passes.pass_registry import PASS_REGISTRY
+    from coremltools.models import utils as model_utils
+    palettizer = PASS_REGISTRY["compression::palettize_weights"]
+    palettizer.set_options([PassOption("config", config), PassOption("joint_compression", False)])
+    prog = model_utils._apply_graph_pass(ml, palettizer, return_pymil_prog=True)
+    spec = ml.get_spec()
+    return mil_convert(prog, convert_to="mlprogram", convert_from="milinternal",
+                       specification_version=spec.specificationVersion, compute_units=ml.compute_unit,
+                       model_description=spec.description, skip_model_load=True,
+                       pass_pipeline=_without_descale_pass())
+
+
+def descales(ml):
+    """{(layer in the chunk, "o" | "down"): the constant its projection's
+    output is multiplied by next, or None when no multiply follows it}."""
+    pattern = re.compile(r"layers_(\d+)_(o|down)_weight")
+    out = {}
+    for fn in ml._mil_program.functions.values():
+        for op in fn.operations:
+            if op.op_type != "conv":
+                continue
+            m = pattern.match(op.inputs["weight"].op.name)
+            if not m:
+                continue
+            after = op.outputs[0].child_ops
+            factor = None
+            if len(after) == 1 and after[0].op_type == "mul":
+                mul = after[0]
+                other = mul.y if mul.x is op.outputs[0] else mul.x
+                if other.val is not None and np.asarray(other.val).size == 1:
+                    factor = float(np.asarray(other.val).ravel()[0])
+            out[(int(m[1]), m[2])] = factor
+    return out
+
+
+def check_descales(ml, scales, what):
+    """Fail unless every output projection with an input scale s is still
+    followed by its multiply by 1/s (`scales`: {(layer in the chunk, proj): s})."""
+    found = descales(ml)
+    for key, s in sorted(scales.items()):
+        if s == 1.0:
+            continue
+        if key not in found:
+            raise core.GateFailure(f"{what}: no convolution for layer {key[0]}'s {key[1]}_proj")
+        if found[key] is None or not math.isclose(found[key], 1.0 / s, rel_tol=1e-3):
+            raise core.GateFailure(f"{what}: layer {key[0]}'s {key[1]}_proj lost its descale (1/{s:g}, found "
+                                   f"{found[key]}): its input scale is folded back into the weights")
+
+
 def step_convert(job, index):
     """Chunk `index` of the build's draw: trace, convert with state,
     palettize, compile into the draw's stage directory."""
@@ -1182,17 +1266,10 @@ def step_convert(job, index):
     if last:
         example.append(torch.zeros(T))
         inputs.append(ct.TensorType("sel", (T,), np.float16))
-    traced = torch.jit.trace(chunk, tuple(example), check_trace=False)
-    shape = tuple(chunk.k_cache.shape)
-    pipeline = ct.PassPipeline.DEFAULT
-    pipeline.remove_passes([LC.DESCALE_PASS])
-    ml = ct.convert(traced, inputs=inputs,
-                    outputs=[ct.TensorType(name="logits" if last else "hidden_out", dtype=np.float16)],
-                    states=[ct.StateType(ct.TensorType(shape=shape, dtype=np.float16), name="k_cache"),
-                            ct.StateType(ct.TensorType(shape=shape, dtype=np.float16), name="v_cache")],
-                    minimum_deployment_target=ct.target.macOS15, compute_precision=ct.precision.FLOAT16,
-                    compute_units=ct.ComputeUnit.CPU_AND_NE, skip_model_load=True, pass_pipeline=pipeline)
-    del traced, chunk, layers
+    descaled = {(j, p): layer.in_scale[p] for j, layer in enumerate(layers) for p in ("o", "down")}
+    ml = to_mlprogram(chunk, example, inputs, last)
+    check_descales(ml, descaled, f"chunk {index}, converted")
+    del chunk, layers
     # the const names the trace gives each projection: layers_<index in chunk>_<proj>_weight_to_fp16
     consts = {op.name for fn in ml._mil_program.functions.values() for op in fn.operations if op.op_type == "const"}
     skip = {}
@@ -1205,8 +1282,8 @@ def step_convert(job, index):
             skip[const] = None
     config = cto.coreml.OpPalettizerConfig(mode="unique", granularity="per_grouped_channel",
                                            group_size=r.palette_group, weight_threshold=2048)
-    ml = cto.coreml.palettize_weights(ml, config=cto.coreml.OptimizationConfig(global_config=config,
-                                                                               op_name_configs=skip))
+    ml = palettize(ml, cto.coreml.OptimizationConfig(global_config=config, op_name_configs=skip))
+    check_descales(ml, descaled, f"chunk {index}, palettized")
     # the palettizer skips a weight it can't store with a warning only (more than 256 values in a
     # group): every projection and head weight must have become a palette but those kept in fp16
     plain = {op.name for fn in ml._mil_program.functions.values() for op in fn.operations if op.op_type == "const"}

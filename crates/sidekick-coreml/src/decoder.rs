@@ -877,14 +877,21 @@ fn output(
 /// A `[1, D, 1, T]` fp16 hidden state as T rows of D values, token-major,
 /// through the array's strides.
 fn read_f16_hidden(array: &MLMultiArray, d: usize, t: usize) -> Result<Vec<f32>> {
+    let shape: Vec<usize> = unsafe { array.shape() }
+        .iter()
+        .map(|n| n.as_usize())
+        .collect();
     let strides: Vec<usize> = unsafe { array.strides() }
         .iter()
         .map(|n| n.as_usize())
         .collect();
-    if unsafe { array.dataType() } != MLMultiArrayDataType::Float16 || strides.len() != 4 {
-        return Err(Error::Inference(
-            "the hidden state isn't [1, D, 1, T] fp16".into(),
-        ));
+    if unsafe { array.dataType() } != MLMultiArrayDataType::Float16
+        || shape != [1, d, 1, t]
+        || strides.len() != 4
+    {
+        return Err(Error::Inference(format!(
+            "the hidden state is {shape:?}, expected [1, {d}, 1, {t}] fp16"
+        )));
     }
     let (sd, st) = (strides[1], strides[3]);
     // SAFETY: the array holds its shape's elements at its strides, alive

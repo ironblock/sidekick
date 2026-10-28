@@ -4621,17 +4621,20 @@ change:
 - the probabilities enter the value matmul times `PV_SCALE` (2^8) and its
   output is scaled back: the matmul's error is 2e-4 at every position;
 - o_proj and down_proj take a calibrated input scale
-  (`techniques.precision.input_scale`, which caps the scaled input at
-  2,048 and the scaled output at 16,384) and the inverse after them, as
-  an explicit multiply. The range calibration records their inputs' rms
-  and maximum. coremltools' `fuse_conv_scale` pass folds a multiply after
-  a convolution into its weights, and the ANE then loses as much as
-  without the scale (layer 1's output: 7.3e-3 folded, 1.6e-3 kept), so
-  the conversion of these programs runs without that pass.
+  (`techniques.precision.input_scale`, within its headroom caps) and the
+  inverse after them, as an explicit multiply. The range calibration
+  records their inputs' rms and maximum, and max |v| for the value
+  matmul's 2^15 check. coremltools' `fuse_conv_scale` pass folds a
+  multiply after a convolution into its weights, and the ANE then loses as
+  much as without the scale (layer 1's output: 7.3e-3 folded, 1.6e-3
+  kept). These programs are converted and palettized without that pass
+  (coremltools' `palettize_weights` reruns the default passes, which would
+  fold the descale of a projection kept in fp16), and the converter fails
+  a chunk in which any scaled projection has lost its multiply.
 
-The staged programs' key (`PROGRAM_REVISION`) and the range calibration's
-(`RANGES_REVISION`) carry the change, so a rerun recalibrates and
-recompiles.
+The staged programs' key carries `PROGRAM_REVISION`, the range
+calibration's key and precision's caps; the range calibration's carries
+`RANGES_REVISION`. A rerun recalibrates and recompiles.
 
 **Result.** The same draw-0 build with chunk 0 rebuilt (chunks 1-3, where
 the rewrites change little, unchanged):
