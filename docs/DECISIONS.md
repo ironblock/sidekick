@@ -4558,10 +4558,10 @@ screens. Each cell is mean KL / p99 KL / top-1, worst family first:
 - **B** is the 8-bit class. Its mean limit is the log-midpoint between the
   GPTQ build's worst family (1.7e-3) and the same palettes rounded to
   nearest (3.8e-3): 2.5e-3. Its p99 limit sits between the two (1.2e-2
-  and 8.8e-2), and its top-1 floor below both GPTQ draws. This agrees with
-  llama.cpp's KL-divergence figures for 8-bit quantisation (mean ≲ 1e-3).
-- **C** is the 4-bit class as llama.cpp reports it (mean ~1e-2); this
-  model's 4-bit build is far worse and grades D.
+  and 8.8e-2), and its top-1 floor below both GPTQ draws.
+- **C** allows about an order of magnitude more divergence than B (mean
+  2e-2, p99 0.25, top-1 95%). The 8-bit build rounded to nearest lands
+  there; this model's 4-bit build, far beyond it, grades D.
 - **D** is anything worse.
 - For another family, rerun these anchors and set each band by the same
   rule rather than reusing the numbers: the limits are properties of how
