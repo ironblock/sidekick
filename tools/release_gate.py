@@ -1166,6 +1166,19 @@ def run_one(args, binary: Path, home: Home, t: "Target") -> dict:
     return rec
 
 
+def df_free_kib() -> dict:
+    """Free KiB of the root and the Data volume, from `df -k` (APFS's
+    purgeable space and other processes move these: measure with nothing
+    else heavy running)."""
+    out = {}
+    for vol in ("/", "/System/Volumes/Data"):
+        p = subprocess.run(["df", "-k", vol], capture_output=True, text=True)
+        lines = p.stdout.strip().splitlines()
+        if p.returncode == 0 and len(lines) >= 2:
+            out[vol] = int(lines[1].split()[3])
+    return out
+
+
 def run_one_chat(args, binary: Path, home: Home, t: "Target") -> dict:
     """A chat model on its default path, the Neural Engine: one request to
     load it (and the disk its compile leaves, when it compiles), then the
@@ -1178,8 +1191,9 @@ def run_one_chat(args, binary: Path, home: Home, t: "Target") -> dict:
            "build": build.record()}
     models_dir, _note = home.serve_dir(build)
     d = Daemon(binary, home, models_dir, model, None, True, None)
-    free0, w0 = shutil.disk_usage(home.root).free, time.time()
-    cache = {"free_gib_before": round(free0 / 2**30, 2)}
+    cache = {}
+    weights = sum(f.stat().st_size for f in build.dir.glob("decoder.*.mlmodelc/weights/weight.bin"))
+    cache["weights_bytes"] = weights
     try:
         with d:
             client = Client(d.url, timeout=WARM_TIMEOUT_SECS)
@@ -1187,21 +1201,26 @@ def run_one_chat(args, binary: Path, home: Home, t: "Target") -> dict:
             if info.get("backend") != "coreml" or info.get("compute_units") != PATH_UNITS["coreml-ane"]:
                 raise GateError(f"{model}: served as {info.get('backend')}/{info.get('compute_units')}, not coreml-ane")
             print(f"[{t.label}] serving on {d.url}; loading the build", flush=True)
+            df0, w0 = df_free_kib(), time.time()
+            cache["free_gib_before"] = round(free_gib(home.root), 2)
             st, _h, payload = client.call("POST", "/v1/chat/completions", {
                 "model": model, "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1, "temperature": 0})
             if st != 200:
                 raise GateError(f"{model}: the loading request failed: HTTP {st}: {json.dumps(payload)[:300]}")
-            free1, w1 = shutil.disk_usage(home.root).free, time.time()
+            w1 = time.time()
+            df1 = df_free_kib()
             compiles = ane_compiles(w0, w1)
-            cache.update(load_seconds=round(w1 - w0, 1), load_compiles=compiles)
+            cache.update(load_seconds=round(w1 - w0, 1), load_compiles=compiles,
+                         load_df_free_kib={"before": df0, "after": df1})
             if compiles:
-                cache["load_disk_bytes"] = free0 - free1
+                cache["load_disk_bytes"] = {vol: (df0[vol] - df1[vol]) * 1024 for vol in df0 if vol in df1}
             client.timeout = ANE_REQUEST_TIMEOUT_SECS + 60
             rec.update(run_chat(args, client, model, build, d.run))
             rec["sidekick"] = client.version
     finally:
         cache["free_gib_after"] = round(free_gib(home.root), 2)
-        cache["ane_compiles"] = ane_compiles(w0, time.time())
+        if "load_seconds" in cache:
+            cache["ane_compiles"] = ane_compiles(w0, time.time())
         rec["cache"] = cache
         t.cache = cache
     rec["seconds"] = round(time.monotonic() - t0, 1)
