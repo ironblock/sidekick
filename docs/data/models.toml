@@ -200,3 +200,10 @@ task = "classify"
 source = "MoritzLaurer/ModernBERT-large-zeroshot-v2.0@a51e07b524299e309dd2b88d48b0cfa2bd9ec598"
 served = "coreml-gpu"
 license_note = "trained partly on ANLI (CC BY-NC 4.0); whether that restriction applies to the weights is unsettled; treat as non-commercial unless you've cleared it"
+
+[models."minicpm5-2b"]
+name = "MiniCPM5-2B"
+family = "Llama (MiniCPM5)"
+task = "chat"
+source = "openbmb/MiniCPM5-2B@f97400052a43d642bbc6e9975e2397e3ae6a6b52"
+served = "coreml-ane"

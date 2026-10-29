@@ -17205,6 +17205,20 @@
    ],
    "training_disclosure": "full",
    "custom_terms": []
+  },
+  "minicpm5-2b": {
+   "licence": "Apache-2.0",
+   "licence_name": "Apache-2.0",
+   "licence_spdx": true,
+   "licence_url": "https://huggingface.co/openbmb/MiniCPM5-2B/blob/f97400052a43d642bbc6e9975e2397e3ae6a6b52/README.md",
+   "tier": "2a",
+   "concerns": [
+    "copyleft-data",
+    "unlicensed-data",
+    "unnamed-synthetic-generator"
+   ],
+   "training_disclosure": "partial",
+   "custom_terms": []
   }
  }
 }
