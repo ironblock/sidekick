@@ -3479,7 +3479,14 @@
      }
     }
    ],
-   "published": [],
+   "published": [
+    {
+     "repo": "sidekickd/minicpm5-2b-coreml",
+     "revision": "3725ecca1bb8636a78b6418d4acca133e5e6646b",
+     "date": "2026-10-29",
+     "sidekick": "0.17.0"
+    }
+   ],
    "recorded": "2026-10-29",
    "evidence": "hashed",
    "note": "Converted with the value-matmul and output-projection rewrites (D55), from the recipe's calibration draw 0. Graded B by D54 on the Neural Engine; task check passed."
