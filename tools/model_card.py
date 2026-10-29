@@ -71,16 +71,16 @@ PATH_NAME = {"coreml-ane": "Neural Engine", "coreml-gpu": "GPU", "coreml-cpu": "
 BACKEND_NAME = {"coreml": "Core ML", "onnx": "ONNX"}
 BACKEND_PATHS = {"coreml": ("coreml-ane", "coreml-gpu", "coreml-cpu"), "onnx": ("onnx-cpu",)}
 CHIP_NAME = {}  # filled from runs.toml's [chips]
-PIPELINE = {"embed": "feature-extraction", "rerank": "text-ranking"}
+PIPELINE = {"embed": "feature-extraction", "rerank": "text-ranking", "chat": "text-generation"}
 COMPUTE_UNITS = {None: "coreml-ane", "cpu_and_ne": "coreml-ane", "cpu_and_gpu": "coreml-gpu",
                  "cpu_only": "coreml-cpu", "all": "coreml-ane"}
 WEIGHTS_NAME = {"fp32": "32-bit float", "fp16": "16-bit float", "fp16 weights": "16-bit float, computed in 32-bit",
-                "int8": "8-bit integer"}
+                "int8": "8-bit integer", "8-bit palettes": "8-bit palettes (GPTQ)"}
 TERMS_NAME = {"permissive": "Permissive", "share-alike": "Share-alike", "non-commercial": "Non-commercial",
               "unknown": "Unknown"}
 DISCLOSURE_NAME = {"full": "fully disclosed", "partial": "partly disclosed", "undisclosed": "undisclosed"}
 TASK_NAME = {"embed": "embedding model", "rerank": "reranker", "text-classification": "classifier",
-             "zero-shot-classification": "zero-shot classifier", "text-ranking": "reranker"}
+             "zero-shot-classification": "zero-shot classifier", "text-ranking": "reranker", "chat": "chat model"}
 SOURCE_KIND = {"mteb": "MTEB results", "mixed": "MTEB results, some tasks self-reported",
                "self-reported": "the model's authors", "independent": "an independent evaluation"}
 
@@ -92,6 +92,9 @@ DOCS = {
     "embed": ("docs/API.md", "embeddings"),
     "classify": ("docs/API.md", "classification"),
     "rerank": ("docs/API.md", "rerank"),
+    "chat": ("docs/API.md", "open-models"),
+    "grades-chat": ("docs/CONVERTING.md", "grading"),
+    "chat-ane": ("docs/BACKENDS.md", "open-chat-models-on-the-neural-engine"),
     "onnx": ("docs/MODELS.md", "onnx-runtime-on-the-cpu-onnx-cpu"),
     "grades-embed": ("docs/MODELS.md", "confidence-grades-the-parity-suite"),
     "grades-classify": ("docs/MODELS.md", "classifiers-v1classify"),
@@ -139,7 +142,8 @@ def committed_manifest(model, backend):
     ONNX, the onnx.toml beside it where one exists."""
     base = REPO / "examples" / "manifests" / model
     names = (["onnx.toml"] if backend == "onnx" else []) + ["manifest.toml"]
-    paths = [base / n for n in names] + [REPO / "examples" / "classifiers" / model / "classifier.toml"]
+    paths = [base / n for n in names] + [REPO / "examples" / "classifiers" / model / "classifier.toml",
+                                         REPO / "examples" / "chat" / model / "chat.toml"]
     for p in paths:
         if p.exists():
             text = p.read_text()
@@ -428,7 +432,7 @@ def front_matter(model, m, manifest, lic, backend, builds):
     tags = ["sidekick", backend]
     tags += ["apple-silicon", "neural-engine"] if backend == "coreml" else ["cpu"]
     tags += {"embed": ["embeddings", "sentence-embeddings"], "classify": ["text-classification"],
-             "rerank": ["reranker", "cross-encoder"]}[m["task"]]
+             "rerank": ["reranker", "cross-encoder"], "chat": ["text-generation", "chat"]}[m["task"]]
     tags.append(f"licence-tier-{lic['tier']}")
     lines.append("tags:")
     lines += [f"- {t}" for t in dict.fromkeys(tags)]
@@ -454,7 +458,8 @@ def summary(model, m, manifest, backend, builds, rows):
     what = TASK_NAME.get(m["task"] if m["task"] != "classify" else task_of(m, manifest), "model")
     dims = f" ({manifest['dims']} dimensions)" if manifest.get("dims") else ""
     article = "an" if m["family"][0].lower() in "aeiou" else "a"
-    where = ("for Apple silicon's Neural Engine, GPU and CPU" if backend == "coreml"
+    where = ("for Apple silicon's Neural Engine" if m["task"] == "chat"
+             else "for Apple silicon's Neural Engine, GPU and CPU" if backend == "coreml"
              else "for ONNX Runtime's CPU backend on macOS and Linux")
     held = (f"one build, `{builds[0]['variant']}/`" if len(builds) == 1
             else f"{len(builds)} builds" if builds else "no build yet")
@@ -501,10 +506,22 @@ def runs_on(b, rows, backend, served):
     return ", ".join(out) or "not graded yet"
 
 
+def chat_download_rows(builds):
+    rows = []
+    for b in builds:
+        grade = next((g["grade"] for g in b["grades"] if g.get("rubric") == "D54"), None)
+        rows.append([f"`{b['variant']}/`", WEIGHTS_NAME.get(b["quantization"], b["quantization"]),
+                     f"{b['chunks']} programs", b["max_seq_len"] or "", mb(build_size(b)),
+                     f"Neural Engine {grade}" if grade else "not graded yet"])
+    return table(["Build", "Weights", "Decoder", "Context (tokens)", "Download", "Runs on (grade)"], rows)
+
+
 def download(model, m, manifest, backend, builds, rows, lic, link):
     served = served_path(m, manifest, backend)
     out = []
-    if builds:
+    if builds and m["task"] == "chat":
+        out.append(chat_download_rows(builds))
+    elif builds:
         trows = []
         for b in builds:
             shape = ", ".join(map(str, b["buckets"])) if b["buckets"] else "any length"
@@ -538,7 +555,7 @@ def download(model, m, manifest, backend, builds, rows, lic, link):
     out += ["", "```sh", cmd, "```", "",
             (f"Needs sidekick {since} or later. " if since else "")
             + " · ".join([link("fetch", "How fetch works"), link("by-hand", "Installing without fetch"),
-                          link({"embed": "embed", "classify": "classify", "rerank": "rerank"}[m["task"]],
+                          link({"embed": "embed", "classify": "classify", "rerank": "rerank", "chat": "chat"}[m["task"]],
                                "Calling the model")])]
     if backend == "coreml":
         out[-1] += " · " + link("compiled", "Why compiled programs")
@@ -557,7 +574,65 @@ def measure_header(m):
     return "Worst cosine" if m["task"] == "embed" else "Worst \\|Δp\\|"
 
 
+FAMILY_NAME = {"repository": "Repository texts", "prose": "Long prose (held out)"}
+TASK_FAMILY = {"titles": "Titles", "tags_vocab": "Tags (fixed vocabulary)", "tags_free": "Tags (free)",
+               "extraction": "Extraction", "instructions": "Instructions"}
+
+
+def chat_fidelity(builds, link):
+    """A chat build's D54 grade: each evaluation family's KL divergence
+    from fp32 and top-1 agreement, and the task check."""
+    out = [f"Graded against the original model in fp32 by sidekick's converter and grader, on the KL "
+           f"divergence of each next-token distribution and top-1 agreement over held-out texts, per text "
+           f"family, the build earning its worst family's letter. {link('grades-chat', 'What the grades mean')}."]
+    for b in builds:
+        for g in (g for g in b["grades"] if g.get("rubric") == "D54"):
+            out += ["", f"**{g['grade']}** on the {PATH_NAME[g['path']]}, {chip(g['chip'])}, "
+                    f"{(g['os'] or '').split(' (')[0]}"
+                    + (" (both calibration draws screened alike)" if g.get("stable") else "")
+                    + (f", for `{b['variant']}/`" if len(builds) > 1 else "") + ":", ""]
+            out.append(table(["Texts", "Positions", "KL mean", "KL p99", "Top-1", "Grade"],
+                             [[FAMILY_NAME.get(f, f), v["positions"], f"{v['kl_mean']:.2e}", f"{v['kl_p99']:.2e}",
+                               f"{100 * v['top1']:.2f}%", v["grade"]] for f, v in g["families"].items()]))
+            tc = g.get("task_check")
+            if tc:
+                out += ["", "Task check, the build served by sidekickd against the original model in fp32 on "
+                        "the same requests of sidekick's chat benchmark: "
+                        + ("**passed**" if tc["passed"] else "**failed**") + ".", ""]
+                out.append(table(["Task", "Requests", "This build", "fp32", "Difference", "Identical replies"],
+                                 [[TASK_FAMILY.get(f, f), v["n"], f"{v['candidate']:.3f}", f"{v['reference']:.3f}",
+                                   f"{v['difference']:+.3f}", f"{100 * v['identical_replies']:.0f}%"]
+                                  for f, v in tc["families"].items()]))
+    if len(out) == 1:
+        out += ["", "Not graded yet."]
+    out += ["", "The grading report's file hashes match this repository's files."]
+    return "\n".join(out)
+
+
+def install_cost(model, builds, link):
+    """What installing a chat build costs beyond its download, and what it
+    shares the Neural Engine with."""
+    costs = [c for c in INPUTS["publishing"].get("ane_cache", []) if c["model"] == model
+             and c["build"] in {b["id"] for b in builds}]
+    if costs:
+        sizes = "; ".join(f"measured {c['bytes'] / 2**30:.2f} GiB for `{next(b['variant'] for b in builds if b['id'] == c['build'])}/`"
+                          f" ({chip(c['chip'])}, {c['os']})" for c in costs)
+    else:
+        sizes = None
+    return "\n".join([
+        f"- **Neural Engine compile cache:** the first load of an install compiles the decoder for the Neural "
+        f"Engine, and macOS keeps the compiled program in a system cache that you can't delete"
+        + (f": {sizes}" if sizes else " (about the size of the weights; not yet measured for this build)")
+        + ". It is paid once per install and again after a macOS update.",
+        "- **Shared with Apple Foundation Models:** the Neural Engine is shared, so other apps using Apple "
+        "Foundation Models, or other Neural Engine work, stall this model's generations while they run. "
+        "sidekickd reports the stalls but can't prevent them.",
+        "", link("chat-ane", "Open chat models on the Neural Engine")])
+
+
 def fidelity(model, m, manifest, backend, builds, rows, link):
+    if m["task"] == "chat":
+        return chat_fidelity(builds, link)
     served = served_path(m, manifest, backend) if backend == "coreml" else None
     several = len(builds) > 1
     # (path, chip, report) -> the build whose files that report graded
@@ -685,7 +760,7 @@ def build_details(b, link):
                      ("xcode", "Xcode"), ("chip", "Converted on"), ("date", "Converted")):
         if p.get(k):
             made.append([label, p[k]])
-    if b["backend"] == "coreml":
+    if b["backend"] == "coreml" and b["buckets"]:
         made.append(["Shared weights", "Yes: " + link("shared", "one weights file for every bucket")
                      if b["layout"] == "shared" else "No: one weights file per bucket"])
     if b["evidence"] == "sha256sums":
@@ -753,6 +828,8 @@ def render(model, backend="coreml", build_ids=None, owner=None, ref=None, links=
         "## Fidelity", "",
         fidelity(model, m, manifest, backend, builds, rows, link),
     ]
+    if m["task"] == "chat":
+        parts += ["", "## Before you install", "", install_cost(model, builds, link)]
     bench = benchmarks(model, builds, INPUTS["results"], link)
     if bench:
         parts += ["", "## Benchmark scores", "", bench]
