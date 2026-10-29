@@ -615,8 +615,10 @@ def install_cost(model, builds, link):
     costs = [c for c in INPUTS["publishing"].get("ane_cache", []) if c["model"] == model
              and c["build"] in {b["id"] for b in builds}]
     if costs:
-        sizes = "; ".join(f"measured {c['bytes'] / 2**30:.2f} GiB for `{next(b['variant'] for b in builds if b['id'] == c['build'])}/`"
-                          f" ({chip(c['chip'])}, {c['os']})" for c in costs)
+        sizes = "; ".join(f"{c['bytes'] / 2**30:.2f} GiB, about one copy of its weights "
+                          f"({c['weights_bytes'] / 2**30:.2f} GiB), measured on "
+                          f"`{next(b['variant'] for b in builds if b['id'] == c['build'])}/`'s first load "
+                          f"({chip(c['chip'])}, {c['os']}, {c['date']})" for c in costs)
     else:
         sizes = None
     return "\n".join([
