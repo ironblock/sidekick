@@ -246,13 +246,21 @@ class LedgerTest(unittest.TestCase):
                   for rel in sorted(str(f.relative_to(chat)) for f in chat.rglob("*") if f.is_file())
                   if rel != "chat.toml"]
         fam = {"positions": 10, "kl_mean": 1e-3, "kl_p99": 1e-2, "top1": 0.99, "grade": "B"}
+        digest = ledger.chat_manifest_digest((chat / "chat.toml").read_text())
+        # the worse path by letter first: C at a lower mean KL beats B at a higher one
         report = {"rubric": "D54", "model": "minicpm5-2b", "chip": "Apple M1 Max", "macos": "macOS 27.0 (26A428)",
-                  "files": graded, "grade": "B", "stable": True,
-                  "paths": {"generation": {"families": {"prose": fam}},
+                  "files": graded, "manifest_digest": digest, "grade": "C", "stable": True,
+                  "paths": {"generation": {"families": {"prose": dict(fam, grade="C", kl_p99=5e-2)}},
                             "prompt": {"families": {"prose": dict(fam, kl_mean=2e-3)}}}}
         (reports / "causal-lm-minicpm5-2b.json").write_text(json.dumps(report))
-        stale = dict(report, files=[dict(graded[0], sha256="0" * 64)] + graded[1:])
-        (reports / "stale.json").write_text(json.dumps(stale))
+        for name, other in (("stale.json", dict(report, files=[dict(graded[0], sha256="0" * 64)] + graded[1:])),
+                            ("subset.json", dict(report, files=graded[1:])),
+                            ("superset.json", dict(report, files=graded + [{"path": "x", "sha256": "0" * 64}])),
+                            ("manifest.json", dict(report, manifest_digest="0" * 64))):
+            (reports / name).write_text(json.dumps(other))
+        # graded_os, written after grading, doesn't detach the grade
+        text = (chat / "chat.toml").read_text()
+        (chat / "chat.toml").write_text(text.replace("[decoder]", 'graded_os = "macOS 27.0"\n\n[decoder]', 1))
         task = self.dir / "task-check.json"
         task.write_text(json.dumps({"passed": True, "families": {"titles": {
             "metric": "rouge_l", "candidate": 0.45, "reference": 0.44, "difference": 0.01, "passed": True, "n": 20,
@@ -264,9 +272,10 @@ class LedgerTest(unittest.TestCase):
                          ("palette8", "8-bit palettes", [], 2, 2033))
         self.assertTrue(b["id"].startswith("minicpm5-2b/coreml/palette8/"))
         [g] = b["grades"]
-        self.assertEqual((g["path"], g["grade"], g["rubric"], g["report"]), ("coreml-ane", "B", "D54",
+        self.assertEqual((g["path"], g["grade"], g["rubric"], g["report"]), ("coreml-ane", "C", "D54",
                                                                             "causal-lm-minicpm5-2b.json"))
-        self.assertEqual(g["families"]["prose"]["kl_mean"], 2e-3)     # the worse of the two decoder paths
+        self.assertEqual(g["families"]["prose"], {"kl_mean": 1e-3, "kl_p99": 5e-2, "top1": 0.99, "grade": "C",
+                                                  "positions": 10})
         self.assertTrue(g["task_check"]["passed"])
         self.assertEqual(ledger.problems(json.loads(self.ledger.read_text()), ledger.load_models()), [])
         self.assertIn("matches", run("--ledger", str(self.ledger), "verify", str(chat)))
@@ -274,6 +283,13 @@ class LedgerTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             run("--ledger", str(self.ledger), "verify", str(chat))
         self.assertIn("host tables: sha256 differs", str(e.exception))
+
+    def test_a_chat_build_with_unknown_weights_is_refused(self):
+        chat = make_chat_build(self.dir / "chat")
+        (chat / "chat.toml").write_text(CHAT_MANIFEST.replace('weights = "palette8"', 'weights = "int4"'))
+        with self.assertRaises(SystemExit) as e:
+            run("--ledger", str(self.ledger), "add", str(chat))
+        self.assertIn("'int4'", str(e.exception))
 
     def test_check_refuses_a_tampered_entry(self):
         self.add()

@@ -20,10 +20,11 @@ family (the repository's texts, #173's set, against held-out prose). The
 ANE grade is the worse of the two paths' grades; the build's grade is the
 ANE's, or lower when the converter's two calibration draws screened
 differently (the stability check). Writes <work>/ane-grade.json, the
-grade report: the grades, the rubric (D54), the chip and macOS, and the
-sha256 of every file of the build it graded but `chat.toml`, so the
-checksum ledger can attach the grade to exactly these files
-(tools/ledger.py). `--report-dir DIR` also writes it to DIR under a name of
+grade report: the grades, the rubric (D54), the chip and macOS, the
+sha256 of every file of the build it graded but `chat.toml`, and
+`chat.toml`'s digest without `graded_os` (tools/ledger.py's
+chat_manifest_digest), so the checksum ledger can attach the grade to
+exactly this build. `--report-dir DIR` also writes it to DIR under a name of
 its own, for docs/data/runs.toml to describe; `--record-os` writes the
 macOS it was graded on into the build's `chat.toml` as `graded_os`, which
 `/v1/models` lists.
@@ -55,6 +56,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import ledger  # noqa: E402  (tools/ledger.py: the chat manifest's digest)
 from sidekick_convert import causal_lm as L  # noqa: E402
 
 PATHS = {"generation": "token", "prompt": "tokens"}
@@ -115,6 +117,7 @@ def main():
                    help="write the macOS it was graded on into the build's chat.toml as graded_os")
     args = p.parse_args()
     files_before = graded_files(args.model_dir)
+    manifest_before = ledger.chat_manifest_digest((args.model_dir / MANIFEST).read_text())
     job = L.Job.load(args.work / "job.json")
     refs_dir = args.work / "references"
     meta = json.loads((refs_dir / "meta.json").read_text())
@@ -161,11 +164,13 @@ def main():
     report = json.loads((args.work / "report.json").read_text())
     ane = L.worse(*(g["grade"] for g in grades.values()))
     final = ane if report.get("stable", True) else L.worse(ane, report["screen_grade"])
-    if graded_files(args.model_dir) != files_before:
+    if (graded_files(args.model_dir) != files_before
+            or ledger.chat_manifest_digest((args.model_dir / MANIFEST).read_text()) != manifest_before):
         raise SystemExit("the build's files changed while it was graded")
     chip, macos, graded_os = machine()
     summary = {"rubric": "D54", "model": job.model_id, "chip": chip, "macos": macos,
                "date": datetime.date.today().isoformat(), "files": files_before,
+               "manifest_digest": manifest_before,
                "paths": grades, "ane_grade": ane, "prompt_rows": prompt_rows, "greedy": same,
                "stable": report.get("stable"), "screens": report.get("screens"), "grade": final,
                "ceiling": meta.get("ceiling"),

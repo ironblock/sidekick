@@ -3418,6 +3418,7 @@
      "report": "causal-lm-minicpm5-2b-2026-10-29.json",
      "rubric": "D54",
      "stable": true,
+     "manifest_digest": "4c8f3cc0372e339f3ef76fa7cc4ee0ae352050387d0141f80b4a91301860d816",
      "families": {
       "prose": {
        "kl_mean": 0.0012790590044417676,

@@ -35,9 +35,12 @@ also takes a release candidate's own).
 A chat build (a `kv-state-1` decoder, D53: `chat.toml`, `decoder.<N>.mlmodelc`
 chunks, host tables) is graded by D54, not by the parity suite. Its grade
 report, tools/grade_causal_lm.py's, records the sha256 of every file it
-graded but `chat.toml`; `--reports` attaches it when every one of those
-files is this build's, at the same path, with the rubric and each
-family's KL mean, p99 and top-1. `--task-check FILE` (task_check.py's
+graded but `chat.toml`, and `chat.toml`'s manifest digest (its content
+without `graded_os`, which the grader writes afterwards); `--reports`
+attaches it when those files are exactly this build's (the same paths,
+none missing, none extra) and the digest is this build's `chat.toml`'s,
+with the rubric and each family's KL mean, p99, top-1 and letter from the
+worse of the decoder's two paths. `--task-check FILE` (task_check.py's
 `--json`) adds the task check to that grade.
 With `--sums`, it records an archived build from a `shasum -a 256` listing
 instead of hashing files; sizes are then unknown unless `--sizes` gives a
@@ -306,6 +309,18 @@ def graded_files_match(files, recorded):
     return all(f.get("path") in files and files[f["path"]][0] == f.get("sha256") for f in recorded)
 
 
+LETTER_ORDER = {letter: i for i, letter in enumerate(LETTERS)}
+
+
+def chat_manifest_digest(text):
+    """sha256 of a chat.toml's content without `graded_os`: its parsed table
+    as canonical JSON, so the line tools/grade_causal_lm.py --record-os
+    adds after grading doesn't move it, and any other change does."""
+    table = tomllib.loads(text)
+    table.pop("graded_os", None)
+    return hashlib.sha256(json.dumps(table, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 def chat_reports(dirs):
     """(file name, report) for every D54 grade report under `dirs`."""
     for d in dirs:
@@ -318,27 +333,35 @@ def chat_reports(dirs):
                 yield p.name, rep
 
 
-def chat_grades(model, files, dirs, any_report=False, task_check=None):
-    """The D54 grades of every grade report whose graded files are all this
-    build's, at the same paths (only reports runs.toml describes, unless
-    `any_report`): the Neural Engine path, the build's letter, and each
-    family's KL mean, p99 and top-1, on the worse of the two decoder paths."""
+def chat_grades(model, files, dirs, any_report=False, task_check=None, manifest_path=None):
+    """The D54 grades of every grade report that graded exactly this build:
+    its files but chat.toml, and chat.toml's content but graded_os (only
+    reports runs.toml describes, unless `any_report`). Each records the
+    Neural Engine path, the build's letter, and each family's KL mean, p99,
+    top-1 and letter from the worse of the decoder's two paths (by letter,
+    then mean KL)."""
     registered = registered_reports()
+    graded = {rel: sha for rel, (sha, _) in files.items() if rel != "chat.toml"}
+    manifest = chat_manifest_digest(Path(manifest_path).read_text()) if manifest_path else None
     out = []
     for name, rep in chat_reports(dirs):
         if rep.get("model") != model or not (any_report or name in registered):
             continue
-        if not all(f["path"] in files and files[f["path"]][0] == f["sha256"] for f in rep["files"]):
+        if {f["path"]: f["sha256"] for f in rep["files"]} != graded:
+            continue
+        if manifest is None or rep.get("manifest_digest") != manifest:
             continue
         fams = {}
         for path in rep["paths"].values():
             for fam, g in path["families"].items():
                 cur = fams.get(fam)
-                if cur is None or g["kl_mean"] > cur["kl_mean"]:
+                key = (LETTER_ORDER[g["grade"]], g["kl_mean"])
+                if cur is None or key > (LETTER_ORDER[cur["grade"]], cur["kl_mean"]):
                     fams[fam] = {"kl_mean": g["kl_mean"], "kl_p99": g["kl_p99"], "top1": g["top1"],
                                  "grade": g["grade"], "positions": g["positions"]}
         grade = {"path": "coreml-ane", "chip": rep["chip"], "os": rep.get("macos"), "grade": rep["grade"],
-                 "report": name, "rubric": "D54", "stable": rep.get("stable"), "families": fams}
+                 "report": name, "rubric": "D54", "stable": rep.get("stable"), "manifest_digest": manifest,
+                 "families": fams}
         if task_check is not None:
             tc = json.loads(Path(task_check).read_text())
             grade["task_check"] = {"passed": tc["passed"], "report": Path(task_check).name, "families": {
@@ -432,6 +455,7 @@ def cmd_add(args):
         if args.sizes and (unsized := sorted(r for r, (_, size) in files.items() if size is None)):
             raise SystemExit(f"--sizes gives no size for: {', '.join(unsized)}")
         manifest_text = ""
+        mpath = None
         meta = {}
         evidence = "sha256sums"
     else:
@@ -457,7 +481,10 @@ def cmd_add(args):
     chat = manifest.get("task") == "text-generation"
     precision = {"Float16": "fp16", "Float32": "fp32"}.get(meta.get("precision"))
     if chat:
-        precision = CHAT_WEIGHTS.get(manifest.get("build", {}).get("weights"))
+        weights = manifest.get("build", {}).get("weights")
+        if weights not in CHAT_WEIGHTS:
+            raise SystemExit(f"chat.toml's [build] weights {weights!r} isn't one of {', '.join(CHAT_WEIGHTS)}")
+        precision = CHAT_WEIGHTS[weights]
     quant = args.quantization or precision or ("fp32" if backend == "onnx" else "fp16")
     buckets, chunks = bucket_layout(files)
     if backend == "onnx":
@@ -490,7 +517,7 @@ def cmd_add(args):
             "date": args.date or meta.get("date"),
         },
         "files": group(files),
-        "grades": (chat_grades(model, files, args.reports or [], args.any_report, args.task_check) if chat
+        "grades": (chat_grades(model, files, args.reports or [], args.any_report, args.task_check, mpath) if chat
                    else matching_grades(model, files, args.reports or [], args.any_report))
         + [parse_grade(g) for g in args.grade or []],
         "published": [],
