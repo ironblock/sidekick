@@ -136,14 +136,31 @@ def floor_tier(entry):
     undisclosed training data, or an unnamed generator, is 2a: disclosed on
     the card, without a gate. Tier 3 is never implied: it is a judgement
     about the licence, which `reason` must give."""
-    terms = {d.get("terms") for d in entry.get("training_data", [])}
+    return floor_verdict(entry)[0]
+
+
+def floor_verdict(entry):
+    """(floor tier, the recorded facts that set it): each dataset whose
+    terms aren't permissive, named with its terms, an unverified licence
+    named as such (it counts as unknown terms whatever `terms` says), and
+    the disclosure and concerns that apply."""
+    reasons = []
+    for d in entry.get("training_data", []):
+        if d.get("licence") == "unverified":
+            reasons.append(f"{d['name']}: licence unverified")
+        elif d.get("terms") != "permissive":
+            reasons.append(f"{d['name']}: {d.get('terms')}")
     concerns = set(entry.get("concerns", []))
-    if concerns & set(TRAVELLING):
-        return "2b"
-    if (terms & {"non-commercial", "share-alike", "unknown"} or entry.get("training_disclosure") != "full"
-            or "unnamed-synthetic-generator" in concerns or not entry.get("training_data")):
-        return "2a"
-    return "1"
+    travelling = sorted(concerns & set(TRAVELLING))
+    if travelling:
+        return "2b", [f"travelling terms ({', '.join(travelling)})"] + reasons
+    if entry.get("training_disclosure") != "full":
+        reasons.append(f"training data {entry.get('training_disclosure')}")
+    if "unnamed-synthetic-generator" in concerns:
+        reasons.append("synthetic data from an unnamed generator")
+    if not entry.get("training_data"):
+        reasons.append("no training data recorded")
+    return ("2a" if reasons else "1"), reasons
 
 
 def pinned(url):
@@ -220,6 +237,8 @@ def problems(data=None, models=None):
                 continue
             if d["terms"] not in TERMS:
                 out.append(f"{w}: {d['name']}: terms {d['terms']!r} isn't one of {', '.join(TERMS)}")
+            if d.get("licence") == "unverified" and d["terms"] != "unknown":
+                out.append(f"{w}: {d['name']}: an unverified licence has unknown terms, not {d['terms']!r}")
             hub = d.get("hub", [])
             if not isinstance(hub, list) or not all(isinstance(h, str) and HUB_ID.match(h) for h in hub):
                 out.append(f"{w}: {d['name']}: hub must be a list of Hugging Face dataset ids (org/name)")
@@ -282,7 +301,9 @@ def main():
         print(f"licences: {len(data)} verdicts, valid")
         return
     for mid, e in data.items():
-        print(f"{mid:34} {e['tier']:3} {e['licence']}")
+        tier, reasons = floor_verdict(e)
+        why = f"  ({'; '.join(reasons)})" if reasons and e["tier"] != "3" else ""
+        print(f"{mid:34} {e['tier']:3} {e['licence']}{why}")
 
 
 if __name__ == "__main__":

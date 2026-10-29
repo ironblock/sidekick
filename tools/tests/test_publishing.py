@@ -333,6 +333,15 @@ class LicencesTest(unittest.TestCase):
         found = self.check(entry(training_data=nc, concerns=["non-commercial-data"], tier="2b"))
         self.assertTrue(any("puts it at 2a" in p for p in found), found)
 
+    def test_an_unverified_licence_counts_as_unknown_and_is_named(self):
+        unv = [{"name": "u", "licence": "unverified", "terms": "unknown", "source": "https://e.org", "stage": "x"}]
+        tier, reasons = licences.floor_verdict(entry(training_data=unv))
+        self.assertEqual((tier, reasons), ("2a", ["u: licence unverified"]))
+        self.assertEqual(licences.floor_verdict(entry()), ("1", []))
+        unv[0]["terms"] = "permissive"
+        found = self.check(entry(training_data=unv, tier="2a"))
+        self.assertTrue(any("unverified licence has unknown terms" in p for p in found), found)
+
     def test_tier_must_follow_the_data(self):
         sa = [{"name": "s", "licence": "CC-BY-SA-4.0", "terms": "share-alike", "source": "https://e.org", "stage": "x"}]
         found = self.check(entry(training_data=sa, concerns=["copyleft-data"], tier="1"))
