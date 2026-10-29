@@ -52,8 +52,9 @@ What it does:
      family's headline score (tools/chat_bench's scorers), the guided
      replies that don't satisfy their schema, and the requests whose
      `usage` differs from the build's tokenizer and template (a guided
-     request's prompt count, which carries the daemon's schema instruction,
-     exactly) are compared with the baseline (tools/chat_bench/gate_score.py, in the chat
+     prompt with the daemon's schema instruction in it, which sidekick-llm's
+     schema_instruction example renders), each by id with its deltas, are
+     compared with the baseline (tools/chat_bench/gate_score.py, in the chat
      benchmark's environment: `--chat-python`). The first request loads
      the build; the free disk before and after it is recorded as the Neural
      Engine compile cache the load left, when it compiled.
@@ -235,9 +236,10 @@ TOLERANCES = {
               "about": "1 - worst cosine with fp32 (embedders), largest |score - fp32| (rerankers)"},
     "sanity": {"abs": 0.01, "about": "each class probability in the textbook MNLI triple"},
     "chat_score": {"abs": 0.02, "about": "a chat-benchmark family's headline score (mode:family), over 12 items"},
-    "exact": {"about": "counts that must not change: refused requests, token-count mismatches, "
-                       "sanity verdicts, probs/nli_probs disagreements; a chat model's replies that differ "
-                       "between two runs at temperature 0, and its guided replies that fail their schema"},
+    "exact": {"about": "values that must not change: refused requests, token-count mismatches, sanity "
+                       "verdicts, probs/nli_probs disagreements; for a chat model, its replies that differ "
+                       "between two runs at temperature 0, its guided replies that fail their schema, and each "
+                       "request whose usage differs from the build's tokenizer and template, with its deltas"},
 }
 
 
@@ -1060,6 +1062,16 @@ def chat_reply(client: Client, model: str, r: dict, guided: bool) -> dict:
     return rec
 
 
+def schema_instructions(reqs: list[dict]) -> dict:
+    """{"family:item": the instruction the daemon puts in a guided request's
+    prompt}, rendered by sidekick-llm itself (its schema_instruction example)."""
+    p = subprocess.run(["cargo", "run", "-q", "--release", "-p", "sidekick-llm", "--example", "schema_instruction"],
+                       cwd=REPO, input=json.dumps([r["schema"] for r in reqs]), capture_output=True, text=True)
+    if p.returncode != 0:
+        raise GateError(f"rendering the schema instructions failed:\n{p.stderr[-1500:]}")
+    return {f"{r['family']}:{r['item']}": text for r, text in zip(reqs, json.loads(p.stdout))}
+
+
 def run_chat(args, client: Client, model: str, build: Build, run_dir: Path) -> dict:
     """The chat sample twice, prompt-only and guided; the replies must be
     byte-identical between the runs, and the first run is scored."""
@@ -1075,9 +1087,11 @@ def run_chat(args, client: Client, model: str, build: Build, run_dir: Path) -> d
                  for m in modes for a, b in zip(first[m]["records"], second[m]["records"]))
     path = run_dir / "chat-run.json"
     path.write_text(json.dumps({"modes": first}, ensure_ascii=False))
+    instructions = run_dir / "chat-instructions.json"
+    instructions.write_text(json.dumps(schema_instructions([r for r, _g in modes["guided"]])))
     try:
         p = subprocess.run([args.chat_python, str(REPO / "tools" / "chat_bench" / "gate_score.py"), str(path),
-                            str(build.dir)], capture_output=True, text=True, timeout=1800)
+                            str(build.dir), str(instructions)], capture_output=True, text=True, timeout=1800)
     except subprocess.TimeoutExpired:
         raise GateError(f"{model}: scoring the chat sample took over 30 min")
     if p.returncode != 0:
@@ -1086,11 +1100,8 @@ def run_chat(args, client: Client, model: str, build: Build, run_dir: Path) -> d
     recs = [r for m in modes for r in first[m]["records"]]
     metrics = {"n": len(recs), "refused": sum(r["status"] != 200 for r in recs), "nondeterministic_replies": differ,
                "schema_invalid": scored["schema_invalid"],
-               "prompt_token_mismatches": scored["prompt_token_mismatches"],
-               "completion_token_mismatches": scored["completion_token_mismatches"],
-               # every guided request's prompt_tokens, exactly: the daemon's schema instruction is in them
-               "guided_prompt_tokens": hashlib.sha256(json.dumps(scored["guided_prompt_tokens"]).encode())
-               .hexdigest()[:16]}
+               # each request whose usage differs from its tokens, with the deltas: held to the baseline exactly
+               "usage_mismatches": json.dumps(scored["usage_mismatches"], sort_keys=True)}
     metrics.update({f"chat:{k}": v for k, v in scored["scores"].items()})
     sample = hashlib.sha256(json.dumps([[m, r["family"], r["item"], r["messages"], r["max_tokens"]]
                                         for m, todo in modes.items() for r, _g in todo]).encode()).hexdigest()
@@ -1236,8 +1247,7 @@ def run_one_chat(args, binary: Path, home: Home, t: "Target") -> dict:
 
 def metric_rule(name: str) -> str:
     if name in ("n", "refused", "token_count_mismatches", "probs_vs_nli_probs_disagreements",
-                "nondeterministic_replies", "schema_invalid", "prompt_token_mismatches",
-                "completion_token_mismatches", "guided_prompt_tokens"):
+                "nondeterministic_replies", "schema_invalid", "usage_mismatches"):
         return "exact"
     if name.startswith("chat:"):
         return "chat_score"
@@ -1344,9 +1354,11 @@ def headline(rec: dict) -> str:
             s += f", fp32 top-1 agreement {m['agree_fp32_top1']:.3f}, max |Δp| {m['max_abs_dp_fp32']:.3g}"
         return s
     if k == "chat":
+        usage = json.loads(m["usage_mismatches"])
         return (f"{m['n']} requests, {m['nondeterministic_replies']} not repeatable, {m['schema_invalid']} guided "
-                f"invalid, usage mismatches {m['prompt_token_mismatches']} prompt / "
-                f"{m['completion_token_mismatches']} completion, refused {m['refused']}")
+                f"invalid, usage mismatches {len(usage)}"
+                + (f" ({', '.join(f'{k} {v}' for k, v in usage.items())})" if usage else "")
+                + f", refused {m['refused']}")
     parts = [f"{t} {m[f'mteb:{t}']:.4f}" for t in MTEB_TASKS if f"mteb:{t}" in m]
     return ", ".join(parts) + f"; worst cos fp32 {m['worst_cosine_fp32']:.6f}"
 

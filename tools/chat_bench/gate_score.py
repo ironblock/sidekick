@@ -3,7 +3,7 @@ chat benchmark's headline metric per family and mode, the guided replies
 that don't satisfy their schema, and the requests whose `usage` doesn't
 match the build's own tokenizer and chat template.
 
-    python tools/chat_bench/gate_score.py <run.json> <build dir>
+    python tools/chat_bench/gate_score.py <run.json> <build dir> [<instructions.json>]
 
 Reads the gate's run file ({"modes": {mode: {"records": [...]}}}, each
 record as tools/chat_bench/run.py writes one, with the request's
@@ -11,18 +11,20 @@ record as tools/chat_bench/run.py writes one, with the request's
 environment (tools/chat_bench/requirements.txt), which has the scorers'
 packages and transformers, for the template.
 
-Token counts. A prompt-only request's `prompt_tokens` must be the rendered
-prompt's length, as transformers renders the build's template with its
-`[chat] template_kwargs`. A guided request's prompt also carries the
-daemon's schema instruction (sidekick-llm's `with_schema_in_prompt`), which
-this doesn't reproduce, so its counts are reported as they are, for the gate
-to hold to its baseline exactly. `completion_tokens` must be the reply's
+Token counts. A request's `prompt_tokens` must be its rendered prompt's
+length, as transformers renders the build's template with its `[chat]
+template_kwargs`. A guided request's prompt also carries the daemon's
+schema instruction, placed as sidekick-llm's `with_schema_in_prompt` places
+it: `<instructions.json>` maps each guided request (`family:item`) to the
+instruction text, as `cargo run -p sidekick-llm --example
+schema_instruction` renders it. `completion_tokens` must be the reply's
 tokens re-encoded, plus one for a prompt-only reply that ended on a stop
 token (finish_reason `stop`), which the daemon counts; a guided reply ends
 when its grammar does, without one. A model may generate a reply in other
 tokens than its re-encoding (greedy decoding needn't pick the canonical
-split), so a mismatch is counted, not judged here: the gate holds the count
-to its baseline.
+split), so a mismatch isn't judged here: each is reported by request with
+its deltas (`usage - expected`), and the gate holds the set to its
+baseline.
 """
 
 from __future__ import annotations
@@ -58,6 +60,19 @@ def counter(build: Path):
     return prompt, completion
 
 
+def with_schema_in_prompt(messages: list[dict], instruction: str) -> list[dict]:
+    """sidekick-llm's `with_schema_in_prompt`: the instruction after the
+    system message's own text and a blank line, or as a system message of
+    its own."""
+    out = [dict(m) for m in messages]
+    if out and out[0]["role"] == "system":
+        text = out[0]["content"]
+        out[0]["content"] = instruction if not text.strip() else f"{text.rstrip()}\n\n{instruction}"
+    else:
+        out.insert(0, {"role": "system", "content": instruction})
+    return out
+
+
 def schema_ok(content: str, schema: dict) -> bool:
     import jsonschema
     value, strict = score.parse_json(content)
@@ -76,8 +91,8 @@ def main() -> int:
     cfg, items, schemas = tasks.load_config(), tasks.load_items(), tasks.load_schemas()
     emb = score.Embedder(None, "none", Path("/nonexistent"))
     prompt_tokens, completion_tokens = counter(build)
-    out = {"scores": {}, "schema_invalid": 0, "prompt_token_mismatches": 0, "completion_token_mismatches": 0,
-           "guided_prompt_tokens": []}
+    instructions = json.loads(Path(sys.argv[3]).read_text()) if len(sys.argv) > 3 else {}
+    out = {"scores": {}, "schema_invalid": 0, "usage_mismatches": {}}
     for mode, part in run["modes"].items():
         fam, _ = score.score_run(part, cfg, items, schemas, emb)
         for f, v in fam.items():
@@ -88,14 +103,14 @@ def main() -> int:
             if mode == "guided" and r.get("schema") is not None and not schema_ok(r["content"], r["schema"]):
                 out["schema_invalid"] += 1
             u = r.get("usage") or {}
+            messages = r["messages"]
             if mode == "guided":
-                out["guided_prompt_tokens"].append(u.get("prompt_tokens"))
-            elif u.get("prompt_tokens") != prompt_tokens(r["messages"]):
-                out["prompt_token_mismatches"] += 1
+                messages = with_schema_in_prompt(messages, instructions[f"{r['family']}:{r['item']}"])
             stop = mode != "guided" and r.get("finish_reason") == "stop"
-            want = completion_tokens(r["content"]) + (1 if stop else 0)
-            if u.get("completion_tokens") != want:
-                out["completion_token_mismatches"] += 1
+            dp = (u.get("prompt_tokens") or 0) - prompt_tokens(messages)
+            dc = (u.get("completion_tokens") or 0) - (completion_tokens(r["content"]) + (1 if stop else 0))
+            if dp or dc:
+                out["usage_mismatches"][f"{mode}:{r['family']}:{r['item']}"] = {"prompt": dp, "completion": dc}
     print(json.dumps(out))
     return 0
 
