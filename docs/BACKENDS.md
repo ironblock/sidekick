@@ -25,6 +25,7 @@ path is in [MODELS.md](MODELS.md).
   - [The CPU sequence cap](#the-cpu-sequence-cap)
   - [The ANE sequence cap](#the-ane-sequence-cap)
   - [Where Core ML places operations](#where-core-ml-places-operations)
+  - [Open chat models on the Neural Engine](#open-chat-models-on-the-neural-engine)
 - [ONNX Runtime on the CPU](#onnx-runtime-on-the-cpu)
   - [Threads](#threads)
 - [The static tier](#the-static-tier)
@@ -326,6 +327,29 @@ bucket) after it returned. With live reads on:
   keyed by the artifact (its program's content, its weights' sizes and
   modification times), the compute units and the macOS build, so a
   restart doesn't read them again.
+
+### Open chat models on the Neural Engine
+
+An open chat model (D53, such as MiniCPM5-2B) is a decoder of a few
+chained programs that runs on the Neural Engine only. Two things set it
+apart from the other Core ML models.
+
+- **Its install costs disk you can't reclaim.** The first load of an
+  install compiles the decoder for the Neural Engine, and macOS keeps the
+  compiled program in its system ANE cache, about the size of the build's
+  weights, which no user can delete
+  ([design/coreml-cache.md](design/coreml-cache.md)). It is paid once per
+  install and again after a macOS update, which recompiles. A new build of
+  sidekickd signed with another identity recompiles too; release builds
+  are signed with a fixed one. Each published build's measured size is on
+  its model card, from [data/publishing.toml](data/publishing.toml).
+- **It shares the Neural Engine.** Apple Foundation Models and other apps'
+  Neural Engine work run on the same engine, and while they run, this
+  model's generations stall. sidekickd counts the stalls and reports them
+  in `/health` ([API.md](API.md#listing-models-and-health)), and the
+  request timeout bounds the worst case, but it can't prevent them.
+  `apple-fm` requests sidekickd itself serves share the open models' queue
+  instead ([API.md](API.md#open-models)).
 
 ## ONNX Runtime on the CPU
 

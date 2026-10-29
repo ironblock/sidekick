@@ -30,8 +30,12 @@
    "abs": 0.01,
    "about": "each class probability in the textbook MNLI triple"
   },
+  "chat_score": {
+   "abs": 0.02,
+   "about": "a chat-benchmark family's headline score (mode:family), over 12 items"
+  },
   "exact": {
-   "about": "counts that must not change: refused requests, token-count mismatches, sanity verdicts, probs/nli_probs disagreements"
+   "about": "values that must not change: refused requests, token-count mismatches, sanity verdicts, probs/nli_probs disagreements; for a chat model, its replies that differ between two runs at temperature 0, its guided replies that fail their schema, and each request whose usage differs from the build's tokenizer and template, with its deltas"
   }
  },
  "mteb_tasks": [
@@ -39,13 +43,13 @@
   "AskUbuntuDupQuestions"
  ],
  "updated": {
-  "commit": "3d5b2b09dc4ab539dd02dd96d478716fbb078388",
+  "commit": "966cd978ad49d859cbb7eba55c449ad95e7831f1",
   "dirty": false,
-  "sidekick": "0.15.0",
+  "sidekick": "0.16.0",
   "chip": "Apple M1 Max",
   "os": "macOS 27.0",
   "os_build": "26A428",
-  "date": "2026-10-24"
+  "date": "2026-10-29"
  },
  "entries": [
   {
@@ -1970,6 +1974,52 @@
     "os_build": "26A428",
     "date": "2026-10-23",
     "sidekick": "0.15.0"
+   }
+  },
+  {
+   "model": "minicpm5-2b",
+   "path": "coreml-ane",
+   "variant": "palette8",
+   "kind": "chat",
+   "default": true,
+   "build": {
+    "ledger": "minicpm5-2b/coreml/palette8/fffc316c8db0",
+    "digest": "fffc316c8db0916d98063a724be785b1563aab6c1b86f54bd87328827123035f",
+    "fingerprint": "1241355f3e55bb4df63320a45d3aef8b6078970b830c19dae3209e1b6cf260e7",
+    "variant": "palette8",
+    "max_seq_len": 2033
+   },
+   "sample": {
+    "source": "fixtures/tasks/chat (first 12 per family)",
+    "sha256": "bf1b621f8eb80aebd35457261e54155dac69cbc75012f390f059b5fd9502ac78"
+   },
+   "metrics": {
+    "n": 84,
+    "refused": 0,
+    "nondeterministic_replies": 0,
+    "schema_invalid": 0,
+    "usage_mismatches": "{\"prompt:tags_free:tag-007\": {\"completion\": 1, \"prompt\": 0}}",
+    "chat:prompt:titles": 0.4035,
+    "chat:prompt:tags_vocab": 0.8333,
+    "chat:prompt:tags_free": 0.3167,
+    "chat:prompt:extraction": 0.9792,
+    "chat:prompt:instructions": 1.0,
+    "chat:guided:tags_vocab": 0.6111,
+    "chat:guided:extraction": 0.9173
+   },
+   "predictions": {
+    "prompt": "DiM6qTaxQdtjQZsBKztbEev8JXMU3qLai77XqJoR3QbDe7XDTL86ePf1H8kt",
+    "guided": "Iu1QetpzEw1CtJYR3QbDePXS"
+   },
+   "seconds": 357.4,
+   "provenance": {
+    "commit": "966cd978ad49d859cbb7eba55c449ad95e7831f1",
+    "dirty": false,
+    "chip": "Apple M1 Max",
+    "os": "macOS 27.0",
+    "os_build": "26A428",
+    "date": "2026-10-29",
+    "sidekick": "0.16.0"
    }
   }
  ],

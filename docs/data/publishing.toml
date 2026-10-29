@@ -38,3 +38,20 @@ size = 596392315
 grade = "A"
 worst = "cosine 1.000000"
 note = "The same repository's fp16 export (0.999994) loads only with ONNX Runtime's graph optimizations off, and its int8 export reaches 0.892; neither is listed."
+
+# The Neural Engine compile cache a chat build's install leaves, which the
+# user can't delete (docs/BACKENDS.md, "Open chat models on the Neural
+# Engine"), measured by tools/release_gate.py on the build's first load in
+# its home: `df -k` free space on the root and Data volumes immediately
+# before and after the load, with nothing else heavy running, and the
+# unified log showing one ANE compile per chunk during it. Paid once per
+# install, and again after a macOS update.
+[[ane_cache]]
+model = "minicpm5-2b"
+build = "minicpm5-2b/coreml/palette8/fffc316c8db0"
+bytes = 2294718464
+weights_bytes = 2278872576
+compiles = 4
+chip = "Apple M1 Max"
+os = "macOS 27.0"
+date = "2026-10-29"

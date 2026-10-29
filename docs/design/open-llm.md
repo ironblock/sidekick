@@ -843,9 +843,10 @@ can read logits; the gate checks what a client sees.
   RoPE files, tokenizer.json, the template, `chat.toml`, in
   `sidekickd/minicpm5-2b-coreml`, recorded in the ledger and installed by
   `sidekickd fetch` as hard links (D51).
-- **The narrow B.** The build is published at the grade the percentile
-  anchor gives it, with the worst-position cosine and the calibration
-  sensitivity stated on its card.
+- **The grade on the card.** The build is published at its D54 grade
+  (KL divergence and top-1 per text family, with the task check), which
+  replaced this note's percentile-cosine anchor; the card states each
+  family's numbers and the chip and macOS they were measured on.
 
 ### The ANE cache cost
 
@@ -859,7 +860,7 @@ with a fixed one), and a macOS update presumably does too.
   persistent conversion home, after the PyTorch screen; the build record
   states the cost.
 - **Users:** one compile per install per macOS version, about the size of
-  the weights, stated in BACKENDS.md and on the model card.
+  the weights, described in BACKENDS.md and measured on the model card.
 
 ## Deferred, not precluded
 

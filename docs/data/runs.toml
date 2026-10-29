@@ -464,6 +464,18 @@ idle = true
 sidekick = "0.8.0 pre-release (commit 396f006)"
 threads = 8
 
+# A chat build's D54 grade report (tools/grade_causal_lm.py --report-dir): the
+# installed build on the Neural Engine through sidekick's own decoder, on
+# both its paths. tools/ledger.py attaches it to the build whose files it
+# records; it isn't a parity report, so tools/models_table.py doesn't read it.
+[runs."causal-lm-minicpm5-2b-2026-10-29.json"]
+runtime = "sidekick-coreml KvDecoder (kv_decoder example)"
+os = "macOS 27.0 (26A428)"
+precision = "8-bit palettes"
+date = "2026-10-29"
+idle = false
+sidekick = "0.16.0 (commit 9df79a8)"
+
 # A model whose threads differ from its run's, by "<report file>:<model id>":
 # Qwen3-Embedding's manifest raises its default to 16, which the
 # Threadripper's cores allow.

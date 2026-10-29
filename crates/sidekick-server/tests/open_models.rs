@@ -205,8 +205,8 @@ fn state(queue_depth: usize, delay: Duration) -> AppState {
         Arc::new(LanedChat::new(Arc::new(MockChat::fm(true)), fm_lane, t)) as Arc<dyn sidekick_core::ChatBackend>
     }))
     .unwrap();
-    chat.insert(chat_models::open_model(Arc::new(model), Some("abc123"), timeout)).unwrap();
-    chat.insert(chat_models::open_model(Arc::new(bytes), Some("abc123"), timeout)).unwrap();
+    chat.insert(chat_models::open_model(Arc::new(model), Some("abc123"), Some("macOS 27.0".into()), timeout)).unwrap();
+    chat.insert(chat_models::open_model(Arc::new(bytes), Some("abc123"), None, timeout)).unwrap();
     chat.set_lane(lane);
     state.chat = Arc::new(chat);
     state
@@ -441,6 +441,7 @@ async fn models_and_health_report_the_open_model() {
     // `tiny`'s word-level tokenizer can't be guided; `bytes`' can.
     assert!(!tiny["honored_fields"].as_array().unwrap().contains(&json!("response_format")));
     assert_eq!(tiny["guided_streaming"], false);
+    assert_eq!(tiny["graded_os"], "macOS 27.0");
     let bytes = models["data"].as_array().unwrap().iter().find(|m| m["id"] == "bytes").expect("listed");
     assert!(bytes["honored_fields"].as_array().unwrap().contains(&json!("response_format")));
     assert_eq!(bytes["guided_streaming"], true);

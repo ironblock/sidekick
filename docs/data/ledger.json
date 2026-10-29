@@ -3209,6 +3209,282 @@
    "note": "Recorded from the SHA256SUMS and size listing of an archived copy of the build, not from a local directory; the local copy was deleted once the archive was verified. Converted before the ledger existed: the converter's commit, coremltools, Python version, OS and machine weren't recorded."
   },
   {
+   "id": "minicpm5-2b/coreml/palette8/fffc316c8db0",
+   "model": "minicpm5-2b",
+   "source": "openbmb/MiniCPM5-2B@f97400052a43d642bbc6e9975e2397e3ae6a6b52",
+   "backend": "coreml",
+   "variant": "palette8",
+   "quantization": "8-bit palettes",
+   "buckets": [],
+   "chunks": 4,
+   "max_seq_len": 2033,
+   "layout": "separate",
+   "digest": "fffc316c8db0916d98063a724be785b1563aab6c1b86f54bd87328827123035f",
+   "fingerprint": "107c5b9f8275",
+   "produced": {
+    "converter": "tools/convert_causal_lm.py",
+    "converter_commit": "9df79a88e3ad3b8db2896480ae7f178e33c37d65",
+    "coremltools": "9.0",
+    "torch": "2.13.0",
+    "python": "3.12.13",
+    "os": "macOS 27.0 (26A428)",
+    "xcode": "27.1 (27A9275)",
+    "chip": "Apple M1 Max",
+    "date": "2026-10-28"
+   },
+   "files": [
+    {
+     "sha256": "c9e8e343366783d8a6fe55a42661c0bc51b92b0308dfc77f672266de5ffe023b",
+     "size": 3079,
+     "paths": [
+      "chat.toml"
+     ]
+    },
+    {
+     "sha256": "bc1f78ef8a86b6bdf64a056cf89dd0ac506db4f198ab363d85168e2500ab44dd",
+     "size": 5435,
+     "paths": [
+      "chat_template.jinja"
+     ]
+    },
+    {
+     "sha256": "57e87c602f436ae26d5bac8d94ecdbc8332eab67468f4f292cfbcc5b4687c2ad",
+     "size": 243,
+     "paths": [
+      "decoder.0.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "b6fbd1598f9d88f2e5f290d7404f291aacb74f87b7d18a045560e1e864ff90f7",
+     "size": 522,
+     "paths": [
+      "decoder.0.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "ac3cb0d6fcbe9bea48ecbe191bcc631c2d45be3db3725c2e40d742cc0d7b45d4",
+     "size": 3990,
+     "paths": [
+      "decoder.0.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "71e2e6ac88fb2c4e15773ef4ed41fbf4148bf0c065adbe55de060164ecc736bb",
+     "size": 439953,
+     "paths": [
+      "decoder.0.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "3cc005bc652a2f48a62439d947e3e432295331d1e3cd346fbd496e666930b103",
+     "size": 669102400,
+     "paths": [
+      "decoder.0.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "fad814b42dd3b60d0d359d26c9b045571192008691373ce81815a1fb3851750a",
+     "size": 243,
+     "paths": [
+      "decoder.1.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "65609a6d6b4384f9d6a181f5955cab965f6e6f525d4907388c343a606a2820fc",
+     "size": 522,
+     "paths": [
+      "decoder.1.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "c9f849aef7adc84fb92d176b44f601f0d6d66b23d0c3bcb3b771d5466ab7f524",
+     "size": 3990,
+     "paths": [
+      "decoder.1.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "1bcabca14e7fbaebfefd7a74d6db0d690c942caa6eb504eafc7206bd0097914e",
+     "size": 444215,
+     "paths": [
+      "decoder.1.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "5f32348e9a7199a8a29df00dee050d8aff21a089a5a8bb5ff422f9d9fb7c5eb2",
+     "size": 669102400,
+     "paths": [
+      "decoder.1.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "ee208fc01e14dbd29b9f3668586fc802b600ab8d2044dc24bf15f630fcb1479f",
+     "size": 243,
+     "paths": [
+      "decoder.2.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "cf52a77ccba10342874320a718a5b197d0fdad0fc63976e022476aa82021c720",
+     "size": 522,
+     "paths": [
+      "decoder.2.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "eba0e61a63a11017b67459500fb92259176739c922aa015badc3c2a27fa5f124",
+     "size": 3988,
+     "paths": [
+      "decoder.2.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "90829f1c16e3fb9b6720ce87c24f74f3bf8482e94717e3f60271dbac5528e1f0",
+     "size": 316606,
+     "paths": [
+      "decoder.2.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "d75635a1d98adc7a861bd062e2ecdeb0d15cddf7279b59dc2a859a6209b310fd",
+     "size": 477930304,
+     "paths": [
+      "decoder.2.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "0413cd4bf35fbfcfb6098837e5f1796572e4964b2f85a68bee6cf3084931f864",
+     "size": 243,
+     "paths": [
+      "decoder.3.mlmodelc/analytics/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "4832ce8a28595e3fd8f2ad4b09356a5e13d8c5039380e26c780d6e98c2123843",
+     "size": 535,
+     "paths": [
+      "decoder.3.mlmodelc/coremldata.bin"
+     ]
+    },
+    {
+     "sha256": "a72cbb218ad696ade0a810c55921b977e0c6ba4413f4e64ccfd11d38e2a063a2",
+     "size": 4255,
+     "paths": [
+      "decoder.3.mlmodelc/metadata.json"
+     ]
+    },
+    {
+     "sha256": "98e91a6ef82a62de16d54e2bc6892df894be523ae055b2de1ea651707c6fe8c2",
+     "size": 134049,
+     "paths": [
+      "decoder.3.mlmodelc/model.mil"
+     ]
+    },
+    {
+     "sha256": "8a49a8c8905661293b4caeadcc01ef020aa587e0d249114b34b14be40173a1da",
+     "size": 462737472,
+     "paths": [
+      "decoder.3.mlmodelc/weights/weight.bin"
+     ]
+    },
+    {
+     "sha256": "3cfc8912f49f6e1f6c6084454121f49ee67b4e3d37d2fd6ef0205c94baa0d0bf",
+     "size": 534773848,
+     "paths": [
+      "embedding.safetensors"
+     ]
+    },
+    {
+     "sha256": "f6cda0a14d1de23783cc69131dad6b882c2258cc8c22db840e670c04c31e1558",
+     "size": 1048728,
+     "paths": [
+      "rope.safetensors"
+     ]
+    },
+    {
+     "sha256": "3e065a558a034185fe299917b398685c1facd0169a9eea1e629eb30c171fed81",
+     "size": 9894271,
+     "paths": [
+      "tokenizer.json"
+     ]
+    }
+   ],
+   "grades": [
+    {
+     "path": "coreml-ane",
+     "chip": "Apple M1 Max",
+     "os": "macOS 27.0 (26A428)",
+     "grade": "B",
+     "report": "causal-lm-minicpm5-2b-2026-10-29.json",
+     "rubric": "D54",
+     "stable": true,
+     "manifest_digest": "4c8f3cc0372e339f3ef76fa7cc4ee0ae352050387d0141f80b4a91301860d816",
+     "families": {
+      "prose": {
+       "kl_mean": 0.0012790590044417676,
+       "kl_p99": 0.01172156952744144,
+       "top1": 0.995745,
+       "grade": "B",
+       "positions": 470
+      },
+      "repository": {
+       "kl_mean": 0.0002892059100356594,
+       "kl_p99": 0.002066586408805547,
+       "top1": 0.989341,
+       "grade": "B",
+       "positions": 1032
+      }
+     },
+     "task_check": {
+      "passed": true,
+      "report": "task-check.json",
+      "families": {
+       "titles": {
+        "metric": "rouge_l",
+        "candidate": 0.4476,
+        "reference": 0.4405,
+        "difference": 0.007099999999999995,
+        "passed": true,
+        "n": 20,
+        "identical_replies": 0.95
+       },
+       "tags_vocab": {
+        "metric": "f1",
+        "candidate": 0.7917,
+        "reference": 0.7917,
+        "difference": 0.0,
+        "passed": true,
+        "n": 20,
+        "identical_replies": 1.0
+       },
+       "extraction": {
+        "metric": "item_field_acc",
+        "candidate": 0.9097,
+        "reference": 0.8958,
+        "difference": 0.013899999999999912,
+        "passed": true,
+        "n": 24,
+        "identical_replies": 0.9167
+       },
+       "instructions": {
+        "metric": "all_checks",
+        "candidate": 1.0,
+        "reference": 1.0,
+        "difference": 0.0,
+        "passed": true,
+        "n": 20,
+        "identical_replies": 0.9
+       }
+      }
+     }
+    }
+   ],
+   "published": [],
+   "recorded": "2026-10-29",
+   "evidence": "hashed",
+   "note": "Converted with the value-matmul and output-projection rewrites (D55), from the recipe's calibration draw 0. Graded B by D54 on the Neural Engine; task check passed."
+  },
+  {
    "id": "modernbert-large-zeroshot-v2.0/coreml/fp16/f08c241503c0",
    "model": "modernbert-large-zeroshot-v2.0",
    "source": "MoritzLaurer/ModernBERT-large-zeroshot-v2.0@a51e07b524299e309dd2b88d48b0cfa2bd9ec598",

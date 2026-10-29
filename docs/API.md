@@ -574,8 +574,10 @@ sidekick's fields beside it: for every model its task and backend; for a
 chat model its `context_length` (prompt and completion together), the
 optional request fields it honors (`honored_fields`), whether guided
 output streams as it is generated (`guided_streaming`), whether it
-has guardrails (`guardrails`), and for an open model its `compute_units`
-and its decoder's `compile_cache` state; for an embedder its `max_seq_len`, `buckets`, `dims`, `matryoshka`, `prompts`
+has guardrails (`guardrails`), and for an open model its `compute_units`,
+the macOS its build was graded on (`graded_os`, from its `chat.toml`; absent
+when the build doesn't record one) and its decoder's `compile_cache` state;
+for an embedder its `max_seq_len`, `buckets`, `dims`, `matryoshka`, `prompts`
 and `named_prompts`; for a classifier its labels or `max_labels`,
 `max_batch`, `extensions`, `required` fields and calibration; for a Core
 ML model its `compute_units`, any `seq_cap`, and each bucket's

@@ -192,9 +192,9 @@ pub fn run(args: &FetchArgs, models_dir: &Path) -> anyhow::Result<Option<String>
         manifests.iter().filter(|f| f.path.strip_prefix(&root).is_some_and(|rest| !rest.contains('/'))).collect();
     let manifest_file = match in_root.as_slice() {
         [one] => **one,
-        _ => bail!("{repo_id}@{revision} has both a manifest.toml and a classifier.toml in `{root}`; fetch can't tell which to serve"),
+        _ => bail!("{repo_id}@{revision} has more than one manifest in `{root}`; fetch can't tell which to serve"),
     };
-    let kind = if manifest_file.path.ends_with(plan::Kind::Classifier.file()) { plan::Kind::Classifier } else { plan::Kind::Embedder };
+    let kind = plan::Kind::of(&manifest_file.path).expect("only manifests were fetched");
     check_file(manifest_file, &mut verified)?;
     let original = std::fs::read_to_string(&manifest_file.blob).context("reading the manifest")?;
     let build = plan::Build::parse(kind, &original)?;
@@ -289,7 +289,7 @@ fn choose_variant(
         None => match (preferred.filter(|p| dirs.contains(p)), dirs.as_slice()) {
             (Some(p), _) => pick(p),
             (None, [one]) => pick(one),
-            (None, []) => bail!("{repo_id}@{revision} has no manifest.toml or classifier.toml, so it isn't a sidekick build"),
+            (None, []) => bail!("{repo_id}@{revision} has no manifest.toml, classifier.toml or chat.toml, so it isn't a sidekick build"),
             (None, _) => bail!("{repo_id}@{revision} has several variants, {named:?}: choose one with --variant"),
         },
     }
@@ -388,10 +388,14 @@ fn check_ledger(build: &verify::LedgerBuild, placed: &[install::Placed], include
     Ok(())
 }
 
-/// The tokenizer and each chosen program, which the build must have.
+/// The tokenizer, each chosen program and any other file the build names
+/// (a chat build's host tables and template), which the build must have.
 fn required_files(build: &plan::Build, chosen: &[usize]) -> Vec<String> {
     let mut names = vec![build.tokenizer.clone()];
-    if build.buckets.is_empty() {
+    names.extend(build.extra.iter().cloned());
+    if build.kind == plan::Kind::Chat {
+        names.extend(build.chunk_programs());
+    } else if build.buckets.is_empty() {
         names.push(build.artifact.clone());
     } else {
         names.extend(chosen.iter().flat_map(|&b| sidekick_core::artifact_files(&build.artifact, b, build.chunks)));

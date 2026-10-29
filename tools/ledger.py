@@ -31,6 +31,17 @@ tokenizer, by full sha256) are all this build's, at the same paths. Those
 are the grades that build was graded with (by default only from reports
 docs/data/runs.toml describes, whose grades are published; `--any-report`
 also takes a release candidate's own).
+
+A chat build (a `kv-state-1` decoder, D53: `chat.toml`, `decoder.<N>.mlmodelc`
+chunks, host tables) is graded by D54, not by the parity suite. Its grade
+report, tools/grade_causal_lm.py's, records the sha256 of every file it
+graded but `chat.toml`, and `chat.toml`'s manifest digest (its content
+without `graded_os`, which the grader writes afterwards); `--reports`
+attaches it when those files are exactly this build's (the same paths,
+none missing, none extra) and the digest is this build's `chat.toml`'s,
+with the rubric and each family's KL mean, p99, top-1 and letter from the
+worse of the decoder's two paths. `--task-check FILE` (task_check.py's
+`--json`) adds the task check to that grade.
 With `--sums`, it records an archived build from a `shasum -a 256` listing
 instead of hashing files; sizes are then unknown unless `--sizes` gives a
 `stat`-style "size path" listing (it may be the same file, the sizes
@@ -63,7 +74,7 @@ MODELS = REPO / "docs" / "data" / "models.toml"
 
 SCHEMA = 1
 BACKENDS = ("coreml", "onnx")
-QUANTIZATIONS = ("fp32", "fp16", "fp16 weights", "int8")
+QUANTIZATIONS = ("fp32", "fp16", "fp16 weights", "int8", "8-bit palettes")
 PATHS = ("coreml-ane", "coreml-gpu", "coreml-cpu", "onnx-cpu")
 LETTERS = ("A", "B", "C", "D", "F")
 EVIDENCE = ("hashed", "sha256sums")
@@ -72,6 +83,9 @@ IGNORED = (".DS_Store",)
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 BUCKET_DIR = re.compile(r"^model_(\d+)(?:\.(\d+))?\.mlmodelc$")
+CHUNK_DIR = re.compile(r"^decoder\.(\d+)\.mlmodelc$")
+MANIFESTS = ("manifest.toml", "classifier.toml", "chat.toml")
+CHAT_WEIGHTS = {"palette8": "8-bit palettes"}
 
 ENTRY_FIELDS = {
     "id": str, "model": str, "source": str, "backend": str, "variant": str, "quantization": str,
@@ -116,7 +130,7 @@ def hash_tree(root, excludes=(), manifest=None):
     seen = {}
     files = {}
     for rel, p in walk(root, excludes):
-        if manifest is not None and rel in ("manifest.toml", "classifier.toml"):
+        if manifest is not None and rel in MANIFESTS:
             p = Path(manifest)
         st = p.stat()
         key = (st.st_dev, st.st_ino)
@@ -173,8 +187,12 @@ def layer(rel):
         return "compile analytics"
     if ".mlmodelc/" in rel:
         return "compiled program"
-    if name in ("manifest.toml", "classifier.toml"):
+    if name in MANIFESTS:
         return "manifest"
+    if name.endswith(".safetensors"):
+        return "host tables"
+    if name.endswith(".jinja"):
+        return "chat template"
     if name.startswith("tokenizer") or name in ("vocab.txt", "special_tokens_map.json"):
         return "tokenizer"
     return "other"
@@ -187,14 +205,19 @@ def read_manifest(text):
 
 
 def bucket_layout(paths):
-    """(sorted buckets, chunk count) from compiled program directory names."""
-    buckets, chunks = set(), set()
+    """(sorted buckets, chunk count) from compiled program directory names.
+    A chat build's decoder has no buckets, only chunks."""
+    buckets, chunks, decoder = set(), set(), set()
     for rel in paths:
         top = rel.split("/", 1)[0]
         m = BUCKET_DIR.match(top)
         if m:
             buckets.add(int(m.group(1)))
             chunks.add(int(m.group(2)) if m.group(2) is not None else 0)
+        elif m := CHUNK_DIR.match(top):
+            decoder.add(int(m.group(1)))
+    if decoder and not buckets:
+        return [], len(decoder)
     return sorted(buckets), max(len(chunks), 1)
 
 
@@ -286,6 +309,68 @@ def graded_files_match(files, recorded):
     return all(f.get("path") in files and files[f["path"]][0] == f.get("sha256") for f in recorded)
 
 
+LETTER_ORDER = {letter: i for i, letter in enumerate(LETTERS)}
+
+
+def chat_manifest_digest(text):
+    """sha256 of a chat.toml's content without `graded_os`: its parsed table
+    as canonical JSON, so the line tools/grade_causal_lm.py --record-os
+    adds after grading doesn't move it, and any other change does."""
+    table = tomllib.loads(text)
+    table.pop("graded_os", None)
+    return hashlib.sha256(json.dumps(table, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def chat_reports(dirs):
+    """(file name, report) for every D54 grade report under `dirs`."""
+    for d in dirs:
+        for p in sorted(Path(d).rglob("*.json")):
+            try:
+                rep = json.loads(p.read_text())
+            except (OSError, ValueError, UnicodeDecodeError):
+                continue
+            if isinstance(rep, dict) and rep.get("rubric") == "D54" and rep.get("files") and rep.get("paths"):
+                yield p.name, rep
+
+
+def chat_grades(model, files, dirs, any_report=False, task_check=None, manifest_path=None):
+    """The D54 grades of every grade report that graded exactly this build:
+    its files but chat.toml, and chat.toml's content but graded_os (only
+    reports runs.toml describes, unless `any_report`). Each records the
+    Neural Engine path, the build's letter, and each family's KL mean, p99,
+    top-1 and letter from the worse of the decoder's two paths (by letter,
+    then mean KL)."""
+    registered = registered_reports()
+    graded = {rel: sha for rel, (sha, _) in files.items() if rel != "chat.toml"}
+    manifest = chat_manifest_digest(Path(manifest_path).read_text()) if manifest_path else None
+    out = []
+    for name, rep in chat_reports(dirs):
+        if rep.get("model") != model or not (any_report or name in registered):
+            continue
+        if {f["path"]: f["sha256"] for f in rep["files"]} != graded:
+            continue
+        if manifest is None or rep.get("manifest_digest") != manifest:
+            continue
+        fams = {}
+        for path in rep["paths"].values():
+            for fam, g in path["families"].items():
+                cur = fams.get(fam)
+                key = (LETTER_ORDER[g["grade"]], g["kl_mean"])
+                if cur is None or key > (LETTER_ORDER[cur["grade"]], cur["kl_mean"]):
+                    fams[fam] = {"kl_mean": g["kl_mean"], "kl_p99": g["kl_p99"], "top1": g["top1"],
+                                 "grade": g["grade"], "positions": g["positions"]}
+        grade = {"path": "coreml-ane", "chip": rep["chip"], "os": rep.get("macos"), "grade": rep["grade"],
+                 "report": name, "rubric": "D54", "stable": rep.get("stable"), "manifest_digest": manifest,
+                 "families": fams}
+        if task_check is not None:
+            tc = json.loads(Path(task_check).read_text())
+            grade["task_check"] = {"passed": tc["passed"], "report": Path(task_check).name, "families": {
+                fam: {k: v[k] for k in ("metric", "candidate", "reference", "difference", "passed", "n",
+                                         "identical_replies")} for fam, v in tc["families"].items()}}
+        out.append(grade)
+    return out
+
+
 def matching_grades(model, files, dirs, any_report=False):
     """The grades of every report that graded exactly this build's files: a
     Core ML report whose buckets are this build's, with the same weights, or
@@ -370,13 +455,14 @@ def cmd_add(args):
         if args.sizes and (unsized := sorted(r for r, (_, size) in files.items() if size is None)):
             raise SystemExit(f"--sizes gives no size for: {', '.join(unsized)}")
         manifest_text = ""
+        mpath = None
         meta = {}
         evidence = "sha256sums"
     else:
         root = Path(args.dir)
         files = hash_tree(root, excludes, args.manifest)
         mpath = Path(args.manifest) if args.manifest else next(
-            (root / n for n in ("manifest.toml", "classifier.toml") if (root / n).exists()), None)
+            (root / n for n in MANIFESTS if (root / n).exists()), None)
         manifest_text = mpath.read_text() if mpath else ""
         meta = coreml_metadata(root, files)
         evidence = "hashed"
@@ -392,14 +478,20 @@ def cmd_add(args):
         source = f"{src['repo']}@{src['revision']}"
     if args.source:
         source = args.source
+    chat = manifest.get("task") == "text-generation"
     precision = {"Float16": "fp16", "Float32": "fp32"}.get(meta.get("precision"))
+    if chat:
+        weights = manifest.get("build", {}).get("weights")
+        if weights not in CHAT_WEIGHTS:
+            raise SystemExit(f"chat.toml's [build] weights {weights!r} isn't one of {', '.join(CHAT_WEIGHTS)}")
+        precision = CHAT_WEIGHTS[weights]
     quant = args.quantization or precision or ("fp32" if backend == "onnx" else "fp16")
     buckets, chunks = bucket_layout(files)
     if backend == "onnx":
         buckets, chunks = [], 1
     shared = any(len(e["paths"]) > 1 and layer(e["paths"][0]) == "weights" for e in group(files))
     dg = digest(files)
-    variant = args.variant or quant.replace(" ", "-")
+    variant = args.variant or (manifest.get("build", {}).get("weights") if chat else None) or quant.replace(" ", "-")
     entry = {
         "id": f"{model}/{backend}/{variant}/{dg[:12]}",
         "model": model,
@@ -409,7 +501,7 @@ def cmd_add(args):
         "quantization": quant,
         "buckets": buckets,
         "chunks": chunks,
-        "max_seq_len": manifest.get("max_seq_len"),
+        "max_seq_len": manifest["decoder"]["context_length"] if chat else manifest.get("max_seq_len"),
         "layout": "shared" if shared else "separate",
         "digest": dg,
         "fingerprint": fingerprint(files),
@@ -425,7 +517,9 @@ def cmd_add(args):
             "date": args.date or meta.get("date"),
         },
         "files": group(files),
-        "grades": matching_grades(model, files, args.reports or [], args.any_report) + [parse_grade(g) for g in args.grade or []],
+        "grades": (chat_grades(model, files, args.reports or [], args.any_report, args.task_check, mpath) if chat
+                   else matching_grades(model, files, args.reports or [], args.any_report))
+        + [parse_grade(g) for g in args.grade or []],
         "published": [],
         "recorded": args.recorded or datetime.date.today().isoformat(),
         "evidence": evidence,
@@ -492,7 +586,7 @@ def cmd_verify(args):
         if exact:
             print(f"{root}: matches {exact[0]['id']}")
             return
-        mpath = next((root / n for n in ("manifest.toml", "classifier.toml") if (root / n).exists()), None)
+        mpath = next((root / n for n in MANIFESTS if (root / n).exists()), None)
         model = read_manifest(mpath.read_text()).get("id") if mpath else None
         cands = [b for b in ledger["builds"] if b["model"] == model] if model else []
         if not cands:
@@ -590,6 +684,10 @@ def problems(ledger, models):
         for g in b["grades"]:
             if g.get("path") not in PATHS or g.get("grade") not in LETTERS or not g.get("chip"):
                 out.append(f"{w}: bad grade {g}")
+            if g.get("rubric") == "D54" and not all(
+                    isinstance(f, dict) and {"kl_mean", "kl_p99", "top1", "grade"} <= set(f)
+                    for f in (g.get("families") or {None: None}).values()):
+                out.append(f"{w}: a D54 grade needs each family's kl_mean, kl_p99, top1 and grade")
         for p in b["published"]:
             if not (p.get("repo") and p.get("revision") and p.get("date") and p.get("sidekick")):
                 out.append(f"{w}: a publication needs repo, revision, date and sidekick")
@@ -621,6 +719,8 @@ def main():
     a.add_argument("--any-report", action="store_true",
                    help="take grades from reports runs.toml doesn't describe too (a release candidate's own)")
     a.add_argument("--grade", action="append", help="path:chip:letter[:report], when no report matches by hash")
+    a.add_argument("--task-check", help="a chat build's task check (tools/chat_bench/task_check.py --json), "
+                                        "added to its D54 grade")
     a.add_argument("--converter")
     a.add_argument("--converter-commit")
     a.add_argument("--torch", help="PyTorch version (default: the Core ML programs' metadata; an ONNX graph's "

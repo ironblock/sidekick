@@ -101,7 +101,7 @@ pub fn build(
         let timeout = timeouts.resolve(&m.id, m.serving.request_timeout_secs.map(Duration::from_secs));
         let model = OpenModel::new(spec, lane.clone(), loader(chat, scan.clone()), timeout.0, config.load_timeout());
         let revision = m.source.as_ref().and_then(|s| s.revision.as_deref());
-        models.push(chat_models::open_model(Arc::new(model), revision, timeout));
+        models.push(chat_models::open_model(Arc::new(model), revision, m.graded_os.clone(), timeout));
     }
     Ok(Some((lane, models)))
 }

@@ -45,6 +45,19 @@ What it does:
      and agreement with fp32 (top document, largest score difference).
    - embedders: a fixed MTEB slice through tools/mteb_transfer.py's client
      path, and the parity corpus's vectors' cosine with fp32's.
+   - chat models (D53): the first 12 items of each chat-benchmark family
+     (fixtures/tasks/chat/), prompt-only and, for the families with a
+     schema, guided (`response_format`), at temperature 0, run twice:
+     every reply must be byte-identical between the two runs; each
+     family's headline score (tools/chat_bench's scorers), the guided
+     replies that don't satisfy their schema, and the requests whose
+     `usage` differs from the build's tokenizer and template (a guided
+     prompt with the daemon's schema instruction in it, which sidekick-llm's
+     schema_instruction example renders), each by id with its deltas, are
+     compared with the baseline (tools/chat_bench/gate_score.py, in the chat
+     benchmark's environment: `--chat-python`). The first request loads
+     the build; the free disk before and after it is recorded as the Neural
+     Engine compile cache the load left, when it compiled.
 5. Compares every number with the baseline entry for the same model, path
    and build variant, under the baseline's tolerances, and ends with a
    one-line summary.
@@ -184,7 +197,14 @@ RESERVED_PORTS = range(8790, 8800)   # sidekickd's default and the ports maintai
 # docs/data/models.json's precision -> the ledger's variant name.
 PRECISION_VARIANT = {"fp16": "fp16", "fp32": "fp32", "fp16 weights": "fp16-weights", "int8": "int8"}
 DEFAULT_VARIANT = {"coreml": "fp16", "onnx": "fp32"}
-VARIANT_ORDER = ["fp16", "fp32", "fp16-weights", "int8"]
+VARIANT_ORDER = ["fp16", "fp32", "fp16-weights", "int8", "palette8"]
+MANIFESTS = ("manifest.toml", "classifier.toml", "chat.toml")
+# A chat model's published build, by its weights (the ledger's variant).
+CHAT_VARIANT = "palette8"
+# The chat sample: the first CHAT_ITEMS items of each family, prompt-only, and
+# guided for the families whose requests carry a schema.
+CHAT_ITEMS = 12
+CHAT_FAMILIES = ["titles", "tags_vocab", "tags_free", "extraction", "instructions"]
 
 # A request on the ANE taking longer than this is taken for a hang: a hung
 # ANE request fails after about 100 s (docs/design/coreml-cache.md, "A hung
@@ -215,9 +235,24 @@ TOLERANCES = {
     "error": {"factor": 2.0, "floor": 1e-5,
               "about": "1 - worst cosine with fp32 (embedders), largest |score - fp32| (rerankers)"},
     "sanity": {"abs": 0.01, "about": "each class probability in the textbook MNLI triple"},
-    "exact": {"about": "counts that must not change: refused requests, token-count mismatches, "
-                       "sanity verdicts, probs/nli_probs disagreements"},
+    "chat_score": {"abs": 0.02, "about": "a chat-benchmark family's headline score (mode:family), over 12 items"},
+    "exact": {"about": "values that must not change: refused requests, token-count mismatches, sanity "
+                       "verdicts, probs/nli_probs disagreements; for a chat model, its replies that differ "
+                       "between two runs at temperature 0, its guided replies that fail their schema, and each "
+                       "request whose usage differs from the build's tokenizer and template, with its deltas"},
 }
+
+
+def merged_tolerances(base: dict) -> dict:
+    """The baseline's tolerances, which a run is judged by, with any rule it
+    lacks added from TOLERANCES and every rule's `about` text from here."""
+    out = {}
+    for k in dict.fromkeys([*TOLERANCES, *base.get("tolerances", {})]):
+        rule = {**TOLERANCES.get(k, {}), **base.get("tolerances", {}).get(k, {})}
+        if k in TOLERANCES:
+            rule["about"] = TOLERANCES[k]["about"]
+        out[k] = rule
+    return out
 
 
 class GateError(Exception):
@@ -261,11 +296,12 @@ class Build:
 
     def __init__(self, path: Path):
         self.dir = path
-        self.manifest_name = "manifest.toml" if (path / "manifest.toml").is_file() else "classifier.toml"
+        self.manifest_name = next(n for n in MANIFESTS if (path / n).is_file())
         m = tomllib.loads((path / self.manifest_name).read_text())
         self.model = m.get("id", path.name)
         self.backend = m.get("backend", "coreml")
-        self.max_seq_len = m.get("max_seq_len")
+        self.chat = self.manifest_name == "chat.toml"
+        self.max_seq_len = m["decoder"]["context_length"] if self.chat else m.get("max_seq_len")
         self.files = None
         self.ledger = None
         self.nearest = None
@@ -289,7 +325,9 @@ class Build:
 
     @property
     def variant(self) -> str:
-        return self.ledger["variant"] if self.ledger else DEFAULT_VARIANT.get(self.backend, self.backend)
+        if self.ledger:
+            return self.ledger["variant"]
+        return CHAT_VARIANT if self.chat else DEFAULT_VARIANT.get(self.backend, self.backend)
 
     def record(self) -> dict:
         out = {"ledger": self.ledger["id"] if self.ledger else None, "digest": self.digest,
@@ -332,7 +370,7 @@ def find_builds(dirs: list[Path]) -> dict[tuple[str, str], list[Build]]:
         if not root.is_dir():
             raise SystemExit(f"--models-dir {root}: not a directory")
         for d in sorted(p for p in root.iterdir() if p.is_dir()):
-            if (d / "manifest.toml").is_file() or (d / "classifier.toml").is_file():
+            if any((d / n).is_file() for n in MANIFESTS):
                 b = Build(d)
                 out.setdefault((b.model, b.backend), []).append(b)
     return out
@@ -1005,8 +1043,88 @@ def run_mteb(python: str, url: str, model: str, path: str, build: Path, work: Pa
 # ---------------------------------------------------------------- one model
 
 
+def chat_requests() -> list[dict]:
+    """The chat sample: the first CHAT_ITEMS items of each family, in the
+    task set's order (tools/chat_bench/tasks.py, standard library only)."""
+    from chat_bench import tasks
+    reqs = tasks.requests()
+    out = []
+    for fam in CHAT_FAMILIES:
+        out += [r for r in reqs if r["family"] == fam][:CHAT_ITEMS]
+    return out
+
+
+def chat_reply(client: Client, model: str, r: dict, guided: bool) -> dict:
+    body = {"model": model, "messages": r["messages"], "temperature": 0, "max_tokens": r["max_tokens"]}
+    if guided:
+        body["response_format"] = {"type": "json_schema", "json_schema": {"name": r["family"], "schema": r["schema"]}}
+    t = time.monotonic()
+    st, _h, payload = client.call("POST", "/v1/chat/completions", body)
+    total = time.monotonic() - t
+    rec = {"family": r["family"], "item": r["item"], "messages": r["messages"],
+           "schema": r["schema"] if guided else None, "status": st, "total_s": total, "ttft_s": total,
+           "ttft_content_s": total, "error": None, "content": "", "reasoning": "", "usage": None,
+           "finish_reason": None}
+    if st != 200:
+        rec["error"] = (payload or {}).get("error") if isinstance(payload, dict) else {"message": str(payload)}
+        return rec
+    choice = payload["choices"][0]
+    rec.update(content=choice["message"].get("content") or "", finish_reason=choice.get("finish_reason"),
+               usage=payload.get("usage"))
+    return rec
+
+
+def schema_instructions(reqs: list[dict]) -> dict:
+    """{"family:item": the instruction the daemon puts in a guided request's
+    prompt}, rendered by sidekick-llm itself (its schema_instruction example)."""
+    p = subprocess.run(["cargo", "run", "-q", "--release", "-p", "sidekick-llm", "--example", "schema_instruction"],
+                       cwd=REPO, input=json.dumps([r["schema"] for r in reqs]), capture_output=True, text=True)
+    if p.returncode != 0:
+        raise GateError(f"rendering the schema instructions failed:\n{p.stderr[-1500:]}")
+    return {f"{r['family']}:{r['item']}": text for r, text in zip(reqs, json.loads(p.stdout))}
+
+
+def run_chat(args, client: Client, model: str, build: Build, run_dir: Path) -> dict:
+    """The chat sample twice, prompt-only and guided; the replies must be
+    byte-identical between the runs, and the first run is scored."""
+    reqs = chat_requests()
+    modes = {"prompt": [(r, False) for r in reqs], "guided": [(r, True) for r in reqs if r["schema"] is not None]}
+    runs = []
+    for attempt in range(2):
+        runs.append({m: {"records": [chat_reply(client, model, r, g) for r, g in todo]} for m, todo in modes.items()})
+        print(f"[{model}] chat sample, run {attempt + 1} of 2: "
+              f"{sum(len(v['records']) for v in runs[-1].values())} requests", flush=True)
+    first, second = runs
+    differ = sum(a["content"] != b["content"] or a["usage"] != b["usage"]
+                 for m in modes for a, b in zip(first[m]["records"], second[m]["records"]))
+    path = run_dir / "chat-run.json"
+    path.write_text(json.dumps({"modes": first}, ensure_ascii=False))
+    instructions = run_dir / "chat-instructions.json"
+    instructions.write_text(json.dumps(schema_instructions([r for r, _g in modes["guided"]])))
+    try:
+        p = subprocess.run([args.chat_python, str(REPO / "tools" / "chat_bench" / "gate_score.py"), str(path),
+                            str(build.dir), str(instructions)], capture_output=True, text=True, timeout=1800)
+    except subprocess.TimeoutExpired:
+        raise GateError(f"{model}: scoring the chat sample took over 30 min")
+    if p.returncode != 0:
+        raise GateError(f"{model}: tools/chat_bench/gate_score.py failed:\n{p.stderr[-1500:]}")
+    scored = json.loads(p.stdout)
+    recs = [r for m in modes for r in first[m]["records"]]
+    metrics = {"n": len(recs), "refused": sum(r["status"] != 200 for r in recs), "nondeterministic_replies": differ,
+               "schema_invalid": scored["schema_invalid"],
+               # each request whose usage differs from its tokens, with the deltas: held to the baseline exactly
+               "usage_mismatches": json.dumps(scored["usage_mismatches"], sort_keys=True)}
+    metrics.update({f"chat:{k}": v for k, v in scored["scores"].items()})
+    sample = hashlib.sha256(json.dumps([[m, r["family"], r["item"], r["messages"], r["max_tokens"]]
+                                        for m, todo in modes.items() for r, _g in todo]).encode()).hexdigest()
+    predictions = {m: "".join(_symbol(int(hashlib.sha256(r["content"].encode()).hexdigest(), 16) % 62)
+                              for r in first[m]["records"]) for m in modes}
+    return {"metrics": metrics, "predictions": predictions,
+            "sample": {"source": f"fixtures/tasks/chat (first {CHAT_ITEMS} per family)", "sha256": sample}}
+
+
 def kind_of(meta: dict, build: Build) -> str:
-    if meta["task"] in ("embed", "rerank"):
+    if meta["task"] in ("embed", "rerank", "chat"):
         return meta["task"]
     fmt = tomllib.loads((build.dir / build.manifest_name).read_text()).get("classify", {}).get("format")
     return "nli" if fmt == "nli" else "classify"
@@ -1019,6 +1137,8 @@ def run_one(args, binary: Path, home: Home, t: "Target") -> dict:
     if kind in ("nli", "classify", "embed") and ref is None:
         raise GateError(f"{model}: no parity reference in --refs")
     units = None if t.default else PATH_UNITS.get(path)
+    if kind == "chat":
+        return run_one_chat(args, binary, home, t)
     rec = {"model": model, "path": path, "variant": t.variant, "kind": kind, "default": t.default,
            "build": build.record()}
     if ref is not None:
@@ -1073,12 +1193,76 @@ def run_one(args, binary: Path, home: Home, t: "Target") -> dict:
     return rec
 
 
+def df_free_kib() -> dict:
+    """Free KiB of the root and the Data volume, from `df -k` (APFS's
+    purgeable space and other processes move these: measure with nothing
+    else heavy running)."""
+    out = {}
+    for vol in ("/", "/System/Volumes/Data"):
+        p = subprocess.run(["df", "-k", vol], capture_output=True, text=True)
+        lines = p.stdout.strip().splitlines()
+        if p.returncode == 0 and len(lines) >= 2:
+            out[vol] = int(lines[1].split()[3])
+    return out
+
+
+def run_one_chat(args, binary: Path, home: Home, t: "Target") -> dict:
+    """A chat model on its default path, the Neural Engine: one request to
+    load it (and the disk its compile leaves, when it compiles), then the
+    chat sample."""
+    t0 = time.monotonic()
+    model, build = t.model, t.build
+    if not t.default or t.path != "coreml-ane":
+        raise GateError(f"{model}: a chat model is gated on its default path, the Neural Engine, only")
+    rec = {"model": model, "path": t.path, "variant": t.variant, "kind": "chat", "default": True,
+           "build": build.record()}
+    models_dir, _note = home.serve_dir(build)
+    d = Daemon(binary, home, models_dir, model, None, True, None)
+    cache = {}
+    weights = sum(f.stat().st_size for f in build.dir.glob("decoder.*.mlmodelc/weights/weight.bin"))
+    cache["weights_bytes"] = weights
+    try:
+        with d:
+            client = Client(d.url, timeout=WARM_TIMEOUT_SECS)
+            info = client.model_info(model, d.health)
+            if info.get("backend") != "coreml" or info.get("compute_units") != PATH_UNITS["coreml-ane"]:
+                raise GateError(f"{model}: served as {info.get('backend')}/{info.get('compute_units')}, not coreml-ane")
+            print(f"[{t.label}] serving on {d.url}; loading the build", flush=True)
+            df0, w0 = df_free_kib(), time.time()
+            cache["free_gib_before"] = round(free_gib(home.root), 2)
+            st, _h, payload = client.call("POST", "/v1/chat/completions", {
+                "model": model, "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1, "temperature": 0})
+            if st != 200:
+                raise GateError(f"{model}: the loading request failed: HTTP {st}: {json.dumps(payload)[:300]}")
+            w1 = time.time()
+            df1 = df_free_kib()
+            compiles = ane_compiles(w0, w1)
+            cache.update(load_seconds=round(w1 - w0, 1), load_compiles=compiles,
+                         load_df_free_kib={"before": df0, "after": df1})
+            if compiles:
+                cache["load_disk_bytes"] = {vol: (df0[vol] - df1[vol]) * 1024 for vol in df0 if vol in df1}
+            client.timeout = ANE_REQUEST_TIMEOUT_SECS + 60
+            rec.update(run_chat(args, client, model, build, d.run))
+            rec["sidekick"] = client.version
+    finally:
+        cache["free_gib_after"] = round(free_gib(home.root), 2)
+        if "load_seconds" in cache:
+            cache["ane_compiles"] = ane_compiles(w0, time.time())
+        rec["cache"] = cache
+        t.cache = cache
+    rec["seconds"] = round(time.monotonic() - t0, 1)
+    return rec
+
+
 # ---------------------------------------------------------------- comparison
 
 
 def metric_rule(name: str) -> str:
-    if name in ("n", "refused", "token_count_mismatches", "probs_vs_nli_probs_disagreements"):
+    if name in ("n", "refused", "token_count_mismatches", "probs_vs_nli_probs_disagreements",
+                "nondeterministic_replies", "schema_invalid", "usage_mismatches"):
         return "exact"
+    if name.startswith("chat:"):
+        return "chat_score"
     if name.startswith("mteb:"):
         return "mteb"
     if name in ("cosine_error_fp32", "stress_error_fp32", "max_abs_diff_fp32", "max_abs_dp_fp32"):
@@ -1181,6 +1365,12 @@ def headline(rec: dict) -> str:
         if "agree_fp32_top1" in m:
             s += f", fp32 top-1 agreement {m['agree_fp32_top1']:.3f}, max |Δp| {m['max_abs_dp_fp32']:.3g}"
         return s
+    if k == "chat":
+        usage = json.loads(m["usage_mismatches"])
+        return (f"{m['n']} requests, {m['nondeterministic_replies']} not repeatable, {m['schema_invalid']} guided "
+                f"invalid, usage mismatches {len(usage)}"
+                + (f" ({', '.join(f'{k} {v}' for k, v in usage.items())})" if usage else "")
+                + f", refused {m['refused']}")
     parts = [f"{t} {m[f'mteb:{t}']:.4f}" for t in MTEB_TASKS if f"mteb:{t}" in m]
     return ", ".join(parts) + f"; worst cos fp32 {m['worst_cosine_fp32']:.6f}"
 
@@ -1231,7 +1421,7 @@ def check_python(python: str, todo: list):
     """Fail before any model runs if `--python` lacks what this run needs:
     mteb (at the pinned version) for an embedder, `tokenizers` for an nli
     model the verification harness scores."""
-    kinds = {t.meta["task"] for t in todo if t.build is not None}
+    kinds = {t.meta["task"] for t in todo if t.build is not None} - {"chat"}
     sanity = any(t.build is not None and t.model in scoring_models() for t in todo)
     probe = []
     if "embed" in kinds:
@@ -1271,6 +1461,18 @@ def entry_key(e: dict) -> tuple:
     return (e["model"], e["path"], e.get("variant") or DEFAULT_VARIANT["onnx" if e["path"] == "onnx-cpu" else "coreml"])
 
 
+def _chat_check_python(python: str, todo: list):
+    """Fail before any model runs if `--chat-python` can't score the chat sample."""
+    if not any(t.build is not None and t.meta["task"] == "chat" for t in todo):
+        return
+    p = subprocess.run([python, "-c", "import rouge_score, jsonschema, numpy, transformers"], capture_output=True,
+                       text=True)
+    if p.returncode != 0:
+        raise SystemExit(f"--chat-python {python} can't score the chat sample "
+                         f"({(p.stderr.strip().splitlines() or ['not runnable'])[-1]}): use the chat benchmark's "
+                         f"environment (tools/chat_bench/requirements.txt)")
+
+
 def plan(args, this_chip: str, by_key: dict, home: Home) -> list[Target]:
     models = models_toml()
     builds = find_builds([Path(d) for d in args.models_dir])
@@ -1293,7 +1495,9 @@ def plan(args, this_chip: str, by_key: dict, home: Home) -> list[Target]:
             if (path, variant) != default and ("all" in args.paths or path in named):
                 targets.append((path, variant))
         for path, variant in targets:
-            t = Target(model, meta, path, variant, path == meta["served"] and variant == "fp16")
+            if meta["task"] == "chat":
+                variant = CHAT_VARIANT
+            t = Target(model, meta, path, variant, path == meta["served"] and variant in ("fp16", CHAT_VARIANT))
             backend = "onnx" if path == "onnx-cpu" else "coreml"
             want = by_key.get(t.key, {}).get("build", {}).get("ledger")
             cands = builds.get((model, backend), [])
@@ -1330,6 +1534,9 @@ def main() -> int:
     ap.add_argument("--python", default=os.environ.get("SIDEKICK_GATE_PYTHON") or sys.executable,
                     help="the interpreter for tools/mteb_transfer.py and scoring_run.py sanity, built from "
                          "tools/release_gate.requirements.txt (default: $SIDEKICK_GATE_PYTHON, else this one)")
+    ap.add_argument("--chat-python", default=os.environ.get("SIDEKICK_CHAT_BENCH_PYTHON") or sys.executable,
+                    help="the interpreter for tools/chat_bench/gate_score.py, the chat benchmark's environment "
+                         "(tools/chat_bench/requirements.txt; default: $SIDEKICK_CHAT_BENCH_PYTHON, else this one)")
     ap.add_argument("--home", type=Path, default=DEFAULT_HOME,
                     help=f"the gate's persistent home (default {DEFAULT_HOME})")
     ap.add_argument("--fresh-home", action="store_true", help="a temporary home instead, deleted afterwards")
@@ -1345,7 +1552,7 @@ def main() -> int:
 
     this_chip = chip()
     base = json.loads(args.baseline.read_text()) if args.baseline.exists() else {"entries": []}
-    tol = base.get("tolerances", TOLERANCES)
+    tol = merged_tolerances(base)
     by_key = {entry_key(e): e for e in base["entries"]}
     home = Home(None if args.fresh_home else args.home.expanduser().resolve())
     try:
@@ -1364,6 +1571,7 @@ def gate(args, this_chip, base, tol, by_key, home) -> int:
                   + (f"\n{'':48} reference: {t.ref}" if b else ""))
         return 0
     check_python(args.python, todo)
+    _chat_check_python(args.chat_python, todo)
     binary = build_daemon(args)
     version = subprocess.run([str(binary), "--version"], capture_output=True, text=True).stdout.strip()
     print(version, flush=True)
@@ -1474,7 +1682,7 @@ def write_baseline(path: Path, base: dict, results: list[dict], prov: dict):
         "about": ("The release gate's baseline: each published model's task sample, run through sidekickd over "
                   "HTTP, on the paths and build variants listed. Written by tools/release_gate.py "
                   "--update-baseline; do not edit by hand. A change to it is deliberate, and its PR says why."),
-        "tolerances": base.get("tolerances", TOLERANCES),
+        "tolerances": merged_tolerances(base),
         "mteb_tasks": MTEB_TASKS,
         "updated": {k: prov[k] for k in ("commit", "dirty", "sidekick", "chip", "os", "os_build", "date")},
         "entries": entries,

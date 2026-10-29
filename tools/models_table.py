@@ -1480,6 +1480,26 @@ def published_builds(rows, models):
     return table(["model", "backend", "variant", "buckets", "repository", "revision", "sidekick release"], out)
 
 
+def chat_grades(rows, models):
+    """Each chat build's D54 grade, from the grades the checksum ledger
+    attached to its files (tools/ledger.py): per text family, the KL mean,
+    p99 and top-1 on the Neural Engine, and the task check."""
+    out = []
+    for b in sorted(ledger.load()["builds"], key=lambda b: (b["model"], b["variant"])):
+        for g in b["grades"]:
+            if g.get("rubric") != "D54":
+                continue
+            fams = "<br>".join(f"{f}: {v['kl_mean']:.2e} / {v['kl_p99']:.2e} / {100 * v['top1']:.2f}% ({v['grade']})"
+                               for f, v in g["families"].items())
+            tc = g.get("task_check")
+            out.append([models[b["model"]]["name"], f"`{b['variant']}`", f"**{g['grade']}**", fams,
+                        "passed" if tc and tc["passed"] else "failed" if tc else "not run",
+                        f"{g['chip']}, {(g['os'] or '').split(' (')[0]}"])
+    if not out:
+        return ["No chat build is graded in the checksum ledger yet."]
+    return table(["model", "build", "grade", "per family: KL mean / p99 / top-1", "task check", "graded on"], out)
+
+
 def mteb_source(rows, models, bench):
     """Where the MTEB scores came from, as a sentence."""
     m = bench["mteb"]
@@ -1725,7 +1745,7 @@ def transfer_cap(rows, models, bench):
 TABLES = {"coreml-grades": coreml_grades, "onnx-accuracy": onnx_accuracy, "latency": latency,
           "threads": threads, "memory": memory, "cosine-scale": cosine_scale,
           "classifier-scales": classifier_scales, "prompts": prompts, "named-prompts": named_prompts,
-          "published-builds": published_builds}
+          "published-builds": published_builds, "chat-grades": chat_grades}
 # Tables from the results file's benchmark scores.
 BENCH_TABLES = {"mteb-eng-v2": mteb_table("MTEB(eng, v2)", every_embedder=True),
                 "mteb-multilingual-v2": mteb_table("MTEB(Multilingual, v2)"),

@@ -1,13 +1,17 @@
 //! What to fetch for a model, and the manifest it is served with.
 //!
 //! A published build's repository is its install tree (D49): the manifest
-//! (`manifest.toml` for an embedder, `classifier.toml` for a classifier),
-//! the tokenizer, and the artifact, one program per bucket for Core ML
-//! (`model_128.mlmodelc/`, …), each chunk its own (D37). A variant (a
+//! (`manifest.toml` for an embedder, `classifier.toml` for a classifier,
+//! `chat.toml` for a chat model), the tokenizer, and the artifact, one
+//! program per bucket for Core ML (`model_128.mlmodelc/`, …), each chunk
+//! its own (D37). A chat build (D53) has no buckets: its decoder's chunks
+//! (`decoder.0.mlmodelc/`, …), its host tables (the embedding and RoPE
+//! files) and its chat template come whole. A variant (a
 //! quantization) is a subdirectory holding its own install tree. Fetch
 //! reads the manifest first, then maps the buckets asked for to
 //! `--include` patterns, so `hf` and the fallback fetch the same files.
 
+use sidekick_core::chat_manifest::{ChatManifest, CHAT_MANIFEST};
 use sidekick_core::manifest::{CLASSIFIER_MANIFEST, EMBEDDER_MANIFEST};
 use sidekick_core::{artifact_files, ClassifierManifest, ModelManifest};
 
@@ -16,14 +20,24 @@ use sidekick_core::{artifact_files, ClassifierManifest, ModelManifest};
 pub enum Kind {
     Embedder,
     Classifier,
+    Chat,
 }
 
 impl Kind {
+    pub const ALL: [Kind; 3] = [Kind::Embedder, Kind::Classifier, Kind::Chat];
+
     pub fn file(self) -> &'static str {
         match self {
             Kind::Embedder => EMBEDDER_MANIFEST,
             Kind::Classifier => CLASSIFIER_MANIFEST,
+            Kind::Chat => CHAT_MANIFEST,
         }
+    }
+
+    /// The kind whose manifest `path` is.
+    pub fn of(path: &str) -> Option<Kind> {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        Kind::ALL.into_iter().find(|k| k.file() == name)
     }
 }
 
@@ -39,13 +53,16 @@ pub struct Build {
     /// Empty for a model without buckets (ONNX, static).
     pub buckets: Vec<usize>,
     pub chunks: usize,
+    /// Files a build needs besides its manifest, tokenizer and programs: a
+    /// chat build's host tables and chat template.
+    pub extra: Vec<String>,
     /// The manifest as written, to rewrite for a subset.
     table: toml::Table,
 }
 
 /// The manifest patterns for a variant's root (`""` or `"<variant>/"`).
 pub fn manifest_patterns(root: &str) -> Vec<String> {
-    [EMBEDDER_MANIFEST, CLASSIFIER_MANIFEST].iter().map(|m| format!("{root}{m}")).collect()
+    Kind::ALL.iter().map(|k| format!("{root}{}", k.file())).collect()
 }
 
 impl Build {
@@ -55,15 +72,22 @@ impl Build {
             Kind::Embedder => {
                 let m: ModelManifest = toml::from_str(text).map_err(|e| anyhow::anyhow!("parsing {}: {e}", kind.file()))?;
                 let chunks = m.chunks();
-                Self { kind, id: m.id, backend: m.backend.name().into(), artifact: m.artifact, tokenizer: m.tokenizer, buckets: m.buckets, chunks, table }
+                Self { kind, id: m.id, backend: m.backend.name().into(), artifact: m.artifact, tokenizer: m.tokenizer, buckets: m.buckets, chunks, extra: vec![], table }
             }
             Kind::Classifier => {
                 let m: ClassifierManifest = toml::from_str(text).map_err(|e| anyhow::anyhow!("parsing {}: {e}", kind.file()))?;
                 let chunks = m.chunks();
-                Self { kind, id: m.id, backend: "coreml".into(), artifact: m.artifact, tokenizer: m.tokenizer, buckets: m.buckets, chunks, table }
+                Self { kind, id: m.id, backend: "coreml".into(), artifact: m.artifact, tokenizer: m.tokenizer, buckets: m.buckets, chunks, extra: vec![], table }
+            }
+            Kind::Chat => {
+                let m: ChatManifest = toml::from_str(text).map_err(|e| anyhow::anyhow!("parsing {}: {e}", kind.file()))?;
+                let d = &m.decoder;
+                let mut extra = vec![d.host.embedding.clone(), d.host.rope.clone()];
+                extra.extend(m.chat.as_ref().map(|c| c.template.clone()));
+                Self { kind, id: m.id, backend: "coreml".into(), artifact: d.artifact.clone(), tokenizer: m.tokenizer, buckets: vec![], chunks: d.chunks, extra, table }
             }
         };
-        for path in [&build.artifact, &build.tokenizer] {
+        for path in [&build.artifact, &build.tokenizer].into_iter().chain(&build.extra) {
             super::hfcache::check_repo_path(&path.replace("{seq}", "0").replace("{chunk}", "0"))
                 .map_err(|_| anyhow::anyhow!("the manifest names an unsafe path `{path}`"))?;
         }
@@ -93,7 +117,10 @@ impl Build {
     /// finds them.
     pub fn includes(&self, root: &str, chosen: &[usize]) -> Vec<String> {
         let mut patterns = vec![format!("{root}{}", self.kind.file()), format!("{root}{}", self.tokenizer)];
-        let names: Vec<String> = if self.buckets.is_empty() {
+        patterns.extend(self.extra.iter().map(|f| format!("{root}{f}")));
+        let names: Vec<String> = if self.kind == Kind::Chat {
+            self.chunk_programs()
+        } else if self.buckets.is_empty() {
             vec![self.artifact.clone()]
         } else {
             chosen.iter().flat_map(|&b| artifact_files(&self.artifact, b, self.chunks)).collect()
@@ -107,6 +134,12 @@ impl Build {
             }
         }
         patterns
+    }
+
+    /// A chat build's chunk programs, `decoder.0.mlmodelc`, … (its
+    /// manifest's `artifact` with `{chunk}` filled in).
+    pub fn chunk_programs(&self) -> Vec<String> {
+        (0..self.chunks).map(|i| self.artifact.replace("{chunk}", &i.to_string())).collect()
     }
 
     /// The manifest to serve the chosen buckets with: the build's own, with
@@ -219,6 +252,58 @@ total = 1
             .replace("max_seq_len = 512", "max_seq_len = 1024")
             + "\n[chunking]\nchunks = 2\nweight_budget_bytes = 966367641\n";
         Build::parse(Kind::Embedder, &text).unwrap()
+    }
+
+    const CHAT: &str = r#"id = "minicpm5-2b"
+task = "text-generation"
+interface = "kv-state-1"
+tokenizer = "tokenizer.json"
+
+[decoder]
+artifact = "decoder.{chunk}.mlmodelc"
+chunks = 2
+tokens_per_call = 16
+cache_capacity = 2048
+context_length = 2033
+hidden_size = 2048
+head_dim = 128
+kv_heads = 2
+layers = [28, 14]
+vocab_size = 130560
+
+[decoder.host]
+embedding = "embedding.safetensors"
+rope = "rope.safetensors"
+
+[chat]
+template = "chat_template.jinja"
+stop_token_ids = [1]
+"#;
+
+    #[test]
+    fn a_chat_build_fetches_its_chunks_host_tables_and_template_whole() {
+        let b = Build::parse(Kind::Chat, CHAT).unwrap();
+        assert_eq!((b.id.as_str(), b.backend.as_str(), b.buckets.len(), b.chunks), ("minicpm5-2b", "coreml", 0, 2));
+        assert!(b.choose(&[128]).unwrap_err().to_string().contains("no sequence-length buckets"));
+        let chosen = b.choose(&[]).unwrap();
+        let inc = b.includes("palette8/", &chosen);
+        let mut repo = vec!["README.md".to_string(), "palette8.sha256".into(), "LICENSE".into()];
+        for f in ["chat.toml", "tokenizer.json", "chat_template.jinja", "embedding.safetensors", "rope.safetensors"] {
+            repo.push(format!("palette8/{f}"));
+        }
+        for c in 0..2 {
+            for f in ["model.mil", "coremldata.bin", "metadata.json", "weights/weight.bin", "analytics/coremldata.bin"] {
+                repo.push(format!("palette8/decoder.{c}.mlmodelc/{f}"));
+            }
+        }
+        let got: Vec<&String> = repo.iter().filter(|f| selected(f, &inc, &[])).collect();
+        let want: Vec<&String> = repo.iter().filter(|f| f.starts_with("palette8/")).collect();
+        assert_eq!(got, want, "the whole build, and nothing of the card or the checksums");
+        assert_eq!(b.served_manifest(CHAT, &chosen).unwrap(), CHAT, "a chat build is served by its own manifest");
+        assert_eq!(Kind::of("palette8/chat.toml"), Some(Kind::Chat));
+        assert!(manifest_patterns("*/").contains(&"*/chat.toml".to_string()));
+        let unsafe_path = CHAT.replace("rope.safetensors", "../rope.safetensors");
+        assert!(Build::parse(Kind::Chat, &unsafe_path).unwrap_err().to_string().contains("unsafe path"));
     }
 
     #[test]

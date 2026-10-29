@@ -19,7 +19,15 @@ references with sidekick_convert.causal_lm.grade, overall and per text
 family (the repository's texts, #173's set, against held-out prose). The
 ANE grade is the worse of the two paths' grades; the build's grade is the
 ANE's, or lower when the converter's two calibration draws screened
-differently (the stability check). Writes <work>/ane-grade.json.
+differently (the stability check). Writes <work>/ane-grade.json, the
+grade report: the grades, the rubric (D54), the chip and macOS, the
+sha256 of every file of the build it graded but `chat.toml`, and
+`chat.toml`'s digest without `graded_os` (tools/ledger.py's
+chat_manifest_digest), so the checksum ledger can attach the grade to
+exactly this build. `--report-dir DIR` also writes it to DIR under a name of
+its own, for docs/data/runs.toml to describe; `--record-os` writes the
+macOS it was graded on into the build's `chat.toml` as `graded_os`, which
+`/v1/models` lists.
 
 Build the example once and sign it with a fixed identifier, so later builds
 of it reuse the ANE compile (the cache key includes the code signature, and
@@ -35,7 +43,11 @@ past `--timeout` seconds.
 """
 
 import argparse
+import datetime
+import hashlib
 import json
+import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -44,9 +56,49 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import ledger  # noqa: E402  (tools/ledger.py: the chat manifest's digest)
 from sidekick_convert import causal_lm as L  # noqa: E402
 
 PATHS = {"generation": "token", "prompt": "tokens"}
+MANIFEST = "chat.toml"
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def graded_files(model_dir):
+    """[{path, sha256}] for every file of the build but its manifest, which
+    `--record-os` edits after grading."""
+    root = Path(model_dir)
+    return [{"path": str(f.relative_to(root)), "sha256": sha256(f)}
+            for f in sorted(root.rglob("*")) if f.is_file() and f.name != ".DS_Store"
+            and str(f.relative_to(root)) != MANIFEST]
+
+
+def machine():
+    """(chip, "macOS <version> (<build>)", "macOS <version>")."""
+    chip = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True).stdout.strip()
+    version = platform.mac_ver()[0]
+    build = subprocess.run(["sw_vers", "-buildVersion"], capture_output=True, text=True).stdout.strip()
+    return chip, f"macOS {version} ({build})", f"macOS {version}"
+
+
+def record_os(manifest, graded_os):
+    """Set `graded_os` in a chat.toml, as a top-level key before its first table."""
+    text = Path(manifest).read_text()
+    line = f'graded_os = "{graded_os}"\n'
+    if re.search(r"(?m)^graded_os = ", text):
+        text = re.sub(r'(?m)^graded_os = .*\n', line, text)
+    else:
+        first = re.search(r"(?m)^\[", text)
+        at = first.start() if first else len(text)
+        text = text[:at] + line + "\n" + text[at:]
+    Path(manifest).write_text(text)
 
 
 def main():
@@ -59,7 +111,13 @@ def main():
     p.add_argument("--speed", action="store_true", help="also time one call at three positions and a generation")
     p.add_argument("--keep-rows", action="store_true",
                    help="keep the logits rows the decoder wrote (<work>/ane/run_*.f32, about 0.5 MB a position)")
+    p.add_argument("--report-dir", type=lambda s: Path(s).expanduser(),
+                   help="also write the grade report here as causal-lm-<model>-<date>.json")
+    p.add_argument("--record-os", action="store_true",
+                   help="write the macOS it was graded on into the build's chat.toml as graded_os")
     args = p.parse_args()
+    files_before = graded_files(args.model_dir)
+    manifest_before = ledger.chat_manifest_digest((args.model_dir / MANIFEST).read_text())
     job = L.Job.load(args.work / "job.json")
     refs_dir = args.work / "references"
     meta = json.loads((refs_dir / "meta.json").read_text())
@@ -106,12 +164,27 @@ def main():
     report = json.loads((args.work / "report.json").read_text())
     ane = L.worse(*(g["grade"] for g in grades.values()))
     final = ane if report.get("stable", True) else L.worse(ane, report["screen_grade"])
-    summary = {"paths": grades, "ane_grade": ane, "prompt_rows": prompt_rows, "greedy": same,
+    if (graded_files(args.model_dir) != files_before
+            or ledger.chat_manifest_digest((args.model_dir / MANIFEST).read_text()) != manifest_before):
+        raise SystemExit("the build's files changed while it was graded")
+    chip, macos, graded_os = machine()
+    summary = {"rubric": "D54", "model": job.model_id, "chip": chip, "macos": macos,
+               "date": datetime.date.today().isoformat(), "files": files_before,
+               "manifest_digest": manifest_before,
+               "paths": grades, "ane_grade": ane, "prompt_rows": prompt_rows, "greedy": same,
                "stable": report.get("stable"), "screens": report.get("screens"), "grade": final,
                "ceiling": meta.get("ceiling"),
                "decoder": {k: run[k] for k in ("load_ms", "first_call_ms", "ane_bytes", "health")},
                "speed": [t for t in run["tasks"] if t["type"] in ("tbench", "gen")]}
     (args.work / "ane-grade.json").write_text(json.dumps(summary, indent=1))
+    if args.report_dir:
+        args.report_dir.mkdir(parents=True, exist_ok=True)
+        named = args.report_dir / f"causal-lm-{job.model_id}-{summary['date']}.json"
+        named.write_text(json.dumps(summary, indent=1))
+        print(f"grade report: {named}")
+    if args.record_os:
+        record_os(args.model_dir / MANIFEST, graded_os)
+        print(f"recorded graded_os = {graded_os!r} in {args.model_dir / MANIFEST}")
     for path, g in grades.items():
         print(f"ANE, {path} path: {L.describe(g)}")
         for fam, sub in g["families"].items():
