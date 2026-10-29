@@ -72,7 +72,9 @@ Light, trunk-based git-flow:
   HTTP: MultiNLI pairs for the nli models, an MTEB slice for the
   embedders, the parity corpora's labelled cases for the other
   classifiers, the reference set for rerankers (its Python environment is
-  pinned in `tools/release_gate.requirements.txt`). It compares every number
+  pinned in `tools/release_gate.requirements.txt`), and a slice of the chat
+  benchmark for open chat models (scored in the chat benchmark's
+  environment, `--chat-python`). It compares every number
   with the committed baseline, `docs/data/release-gate.json`, and fails on
   drift beyond the tolerances recorded there. Don't tag unless its last
   line reads PASS; put that line in the release PR. A deliberate change to
