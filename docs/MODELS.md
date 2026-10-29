@@ -2164,7 +2164,9 @@ family's letter, with a task check on the chat benchmark beside it
 grades the checksum ledger attaches to each build's files:
 
 <!-- generated: chat-grades -->
-No chat build is graded in the checksum ledger yet.
+| model | build | grade | per family: KL mean / p99 / top-1 | task check | graded on |
+|---|---|---|---|---|---|
+| MiniCPM5-2B | `palette8` | **B** | prose: 1.28e-03 / 1.17e-02 / 99.57% (B)<br>repository: 2.89e-04 / 2.07e-03 / 98.93% (B) | passed | Apple M1 Max, macOS 27.0 |
 <!-- /generated -->
 
 Installing one costs a Neural Engine compile that macOS keeps and you
