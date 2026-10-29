@@ -35,7 +35,7 @@
    "about": "a chat-benchmark family's headline score (mode:family), over 12 items"
   },
   "exact": {
-   "about": "counts that must not change: refused requests, token-count mismatches, sanity verdicts, probs/nli_probs disagreements"
+   "about": "values that must not change: refused requests, token-count mismatches, sanity verdicts, probs/nli_probs disagreements; for a chat model, its replies that differ between two runs at temperature 0, its guided replies that fail their schema, and each request whose usage differs from the build's tokenizer and template, with its deltas"
   }
  },
  "mteb_tasks": [
@@ -43,7 +43,7 @@
   "AskUbuntuDupQuestions"
  ],
  "updated": {
-  "commit": "c2226f5a3af5872a35a92f23d11d2d3c2b182d39",
+  "commit": "966cd978ad49d859cbb7eba55c449ad95e7831f1",
   "dirty": false,
   "sidekick": "0.16.0",
   "chip": "Apple M1 Max",
@@ -1998,9 +1998,7 @@
     "refused": 0,
     "nondeterministic_replies": 0,
     "schema_invalid": 0,
-    "prompt_token_mismatches": 0,
-    "completion_token_mismatches": 1,
-    "guided_prompt_tokens": "270ee7ba11a2851c",
+    "usage_mismatches": "{\"prompt:tags_free:tag-007\": {\"completion\": 1, \"prompt\": 0}}",
     "chat:prompt:titles": 0.4035,
     "chat:prompt:tags_vocab": 0.8333,
     "chat:prompt:tags_free": 0.3167,
@@ -2013,9 +2011,9 @@
     "prompt": "DiM6qTaxQdtjQZsBKztbEev8JXMU3qLai77XqJoR3QbDe7XDTL86ePf1H8kt",
     "guided": "Iu1QetpzEw1CtJYR3QbDePXS"
    },
-   "seconds": 353.8,
+   "seconds": 357.4,
    "provenance": {
-    "commit": "c2226f5a3af5872a35a92f23d11d2d3c2b182d39",
+    "commit": "966cd978ad49d859cbb7eba55c449ad95e7831f1",
     "dirty": false,
     "chip": "Apple M1 Max",
     "os": "macOS 27.0",
