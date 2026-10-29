@@ -51,8 +51,9 @@ What it does:
      every reply must be byte-identical between the two runs; each
      family's headline score (tools/chat_bench's scorers), the guided
      replies that don't satisfy their schema, and the requests whose
-     `usage` differs from the build's tokenizer and template are compared
-     with the baseline (tools/chat_bench/gate_score.py, in the chat
+     `usage` differs from the build's tokenizer and template (a guided
+     request's prompt count, which carries the daemon's schema instruction,
+     exactly) are compared with the baseline (tools/chat_bench/gate_score.py, in the chat
      benchmark's environment: `--chat-python`). The first request loads
      the build; the free disk before and after it is recorded as the Neural
      Engine compile cache the load left, when it compiled.
@@ -1086,7 +1087,10 @@ def run_chat(args, client: Client, model: str, build: Build, run_dir: Path) -> d
     metrics = {"n": len(recs), "refused": sum(r["status"] != 200 for r in recs), "nondeterministic_replies": differ,
                "schema_invalid": scored["schema_invalid"],
                "prompt_token_mismatches": scored["prompt_token_mismatches"],
-               "completion_token_mismatches": scored["completion_token_mismatches"]}
+               "completion_token_mismatches": scored["completion_token_mismatches"],
+               # every guided request's prompt_tokens, exactly: the daemon's schema instruction is in them
+               "guided_prompt_tokens": hashlib.sha256(json.dumps(scored["guided_prompt_tokens"]).encode())
+               .hexdigest()[:16]}
     metrics.update({f"chat:{k}": v for k, v in scored["scores"].items()})
     sample = hashlib.sha256(json.dumps([[m, r["family"], r["item"], r["messages"], r["max_tokens"]]
                                         for m, todo in modes.items() for r, _g in todo]).encode()).hexdigest()
@@ -1233,7 +1237,7 @@ def run_one_chat(args, binary: Path, home: Home, t: "Target") -> dict:
 def metric_rule(name: str) -> str:
     if name in ("n", "refused", "token_count_mismatches", "probs_vs_nli_probs_disagreements",
                 "nondeterministic_replies", "schema_invalid", "prompt_token_mismatches",
-                "completion_token_mismatches"):
+                "completion_token_mismatches", "guided_prompt_tokens"):
         return "exact"
     if name.startswith("chat:"):
         return "chat_score"

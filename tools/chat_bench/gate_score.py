@@ -11,12 +11,18 @@ record as tools/chat_bench/run.py writes one, with the request's
 environment (tools/chat_bench/requirements.txt), which has the scorers'
 packages and transformers, for the template.
 
-Token counts. `prompt_tokens` must be the rendered prompt's length, as
-transformers renders the build's template with its `[chat]
-template_kwargs`; `completion_tokens` must be the reply's tokens re-encoded,
-plus one when the reply ended on a stop token (finish_reason `stop`), which
-the daemon counts. A mismatch is counted, not judged here: the gate holds
-the count to its baseline.
+Token counts. A prompt-only request's `prompt_tokens` must be the rendered
+prompt's length, as transformers renders the build's template with its
+`[chat] template_kwargs`. A guided request's prompt also carries the
+daemon's schema instruction (sidekick-llm's `with_schema_in_prompt`), which
+this doesn't reproduce, so its counts are reported as they are, for the gate
+to hold to its baseline exactly. `completion_tokens` must be the reply's
+tokens re-encoded, plus one for a prompt-only reply that ended on a stop
+token (finish_reason `stop`), which the daemon counts; a guided reply ends
+when its grammar does, without one. A model may generate a reply in other
+tokens than its re-encoding (greedy decoding needn't pick the canonical
+split), so a mismatch is counted, not judged here: the gate holds the count
+to its baseline.
 """
 
 from __future__ import annotations
@@ -70,7 +76,8 @@ def main() -> int:
     cfg, items, schemas = tasks.load_config(), tasks.load_items(), tasks.load_schemas()
     emb = score.Embedder(None, "none", Path("/nonexistent"))
     prompt_tokens, completion_tokens = counter(build)
-    out = {"scores": {}, "schema_invalid": 0, "prompt_token_mismatches": 0, "completion_token_mismatches": 0}
+    out = {"scores": {}, "schema_invalid": 0, "prompt_token_mismatches": 0, "completion_token_mismatches": 0,
+           "guided_prompt_tokens": []}
     for mode, part in run["modes"].items():
         fam, _ = score.score_run(part, cfg, items, schemas, emb)
         for f, v in fam.items():
@@ -81,9 +88,12 @@ def main() -> int:
             if mode == "guided" and r.get("schema") is not None and not schema_ok(r["content"], r["schema"]):
                 out["schema_invalid"] += 1
             u = r.get("usage") or {}
-            if u.get("prompt_tokens") != prompt_tokens(r["messages"]):
+            if mode == "guided":
+                out["guided_prompt_tokens"].append(u.get("prompt_tokens"))
+            elif u.get("prompt_tokens") != prompt_tokens(r["messages"]):
                 out["prompt_token_mismatches"] += 1
-            want = completion_tokens(r["content"]) + (1 if r.get("finish_reason") == "stop" else 0)
+            stop = mode != "guided" and r.get("finish_reason") == "stop"
+            want = completion_tokens(r["content"]) + (1 if stop else 0)
             if u.get("completion_tokens") != want:
                 out["completion_token_mismatches"] += 1
     print(json.dumps(out))
