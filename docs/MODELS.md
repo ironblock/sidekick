@@ -2169,10 +2169,8 @@ grades the checksum ledger attaches to each build's files:
 | MiniCPM5-2B | `palette8` | **B** | prose: 1.28e-03 / 1.17e-02 / 99.57% (B)<br>repository: 2.89e-04 / 2.07e-03 / 98.93% (B) | passed | Apple M1 Max, macOS 27.0 |
 <!-- /generated -->
 
-Installing one costs a Neural Engine compile that macOS keeps and you
-can't delete, and other Neural Engine work stalls its generations
-([BACKENDS.md](BACKENDS.md#open-chat-models-on-the-neural-engine)); each
-model's card states its measured size.
+What installing one costs, and what it shares the Neural Engine with, is
+in [BACKENDS.md](BACKENDS.md#open-chat-models-on-the-neural-engine).
 
 ## Licences and training data
 

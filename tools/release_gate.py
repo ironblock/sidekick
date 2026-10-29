@@ -243,6 +243,18 @@ TOLERANCES = {
 }
 
 
+def merged_tolerances(base: dict) -> dict:
+    """The baseline's tolerances, which a run is judged by, with any rule it
+    lacks added from TOLERANCES and every rule's `about` text from here."""
+    out = {}
+    for k in dict.fromkeys([*TOLERANCES, *base.get("tolerances", {})]):
+        rule = {**TOLERANCES.get(k, {}), **base.get("tolerances", {}).get(k, {})}
+        if k in TOLERANCES:
+            rule["about"] = TOLERANCES[k]["about"]
+        out[k] = rule
+    return out
+
+
 class GateError(Exception):
     """A model that couldn't be run: reported, and the gate fails."""
 
@@ -1540,7 +1552,7 @@ def main() -> int:
 
     this_chip = chip()
     base = json.loads(args.baseline.read_text()) if args.baseline.exists() else {"entries": []}
-    tol = {**TOLERANCES, **base.get("tolerances", {})}
+    tol = merged_tolerances(base)
     by_key = {entry_key(e): e for e in base["entries"]}
     home = Home(None if args.fresh_home else args.home.expanduser().resolve())
     try:
@@ -1670,7 +1682,7 @@ def write_baseline(path: Path, base: dict, results: list[dict], prov: dict):
         "about": ("The release gate's baseline: each published model's task sample, run through sidekickd over "
                   "HTTP, on the paths and build variants listed. Written by tools/release_gate.py "
                   "--update-baseline; do not edit by hand. A change to it is deliberate, and its PR says why."),
-        "tolerances": {**TOLERANCES, **base.get("tolerances", {})},
+        "tolerances": merged_tolerances(base),
         "mteb_tasks": MTEB_TASKS,
         "updated": {k: prov[k] for k in ("commit", "dirty", "sidekick", "chip", "os", "os_build", "date")},
         "entries": entries,

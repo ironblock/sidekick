@@ -605,7 +605,12 @@ def chat_fidelity(builds, link):
                                   for f, v in tc["families"].items()]))
     if len(out) == 1:
         out += ["", "Not graded yet."]
-    out += ["", "The grading report's file hashes match this repository's files."]
+    chips = sorted({chip(g["chip"]) for b in builds for g in b["grades"] if g.get("rubric") == "D54"})
+    if chips:
+        out += ["", f"Graded on {' and '.join(chips)} only; other chips haven't been graded."]
+    out += ["", "The grading report's file hashes match every file of this build but `chat.toml`, and its "
+            "digest of `chat.toml` matches this one's content without `graded_os`, the line that records "
+            "where it was graded."]
     return "\n".join(out)
 
 
@@ -625,7 +630,8 @@ def install_cost(model, builds, link):
         f"- **Neural Engine compile cache:** the first load of an install compiles the decoder for the Neural "
         f"Engine, and macOS keeps the compiled program in a system cache that you can't delete"
         + (f": {sizes}" if sizes else " (about the size of the weights; not yet measured for this build)")
-        + ". It is paid once per install and again after a macOS update.",
+        + ". It is paid once per install and again after a macOS update, and a sidekickd signed with "
+        "another identity than the release's compiles it again.",
         "- **Shared with Apple Foundation Models:** the Neural Engine is shared, so other apps using Apple "
         "Foundation Models, or other Neural Engine work, stall this model's generations while they run. "
         "sidekickd reports the stalls but can't prevent them.",
