@@ -130,6 +130,12 @@ repository or revision (a build not published yet needs `--repo`).
   the first requests don't wait on Core ML's compile ([D52](DECISIONS.md#d52--warm-core-mls-compile-cache-before-requests-need-it)). `--no-warm`
   skips it, and so does `warm = false` under the model's
   `[models."<id>"]` in the config.
+- **An open chat model's build comes whole:** its decoder's chunk
+  programs, embedding and RoPE tables, tokenizer, template and
+  `chat.toml`; it has no buckets, so `--buckets` doesn't apply. fetch
+  warms its decoder like any Core ML build, and that compile leaves a
+  Neural Engine cache about the size of its weights, which you can't
+  delete ([BACKENDS.md](BACKENDS.md#open-chat-models-on-the-neural-engine)).
 
 ### Installing a published build by hand
 
