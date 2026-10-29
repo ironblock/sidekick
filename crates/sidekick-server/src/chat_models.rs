@@ -219,8 +219,9 @@ pub fn foundation_models(
 }
 
 /// `/v1/models`' listing of an open model (D53). `guided` is whether its
-/// tokenizer lets llguidance constrain its output (#186).
-pub fn open_listing(guided: bool) -> ChatListing {
+/// tokenizer lets llguidance constrain its output (#186); `graded_os` is
+/// the macOS its build was graded on (its `chat.toml`).
+pub fn open_listing(guided: bool, graded_os: Option<String>) -> ChatListing {
     let mut honored_fields = vec!["max_completion_tokens", "max_tokens", "seed", "stop", "temperature", "top_p"];
     if guided {
         honored_fields.insert(2, "response_format");
@@ -233,7 +234,7 @@ pub fn open_listing(guided: bool) -> ChatListing {
         guided_streaming: guided,
         guardrails: false,
         compute_units: Some(sidekick_core::ComputeUnits::CpuAndNeuralEngine.name()),
-        graded_os: None,
+        graded_os,
     }
 }
 
@@ -242,6 +243,7 @@ pub fn open_listing(guided: bool) -> ChatListing {
 pub fn open_model(
     model: Arc<sidekick_llm::OpenModel>,
     revision: Option<&str>,
+    graded_os: Option<String>,
     request_timeout: (Duration, &'static str),
 ) -> ChatModel {
     let id = model.id().to_string();
@@ -250,7 +252,7 @@ pub fn open_model(
         None => id,
     };
     let live = model.clone();
-    let listing = open_listing(model.guided().is_ok());
+    let listing = open_listing(model.guided().is_ok(), graded_os);
     ChatModel::new(model, listing, request_timeout)
         .with_provenance(provenance)
         .with_live_health(Arc::new(move || live.health()))

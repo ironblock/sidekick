@@ -90,6 +90,10 @@ pub struct ChatManifest {
     /// cache capacity must fit under it.
     #[serde(default)]
     pub ane_max_seq_len: Option<usize>,
+    /// The macOS the build was graded on (`"macOS 27.0"`), as
+    /// tools/grade_causal_lm.py records it; `/v1/models` lists it.
+    #[serde(default)]
+    pub graded_os: Option<String>,
     pub decoder: DecoderSection,
     /// `[chat]`: the template and the stop tokens. Required to serve the
     /// model ([`check_serving`](Self::check_serving)); the decoder alone
