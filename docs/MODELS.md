@@ -2152,6 +2152,26 @@ Two-way checkers report binary triple accuracy (S against not-S), never three-wa
 
 <!-- verification-scores:end -->
 
+## Chat models
+
+Open chat models (D53) run on the Neural Engine beside Apple Foundation
+Models, served by `/v1/chat/completions` ([API.md](API.md#open-models)).
+A chat build is graded by D54, not by the parity suite: the KL divergence
+of each next-token distribution from the original model's in fp32, and
+top-1 agreement, per family of held-out texts, the build earning its worst
+family's letter, with a task check on the chat benchmark beside it
+([CONVERTING.md](CONVERTING.md#grading) has the bands). Generated from the
+grades the checksum ledger attaches to each build's files:
+
+<!-- generated: chat-grades -->
+No chat build is graded in the checksum ledger yet.
+<!-- /generated -->
+
+Installing one costs a Neural Engine compile that macOS keeps and you
+can't delete, and other Neural Engine work stalls its generations
+([BACKENDS.md](BACKENDS.md#open-chat-models-on-the-neural-engine)); each
+model's card states its measured size.
+
 ## Licences and training data
 
 Every model here has a licence that permits redistribution, and most
@@ -2184,7 +2204,9 @@ tier that follows ([PUBLISHING.md](PUBLISHING.md)):
 - **Undisclosed training data, or synthetic data from a generator that
   isn't named:** bge-small-en-v1.5, nlptown-sentiment, laya-en,
   laya-typed-decisions, julia-1, gliner2.5-decide, lumma-fev-0.1b and
-  agent-jev.
+  agent-jev. MiniCPM5-2B's UltraData sets are Apache-2.0 as collections but
+  defer to their sources' terms: web and code corpora, synthetic data from
+  unnamed generators, and RL problems under CC BY-SA 4.0.
 
 The audit records terms, not legal conclusions: check them against your
 own use. The [comparison page](https://ironblock.github.io/sidekick/)
