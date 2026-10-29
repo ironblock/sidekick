@@ -277,6 +277,7 @@ rope = "rope.safetensors"
 
 [chat]
 template = "chat_template.jinja"
+stop_token_ids = [1]
 "#;
 
     #[test]
