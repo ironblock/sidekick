@@ -8,6 +8,7 @@ round to nearest; calibration draws, grading and the committed fixtures and
 manifest follow their rules. No Core ML and no download.
 """
 
+import dataclasses
 import json
 import math
 import tempfile
@@ -21,6 +22,7 @@ import torch
 from sidekick_convert import causal_lm as L
 from sidekick_convert.backbones import llama_causal as LC
 from sidekick_convert.techniques import gptq as G
+from sidekick_convert.techniques import precision
 
 
 def tiny_llama(dirname, seed=0, layers=3, **overrides):
@@ -83,10 +85,36 @@ class Rewrites(unittest.TestCase):
         forced = LC.Ranges(K=2, norm_scale=[0.25] * (2 * self.ck.layers + 1), norm_max=[], linear_out_max=[])
         self.assertSameLogits(self.rewritten(rot, forced))
 
+    def test_the_value_matmul_and_output_projection_scales_are_exact(self):
+        rot = LC.Rotation(seed=3).bind(self.ck)
+        ranges = LC.calibrate_ranges(self.ck, self.ids, rot, report=lambda *_: None)
+        self.assertEqual(len(ranges.in_scale), self.ck.layers)
+        for (so, sd), ((o_rms, o_max), (d_rms, d_max)) in zip(ranges.in_scale, ranges.in_stats):
+            for s, rms, mx in ((so, o_rms, o_max), (sd, d_rms, d_max)):
+                self.assertGreaterEqual(s, 1.0)
+                self.assertEqual(math.log2(s), round(math.log2(s)))
+                self.assertTrue(s == 1.0 or mx * s <= precision.IN_MAX)
+        forced = dataclasses.replace(ranges, in_scale=[[8.0, 16.0]] * self.ck.layers)
+        h = LC.embed(LC.embedding_table(self.ck, rot), self.ids[0])
+        scaled = LC.run_layer(LC.build_layer(self.ck, 0, rot, forced), h, self.ck)
+        saved = LC.PV_SCALE
+        try:
+            LC.PV_SCALE = 1.0
+            plain = LC.run_layer(LC.build_layer(self.ck, 0, rot, dataclasses.replace(ranges, in_scale=None)), h,
+                                 self.ck)
+        finally:
+            LC.PV_SCALE = saved
+        self.assertGreater(saved, 1.0)
+        self.assertEqual(math.log2(saved), round(math.log2(saved)))
+        self.assertTrue(torch.equal(scaled, plain))
+
     def test_the_rotation_spreads_the_massive_activation(self):
         plain = LC.calibrate_ranges(self.ck, self.ids, None, report=lambda *_: None)
         rotated = LC.calibrate_ranges(self.ck, self.ids, LC.Rotation(seed=0).bind(self.ck), report=lambda *_: None)
         self.assertLess(max(rotated.norm_max), max(plain.norm_max))
+
+    def test_a_dead_input_keeps_scale_one(self):
+        self.assertEqual(precision.input_scale(LC._Stat(0.0, 0.0)), 1.0)
 
     def test_norm_prescales_keep_squares_in_range(self):
         ranges = LC.calibrate_ranges(self.ck, self.ids, None, report=lambda *_: None)
@@ -171,6 +199,53 @@ class Rewrites(unittest.TestCase):
         every = LC.logits(norm, head, h)
         self.assertTrue(torch.allclose(LC.logits(norm, head, h, (3, 9)), every[3:9], atol=1e-6))
         self.assertTrue(torch.allclose(LC.logits(norm, head, h, [2, 7, 30]), every[[2, 7, 30]], atol=1e-6))
+
+
+def _have_coremltools():
+    try:
+        import coremltools  # noqa: F401
+        from coremltools import libmilstoragepython  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+@unittest.skipUnless(_have_coremltools(), "needs coremltools")
+class Descales(unittest.TestCase):
+    """The output projections' descales survive conversion and palettization
+    (llama_causal.DESCALE_PASS), and the check sees it when they don't."""
+
+    def test_descales_survive_conversion_and_palettization(self):
+        import coremltools as ct
+        import coremltools.optimize as cto
+        from sidekick_convert import core
+        torch.set_grad_enabled(False)
+        with tempfile.TemporaryDirectory() as d:
+            tiny_llama(d, layers=2)
+            ck = LC.Checkpoint(d)
+            rot = LC.Rotation(seed=1).bind(ck)
+            ranges = LC.calibrate_ranges(ck, [list(range(5, 30))], rot, report=lambda *_: None)
+            ranges = dataclasses.replace(ranges, in_scale=[[8.0, 16.0], [1.0, 4.0]])
+            layers = [LC.build_layer(ck, i, rot, ranges) for i in range(ck.layers)]
+            T, C, D, Dh = 4, 16, ck.hidden, ck.head_dim
+            chunk = LC.Chunk(layers, ck, T, C).eval()
+            example = [torch.zeros(1, D, 1, T), torch.tensor([0], dtype=torch.int32), LC.mask_for(0, T, C),
+                       torch.zeros(T, Dh), torch.zeros(T, Dh)]
+            inputs = [ct.TensorType("hidden_in", (1, D, 1, T), np.float16), ct.TensorType("pos", (1,), np.int32),
+                      ct.TensorType("mask", (1, 1, T, C), np.float16),
+                      ct.TensorType("cos", (T, Dh), np.float16), ct.TensorType("sin", (T, Dh), np.float16)]
+            scales = {(j, p): layer.in_scale[p] for j, layer in enumerate(layers) for p in ("o", "down")}
+            ml = L.to_mlprogram(chunk, example, inputs, last=False)
+            self.assertEqual(L.descales(ml), {(0, "o"): 1 / 8, (0, "down"): 1 / 16, (1, "o"): None,
+                                              (1, "down"): 1 / 4})
+            L.check_descales(ml, scales, "converted")
+            # every weight here stays plain fp16, as an fp16 projection does (too many values per group)
+            config = cto.coreml.OptimizationConfig(global_config=cto.coreml.OpPalettizerConfig(
+                mode="unique", granularity="per_grouped_channel", group_size=16, weight_threshold=2048))
+            L.check_descales(L.palettize(ml, config), scales, "palettized")
+            # coremltools' own palettize_weights reruns the default passes and folds them
+            with self.assertRaises(core.GateFailure):
+                L.check_descales(cto.coreml.palettize_weights(ml, config), scales, "default passes")
 
 
 class Gptq(unittest.TestCase):

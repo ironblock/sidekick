@@ -21,6 +21,13 @@
 //!   text T tokens per call instead, as a prompt is fed, and reads each
 //!   position's row by rerunning its call with `sel` at it (a call rewrites
 //!   the same cache positions, so a rerun is idempotent);
+//! - `{"type": "chunk", "name": …, "chunk": 1, "hidden": <file>, "rows":
+//!   [...]}`: one chunk alone over a whole text, T tokens per call from
+//!   position 0, its input read from `hidden` (the text's residual stream
+//!   at the chunk's input, fp16 bits, token-major [N, D], N a multiple of
+//!   T); its output goes to `<out prefix>_<name>.f32`: every position's
+//!   hidden state [N, D], or, for the last chunk, the logits rows at
+//!   `rows`. For localizing a build's error by chunk;
 //! - `{"type": "gen", "name": …, "ids": [...], "n": 128}`: a served-style
 //!   generation, timed (time to first token, decode tokens per second);
 //! - `{"type": "fresh", "reps": 8}`: what a fresh KV state costs: the time
@@ -243,6 +250,50 @@ fn main() {
                 }
                 r["rows"] = json!(written);
                 r["vocab"] = json!(shape.vocab_size);
+            }
+            "chunk" => {
+                let k = task["chunk"].as_u64().expect("chunk") as usize;
+                let d = shape.hidden_size;
+                let bytes =
+                    std::fs::read(task["hidden"].as_str().expect("hidden")).expect("hidden file");
+                let hidden: Vec<u16> = bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|b| u16::from_le_bytes(*b))
+                    .collect();
+                assert_eq!(
+                    hidden.len() % (d * t_tokens),
+                    0,
+                    "hidden isn't [N, D] with N a multiple of T"
+                );
+                let wanted: std::collections::BTreeSet<usize> = task
+                    .get("rows")
+                    .and_then(|r| r.as_array())
+                    .map(|r| r.iter().map(|v| v.as_u64().unwrap() as usize).collect())
+                    .unwrap_or_default();
+                let path = format!("{out}_{name}.f32");
+                let mut file =
+                    std::io::BufWriter::new(std::fs::File::create(&path).expect("chunk file"));
+                let mut written = 0;
+                for (c, call) in hidden.chunks_exact(d * t_tokens).enumerate() {
+                    let start = c * t_tokens;
+                    let sels: Vec<usize> = (0..t_tokens)
+                        .filter(|s| wanted.contains(&(start + s)))
+                        .collect();
+                    let sels = if sels.is_empty() { vec![0] } else { sels };
+                    for (n, &sel) in sels.iter().enumerate() {
+                        let got = decoder.step_chunk(k, call, start, sel).expect("chunk call");
+                        let keep = got.len() == d * t_tokens || wanted.contains(&(start + sel));
+                        if keep && (n == 0 || got.len() != d * t_tokens) {
+                            for v in &got {
+                                file.write_all(&v.to_le_bytes()).unwrap();
+                            }
+                            written += 1;
+                        }
+                    }
+                }
+                r["calls_written"] = json!(written);
             }
             "gen" => {
                 let prompt = ids(task);

@@ -132,7 +132,7 @@ around and where it was measured.
 | `masks` | finite additive masks (`MASK_ADD = -30000`; `finfo.min` is -inf in fp16 and NaNs softmax), bands, causal masks, `self_attending()` so no query row is fully masked | every model; `self_attending` wherever a row can be fully masked (sliding windows, pairwise masks) with a softmax variant or op that NaNs on it | D15, D25 |
 | `attention` | `explicit()` matmul → softmax → matmul, never the fused op; `matmul_softmax()` opt-in: the denominator comes from the value matmul, because the ANE's `reduce_sum` is the one op not bit-identical across compiled buckets | `explicit` always (or pass `scale=` to `F.scaled_dot_product_attention`, which makes coremltools emit explicit ops); `matmul_softmax` only as a measured per-model change | D25 |
 | `activations` | `TanhGelu`, `TwiceGelu` (erf), `TanhSilu`, `StableSilu`: 2·f(x) from tanh, erf or exp, since the native `gelu` (≤ 6e-3 on [-1, 1]) and `silu` (≤ 1.5e-2) are coarse on the ANE; the factor 2 is folded downstream | follow the model's own `hidden_act`: TanhGelu for `gelu_pytorch_tanh`, TwiceGelu for erf `gelu`, TanhSilu or StableSilu for `silu` (StableSilu where TanhSilu's 1 + tanh(x/2) cancels in fp16 for negative x: agent-jev, Lumma-fev and F2LLM; LFM2.5's rescaled MLP input makes the two alike, D39). Opt-in and measured per model: an erf GELU didn't help gte-modernbert and made its CPU path worse, and Core ML's CPU erf is coarser than its gelu | D17, D19, D20, D25, D39 |
-| `precision` | the ANE linear's small-input floor (relative error ~3e-4 / rms(input)): power-of-two input scales folded upstream, `Descale` after | a linear whose calibrated input rms is small (≲ 0.02–0.03) | D17, D19, D20 |
+| `precision` | the ANE linear's small-input floor (relative error ~3e-4 / rms(input)): power-of-two input scales folded upstream, `Descale` after. The ANE's matmul and 1x1 convolution have it too; coremltools' `fuse_conv_scale` folds a descale after a convolution back into its weights, which undoes the fix, so a convolution's descale needs the pass removed | a linear whose calibrated input rms is small (≲ 0.02–0.03); attention probabilities over a long context | D17, D19, D20, D55 |
 | `saturation` | the ANE linear saturates above 2^15: `check()` the rule (calibrated outputs ≤ 0.85 × 2^15), `choose_k()` / `headroom_at()` for a residual stream run at 1/K | check on every model; residual K where a massive activation crosses it (ModernBERT) | D25 amendment |
 | `pooling` | CLS, masked mean (by the attention_mask input, never by token id; summed at 1/32 for fp16 range), last token without a gather, L2 squared at 1/32; outputs end in a literal `(1, dims)` reshape | every pooled head | D15, D17, D20 |
 | `reduce` | `blocked_max()`: max over 128-wide slices, exact everywhere (macOS 27's CPU `reduce_max` over ≥ 256 elements returns max(x, 0)) | any explicit max over a long axis | laya |
@@ -540,6 +540,9 @@ scale, and `[placement]`, each chunk's compute plan.
   their squares stay in fp16 range, and the residual stream at 1/K when a
   projection's output would cross the ANE linear's 2^15 (K = 1 for
   MiniCPM5-2B, whose rotated outputs stay under 200);
+- power-of-two scales on the value matmul's probabilities and on o_proj's
+  and down_proj's inputs, each undone by an explicit multiply, against the
+  ANE's small-input floor at long context and in the early layers (D55);
 - R1 and R2 Hadamard rotations folded into the weights, which spread the
   massive activations over every channel: the largest RMSNorm input falls
   from about 5,500 to about 226, and the weights' outliers to what Gaussian

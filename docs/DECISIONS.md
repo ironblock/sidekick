@@ -4577,7 +4577,10 @@ screens. Each cell is mean KL / p99 KL / top-1, worst family first:
 - **The bands were fixed before the build they grade was measured on the
   ANE,** knowing only an earlier build's ANE numbers, which the PR
   disclosed; the ANE adds divergence beyond the PyTorch screen on the
-  chat-framed text.
+  chat-framed text. *Amended by D55:* two precision rewrites cut that
+  excess from 3.1 to 1.4 times the screen's, and the rebuilt build grades
+  B (prose 1.28e-3 / 1.17e-2 / 99.57%, repository 2.89e-4 / 2.07e-3 /
+  98.93%).
 
 **Rejected.**
 - **Keeping the cosine rubric and loosening the wide-flip cap:** it would
@@ -4587,6 +4590,80 @@ screens. Each cell is mean KL / p99 KL / top-1, worst family first:
   outweigh the prose family's 470, which is where the build is weakest.
 - **A task check alone:** it is coarse (tens of items per family) and
   can't see a distribution shift until it changes greedy text.
+
+## D55 — Two ANE precision rewrites in the causal-LM backbone
+MiniCPM5-2B's 8-bit build screened B in PyTorch but graded C on the ANE
+under D54: its prose family's mean KL was 2.7e-3 against the B limit of
+2.5e-3 (#184). The ANE added 3.1 times the screen's divergence on the
+chat-framed 2,007-token text, 1.6 times on the plain 2,000-token article
+and 1.0 to 1.7 times on the 256-token repository texts.
+
+**Where.** Each chunk program was run alone on the ANE, fed PyTorch's
+residual stream at its boundary (`KvDecoder::step_chunk`, the
+`kv_decoder` example's `chunk` task), and PyTorch finished the network
+from its output. The first chunk (layers 0-13) carried nearly all of the
+added divergence: on the chat-framed text, 4.8e-3 from chunk 0 alone
+against 4.8e-3 from all four; chunks 1-3 each added under 2e-5. Its
+output's error grew with the position, from 1.0e-2 to 2.1e-2 relative.
+
+**Why.** One-layer programs on the ANE, with their intermediates as
+outputs and each stage recomputed exactly from the ANE's own input to it,
+found two causes, both instances of the linear's small-input floor (D17):
+- **The value matmul.** Its error grew with the context, from 2.2e-3 at
+  position 128 to 3.6e-2 at 1,984 (layer 1), while the scores and the
+  softmax stayed near 5e-4. The probabilities it reads are small, and
+  smaller the longer the context.
+- **The output projections.** o_proj and down_proj read inputs whose rms
+  is 0.02-0.1 in the early layers, and lost about 1% each on the ANE
+  (layer 1: 0.8% and 1.1%; the layer's output 7.3e-3).
+
+**Decision.** Two rewrites in `backbones.llama_causal`, both powers of
+two and exact in fp32, so the PyTorch screen and the GPTQ weights don't
+change:
+- the probabilities enter the value matmul times `PV_SCALE` (2^8) and its
+  output is scaled back: the matmul's error is 2e-4 at every position;
+- o_proj and down_proj take a calibrated input scale
+  (`techniques.precision.input_scale`, within its headroom caps) and the
+  inverse after them, as an explicit multiply. The range calibration
+  records their inputs' rms and maximum, and max |v| for the value
+  matmul's 2^15 check. coremltools' `fuse_conv_scale` pass folds a
+  multiply after a convolution into its weights, and the ANE then loses as
+  much as without the scale (layer 1's output: 7.3e-3 folded, 1.6e-3
+  kept). These programs are converted and palettized without that pass
+  (coremltools' `palettize_weights` reruns the default passes, which would
+  fold the descale of a projection kept in fp16), and the converter fails
+  a chunk in which any scaled projection has lost its multiply.
+
+The staged programs' key carries `PROGRAM_REVISION`, the range
+calibration's key and precision's caps; the range calibration's carries
+`RANGES_REVISION`. A rerun recalibrates and recompiles.
+
+**Result.** The draw-0 build rebuilt with both rewrites in all four
+chunks (same GPTQ weights; both draws screen B, so the stability check
+holds) grades **B** on the ANE, on the generation and prompt paths alike:
+
+| family | ANE before: mean / p99 / top-1 | after | grade |
+|---|---|---|---|
+| repository | 3.56e-4 / 3.02e-3 / 98.74% | 2.89e-4 / 2.07e-3 / 98.93% | B |
+| prose | 2.68e-3 / 2.47e-2 / 98.30% | 1.28e-3 / 1.17e-2 / 99.57% | C → B |
+
+Per text, the ANE's KL is now 1.0 to 1.4 times the screen's (the
+chat-framed text 3.1 → 1.4). Every operation of every chunk is on the ANE.
+The task check passes as before, with more replies identical to fp32's
+(extraction 88% → 92%, instructions 85% → 90%).
+
+**Known limitations.**
+- **The chat-framed text's mean rests on a few positions.** With the
+  value-matmul rewrite alone, three high-entropy positions carried 86% of
+  its mean and one rose from 0.26 to 1.19 while the text's median fell;
+  the grade can move with errors at that handful of positions.
+
+**Rejected.**
+- **Dividing the weights instead of an explicit descale:** small weights
+  would fall into fp16's subnormal range (D17).
+- **An online Hadamard before down_proj** (QuaRot's R4) to flatten its
+  input: the scales alone fix the measured loss, and R4 changes the
+  weights GPTQ quantises.
 
 ## Hardware verification status
 

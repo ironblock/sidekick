@@ -15,7 +15,14 @@ KV cache as Core ML state:
   slice update at `pos`. Everything fp16 but `pos`. The token embedding is
   the host's (`embedding_table`), as are the RoPE rows (`rope_tables`).
 - **Explicit attention** (matmul, softmax, matmul; never the fused op,
-  D25) under a finite additive mask (techniques.masks.MASK_ADD).
+  D25) under a finite additive mask (techniques.masks.MASK_ADD), with the
+  probabilities scaled by PV_SCALE into the value matmul and the output
+  scaled back after it.
+- **Output projections' input scales** (techniques.precision): o_proj and
+  down_proj read inputs whose rms is small (0.02-0.1 in MiniCPM5-2B's early
+  layers), which costs them about 1% on the ANE. Each takes a calibrated
+  power-of-two scale on its input and the inverse on its output, as an
+  explicit multiply the conversion keeps (DESCALE_PASS).
 - **StableSilu** (D39) for the MLP, with up_proj taking its factor 1/2.
 - **RMSNorm pre-scales**: each norm's input is multiplied by a power of two
   that keeps its squares in fp16 range, with eps * s^2 (the norm is
@@ -54,11 +61,25 @@ import torch.nn as nn
 
 from ..techniques.activations import StableSilu
 from ..techniques.masks import MASK_ADD
-from ..techniques import saturation
+from ..techniques import precision, saturation
 
 NORM_SQ_MAX = 30000.0
 """The largest square an RMSNorm input may reach after its pre-scale: under
 fp16's 65,504 with a margin."""
+
+PV_SCALE = 2.0 ** 8
+"""The attention probabilities' power-of-two scale into the value matmul,
+undone right after it, against the ANE's small-input floor on the matmul's
+input, which grows with the context as the probabilities shrink (D55).
+Exact in fp32; the matmul's output is at most PV_SCALE x max |v|, which
+calibrate_ranges checks against the ANE's 2^15."""
+
+DESCALE_PASS = "common::fuse_conv_scale"
+"""coremltools' pass that folds a multiply after a convolution into its
+weights. It would fold an output projection's descale back into a plain
+weight, which undoes its input scale on the ANE (D55), so these programs are
+converted and palettized without it, and the converter checks that every
+descale survived."""
 
 PROJECTIONS = ("q", "k", "v", "o", "gate", "up", "down")
 HF_NAMES = {"q": "self_attn.q_proj", "k": "self_attn.k_proj", "v": "self_attn.v_proj", "o": "self_attn.o_proj",
@@ -206,7 +227,17 @@ class Layer(nn.Module):
                 w = w / StableSilu.GAIN       # StableSilu returns 2 silu(x)
             setattr(self, proj, conv(w))
         self.act = StableSilu()
+        self.in_scale = {"o": 1.0, "down": 1.0}   # output projections' input scales (apply_ranges)
+        self.istat = None           # range calibration: o and down inputs' [sum x^2, count, max |x|]
+        self.vstat = None           # range calibration: max |v out|
         self.ostat = None           # range calibration: [max |q,k,v,gate,up out|, max |o,down out|]
+
+    def _track_in(self, which, x):
+        if self.istat is not None:
+            s = self.istat[which]
+            s[0] += float(x.double().pow(2).sum())
+            s[1] += x.numel()
+            s[2] = max(s[2], float(x.abs().max()))
 
     def _track(self, which, *ts):
         if self.ostat is not None:
@@ -217,6 +248,8 @@ class Layer(nn.Module):
         x = self.n1(h)
         q, k, v = self.q(x), self.k(x), self.v(x)
         self._track(0, q, k, v)
+        if self.vstat is not None:
+            self.vstat = max(self.vstat, float(v.abs().max()))
         q = q.view(H, Dh, S).transpose(1, 2)
         k = k.view(KVH, Dh, S).transpose(1, 2)
         v = v.view(KVH, Dh, S).transpose(1, 2)
@@ -228,13 +261,22 @@ class Layer(nn.Module):
         V = vc[li].to(q.dtype)
         qg = (q * self.scale).reshape(KVH, rep * S, Dh)
         s = torch.matmul(qg, K.transpose(1, 2)).view(KVH, rep, S, C) + mask.view(1, 1, S, C)
-        p = torch.softmax(s, dim=-1).view(KVH, rep * S, C)
-        o = torch.matmul(p, V).view(H, S, Dh).transpose(1, 2).reshape(1, H * Dh, 1, S)
+        so, sd = self.in_scale["o"], self.in_scale["down"]
+        p = torch.softmax(s, dim=-1).view(KVH, rep * S, C) * PV_SCALE
+        o = torch.matmul(p, V) * (so / PV_SCALE)
+        o = o.view(H, S, Dh).transpose(1, 2).reshape(1, H * Dh, 1, S)
+        self._track_in("o", o)
         o = self.o(o)
+        if so != 1.0:
+            o = o * (1.0 / so)
         h = h + o
         x = self.n2(h)
         g, u = self.gate(x), self.up(x)
-        d = self.down(self.act(g) * u)
+        a = self.act(g) * u
+        self._track_in("down", a)
+        d = self.down(a * sd if sd != 1.0 else a)
+        if sd != 1.0:
+            d = d * (1.0 / sd)
         self._track(0, g, u)
         self._track(1, o, d)
         return h + d
@@ -360,6 +402,9 @@ class Ranges:
     norm_scale: list
     norm_max: list
     linear_out_max: list           # per layer: [max |q,k,v,gate,up out|, max |o,down out|]
+    in_scale: list = None          # per layer: [o's input scale, down's input scale]
+    v_out_max: list = None         # per layer: max |v out|, what the value matmul reads
+    in_stats: list = None          # per layer: [[rms, max] of o's input, [rms, max] of down's input]
 
     def to_json(self):
         return dataclasses.asdict(self)
@@ -380,6 +425,8 @@ def apply_ranges(layer, i, L, ranges):
     for n, s in ((layer.n1, ranges.norm_scale[i]), (layer.n2, ranges.norm_scale[L + i])):
         n.eps = n.eps / (K * K) * s * s
         n.mult = s
+    if ranges.in_scale is not None:
+        layer.in_scale = {"o": ranges.in_scale[i][0], "down": ranges.in_scale[i][1]}
     return layer
 
 
@@ -486,18 +533,25 @@ def calibrate_ranges(ck, sequences, rot=None, K=None, report=print):
     lin = [[0.0, 0.0] for _ in range(L)]
     cur = {}
 
+    ins = [None] * L
+    vmax = [0.0] * L
+
     def on_layer(i, layer):
-        layer.n1.stat, layer.n2.stat, layer.ostat = 0.0, 0.0, [0.0, 0.0]
+        layer.n1.stat, layer.n2.stat, layer.ostat, layer.vstat = 0.0, 0.0, [0.0, 0.0], 0.0
+        layer.istat = {"o": [0.0, 0, 0.0], "down": [0.0, 0, 0.0]}
         cur["layer"] = layer
 
     def on_hidden(i, s, h):
         lay = cur["layer"]
         nmax[i], nmax[L + i], lin[i] = lay.n1.stat, lay.n2.stat, list(lay.ostat)
+        ins[i] = [[math.sqrt(st[0] / st[1]), st[2]] for st in (lay.istat["o"], lay.istat["down"])]
+        vmax[i] = lay.vstat
 
     table = embedding_table(ck, rot)
     hs = stream(ck, sequences, lambda i: build_layer(ck, i, rot), table, on_layer, on_hidden)
     nmax[2 * L] = max(float(h.abs().max()) for h in hs)
     fixed, scaled = max(x[0] for x in lin), max(x[1] for x in lin)
+    saturation.check({"the value matmul at PV_SCALE": PV_SCALE * max(vmax)})
     if K is None:
         K, _ = saturation.choose_k(fixed, scaled)
     scales = []
@@ -507,6 +561,18 @@ def calibrate_ranges(ck, sequences, rot=None, K=None, report=print):
         while (m * s) ** 2 > NORM_SQ_MAX:
             s /= 2.0
         scales.append(s)
+    # o and down write the residual stream at 1/K; their inputs don't scale with K
+    in_scale = [[precision.input_scale(_Stat(*st), _Stat(0.0, lin[i][1] / K)) for st in ins[i]] for i in range(L)]
     report(f"ranges: K = {K} (o/down outputs up to {scaled:.0f}, other projections {fixed:.0f}); norm inputs up "
-           f"to {max(nmax) / K:.1f}; {sum(s != 1.0 for s in scales)}/{len(scales)} norms pre-scaled")
-    return Ranges(K=int(K), norm_scale=scales, norm_max=[m / K for m in nmax], linear_out_max=lin)
+           f"to {max(nmax) / K:.1f}; {sum(s != 1.0 for s in scales)}/{len(scales)} norms pre-scaled; "
+           f"{sum(s != 1.0 for x in in_scale for s in x)}/{2 * L} output projections' inputs scaled "
+           f"(up to {max(s for x in in_scale for s in x):.0f})")
+    return Ranges(K=int(K), norm_scale=scales, norm_max=[m / K for m in nmax], linear_out_max=lin,
+                  in_scale=in_scale, in_stats=ins, v_out_max=vmax)
+
+
+@dataclasses.dataclass
+class _Stat:
+    """What precision.input_scale reads of a calibrate.Stat."""
+    rms: float
+    max: float

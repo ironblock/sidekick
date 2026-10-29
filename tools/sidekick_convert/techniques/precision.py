@@ -29,7 +29,10 @@ def pow2(x):
 
 def input_scale(stat, out=None, gain=1.0, in_max=IN_MAX, out_max=OUT_MAX):
     """Power-of-two scale bringing `stat` (arriving already scaled by `gain`)
-    to rms ~1, within headroom for the input and, if given, the output. >= 1."""
+    to rms ~1, within headroom for the input and, if given, the output. >= 1;
+    1 for an input that is all zeros."""
+    if stat.rms == 0:
+        return 1.0
     s = pow2(1.0 / (gain * stat.rms))
     while s > 1.0 and (stat.max * gain * s > in_max
                        or (out is not None and out.max * gain * s > out_max)):
