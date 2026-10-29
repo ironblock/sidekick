@@ -63,6 +63,39 @@ def make_build(root, shared=True):
     return root
 
 
+CHAT_MANIFEST = """id = "minicpm5-2b"
+task = "text-generation"
+source = { repo = "openbmb/MiniCPM5-2B", revision = "f97400052a43d642bbc6e9975e2397e3ae6a6b52" }
+interface = "kv-state-1"
+tokenizer = "tokenizer.json"
+
+[decoder]
+artifact = "decoder.{chunk}.mlmodelc"
+chunks = 2
+context_length = 2033
+
+[build]
+weights = "palette8"
+"""
+
+
+def make_chat_build(root):
+    """A model directory shaped like a two-chunk chat build (D53)."""
+    root = Path(root)
+    root.mkdir(parents=True)
+    (root / "chat.toml").write_text(CHAT_MANIFEST)
+    (root / "tokenizer.json").write_text("{}")
+    (root / "chat_template.jinja").write_text("{{ messages }}")
+    (root / "embedding.safetensors").write_bytes(b"embedding")
+    (root / "rope.safetensors").write_bytes(b"rope")
+    for i in range(2):
+        prog = root / f"decoder.{i}.mlmodelc"
+        (prog / "weights").mkdir(parents=True)
+        (prog / "model.mil").write_text(f"chunk {i}")
+        (prog / "weights" / "weight.bin").write_bytes(bytes([i]) * 64)
+    return root
+
+
 def run(*argv):
     out = io.StringIO()
     old = sys.argv
@@ -204,6 +237,43 @@ class LedgerTest(unittest.TestCase):
             {"id": "bge-small-en-v1.5", "buckets": [], "paths": [{"path": "onnx-cpu", "letter": "A"}]}]}))
         grades = ledger.matching_grades("bge-small-en-v1.5", files, [reports], any_report=True)
         self.assertEqual([(g["path"], g["grade"], g["report"]) for g in grades], [("onnx-cpu", "A", "match.json")])
+
+    def test_chat_build_and_its_d54_grade(self):
+        chat = make_chat_build(self.dir / "chat")
+        reports = self.dir / "reports"
+        reports.mkdir()
+        graded = [{"path": rel, "sha256": hashlib.sha256((chat / rel).read_bytes()).hexdigest()}
+                  for rel in sorted(str(f.relative_to(chat)) for f in chat.rglob("*") if f.is_file())
+                  if rel != "chat.toml"]
+        fam = {"positions": 10, "kl_mean": 1e-3, "kl_p99": 1e-2, "top1": 0.99, "grade": "B"}
+        report = {"rubric": "D54", "model": "minicpm5-2b", "chip": "Apple M1 Max", "macos": "macOS 27.0 (26A428)",
+                  "files": graded, "grade": "B", "stable": True,
+                  "paths": {"generation": {"families": {"prose": fam}},
+                            "prompt": {"families": {"prose": dict(fam, kl_mean=2e-3)}}}}
+        (reports / "causal-lm-minicpm5-2b.json").write_text(json.dumps(report))
+        stale = dict(report, files=[dict(graded[0], sha256="0" * 64)] + graded[1:])
+        (reports / "stale.json").write_text(json.dumps(stale))
+        task = self.dir / "task-check.json"
+        task.write_text(json.dumps({"passed": True, "families": {"titles": {
+            "metric": "rouge_l", "candidate": 0.45, "reference": 0.44, "difference": 0.01, "passed": True, "n": 20,
+            "identical_replies": 0.95, "rule": "ROUGE-L, at most 3 points below"}}}))
+        run("--ledger", str(self.ledger), "add", str(chat), "--reports", str(reports), "--any-report",
+            "--task-check", str(task))
+        b = self.entry()
+        self.assertEqual((b["variant"], b["quantization"], b["buckets"], b["chunks"], b["max_seq_len"]),
+                         ("palette8", "8-bit palettes", [], 2, 2033))
+        self.assertTrue(b["id"].startswith("minicpm5-2b/coreml/palette8/"))
+        [g] = b["grades"]
+        self.assertEqual((g["path"], g["grade"], g["rubric"], g["report"]), ("coreml-ane", "B", "D54",
+                                                                            "causal-lm-minicpm5-2b.json"))
+        self.assertEqual(g["families"]["prose"]["kl_mean"], 2e-3)     # the worse of the two decoder paths
+        self.assertTrue(g["task_check"]["passed"])
+        self.assertEqual(ledger.problems(json.loads(self.ledger.read_text()), ledger.load_models()), [])
+        self.assertIn("matches", run("--ledger", str(self.ledger), "verify", str(chat)))
+        (chat / "embedding.safetensors").write_bytes(b"other")
+        with self.assertRaises(SystemExit) as e:
+            run("--ledger", str(self.ledger), "verify", str(chat))
+        self.assertIn("host tables: sha256 differs", str(e.exception))
 
     def test_check_refuses_a_tampered_entry(self):
         self.add()
