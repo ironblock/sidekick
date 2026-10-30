@@ -3,8 +3,8 @@
 Small, on-device models for the background work beside a bigger one:
 session titles, tags, embeddings, classification, reranking. sidekick runs
 them on the parts of a Mac a local LLM or an editor leaves idle (the Neural
-Engine for encoders, Apple's Foundation Models for short constrained
-generation), so they don't compete with the GPU. On Intel Macs and Linux
+Engine for encoders and small open chat models, Apple's Foundation Models
+for short constrained generation), so they don't compete with the GPU. On Intel Macs and Linux
 the same API serves embedders on the CPU through ONNX Runtime.
 
 Compare every model's fidelity and benchmark scores by chip and path:
@@ -16,7 +16,7 @@ OpenAI-compatible base URL can use it.
 
 | Route | What it serves |
 |---|---|
-| `POST /v1/chat/completions` | Apple Foundation Models: Apple silicon, macOS 26+, Apple Intelligence on |
+| `POST /v1/chat/completions` | Apple Foundation Models (Apple silicon, macOS 26+, Apple Intelligence on) and open chat models on the Neural Engine (Apple silicon) |
 | `POST /v1/embeddings`, `/v2/embed` | Embedders, on the Neural Engine, GPU or CPU (Core ML) or the CPU (ONNX Runtime) |
 | `POST /v1/classify` | Classifiers, including zero-shot and NLI (Core ML, macOS) |
 | `POST /v1/rerank`, `/rerank`, `/v2/rerank` | Cross-encoder rerankers (Core ML, macOS) |
@@ -57,7 +57,7 @@ platforms' archive names are in [docs/INSTALL.md](docs/INSTALL.md).
 **1. Install.**
 
 ```sh
-VERSION=v0.16.0
+VERSION=v0.17.0
 NAME=sidekick-$VERSION-aarch64-apple-darwin
 curl -LO https://github.com/ironblock/sidekick/releases/download/$VERSION/$NAME.tar.gz
 curl -LO https://github.com/ironblock/sidekick/releases/download/$VERSION/$NAME.tar.gz.sha256

@@ -2232,6 +2232,7 @@ convert it instead ([CONVERTING.md](CONVERTING.md)).
 | `qwen3-embedding-0.6b` | coreml | `fp16` | 128, 256, 512, 1,024, 2,048 | [sidekickd/qwen3-embedding-0.6b-coreml](https://huggingface.co/sidekickd/qwen3-embedding-0.6b-coreml) | `ef4a1aeeacc0` | 0.16.0 |
 | `qwen3-embedding-0.6b` | onnx | `fp16-weights` | | [sidekickd/qwen3-embedding-0.6b-onnx](https://huggingface.co/sidekickd/qwen3-embedding-0.6b-onnx) | `5a1cebe1c312` | 0.16.0 |
 | `qwen3-embedding-0.6b` | onnx | `fp32` | | [sidekickd/qwen3-embedding-0.6b-onnx](https://huggingface.co/sidekickd/qwen3-embedding-0.6b-onnx) | `5a1cebe1c312` | 0.16.0 |
+| `minicpm5-2b` | coreml | `palette8` | | [sidekickd/minicpm5-2b-coreml](https://huggingface.co/sidekickd/minicpm5-2b-coreml) | `3725ecca1bb8` | 0.17.0 |
 <!-- /generated -->
 
 ## Incompatible / not integrated

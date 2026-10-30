@@ -35,7 +35,7 @@ archive per platform, `sidekick-<version>-<target>.tar.gz`, with its
 `.sha256` beside it. On an Apple silicon Mac:
 
 ```sh
-VERSION=v0.16.0
+VERSION=v0.17.0
 NAME=sidekick-$VERSION-aarch64-apple-darwin
 curl -LO https://github.com/ironblock/sidekick/releases/download/$VERSION/$NAME.tar.gz
 curl -LO https://github.com/ironblock/sidekick/releases/download/$VERSION/$NAME.tar.gz.sha256
@@ -70,7 +70,7 @@ its libraries. Clear the attribute from the unpacked directory before the
 first run:
 
 ```sh
-xattr -dr com.apple.quarantine sidekick-v0.16.0-aarch64-apple-darwin
+xattr -dr com.apple.quarantine sidekick-v0.17.0-aarch64-apple-darwin
 ```
 
 ## ONNX Runtime
