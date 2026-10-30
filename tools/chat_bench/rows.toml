@@ -156,3 +156,53 @@ repo = "openbmb/MiniCPM5-2B"
 revision = "f97400052a43d642bbc6e9975e2397e3ae6a6b52"
 chat_template_args = { enable_thinking = false }
 json = "prompt"
+
+# LFM3-1.7B against MiniCPM5-2B on one serving stack. LFM3's architecture
+# (gated short convolutions, sliding-window and full attention) is in its
+# repository's own PyTorch code only, so both models run here on serve_ref's
+# torch backend (MPS, bf16), prompt-only and guided. LFM3's chat template opens
+# a `<think>` block by default; `enable_thinking: false` puts an empty one in
+# the generation prompt instead (its card says that can be inconsistent).
+[[row]]
+id = "minicpm5-2b-torch"
+label = "MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows"
+server = "serve_ref"
+backend = "torch"
+repo = "openbmb/MiniCPM5-2B"
+revision = "f97400052a43d642bbc6e9975e2397e3ae6a6b52"
+chat_template_args = { enable_thinking = false }
+json = "prompt"
+
+[[row]]
+id = "minicpm5-2b-torch-guided"
+label = "MiniCPM5-2B on serve_ref (PyTorch, MPS), guided JSON (llguidance)"
+server = "serve_ref"
+backend = "torch"
+constrained = true
+repo = "openbmb/MiniCPM5-2B"
+revision = "f97400052a43d642bbc6e9975e2397e3ae6a6b52"
+chat_template_args = { enable_thinking = false }
+json = "guided"
+families = ["tags_vocab", "extraction"]
+
+[[row]]
+id = "lfm3-1.7b-nothink"
+label = "LFM3-1.7B, thinking off"
+server = "serve_ref"
+backend = "torch"
+repo = "LiquidAI/LFM3-1.7B"
+revision = "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7"
+chat_template_args = { enable_thinking = false }
+json = "prompt"
+
+[[row]]
+id = "lfm3-1.7b-nothink-guided"
+label = "LFM3-1.7B, thinking off, guided JSON (llguidance)"
+server = "serve_ref"
+backend = "torch"
+constrained = true
+repo = "LiquidAI/LFM3-1.7B"
+revision = "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7"
+chat_template_args = { enable_thinking = false }
+json = "guided"
+families = ["tags_vocab", "extraction"]
