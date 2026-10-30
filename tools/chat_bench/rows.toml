@@ -206,3 +206,45 @@ revision = "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7"
 chat_template_args = { enable_thinking = false }
 json = "guided"
 families = ["tags_vocab", "extraction"]
+
+# Thinking on (the template's default): the reply opens with a `<think>`
+# block, which serve_ref streams as reasoning. Thinking tokens count toward
+# max_tokens, so each family's limit gets 4,096 tokens of headroom (in a
+# 25-request probe it thought for about 1,000 tokens, and beyond 2,000 on 3).
+[[row]]
+id = "lfm3-1.7b-think"
+label = "LFM3-1.7B, thinking on"
+server = "serve_ref"
+backend = "torch"
+repo = "LiquidAI/LFM3-1.7B"
+revision = "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7"
+think_tags = ["<think>", "</think>"]
+extra_max_tokens = 4096
+json = "prompt"
+
+[[row]]
+id = "lfm3-1.7b-think-guided"
+label = "LFM3-1.7B, thinking on, guided JSON (llguidance)"
+server = "serve_ref"
+backend = "torch"
+constrained = true
+repo = "LiquidAI/LFM3-1.7B"
+revision = "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7"
+think_tags = ["<think>", "</think>"]
+extra_max_tokens = 4096
+json = "guided"
+families = ["tags_vocab", "extraction"]
+
+# Thinking on, capped at 512 tokens: the harness then closes the block and
+# lets the model answer (budget forcing), as the K2-Horizon high row does.
+[[row]]
+id = "lfm3-1.7b-think-512"
+label = "LFM3-1.7B, thinking capped at 512 tokens"
+server = "serve_ref"
+backend = "torch"
+repo = "LiquidAI/LFM3-1.7B"
+revision = "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7"
+think_tags = ["<think>", "</think>"]
+reasoning_budget = 512
+extra_max_tokens = 520
+json = "prompt"

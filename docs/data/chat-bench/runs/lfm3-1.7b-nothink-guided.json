@@ -1,0 +1,3320 @@
+{
+ "schema": "sidekick-chat-bench-run/1",
+ "row": {
+  "id": "lfm3-1.7b-nothink-guided",
+  "label": "LFM3-1.7B, thinking off, guided JSON (llguidance)",
+  "server": "serve_ref",
+  "backend": "torch",
+  "constrained": true,
+  "repo": "LiquidAI/LFM3-1.7B",
+  "revision": "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7",
+  "chat_template_args": {
+   "enable_thinking": false
+  },
+  "json": "guided",
+  "families": [
+   "tags_vocab",
+   "extraction"
+  ]
+ },
+ "task_set": {
+  "extraction.jsonl": "9cf90b4b7f47075e3e88244fa28b5f97144a2352363e4626e0d225d56e28ece8",
+  "instructions.jsonl": "e4c1927781cf601e3d265b03bcfb11635ddb15e5eff78c233fc6639559ea373c",
+  "schemas.json": "3346b4808a516d913e20a8fc586a277a216291fa7567ebfbe84e926732cc2278",
+  "tags.jsonl": "817f0bfb785defb9ca6c5c69dfe9711631878eb90cd464ebfcaba81a57556f85",
+  "tasks.toml": "eca7faa28653953dfa0f42a7f2f5c756b14b74e090d630361f9585c9e2b34843",
+  "titles.jsonl": "0d436f55f9cb19850f7a177a021092f61b33afd6d24e6691fc38917657db8601",
+  "requests": "2d39a7b9c39dc613f29625999028f03ac9840c5174410247b359dbf71d287a23",
+  "version": 1
+ },
+ "model": {
+  "repo": "LiquidAI/LFM3-1.7B",
+  "revision": "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7",
+  "load_s": 7.1
+ },
+ "stack": {
+  "server": "tools/chat_bench/serve_ref.py",
+  "backend": "torch",
+  "greedy": "argmax",
+  "torch": "2.14.1",
+  "transformers": "5.20.2",
+  "device": "mps",
+  "dtype": "bfloat16",
+  "llguidance": "1.9.1"
+ },
+ "machine": {
+  "macos": "27.0",
+  "macos_build": "26A428",
+  "chip": "Apple M1 Max",
+  "memory_gb": 32,
+  "arch": "arm64"
+ },
+ "request_shape": {
+  "model": "LiquidAI/LFM3-1.7B",
+  "messages": "<item>",
+  "temperature": 0.0,
+  "max_tokens": 64,
+  "stream": true,
+  "stream_options": {
+   "include_usage": true
+  },
+  "response_format": {
+   "type": "json_schema",
+   "json_schema": {
+    "name": "tags_vocab",
+    "schema": {
+     "type": "object",
+     "properties": {
+      "tags": {
+       "type": "array",
+       "items": {
+        "type": "string",
+        "enum": [
+         "programming",
+         "databases",
+         "networking",
+         "security",
+         "cloud-devops",
+         "hardware",
+         "mobile-apps",
+         "machine-learning",
+         "personal-finance",
+         "business",
+         "health",
+         "fitness",
+         "travel",
+         "food-cooking",
+         "sports",
+         "music",
+         "film-tv",
+         "books",
+         "science",
+         "history",
+         "education",
+         "law",
+         "home-garden",
+         "pets",
+         "automotive",
+         "gaming",
+         "environment",
+         "shopping"
+        ]
+       },
+       "minItems": 1,
+       "maxItems": 3
+      }
+     },
+     "required": [
+      "tags"
+     ]
+    }
+   }
+  }
+ },
+ "started": "2026-10-30T10:17:27",
+ "timeout_s": 300.0,
+ "limit": null,
+ "sample": null,
+ "records": [
+  {
+   "family": "tags_vocab",
+   "item": "tag-001",
+   "status": 200,
+   "content": "{\"tags\": [\"history\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 282,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2925041249836795,
+   "ttft_content_s": 0.2925041249836795,
+   "total_s": 0.43068579101236537,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-002",
+   "status": 200,
+   "content": "{\"tags\": [\"environment\", \"science\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 280,
+    "completion_tokens": 9,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29678324999986216,
+   "ttft_content_s": 0.29678324999986216,
+   "total_s": 0.5161798750050366,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-003",
+   "status": 200,
+   "content": "{\"tags\": [\"home-garden\", \"home-garden\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 291,
+    "completion_tokens": 14,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3089330000220798,
+   "ttft_content_s": 0.3089330000220798,
+   "total_s": 0.6627244169940241,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-004",
+   "status": 200,
+   "content": "{\"tags\": [\"history\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 281,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2965770830051042,
+   "ttft_content_s": 0.2965770830051042,
+   "total_s": 0.434914999990724,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-005",
+   "status": 200,
+   "content": "{\"tags\": [\"health\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 263,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2778383329859935,
+   "ttft_content_s": 0.2778383329859935,
+   "total_s": 0.4157529159565456,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-006",
+   "status": 200,
+   "content": "{\"tags\": [\"home-garden\", \"pets\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 282,
+    "completion_tokens": 12,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2888587500201538,
+   "ttft_content_s": 0.2888587500201538,
+   "total_s": 0.5869066250161268,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-007",
+   "status": 200,
+   "content": "{\"tags\": [\"gaming\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 292,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30736395803978667,
+   "ttft_content_s": 0.30736395803978667,
+   "total_s": 0.46938054100610316,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-008",
+   "status": 200,
+   "content": "{\"tags\": [\"film-tv\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 275,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2944084170158021,
+   "ttft_content_s": 0.2944084170158021,
+   "total_s": 0.482294500048738,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-009",
+   "status": 200,
+   "content": "{\"tags\": [\"food-cooking\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 305,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.31632375001208857,
+   "ttft_content_s": 0.31632375001208857,
+   "total_s": 0.5068122500088066,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-010",
+   "status": 200,
+   "content": "{\"tags\": [\"sports\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 285,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2964169579790905,
+   "ttft_content_s": 0.2964169579790905,
+   "total_s": 0.45825883297948167,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-011",
+   "status": 200,
+   "content": "{\"tags\": [\"databases\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 284,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3007729999953881,
+   "ttft_content_s": 0.3007729999953881,
+   "total_s": 0.4706411249935627,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-012",
+   "status": 200,
+   "content": "{\"tags\": [\"automotive\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 295,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3045445840107277,
+   "ttft_content_s": 0.3045445840107277,
+   "total_s": 0.4675592089770362,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-013",
+   "status": 200,
+   "content": "{\"tags\": [\"education\", \"science\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 304,
+    "completion_tokens": 10,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.31415150000248104,
+   "ttft_content_s": 0.31415150000248104,
+   "total_s": 0.5594779580133036,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-014",
+   "status": 200,
+   "content": "{\"tags\": [\"programming\", \"databases\", \"networking\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 341,
+    "completion_tokens": 15,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.34469145798357204,
+   "ttft_content_s": 0.34469145798357204,
+   "total_s": 0.7275524159776978,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-015",
+   "status": 200,
+   "content": "{\"tags\": [\"business\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 307,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3160454159951769,
+   "ttft_content_s": 0.3160454159951769,
+   "total_s": 0.4532297499827109,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-016",
+   "status": 200,
+   "content": "{\"tags\": [\"gaming\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 303,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30368900002213195,
+   "ttft_content_s": 0.30368900002213195,
+   "total_s": 0.4669797910028137,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-017",
+   "status": 200,
+   "content": "{\"tags\": [\"film-tv\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 302,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3047899579978548,
+   "ttft_content_s": 0.3047899579978548,
+   "total_s": 0.4955572919570841,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-018",
+   "status": 200,
+   "content": "{\"tags\": [\"health\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 289,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3040189999737777,
+   "ttft_content_s": 0.3040189999737777,
+   "total_s": 0.4401673339889385,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-019",
+   "status": 200,
+   "content": "{\"tags\": [\"books\", \"film-tv\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 291,
+    "completion_tokens": 11,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30307783297030255,
+   "ttft_content_s": 0.30307783297030255,
+   "total_s": 0.5755477499915287,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-020",
+   "status": 200,
+   "content": "{\"tags\": [\"security\", \"databases\", \"databases\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 283,
+    "completion_tokens": 16,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2945687079918571,
+   "ttft_content_s": 0.2945687079918571,
+   "total_s": 0.7035467499517836,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-021",
+   "status": 200,
+   "content": "{\"tags\": [\"automotive\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 274,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29517970903543755,
+   "ttft_content_s": 0.29517970903543755,
+   "total_s": 0.4569111670134589,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-022",
+   "status": 200,
+   "content": "{\"tags\": [\"travel\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 284,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2887642080313526,
+   "ttft_content_s": 0.2887642080313526,
+   "total_s": 0.45629270805511624,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-023",
+   "status": 200,
+   "content": "{\"tags\": [\"business\", \"personal-finance\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 285,
+    "completion_tokens": 11,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29457983298925683,
+   "ttft_content_s": 0.29457983298925683,
+   "total_s": 0.5681257909745909,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-024",
+   "status": 200,
+   "content": "{\"tags\": [\"programming\", \"security\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 292,
+    "completion_tokens": 9,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29736737499479204,
+   "ttft_content_s": 0.29736737499479204,
+   "total_s": 0.517634249990806,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-025",
+   "status": 200,
+   "content": "{\"tags\": [\"home-garden\", \"pets\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 281,
+    "completion_tokens": 12,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2899417909793556,
+   "ttft_content_s": 0.2899417909793556,
+   "total_s": 0.5920761249726638,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-026",
+   "status": 200,
+   "content": "{\"tags\": [\"health\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 288,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2970189579646103,
+   "ttft_content_s": 0.2970189579646103,
+   "total_s": 0.43617420800728723,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-027",
+   "status": 200,
+   "content": "{\"tags\": [\"personal-finance\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 248,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.258580667024944,
+   "ttft_content_s": 0.258580667024944,
+   "total_s": 0.4481223750044592,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-028",
+   "status": 200,
+   "content": "{\"tags\": [\"environment\", \"home-garden\", \"food-cooking\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 293,
+    "completion_tokens": 16,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30549695796798915,
+   "ttft_content_s": 0.30549695796798915,
+   "total_s": 0.7193132079555653,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-029",
+   "status": 200,
+   "content": "{\"tags\": [\"security\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 272,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28297875000862405,
+   "ttft_content_s": 0.28297875000862405,
+   "total_s": 0.42223004199331626,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-030",
+   "status": 200,
+   "content": "{\"tags\": [\"hardware\", \"programming\", \"databases\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 295,
+    "completion_tokens": 14,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3007223340100609,
+   "ttft_content_s": 0.3007223340100609,
+   "total_s": 0.6683961669914424,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-031",
+   "status": 200,
+   "content": "{\"tags\": [\"automotive\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 307,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.309951875009574,
+   "ttft_content_s": 0.309951875009574,
+   "total_s": 0.4760939169791527,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-032",
+   "status": 200,
+   "content": "{\"tags\": [\"books\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 292,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29835858300793916,
+   "ttft_content_s": 0.29835858300793916,
+   "total_s": 0.43626470799790695,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-033",
+   "status": 200,
+   "content": "{\"tags\": [\"mobile-apps\", \"programming\", \"databases\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 310,
+    "completion_tokens": 15,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.31558650004444644,
+   "ttft_content_s": 0.31558650004444644,
+   "total_s": 0.6991185420192778,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-034",
+   "status": 200,
+   "content": "{\"tags\": [\"personal-finance\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 290,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3072272500139661,
+   "ttft_content_s": 0.3072272500139661,
+   "total_s": 0.5040382079896517,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-035",
+   "status": 200,
+   "content": "{\"tags\": [\"networking\", \"cloud-devops\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 285,
+    "completion_tokens": 12,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2904252919834107,
+   "ttft_content_s": 0.2904252919834107,
+   "total_s": 0.5930682080215774,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-036",
+   "status": 200,
+   "content": "{\"tags\": [\"law\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 272,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.276308040949516,
+   "ttft_content_s": 0.276308040949516,
+   "total_s": 0.4129036249942146,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-037",
+   "status": 200,
+   "content": "{\"tags\": [\"environment\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 284,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2895359580288641,
+   "ttft_content_s": 0.2895359580288641,
+   "total_s": 0.4261749580036849,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-038",
+   "status": 200,
+   "content": "{\"tags\": [\"gaming\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 306,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3183610839769244,
+   "ttft_content_s": 0.3183610839769244,
+   "total_s": 0.48391358397202566,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-039",
+   "status": 200,
+   "content": "{\"tags\": [\"education\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 288,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28780674998415634,
+   "ttft_content_s": 0.28780674998415634,
+   "total_s": 0.45111241698032245,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-040",
+   "status": 200,
+   "content": "{\"tags\": [\"science\", \"health\", \"environment\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 319,
+    "completion_tokens": 12,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.31653949996689335,
+   "ttft_content_s": 0.31653949996689335,
+   "total_s": 0.6164231669972651,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-041",
+   "status": 200,
+   "content": "{\"tags\": [\"home-garden\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 268,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2833470000186935,
+   "ttft_content_s": 0.2833470000186935,
+   "total_s": 0.4734614579938352,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-042",
+   "status": 200,
+   "content": "{\"tags\": [\"music\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 266,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2832265410106629,
+   "ttft_content_s": 0.2832265410106629,
+   "total_s": 0.4295318750082515,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-043",
+   "status": 200,
+   "content": "{\"tags\": [\"books\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 336,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3366844999836758,
+   "ttft_content_s": 0.3366844999836758,
+   "total_s": 0.47310041601303965,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-044",
+   "status": 200,
+   "content": "{\n  \"tags\": [\"machine-learning\", \"programming\"]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 302,
+    "completion_tokens": 14,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29858441703254357,
+   "ttft_content_s": 0.29858441703254357,
+   "total_s": 0.6541643340024166,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-045",
+   "status": 200,
+   "content": "{\"tags\": [\"health\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 300,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30391116603277624,
+   "ttft_content_s": 0.30391116603277624,
+   "total_s": 0.440328375028912,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-046",
+   "status": 200,
+   "content": "{\"tags\": [\"cloud-devops\", \"environment\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 282,
+    "completion_tokens": 11,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2891103749861941,
+   "ttft_content_s": 0.2891103749861941,
+   "total_s": 0.5743826669640839,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-047",
+   "status": 200,
+   "content": "{\"tags\": [\"hardware\", \"machine-learning\", \"gaming\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 362,
+    "completion_tokens": 16,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3528025420382619,
+   "ttft_content_s": 0.3528025420382619,
+   "total_s": 0.7627246670308523,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-048",
+   "status": 200,
+   "content": "{\n  \"tags\": [\"programming\", \"databases\"]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 308,
+    "completion_tokens": 13,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3157880419748835,
+   "ttft_content_s": 0.3157880419748835,
+   "total_s": 0.6443397079710849,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-049",
+   "status": 200,
+   "content": "{\"tags\": [\"networking\", \"cloud-devops\", \"databases\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 280,
+    "completion_tokens": 16,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28831449995050207,
+   "ttft_content_s": 0.28831449995050207,
+   "total_s": 0.6991170839755796,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-050",
+   "status": 200,
+   "content": "{\"tags\": [\"sports\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 335,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.33407287497539073,
+   "ttft_content_s": 0.33407287497539073,
+   "total_s": 0.49747404200024903,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-051",
+   "status": 200,
+   "content": "{\"tags\": [\"education\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 294,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3037254589726217,
+   "ttft_content_s": 0.3037254589726217,
+   "total_s": 0.4694558340124786,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-052",
+   "status": 200,
+   "content": "{\"tags\": [\"mobile-apps\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 296,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30498400004580617,
+   "ttft_content_s": 0.30498400004580617,
+   "total_s": 0.49528262502280995,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-053",
+   "status": 200,
+   "content": "{\"tags\": [\"fitness\", \"health\", \"sports\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 329,
+    "completion_tokens": 14,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3362788339727558,
+   "ttft_content_s": 0.3362788339727558,
+   "total_s": 0.70637612498831,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-054",
+   "status": 200,
+   "content": "{\"tags\": [\"environment\", \"science\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 302,
+    "completion_tokens": 9,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29964162496617064,
+   "ttft_content_s": 0.29964162496617064,
+   "total_s": 0.5213782079517841,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-055",
+   "status": 200,
+   "content": "{\"tags\": [\"business\", \"shopping\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 230,
+    "completion_tokens": 10,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.24850549997063354,
+   "ttft_content_s": 0.24850549997063354,
+   "total_s": 0.48984454199671745,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-056",
+   "status": 200,
+   "content": "{\"tags\": [\"databases\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 306,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.309686208027415,
+   "ttft_content_s": 0.309686208027415,
+   "total_s": 0.4726683330372907,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-057",
+   "status": 200,
+   "content": "{\"tags\": [\"fitness\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 287,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30005958396941423,
+   "ttft_content_s": 0.30005958396941423,
+   "total_s": 0.4646736669819802,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-058",
+   "status": 200,
+   "content": "{\"tags\": [\"machine-learning\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 302,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2999635830055922,
+   "ttft_content_s": 0.2999635830055922,
+   "total_s": 0.4913383750244975,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-059",
+   "status": 200,
+   "content": "{\"tags\": [\"food-cooking\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 290,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2970755409915,
+   "ttft_content_s": 0.2970755409915,
+   "total_s": 0.4877283330424689,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-060",
+   "status": 200,
+   "content": "{\"tags\": [\"networking\", \"security\", \"cloud-devops\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 297,
+    "completion_tokens": 15,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30602691596141085,
+   "ttft_content_s": 0.30602691596141085,
+   "total_s": 0.6904491250170395,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-061",
+   "status": 200,
+   "content": "{\"tags\": [\"health\", \"mobile-apps\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 286,
+    "completion_tokens": 11,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2958740830072202,
+   "ttft_content_s": 0.2958740830072202,
+   "total_s": 0.5688712499686517,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-062",
+   "status": 200,
+   "content": "{\"tags\": [\"sports\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 276,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2948572500026785,
+   "ttft_content_s": 0.2948572500026785,
+   "total_s": 0.45798983302665874,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-063",
+   "status": 200,
+   "content": "{\"tags\": [\"science\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 274,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2889560000039637,
+   "ttft_content_s": 0.2889560000039637,
+   "total_s": 0.42695487500168383,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-064",
+   "status": 200,
+   "content": "{\"tags\": [\"machine-learning\", \"science\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 294,
+    "completion_tokens": 11,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29881862498587,
+   "ttft_content_s": 0.29881862498587,
+   "total_s": 0.5755977499647997,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-065",
+   "status": 200,
+   "content": "{\"tags\": [\"travel\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 295,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3001467499998398,
+   "ttft_content_s": 0.3001467499998398,
+   "total_s": 0.46752508298959583,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-066",
+   "status": 200,
+   "content": "{\"tags\": [\"travel\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 295,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2965569579973817,
+   "ttft_content_s": 0.2965569579973817,
+   "total_s": 0.4614654580364004,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-067",
+   "status": 200,
+   "content": "{\"tags\": [\"music\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 276,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28693641599966213,
+   "ttft_content_s": 0.28693641599966213,
+   "total_s": 0.4244064160156995,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-068",
+   "status": 200,
+   "content": "{\"tags\": [\"security\", \"cloud-devops\", \"databases\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 290,
+    "completion_tokens": 15,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2986577919800766,
+   "ttft_content_s": 0.2986577919800766,
+   "total_s": 0.6821777499862947,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-069",
+   "status": 200,
+   "content": "{\"tags\": [\"databases\", \"cloud-devops\", \"security\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 279,
+    "completion_tokens": 15,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29670937499031425,
+   "ttft_content_s": 0.29670937499031425,
+   "total_s": 0.6830679590348154,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-070",
+   "status": 200,
+   "content": "{\"tags\": [\"sports\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 274,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2885234580026008,
+   "ttft_content_s": 0.2885234580026008,
+   "total_s": 0.45223870797781274,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-071",
+   "status": 200,
+   "content": "{\"tags\": [\"law\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 256,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.26194345799740404,
+   "ttft_content_s": 0.26194345799740404,
+   "total_s": 0.39942466700449586,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-072",
+   "status": 200,
+   "content": "{\"tags\": [\"music\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 300,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29783937497995794,
+   "ttft_content_s": 0.29783937497995794,
+   "total_s": 0.4345605419948697,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-073",
+   "status": 200,
+   "content": "{\"tags\": [\"history\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 266,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2762168749468401,
+   "ttft_content_s": 0.2762168749468401,
+   "total_s": 0.4132762919762172,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-074",
+   "status": 200,
+   "content": "{\"tags\": [\"programming\", \"hardware\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 285,
+    "completion_tokens": 10,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28962220798712224,
+   "ttft_content_s": 0.28962220798712224,
+   "total_s": 0.5357016669586301,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-075",
+   "status": 200,
+   "content": "{\"tags\": [\"business\", \"business\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 315,
+    "completion_tokens": 10,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.315617167041637,
+   "ttft_content_s": 0.315617167041637,
+   "total_s": 0.5604742920259014,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-076",
+   "status": 200,
+   "content": "{\"tags\": [\"programming\", \"cloud-devops\", \"databases\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 389,
+    "completion_tokens": 15,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.37980683299247175,
+   "ttft_content_s": 0.37980683299247175,
+   "total_s": 0.7672620830126107,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-077",
+   "status": 200,
+   "content": "{\"tags\": [\"travel\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 315,
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30885862500872463,
+   "ttft_content_s": 0.30885862500872463,
+   "total_s": 0.472860791021958,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-078",
+   "status": 200,
+   "content": "{\"tags\": [\"film-tv\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 258,
+    "completion_tokens": 8,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2749832500121556,
+   "ttft_content_s": 0.2749832500121556,
+   "total_s": 0.46367616701172665,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-079",
+   "status": 200,
+   "content": "{\"tags\": [\"programming\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 285,
+    "completion_tokens": 6,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2887009170372039,
+   "ttft_content_s": 0.2887009170372039,
+   "total_s": 0.4253144169924781,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "tags_vocab",
+   "item": "tag-080",
+   "status": 200,
+   "content": "{\"tags\": [\"home-garden\", \"pets\", \"health\"]}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 274,
+    "completion_tokens": 15,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29473587503889576,
+   "ttft_content_s": 0.29473587503889576,
+   "total_s": 0.6871858750237152,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-001",
+   "status": 200,
+   "content": "{\n  \"name\": \"Northgate Makers Market\",\n  \"date\": \"2026-03-14\",\n  \"start_time\": \"10:00\",\n  \"venue\": \"Wharf Street Hall\",\n  \"city\": \"Leeds\",\n  \"online\": false,\n  \"ticket_price\": 0,\n  \"currency\": \"USD\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 384,
+    "completion_tokens": 74,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.36299350002082065,
+   "ttft_content_s": 0.36299350002082065,
+   "total_s": 2.361423916008789,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-002",
+   "status": 200,
+   "content": "{\n  \"name\": \"Lisbon Data Engineering Meetup #14\",\n  \"date\": \"2026-03-19\",\n  \"start_time\": \"18:30\",\n  \"venue\": \"Armazém 7, the old warehouse by the river\",\n  \"city\": \"Lisbon\",\n  \"online\": false,\n  \"ticket_price\": 15,\n  \"currency\": \"EUR\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 386,
+    "completion_tokens": 87,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.38103970797965303,
+   "ttft_content_s": 0.38103970797965303,
+   "total_s": 2.7427967080147937,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-003",
+   "status": 200,
+   "content": "{\n  \"name\": \"Budgeting for Freelancers\",\n  \"date\": \"2026-04-22\",\n  \"start_time\": \"13:00\",\n  \"venue\": \"online\",\n  \"city\": \"UK\",\n  \"online\": true,\n  \"ticket_price\": 0,\n  \"currency\": \"USD\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 364,
+    "completion_tokens": 72,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3525673749973066,
+   "ttft_content_s": 0.3525673749973066,
+   "total_s": 2.3106180839822628,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-004",
+   "status": 200,
+   "content": "{\n  \"name\": \"Riverside Jazz Night\",\n  \"date\": \"2026-06-05\",\n  \"start_time\": \"evening\",\n  \"venue\": \"Old Boathouse\",\n  \"city\": \"Priya's band is playing the second set\"  ,  \"online\": false,\n  \"ticket_price\": 0,\n  \"currency\": \"USD\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 348,
+    "completion_tokens": 83,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3444580840296112,
+   "ttft_content_s": 0.3444580840296112,
+   "total_s": 2.5919665840337984,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-005",
+   "status": 200,
+   "content": "{\n  \"name\": \"Harbour Run 10K\",\n  \"date\": \"2026-05-17\",\n  \"start_time\": \"08:15\",\n  \"venue\": \"Marina Pavilion\",\n  \"city\": \"Portsmouth\",\n  \"online\": false,\n  \"ticket_price\": 32,\n  \"currency\": \"GBP\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 374,
+    "completion_tokens": 76,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3681721669854596,
+   "ttft_content_s": 0.3681721669854596,
+   "total_s": 2.4382674579974264,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-006",
+   "status": 200,
+   "content": "{\n  \"name\": \"Lakeshore Python Day 2026\",\n  \"date\": \"2026-10-08\",\n  \"start_time\": \"09:00\",\n  \"venue\": \"Metro Hall Conference Centre\",\n  \"city\": \"Toronto\",\n  \"online\": false,\n  \"ticket_price\": 249,\n  \"currency\": \"CAD\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 357,
+    "completion_tokens": 78,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3528515829821117,
+   "ttft_content_s": 0.3528515829821117,
+   "total_s": 2.4705168749787845,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-007",
+   "status": 200,
+   "content": "{\n  \"name\": \"Lighthouse Stories Night\",\n  \"date\": \"2026-11-11\",\n  \"start_time\": \"TBD\",\n  \"venue\": \"online book club's next session (members' channel)\",\n  \"city\": \"TBD\",\n  \"online\": true,\n  \"ticket_price\": 0,\n  \"currency\": \"USD\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 352,
+    "completion_tokens": 79,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.34642625000560656,
+   "ttft_content_s": 0.34642625000560656,
+   "total_s": 2.473562417028006,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-008",
+   "status": 200,
+   "content": "{\n  \"name\": \"Tokyo Craft Beer Weekend\",\n  \"date\": \"2026-07-25\",\n  \"start_time\": \"11:00\",\n  \"venue\": \"Kanda Riverside Hall\",\n  \"city\": \"Tokyo\",\n  \"online\": false,\n  \"ticket_price\": 3500,\n  \"currency\": \"JPY\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 356,
+    "completion_tokens": 78,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3524739999556914,
+   "ttft_content_s": 0.3524739999556914,
+   "total_s": 2.4585707079968415,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-009",
+   "status": 200,
+   "content": "{\n  \"name\": \"Annual Volunteers' Dinner\",\n  \"date\": \"2026-09-12\",\n  \"start_time\": \"19:00\",\n  \"venue\": \"ballroom of the Grand Lodge Hotel\",\n  \"city\": \"Edinburgh\",\n  \"online\": false,\n  \"ticket_price\": 25,\n  \"currency\": \"GBP\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 377,
+    "completion_tokens": 79,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3601630000048317,
+   "ttft_content_s": 0.3601630000048317,
+   "total_s": 2.5033001250121742,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-010",
+   "status": 200,
+   "content": "{\n  \"name\": \"Zürich Open Source Hack Night\",\n  \"date\": \"2026-12-03\",\n  \"start_time\": \"unknown\",\n  \"venue\": \"Werkhaus\",\n  \"city\": \"Zürich\",\n  \"online\": false,\n  \"ticket_price\": 0,\n  \"currency\": \"CHF\",\n  \"date_confirmed\": \"Exact timings are still being confirmed.\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 359,
+    "completion_tokens": 92,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3512401249608956,
+   "ttft_content_s": 0.3512401249608956,
+   "total_s": 2.8338774159783497,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-011",
+   "status": 200,
+   "content": "{\n  \"name\": \"Jordan\",\n  \"email\": \"marta.kowalczyk@example.com\",\n  \"phone\": \"(312) 555-0142\",\n  \"organization\": \"Brightwell Analytics\",\n  \"job_title\": \"Head of Partnerships\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 215,
+    "completion_tokens": 59,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2419291670084931,
+   "ttft_content_s": 0.2419291670084931,
+   "total_s": 1.8083446670207195,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-012",
+   "status": 200,
+   "content": "{\n  \"name\": \"Aisha Rahman\",\n  \"email\": \"aisha.rahman@example.org\",\n  \"phone\": \"01632 960418\",\n  \"organization\": \"Fernhill Logistics\",\n  \"job_title\": \"Procurement Manager\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 262,
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.27553920802893117,
+   "ttft_content_s": 0.27553920802893117,
+   "total_s": 1.8404966670204885,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-013",
+   "status": 200,
+   "content": "{\n  \"name\": \"Tomás Ferreira\",\n  \"email\": \"tomas.ferreira@example.com\",\n  \"phone\": \"not provided\",\n  \"organization\": \"Lumen & Co\",\n  \"job_title\": \"senior (role not specified)\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 207,
+    "completion_tokens": 57,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.23199125000974163,
+   "ttft_content_s": 0.23199125000974163,
+   "total_s": 1.7457448330242187,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-014",
+   "status": 200,
+   "content": "{\n  \"name\": \"NORA LINDQVIST\",\n  \"email\": \"nora.lindqvist@example.com\",\n  \"phone\": \"+44 7700 900123\",\n  \"organization\": \"Halvard Systems\",\n  \"job_title\": \"Senior Software Engineer\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 228,
+    "completion_tokens": 62,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2508155000396073,
+   "ttft_content_s": 0.2508155000396073,
+   "total_s": 1.9095376250334084,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-015",
+   "status": 200,
+   "content": "{\n  \"name\": \"Elena Sorokina\",\n  \"email\": \"elena.sorokina@example.com\",\n  \"phone\": \"\",\n  \"organization\": \"Corvane Media\",\n  \"job_title\": \"Marketing Director\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 230,
+    "completion_tokens": 53,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2491904170019552,
+   "ttft_content_s": 0.2491904170019552,
+   "total_s": 1.662964999966789,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-016",
+   "status": 200,
+   "content": "{\n  \"name\": \"Gareth Evans\",\n  \"email\": \"Not stated (doesn't really do email apparently)\",\n  \"phone\": \"07700 900456\",\n  \"organization\": \"Not stated\",\n  \"job_title\": \"Fixed the boiler (number for the guy who fixed the boiler, in case it acts up again)\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 198,
+    "completion_tokens": 72,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.22493120795115829,
+   "ttft_content_s": 0.22493120795115829,
+   "total_s": 2.1432505409466103,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-017",
+   "status": 200,
+   "content": "{\n  \"name\": \"Beatriz Almeida\",\n  \"email\": \"beatriz.almeida@example.org\",\n  \"phone\": \"+1 (617) 555-0119\",\n  \"organization\": \"Solenne Bank\",\n  \"job_title\": \"Data Protection Officer\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 225,
+    "completion_tokens": 62,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2506842499715276,
+   "ttft_content_s": 0.2506842499715276,
+   "total_s": 1.947807874996215,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-018",
+   "status": 200,
+   "content": "{\n  \"name\": \"Kenji Watanabe\",\n  \"email\": \"kenji.watanabe@example.com\",\n  \"phone\": \"(646) 555-0177\",\n  \"organization\": \"Tsubaki Freight\",\n  \"job_title\": \"Operations Lead\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 234,
+    "completion_tokens": 60,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2516822919715196,
+   "ttft_content_s": 0.2516822919715196,
+   "total_s": 1.8717615829664283,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-019",
+   "status": 200,
+   "content": "{\n  \"name\": \"Inès Moreau\",\n  \"email\": \"not provided in text\",\n  \"phone\": \"not provided in text\",\n  \"organization\": \"Atelier Verre\",\n  \"job_title\": \"founder\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 211,
+    "completion_tokens": 52,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.24317283398704603,
+   "ttft_content_s": 0.24317283398704603,
+   "total_s": 1.6361218750244007,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-020",
+   "status": 200,
+   "content": "{\n  \"name\": \"Liam O'Connor\",\n  \"email\": \"liam.oconnor@example.org\",\n  \"phone\": \"01632 960771\",\n  \"organization\": \"Greenway Community Trust\",\n  \"job_title\": \"Volunteer Coordinator\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 218,
+    "completion_tokens": 60,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.24739670800045133,
+   "ttft_content_s": 0.24739670800045133,
+   "total_s": 1.860392666014377,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-021",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Northwind 40L Trail Backpack\",\n  \"brand\": \"Kestrel Outdoor\",\n  \"price\": 129.99,\n  \"currency\": \"USD\",\n  \"in_stock\": true,\n  \"colors\": [\n    \"forest green\",\n    \"slate grey\",\n    \"rust\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 283,
+    "completion_tokens": 71,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28975062497192994,
+   "ttft_content_s": 0.28975062497192994,
+   "total_s": 2.2093447919469327,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-022",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Harrow & Finch Merino Crew Jumper\",\n  \"brand\": \"Harrow & Finch\",\n  \"price\": 64.00,\n  \"currency\": \"GBP\",\n  \"in_stock\": true,\n  \"colors\": [\n    \"oatmeal\",\n    \"navy\",\n    \"bottle green\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 281,
+    "completion_tokens": 78,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2884396659792401,
+   "ttft_content_s": 0.2884396659792401,
+   "total_s": 2.4031154579715803,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-023",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Aurora desk lamp\",\n  \"brand\": \"Halden\",\n  \"price\": 45,\n  \"currency\": \"EUR\",\n  \"in_stock\": false,\n  \"colors\": []\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 269,
+    "completion_tokens": 48,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2816696249647066,
+   "ttft_content_s": 0.2816696249647066,
+   "total_s": 1.5685917919618078,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-024",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Kumo Ceramic Pour-Over Dripper\",\n  \"brand\": \"Tsuchi Works\",\n  \"price\": 4800,\n  \"currency\": \"JPY\",\n  \"in_stock\": false,\n  \"colors\": [\n    \"white\",\n    \"charcoal\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 282,
+    "completion_tokens": 68,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28791712498059496,
+   "ttft_content_s": 0.28791712498059496,
+   "total_s": 2.118694874981884,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-025",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Voltaic Pro wireless headphones\",\n  \"brand\": \"Arden Audio\",\n  \"price\": 149,\n  \"currency\": \"USD\",\n  \"in_stock\": true,\n  \"colors\": [\n    \"Midnight Black\",\n    \"Glacier White\",\n    \"Sage\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 285,
+    "completion_tokens": 71,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2893885840312578,
+   "ttft_content_s": 0.2893885840312578,
+   "total_s": 2.2167925420217216,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-026",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Wave Mini\",\n  \"brand\": \"Wave\",\n  \"price\": 39.99,\n  \"currency\": \"USD\",\n  \"in_stock\": true,\n  \"colors\": []\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 261,
+    "completion_tokens": 48,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.27697383298072964,
+   "ttft_content_s": 0.27697383298072964,
+   "total_s": 1.5716421250253916,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-027",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Bergli Alpenglow Insulated Jacket\",\n  \"brand\": \"Bergli\",\n  \"price\": 249,\n  \"currency\": \"CHF\",\n  \"in_stock\": true,\n  \"colors\": [\n    \"red\",\n    \"navy\",\n    \"black\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 273,
+    "completion_tokens": 68,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29428525001276284,
+   "ttft_content_s": 0.29428525001276284,
+   "total_s": 2.1218763329670765,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-028",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Maple Ridge Coffee Co. Morning Roast, whole bean, 340 g bag\",\n  \"brand\": \"Maple Ridge Coffee Co.\",\n  \"price\": 18.95,\n  \"currency\": \"CAD\",\n  \"in_stock\": true,\n  \"colors\": []\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 262,
+    "completion_tokens": 65,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2685377090238035,
+   "ttft_content_s": 0.2685377090238035,
+   "total_s": 2.0174079589778557,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-029",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Orbit smart plug\",\n  \"brand\": \"Orbit\",\n  \"price\": 19.99,\n  \"currency\": \"USD\",\n  \"in_stock\": false,\n  \"colors\": []\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 266,
+    "completion_tokens": 49,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.274767333001364,
+   "ttft_content_s": 0.274767333001364,
+   "total_s": 1.5871515000471845,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-030",
+   "status": 200,
+   "content": "{\n  \"product_name\": \"Coastline Linen Beach Towel\",\n  \"brand\": \"Saltmarsh Home\",\n  \"price\": 59.00,\n  \"currency\": \"AUD\",\n  \"in_stock\": false,\n  \"colors\": [\n    \"sand\",\n    \"terracotta\",\n    \"ocean blue\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 280,
+    "completion_tokens": 75,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2881443750229664,
+   "ttft_content_s": 0.2881443750229664,
+   "total_s": 2.3105069170123897,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-031",
+   "status": 200,
+   "content": "{\n  \"summary\": \"App crashes when exporting a PDF\",\n  \"severity\": \"high\",\n  \"component\": \"export\",\n  \"version\": \"3.2.1\",\n  \"os\": \"macos\",\n  \"reproducible\": true\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 326,
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.32925454096402973,
+   "ttft_content_s": 0.32925454096402973,
+   "total_s": 1.8887230830150656,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-032",
+   "status": 200,
+   "content": "{\n  \"summary\": \"sync is deleting local notes after update\",\n  \"severity\": \"critical\",\n  \"component\": \"sync engine\",\n  \"version\": \"7.0.2\",\n  \"os\": \"windows\",\n  \"reproducible\": true,\n  \"os_field\": \"windows\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 333,
+    "completion_tokens": 68,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3344824999803677,
+   "ttft_content_s": 0.3344824999803677,
+   "total_s": 2.1691267080022953,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-033",
+   "status": 200,
+   "content": "{\n  \"summary\": \"Minor cosmetic issue in dark mode: the label on the toolbar's Share button is a couple of pixels lower than other button labels; does not affect functionality.\",\n  \"severity\": \"low\",\n  \"component\": \"toolbar's Share button label\",\n  \"version\": \"\",\n  \"os\": \"other\",\n  \"reproducible\": false\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 298,
+    "completion_tokens": 81,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30642654199618846,
+   "ttft_content_s": 0.30642654199618846,
+   "total_s": 2.514102625020314,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-034",
+   "status": 200,
+   "content": "{\n  \"summary\": \"Search returns no results after upgrade to version 2.4.1 on Ubuntu 24.04.\",\n  \"severity\": \"medium\",\n  \"component\": \"search indexer\",\n  \"version\": \"2.4.1\",\n  \"os\": \"linux\",\n  \"reproducible\": true\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 333,
+    "completion_tokens": 73,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.32754362502601,
+   "ttft_content_s": 0.32754362502601,
+   "total_s": 2.2937467920128256,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-035",
+   "status": 200,
+   "content": "{\n  \"summary\": \"Payment screen froze during checkout on Pixel 8 Android 15 app version 4.12.0, causing charge without order confirmation.\",\n  \"severity\": \"high\",\n  \"component\": \"checkout\",\n  \"version\": \"4.12.0\",\n  \"os\": \"android\",\n  \"reproducible\": false\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 330,
+    "completion_tokens": 79,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3354281249921769,
+   "ttft_content_s": 0.3354281249921769,
+   "total_s": 2.4675045000039972,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-036",
+   "status": 200,
+   "content": "{\n  \"summary\": \"Photos upload sideways from the iPhone app\",\n  \"severity\": \"medium\",\n  \"component\": \"image upload\",\n  \"version\": \"5.6\",\n  \"os\": \"ios\",\n  \"reproducible\": true,\n  \"reproducible_explanation\": \"Every portrait photo I upload through the camera roll picker ends up rotated 90 degrees on the website. It happens every single time. My laptop runs Windows and uploading the same photos from the browser there is fine, so it's only the phone app.\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 320,
+    "completion_tokens": 120,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3158203750499524,
+   "ttft_content_s": 0.3158203750499524,
+   "total_s": 3.5745320830028504,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-037",
+   "status": 200,
+   "content": "{\n  \"summary\": \"Login sometimes fails with 'session expired' straight after signing in, usually first thing in the morning, and hitting retry normally works, but the reporter hasn't been able to trigger it on demand.\",\n  \"severity\": \"medium\",\n  \"component\": \"login\",\n  \"version\": \"\",\n  \"os\": \"other\",\n  \"reproducible\": false\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 311,
+    "completion_tokens": 83,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.316278540994972,
+   "ttft_content_s": 0.316278540994972,
+   "total_s": 2.5637772500049323,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-038",
+   "status": 200,
+   "content": "{\n  \"summary\": \"Passwords written to the server log in plain text\",\n  \"severity\": \"critical\",\n  \"component\": \"logging\",\n  \"version\": \"5.0.0-rc2\",\n  \"os\": \"linux\",\n  \"reproducible\": true\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 320,
+    "completion_tokens": 63,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.30990983301308006,
+   "ttft_content_s": 0.30990983301308006,
+   "total_s": 2.0063611670047976,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-039",
+   "status": 200,
+   "content": "{\n  \"summary\": \"Calendar shows events one day early for users west of UTC\",\n  \"severity\": \"high\",\n  \"component\": \"calendar month view\",\n  \"version\": \"1.8.0 (build 2026-05-12, previous release 1.7.4)\",\n  \"os\": \"windows\",\n  \"reproducible\": true\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 343,
+    "completion_tokens": 82,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.34467154199955985,
+   "ttft_content_s": 0.34467154199955985,
+   "total_s": 2.5612107499619015,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-040",
+   "status": 200,
+   "content": "{\n  \"summary\": \"On FreeBSD 14, the install script prints a warning about a missing optional dependency (libnotify) even though desktop notifications aren't used on servers; the install completes and runs fine.\",\n  \"severity\": \"low\",\n  \"component\": \"install script\",\n  \"version\": \"FreeBSD 14\",\n  \"os\": \"macos\",\n  \"reproducible\": false\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 287,
+    "completion_tokens": 90,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2883125829976052,
+   "ttft_content_s": 0.2883125829976052,
+   "total_s": 2.7164895420428365,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-041",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"GREENLEAF GROCERS\",\n  \"date\": \"2026-04-11\",\n  \"total\": 13.50,\n  \"currency\": \"GBP\",\n  \"payment_method\": \"card\",\n  \"item_count\": 5\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 333,
+    "completion_tokens": 61,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.327321040967945,
+   "ttft_content_s": 0.327321040967945,
+   "total_s": 1.9769276659935713,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-042",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"Corner Cup Café\",\n  \"date\": \"2026-06-07\",\n  \"total\": 7.95,\n  \"currency\": \"GBP\",\n  \"payment_method\": \"cash\",\n  \"item_count\": 3\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 313,
+    "completion_tokens": 59,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3154400000348687,
+   "ttft_content_s": 0.3154400000348687,
+   "total_s": 1.8949780420516618,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-043",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"Quillby Books\",\n  \"date\": \"2024-01-01\",\n  \"total\": 42.10,\n  \"currency\": \"USD\",\n  \"payment_method\": \"other\",\n  \"item_count\": 1\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 274,
+    "completion_tokens": 57,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2895317500224337,
+   "ttft_content_s": 0.2895317500224337,
+   "total_s": 1.8238613750436343,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-044",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"BÄCKEREI SONNENKORN\",\n  \"date\": \"2026-03-14\",\n  \"total\": 8.30,\n  \"currency\": \"EUR\",\n  \"payment_method\": \"mobile\",\n  \"item_count\": 3\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 338,
+    "completion_tokens": 64,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.34386820800136775,
+   "ttft_content_s": 0.34386820800136775,
+   "total_s": 2.063339541957248,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-045",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"Lantern Noodle House\",\n  \"date\": \"2026-09-19\",\n  \"total\": 64.00,\n  \"currency\": \"USD\",\n  \"payment_method\": \"card\",\n  \"item_count\": 4\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 326,
+    "completion_tokens": 60,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3256701249629259,
+   "ttft_content_s": 0.3256701249629259,
+   "total_s": 1.9444549590116367,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-046",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"Hoshi Stationery, Shibuya store\",\n  \"date\": \"2026-02-27\",\n  \"total\": 2860,\n  \"currency\": \"JPY\",\n  \"payment_method\": \"card\",\n  \"item_count\": 3\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 313,
+    "completion_tokens": 62,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3084110420313664,
+   "ttft_content_s": 0.3084110420313664,
+   "total_s": 1.973139750014525,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-047",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"Vireo Garden Supply\",\n  \"date\": \"2026-03-22\",\n  \"total\": 72.00,\n  \"currency\": \"EUR\",\n  \"payment_method\": \"other\",\n  \"item_count\": 4\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 328,
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3290532079990953,
+   "ttft_content_s": 0.3290532079990953,
+   "total_s": 1.88510120799765,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-048",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"Hillside Apiary stall\",\n  \"date\": \"2024-06-12\",\n  \"total\": 15,\n  \"currency\": \"GBP\",\n  \"payment_method\": \"cash\",\n  \"item_count\": 1\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 275,
+    "completion_tokens": 59,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28947887499816716,
+   "ttft_content_s": 0.28947887499816716,
+   "total_s": 1.926663041987922,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-049",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"Ridgeline Outfitters, Store #112\",\n  \"date\": \"2026-05-30\",\n  \"total\": 187.58,\n  \"currency\": \"CAD\",\n  \"payment_method\": \"card\",\n  \"item_count\": 3\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 340,
+    "completion_tokens": 64,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3480194170260802,
+   "ttft_content_s": 0.3480194170260802,
+   "total_s": 2.0657403329969384,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-050",
+   "status": 200,
+   "content": "{\n  \"merchant\": \"Saffron Table\",\n  \"date\": \"2026-09-02\",\n  \"total\": 38.50,\n  \"currency\": \"USD\",\n  \"payment_method\": \"cash\",\n  \"item_count\": 2\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 286,
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.293193917023018,
+   "ttft_content_s": 0.293193917023018,
+   "total_s": 1.84507629199652,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-051",
+   "status": 200,
+   "content": "{\n  \"airline\": \"British Airways\",\n  \"flight_number\": \"BA117\",\n  \"from_airport\": \"LHR\",\n  \"to_airport\": \"JFK\",\n  \"date\": \"2026-05-12\",\n  \"passengers\": 1\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 294,
+    "completion_tokens": 62,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2980085830204189,
+   "ttft_content_s": 0.2980085830204189,
+   "total_s": 1.9735890830052085,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-052",
+   "status": 200,
+   "content": "{\n  \"airline\": \"Lufthansa\",\n  \"flight_number\": \"LH400\",\n  \"from_airport\": \"FRA\",\n  \"to_airport\": \"JFK\",\n  \"date\": \"2026-06-03\",\n  \"passengers\": 2,\n  \"flight_number_return\": \"LH401\",\n  \"from_airport_return\": \"JFK\",\n  \"to_airport_return\": \"FRA\",\n  \"date_return\": \"2026-06-17\",\n  \"passengers_return\": 1\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 310,
+    "completion_tokens": 123,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3101072089630179,
+   "ttft_content_s": 0.3101072089630179,
+   "total_s": 3.6754212089581415,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-053",
+   "status": 200,
+   "content": "{\n  \"airline\": \"UA\",\n  \"flight_number\": \"914\",\n  \"from_airport\": \"\",\n  \"to_airport\": \"\",\n  \"date\": \"2026-02-09\",\n  \"passengers\": 1\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 274,
+    "completion_tokens": 54,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2885026250150986,
+   "ttft_content_s": 0.2885026250150986,
+   "total_s": 1.731532583013177,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-054",
+   "status": 200,
+   "content": "{\n  \"airline\": \"Aer Lingus EI\",\n  \"flight_number\": \"EI 203\",\n  \"from_airport\": \"MAN\",\n  \"to_airport\": \"DUB\",\n  \"date\": \"2026-08-28\",\n  \"passengers\": 2\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 279,
+    "completion_tokens": 67,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28802325000287965,
+   "ttft_content_s": 0.28802325000287965,
+   "total_s": 2.0871277090045623,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-055",
+   "status": 200,
+   "content": "{\n  \"airline\": \"KLM\",\n  \"flight_number\": \"KL1008\",\n  \"from_airport\": \"AMS\",\n  \"to_airport\": \"LHR\",\n  \"date\": \"2026-02-14\",\n  \"passengers\": 2\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 302,
+    "completion_tokens": 63,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29898087499896064,
+   "ttft_content_s": 0.29898087499896064,
+   "total_s": 1.9966062079765834,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-056",
+   "status": 200,
+   "content": "{\n  \"airline\": \"Singapore Airlines\",\n  \"flight_number\": \"SQ322\",\n  \"from_airport\": \"SIN\",\n  \"to_airport\": \"LHR\",\n  \"date\": \"2026-04-30\",\n  \"passengers\": 1\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 285,
+    "completion_tokens": 62,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2897676670108922,
+   "ttft_content_s": 0.2897676670108922,
+   "total_s": 1.9574525830103084,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-057",
+   "status": 200,
+   "content": "{\n  \"airline\": \"QF1\",\n  \"flight_number\": \"QF1\",\n  \"from_airport\": \"\",\n  \"to_airport\": \"\",\n  \"date\": \"2026-08-01\",\n  \"passengers\": 0\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 263,
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2684224999975413,
+   "ttft_content_s": 0.2684224999975413,
+   "total_s": 1.8268638330046088,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-058",
+   "status": 200,
+   "content": "{\n  \"airline\": \"Air Canada\",\n  \"flight_number\": \"AC856\",\n  \"from_airport\": \"YYZ\",\n  \"to_airport\": \"LHR\",\n  \"date\": \"2026-10-11\",\n  \"passengers\": 1\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 279,
+    "completion_tokens": 62,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28975895803887397,
+   "ttft_content_s": 0.28975895803887397,
+   "total_s": 1.9513218330102973,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-059",
+   "status": 200,
+   "content": "{\n  \"airline\": \"Iberia\",\n  \"flight_number\": \"IB3166\",\n  \"from_airport\": \"MAD\",\n  \"to_airport\": \"LIS\",\n  \"date\": \"2026-07-20\",\n  \"passengers\": 4,\n  \"flight_number_2\": \"IB3167\",\n  \"from_airport_2\": \"LIS\",\n  \"to_airport_2\": \"MAD\",\n  \"date_2\": \"2026-07-27\"\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 301,
+    "completion_tokens": 116,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.3063620839966461,
+   "ttft_content_s": 0.3063620839966461,
+   "total_s": 3.45847654202953,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-060",
+   "status": 200,
+   "content": "{\n  \"airline\": \"easyJet\",\n  \"flight_number\": \"U2 8341\",\n  \"from_airport\": \"BRS\",\n  \"to_airport\": \"not stated\",\n  \"date\": \"2026-12-06\",\n  \"passengers\": 1\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 266,
+    "completion_tokens": 67,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2769998340518214,
+   "ttft_content_s": 0.2769998340518214,
+   "total_s": 2.089561834000051,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-061",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Senior Backend Engineer\",\n  \"company\": \"Lattice Bloom\",\n  \"city\": \"Berlin, Germany\",\n  \"work_mode\": \"hybrid\",\n  \"salary_min\": 75000,\n  \"salary_max\": 90000\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 271,
+    "completion_tokens": 61,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28120829100953415,
+   "ttft_content_s": 0.28120829100953415,
+   "total_s": 1.9241641660337336,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-062",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Product Designer\",\n  \"company\": \"Fernvale Studio\",\n  \"city\": \"Manchester\",\n  \"work_mode\": \"onsite\",\n  \"salary_min\": 60000,\n  \"salary_max\": 70000\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 278,
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.29743333300575614,
+   "ttft_content_s": 0.29743333300575614,
+   "total_s": 1.856930750014726,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-063",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Developer Advocate\",\n  \"company\": \"Tessellate\",\n  \"city\": \"nine countries\",\n  \"work_mode\": \"remote\",\n  \"salary_min\": 0,\n  \"salary_max\": 0\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 265,
+    "completion_tokens": 59,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2826793750282377,
+   "ttft_content_s": 0.2826793750282377,
+   "total_s": 1.8751805829815567,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-064",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Warehouse Operations Supervisor\",\n  \"company\": \"Northbay Distribution\",\n  \"city\": \"Toronto, ON\",\n  \"work_mode\": \"onsite\",\n  \"salary_min\": 62000,\n  \"salary_max\": 71000\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 270,
+    "completion_tokens": 62,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28249179100384936,
+   "ttft_content_s": 0.28249179100384936,
+   "total_s": 1.9513825830072165,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-065",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Data Analyst\",\n  \"company\": \"Quarry Lane Analytics\",\n  \"city\": \"Bristol\",\n  \"work_mode\": \"hybrid\",\n  \"salary_min\": 42000,\n  \"salary_max\": 50000\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 286,
+    "completion_tokens": 59,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2892363329883665,
+   "ttft_content_s": 0.2892363329883665,
+   "total_s": 1.8727114999783225,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-066",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Office Manager\",\n  \"company\": \"Marlowe & Pike\",\n  \"city\": \"Edinburgh\",\n  \"work_mode\": \"hybrid\",\n  \"salary_min\": 0,\n  \"salary_max\": 0\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 243,
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2594337910413742,
+   "ttft_content_s": 0.2594337910413742,
+   "total_s": 1.811844916024711,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-067",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Site Reliability Engineer\",\n  \"company\": \"Cobaltline\",\n  \"city\": \"US\",\n  \"work_mode\": \"remote\",\n  \"salary_min\": 130000,\n  \"salary_max\": 155000\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 272,
+    "completion_tokens": 59,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2767762920120731,
+   "ttft_content_s": 0.2767762920120731,
+   "total_s": 1.860070375027135,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-068",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Head Chef\",\n  \"company\": \"The Copper Kettle\",\n  \"city\": \"Bath\",\n  \"work_mode\": \"onsite\",\n  \"salary_min\": 38000,\n  \"salary_max\": 42000\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 264,
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.27665304200490937,
+   "ttft_content_s": 0.27665304200490937,
+   "total_s": 1.831322457990609,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-069",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Staff Machine Learning Engineer\",\n  \"company\": \"Halcyon Robotics\",\n  \"city\": \"San Francisco\",\n  \"work_mode\": \"hybrid\",\n  \"salary_min\": 140000,\n  \"salary_max\": 165000\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 259,
+    "completion_tokens": 61,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2741375000332482,
+   "ttft_content_s": 0.2741375000332482,
+   "total_s": 1.9106083330116235,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-070",
+   "status": 200,
+   "content": "{\n  \"job_title\": \"Junior UX Designer\",\n  \"company\": \"Pinewood Labs\",\n  \"city\": \"Pinewood Labs\",\n  \"work_mode\": \"onsite\",\n  \"salary_min\": 0,\n  \"salary_max\": 0\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 248,
+    "completion_tokens": 62,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2557443749974482,
+   "ttft_content_s": 0.2557443749974482,
+   "total_s": 1.9321617500390857,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-071",
+   "status": 200,
+   "content": "{\n  \"dish\": \"Shakshuka\",\n  \"servings\": 2,\n  \"prep_minutes\": 10,\n  \"cook_minutes\": 20,\n  \"vegetarian\": true,\n  \"ingredients\": [\n    \"olive oil\",\n    \"onion\",\n    \"red pepper\",\n    \"garlic\",\n    \"cumin\",\n    \"smoked paprika\",\n    \"chopped tomatoes\",\n    \"eggs\",\n    \"salt\",\n    \"coriander\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 278,
+    "completion_tokens": 108,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2901725000119768,
+   "ttft_content_s": 0.2901725000119768,
+   "total_s": 3.2470949169946834,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-072",
+   "status": 200,
+   "content": "{\n  \"dish\": \"Sunday roast chicken with lemon and thyme\",\n  \"servings\": 4,\n  \"prep_minutes\": 30,\n  \"cook_minutes\": 75,\n  \"vegetarian\": false,\n  \"ingredients\": [\n    \"whole chicken\",\n    \"two lemons\",\n    \"a bunch of thyme\",\n    \"a bulb of garlic\",\n    \"butter\",\n    \"potatoes\",\n    \"carrots\",\n    \"salt\",\n    \"black pepper\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 268,
+    "completion_tokens": 110,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2769596250145696,
+   "ttft_content_s": 0.2769596250145696,
+   "total_s": 3.284037042001728,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-073",
+   "status": 200,
+   "content": "{\n  \"dish\": \"banana bread\",\n  \"servings\": 3,\n  \"prep_minutes\": 0,\n  \"cook_minutes\": 0,\n  \"vegetarian\": true,\n  \"ingredients\": [\n    \"bananas\",\n    \"melted butter\",\n    \"light brown sugar\",\n    \"egg\",\n    \"vanilla extract\",\n    \"plain flour\",\n    \"bicarbonate of soda\",\n    \"salt\",\n    \"walnuts (optional, but not used)\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 280,
+    "completion_tokens": 108,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2885497499955818,
+   "ttft_content_s": 0.2885497499955818,
+   "total_s": 3.218171667016577,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-074",
+   "status": 200,
+   "content": "{\n  \"dish\": \"Weeknight lentil dal\",\n  \"servings\": 4,\n  \"prep_minutes\": 10,\n  \"cook_minutes\": 30,\n  \"vegetarian\": true,\n  \"ingredients\": [\n    \"red lentils\",\n    \"vegetable stock\",\n    \"turmeric\",\n    \"salt\",\n    \"onion\",\n    \"garlic\",\n    \"ginger\",\n    \"cumin seeds\",\n    \"ghee\",\n    \"lime\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 276,
+    "completion_tokens": 107,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2895260829827748,
+   "ttft_content_s": 0.2895260829827748,
+   "total_s": 3.176545541966334,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-075",
+   "status": 200,
+   "content": "{\n  \"dish\": \"Honey-soy glazed salmon\",\n  \"servings\": 2,\n  \"prep_minutes\": 10,\n  \"cook_minutes\": 15,\n  \"vegetarian\": false,\n  \"ingredients\": [\n    \"salmon fillets\",\n    \"soy sauce\",\n    \"honey\",\n    \"garlic clove\",\n    \"sesame oil\",\n    \"spring onions\",\n    \"sesame seeds\",\n    \"steamed rice\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 274,
+    "completion_tokens": 105,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28854708396829665,
+   "ttft_content_s": 0.28854708396829665,
+   "total_s": 3.1350399169605225,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-076",
+   "status": 200,
+   "content": "{\n  \"dish\": \"Quick chickpea and spinach curry\",\n  \"servings\": 1,\n  \"prep_minutes\": 5,\n  \"cook_minutes\": 15,\n  \"vegetarian\": true,\n  \"ingredients\": [\n    \"onion\",\n    \"garlic\",\n    \"curry paste\",\n    \"chickpeas\",\n    \"coconut milk\",\n    \"spinach\",\n    \"lemon juice\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 257,
+    "completion_tokens": 99,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2757909159990959,
+   "ttft_content_s": 0.2757909159990959,
+   "total_s": 2.95728162501473,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-077",
+   "status": 200,
+   "content": "{\n  \"dish\": \"Classic French omelette\",\n  \"servings\": 1,\n  \"prep_minutes\": 5,\n  \"cook_minutes\": 3,\n  \"vegetarian\": true,\n  \"ingredients\": [\n    \"eggs\",\n    \"salt\",\n    \"butter\",\n    \"chopped chives\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 275,
+    "completion_tokens": 76,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.28913750004721805,
+   "ttft_content_s": 0.28913750004721805,
+   "total_s": 2.3363054590299726,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-078",
+   "status": 200,
+   "content": "{\n  \"dish\": \"Slow-cooked beef ragù\",\n  \"servings\": 6,\n  \"prep_minutes\": 20,\n  \"cook_minutes\": 3,\n  \"vegetarian\": false,\n  \"ingredients\": [\n    \"beef chuck\",\n    \"olive oil\",\n    \"onion\",\n    \"carrot\",\n    \"celery\",\n    \"garlic\",\n    \"tomato purée\",\n    \"red wine\",\n    \"chopped tomatoes\",\n    \"beef stock\",\n    \"bay leaves\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 263,
+    "completion_tokens": 119,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.2692582079907879,
+   "ttft_content_s": 0.2692582079907879,
+   "total_s": 3.5047295410186052,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-079",
+   "status": 200,
+   "content": "{\n  \"dish\": \"Sheet-pan halloumi and vegetables\",\n  \"servings\": 3,\n  \"prep_minutes\": 15,\n  \"cook_minutes\": 35,\n  \"vegetarian\": true,\n  \"ingredients\": [\n    \"courgette\",\n    \"red onion\",\n    \"cherry tomatoes\",\n    \"peppers\",\n    \"olive oil\",\n    \"dried oregano\",\n    \"halloumi\",\n    \"honey\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 266,
+    "completion_tokens": 105,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.27532112499466166,
+   "ttft_content_s": 0.27532112499466166,
+   "total_s": 3.1238856249838136,
+   "error": null,
+   "constrained": null
+  },
+  {
+   "family": "extraction",
+   "item": "ext-080",
+   "status": 200,
+   "content": "{\n  \"dish\": \"Roasted carrot and ginger soup\",\n  \"servings\": 1,\n  \"prep_minutes\": 5,\n  \"cook_minutes\": 10,\n  \"vegetarian\": true,\n  \"ingredients\": [\n    \"carrots\",\n    \"onion\",\n    \"olive oil\",\n    \"fresh ginger\",\n    \"vegetable stock\",\n    \"crème fraîche\",\n    \"salt\",\n    \"pepper\"\n  ]\n}",
+   "reasoning": "",
+   "finish_reason": "stop",
+   "usage": {
+    "prompt_tokens": 253,
+    "completion_tokens": 101,
+    "completion_tokens_details": {
+     "reasoning_tokens": 0
+    }
+   },
+   "ttft_s": 0.260602958034724,
+   "ttft_content_s": 0.260602958034724,
+   "total_s": 2.9904615830164403,
+   "error": null,
+   "constrained": null
+  }
+ ]
+}
