@@ -2403,6 +2403,1969 @@
     }
    }
   },
+  "lfm3-1.7b-nothink-guided": {
+   "label": "LFM3-1.7B, thinking off, guided JSON (llguidance)",
+   "server": "serve_ref",
+   "json": "guided",
+   "model": {
+    "repo": "LiquidAI/LFM3-1.7B",
+    "revision": "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7",
+    "load_s": 7.1
+   },
+   "stack": {
+    "server": "tools/chat_bench/serve_ref.py",
+    "backend": "torch",
+    "greedy": "argmax",
+    "torch": "2.14.1",
+    "transformers": "5.20.2",
+    "device": "mps",
+    "dtype": "bfloat16",
+    "llguidance": "1.9.1"
+   },
+   "machine": {
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "chip": "Apple M1 Max",
+    "memory_gb": 32,
+    "arch": "arm64"
+   },
+   "started": "2026-10-30T10:17:27",
+   "requests": 160,
+   "chat_template_args": {
+    "enable_thinking": false
+   },
+   "reasoning_budget": null,
+   "prefill": null,
+   "scores": {
+    "tags_vocab": {
+     "f1": {
+      "value": 0.7954,
+      "lo": 0.7463,
+      "hi": 0.845,
+      "n": 80
+     },
+     "precision": {
+      "value": 0.8562,
+      "lo": 0.7958,
+      "hi": 0.9104,
+      "n": 80
+     },
+     "recall": {
+      "value": 0.8146,
+      "lo": 0.7583,
+      "hi": 0.8708,
+      "n": 80
+     },
+     "top1": {
+      "value": 0.9,
+      "lo": 0.8375,
+      "hi": 0.9625,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "off_vocab_rate": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 126
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.298,
+      "ttft_p90_s": 0.316,
+      "ttft_content_median_s": 0.298,
+      "ttft_content_p90_s": 0.316,
+      "output_tok_s_median": 16.0,
+      "total_median_s": 0.483,
+      "total_p90_s": 0.691,
+      "output_tokens_mean": 9.2,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 36.6,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.7954,
+      "lo": 0.7463,
+      "hi": 0.845,
+      "n": 80
+     }
+    },
+    "extraction": {
+     "field_acc": {
+      "value": 0.9754,
+      "lo": 0.9584,
+      "hi": 0.9901,
+      "n": 413
+     },
+     "item_field_acc": {
+      "value": 0.9679,
+      "lo": 0.9424,
+      "hi": 0.9887,
+      "n": 80
+     },
+     "absent_ok": {
+      "value": 0.1429,
+      "lo": 0.0633,
+      "hi": 0.2329,
+      "n": 77
+     },
+     "exact": {
+      "value": 0.6,
+      "lo": 0.4875,
+      "hi": 0.7,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "extra_keys": {
+      "value": 0.0625,
+      "lo": 0.0125,
+      "hi": 0.1125,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "refusal": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "length_cut": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.289,
+      "ttft_p90_s": 0.348,
+      "ttft_content_median_s": 0.289,
+      "ttft_content_p90_s": 0.348,
+      "output_tok_s_median": 31.9,
+      "total_median_s": 2.065,
+      "total_p90_s": 3.139,
+      "output_tokens_mean": 72.5,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 36.5,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.9679,
+      "lo": 0.9424,
+      "hi": 0.9887,
+      "n": 80
+     }
+    }
+   }
+  },
+  "lfm3-1.7b-nothink": {
+   "label": "LFM3-1.7B, thinking off",
+   "server": "serve_ref",
+   "json": "prompt",
+   "model": {
+    "repo": "LiquidAI/LFM3-1.7B",
+    "revision": "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7",
+    "load_s": 7.1
+   },
+   "stack": {
+    "server": "tools/chat_bench/serve_ref.py",
+    "backend": "torch",
+    "greedy": "argmax",
+    "torch": "2.14.1",
+    "transformers": "5.20.2",
+    "device": "mps",
+    "dtype": "bfloat16"
+   },
+   "machine": {
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "chip": "Apple M1 Max",
+    "memory_gb": 32,
+    "arch": "arm64"
+   },
+   "started": "2026-10-30T10:13:30",
+   "requests": 400,
+   "chat_template_args": {
+    "enable_thinking": false
+   },
+   "reasoning_budget": null,
+   "prefill": null,
+   "scores": {
+    "titles": {
+     "format_ok": {
+      "value": 0.4625,
+      "lo": 0.35,
+      "hi": 0.575,
+      "n": 80
+     },
+     "len_ok": {
+      "value": 0.4875,
+      "lo": 0.375,
+      "hi": 0.6,
+      "n": 80
+     },
+     "rouge_l": {
+      "value": 0.4115,
+      "lo": 0.3739,
+      "hi": 0.4503,
+      "n": 80
+     },
+     "emb_sim": {
+      "value": 0.8338,
+      "lo": 0.8169,
+      "hi": 0.8495,
+      "n": 80
+     },
+     "fmt_nonempty": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_single_line": {
+      "value": 0.725,
+      "lo": 0.625,
+      "hi": 0.8125,
+      "n": 80
+     },
+     "fmt_max_words": {
+      "value": 0.4875,
+      "lo": 0.375,
+      "hi": 0.6,
+      "n": 80
+     },
+     "fmt_no_quotes": {
+      "value": 0.9375,
+      "lo": 0.8875,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "fmt_no_prefix": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_trailing_punct": {
+      "value": 0.9125,
+      "lo": 0.85,
+      "hi": 0.975,
+      "n": 80
+     },
+     "fmt_no_markdown": {
+      "value": 0.9125,
+      "lo": 0.85,
+      "hi": 0.9625,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.263,
+      "ttft_p90_s": 0.362,
+      "ttft_content_median_s": 0.263,
+      "ttft_content_p90_s": 0.362,
+      "output_tok_s_median": 19.8,
+      "total_median_s": 0.657,
+      "total_p90_s": 1.152,
+      "output_tokens_mean": 17.6,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 33.1,
+      "length_cut_rate": 0.275
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.4115,
+      "lo": 0.3739,
+      "hi": 0.4503,
+      "n": 80
+     }
+    },
+    "tags_vocab": {
+     "f1": {
+      "value": 0.7858,
+      "lo": 0.725,
+      "hi": 0.8438,
+      "n": 80
+     },
+     "precision": {
+      "value": 0.8562,
+      "lo": 0.7938,
+      "hi": 0.9146,
+      "n": 80
+     },
+     "recall": {
+      "value": 0.7833,
+      "lo": 0.7167,
+      "hi": 0.8521,
+      "n": 80
+     },
+     "top1": {
+      "value": 0.8875,
+      "lo": 0.8125,
+      "hi": 0.95,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 0.8125,
+      "lo": 0.725,
+      "hi": 0.8875,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 0.9875,
+      "lo": 0.9625,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 0.875,
+      "lo": 0.8,
+      "hi": 0.9375,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0125,
+      "lo": 0.0,
+      "hi": 0.0375,
+      "n": 80
+     },
+     "off_vocab_rate": {
+      "value": 0.1729,
+      "lo": 0.0902,
+      "hi": 0.2574,
+      "n": 133
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.301,
+      "ttft_p90_s": 0.329,
+      "ttft_content_median_s": 0.301,
+      "ttft_content_p90_s": 0.329,
+      "output_tok_s_median": 15.1,
+      "total_median_s": 0.527,
+      "total_p90_s": 2.066,
+      "output_tokens_mean": 15.7,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 31.0,
+      "length_cut_rate": 0.125
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.7858,
+      "lo": 0.725,
+      "hi": 0.8438,
+      "n": 80
+     }
+    },
+    "tags_free": {
+     "concept_recall": {
+      "value": 0.4494,
+      "lo": 0.41,
+      "hi": 0.4894,
+      "n": 80
+     },
+     "format_ok": {
+      "value": 0.675,
+      "lo": 0.575,
+      "hi": 0.775,
+      "n": 80
+     },
+     "on_gold_precision": {
+      "value": 0.5895,
+      "lo": 0.5516,
+      "hi": 0.6272,
+      "n": 285
+     },
+     "grounded_rate": {
+      "value": 0.7088,
+      "lo": 0.6704,
+      "hi": 0.7441,
+      "n": 285
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.228,
+      "ttft_p90_s": 0.247,
+      "ttft_content_median_s": 0.228,
+      "ttft_content_p90_s": 0.247,
+      "output_tok_s_median": 18.8,
+      "total_median_s": 0.458,
+      "total_p90_s": 0.609,
+      "output_tokens_mean": 10.3,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 32.7,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.4494,
+      "lo": 0.41,
+      "hi": 0.4894,
+      "n": 80
+     }
+    },
+    "extraction": {
+     "field_acc": {
+      "value": 0.9415,
+      "lo": 0.9042,
+      "hi": 0.9725,
+      "n": 413
+     },
+     "item_field_acc": {
+      "value": 0.9158,
+      "lo": 0.8636,
+      "hi": 0.9633,
+      "n": 80
+     },
+     "absent_ok": {
+      "value": 0.1692,
+      "lo": 0.0759,
+      "hi": 0.2679,
+      "n": 65
+     },
+     "exact": {
+      "value": 0.5875,
+      "lo": 0.475,
+      "hi": 0.6875,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 0.9125,
+      "lo": 0.85,
+      "hi": 0.975,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 0.95,
+      "lo": 0.9,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 0.95,
+      "lo": 0.9,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "extra_keys": {
+      "value": 0.025,
+      "lo": 0.0,
+      "hi": 0.0625,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.05,
+      "lo": 0.0125,
+      "hi": 0.1,
+      "n": 80
+     },
+     "refusal": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "length_cut": {
+      "value": 0.05,
+      "lo": 0.0125,
+      "hi": 0.1,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.289,
+      "ttft_p90_s": 0.347,
+      "ttft_content_median_s": 0.289,
+      "ttft_content_p90_s": 0.347,
+      "output_tok_s_median": 31.7,
+      "total_median_s": 2.086,
+      "total_p90_s": 3.372,
+      "output_tokens_mean": 82.5,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 36.5,
+      "length_cut_rate": 0.05
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.9158,
+      "lo": 0.8636,
+      "hi": 0.9633,
+      "n": 80
+     }
+    },
+    "instructions": {
+     "all_checks": {
+      "value": 0.8,
+      "lo": 0.7,
+      "hi": 0.8875,
+      "n": 80
+     },
+     "check_rate": {
+      "value": 0.8316,
+      "lo": 0.7475,
+      "hi": 0.9053,
+      "n": 95
+     },
+     "answer_acc": {
+      "value": 0.6897,
+      "lo": 0.5172,
+      "hi": 0.8621,
+      "n": 29
+     },
+     "by_check": {
+      "answer_only": {
+       "value": 0.9412,
+       "lo": 0.8235,
+       "hi": 1.0,
+       "n": 17
+      },
+      "answer_only_number": {
+       "value": 0.375,
+       "lo": 0.0,
+       "hi": 0.75,
+       "n": 8
+      },
+      "bullet_count": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 7
+      },
+      "ends_with": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 3
+      },
+      "forbidden_words": {
+       "value": 0.75,
+       "lo": 0.25,
+       "hi": 1.0,
+       "n": 4
+      },
+      "language": {
+       "value": 0.8889,
+       "lo": 0.7222,
+       "hi": 1.0,
+       "n": 18
+      },
+      "lowercase": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "max_chars": {
+       "value": 0.6667,
+       "lo": 0.0,
+       "hi": 1.0,
+       "n": 3
+      },
+      "max_sentences": {
+       "value": 0.875,
+       "lo": 0.625,
+       "hi": 1.0,
+       "n": 8
+      },
+      "max_words": {
+       "value": 0.6667,
+       "lo": 0.4,
+       "hi": 0.8667,
+       "n": 15
+      },
+      "single_line": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "starts_with": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      }
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.097,
+      "ttft_p90_s": 0.155,
+      "ttft_content_median_s": 0.097,
+      "ttft_content_p90_s": 0.155,
+      "output_tok_s_median": 33.0,
+      "total_median_s": 0.795,
+      "total_p90_s": 2.114,
+      "output_tokens_mean": 38.9,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 36.9,
+      "length_cut_rate": 0.0125
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.8,
+      "lo": 0.7,
+      "hi": 0.8875,
+      "n": 80
+     }
+    }
+   }
+  },
+  "lfm3-1.7b-think-512": {
+   "label": "LFM3-1.7B, thinking capped at 512 tokens",
+   "server": "serve_ref",
+   "json": "prompt",
+   "model": {
+    "repo": "LiquidAI/LFM3-1.7B",
+    "revision": "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7",
+    "load_s": 6.0
+   },
+   "stack": {
+    "server": "tools/chat_bench/serve_ref.py",
+    "backend": "torch",
+    "greedy": "argmax",
+    "torch": "2.14.1",
+    "transformers": "5.20.2",
+    "device": "mps",
+    "dtype": "bfloat16"
+   },
+   "machine": {
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "chip": "Apple M1 Max",
+    "memory_gb": 32,
+    "arch": "arm64"
+   },
+   "started": "2026-10-30T11:58:03",
+   "requests": 400,
+   "chat_template_args": null,
+   "reasoning_budget": 512,
+   "prefill": null,
+   "scores": {
+    "titles": {
+     "format_ok": {
+      "value": 0.9625,
+      "lo": 0.9125,
+      "hi": 1.0,
+      "n": 80
+     },
+     "len_ok": {
+      "value": 0.9625,
+      "lo": 0.9125,
+      "hi": 1.0,
+      "n": 80
+     },
+     "rouge_l": {
+      "value": 0.4535,
+      "lo": 0.4199,
+      "hi": 0.4886,
+      "n": 80
+     },
+     "emb_sim": {
+      "value": 0.8428,
+      "lo": 0.8289,
+      "hi": 0.8562,
+      "n": 80
+     },
+     "fmt_nonempty": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_single_line": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_max_words": {
+      "value": 0.9625,
+      "lo": 0.9125,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_quotes": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_prefix": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_trailing_punct": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_markdown": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.247,
+      "ttft_p90_s": 0.353,
+      "ttft_content_median_s": 14.056,
+      "ttft_content_p90_s": 14.24,
+      "output_tok_s_median": 36.4,
+      "total_median_s": 14.263,
+      "total_p90_s": 14.469,
+      "output_tokens_mean": 519.9,
+      "reasoning_tokens_mean": 512,
+      "decode_tok_s_median": 37.0,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.4535,
+      "lo": 0.4199,
+      "hi": 0.4886,
+      "n": 80
+     }
+    },
+    "tags_vocab": {
+     "f1": {
+      "value": 0.9213,
+      "lo": 0.8879,
+      "hi": 0.9521,
+      "n": 80
+     },
+     "precision": {
+      "value": 0.9354,
+      "lo": 0.8938,
+      "hi": 0.9688,
+      "n": 80
+     },
+     "recall": {
+      "value": 0.9396,
+      "lo": 0.9021,
+      "hi": 0.9729,
+      "n": 80
+     },
+     "top1": {
+      "value": 0.9875,
+      "lo": 0.9625,
+      "hi": 1.0,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 0.9875,
+      "lo": 0.9625,
+      "hi": 1.0,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 0.9875,
+      "lo": 0.9625,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "off_vocab_rate": {
+      "value": 0.0079,
+      "lo": 0.0,
+      "hi": 0.0252,
+      "n": 126
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.297,
+      "ttft_p90_s": 0.318,
+      "ttft_content_median_s": 14.13,
+      "ttft_content_p90_s": 14.292,
+      "output_tok_s_median": 36.0,
+      "total_median_s": 14.476,
+      "total_p90_s": 14.653,
+      "output_tokens_mean": 466.5,
+      "reasoning_tokens_mean": 454.4,
+      "decode_tok_s_median": 36.8,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.9213,
+      "lo": 0.8879,
+      "hi": 0.9521,
+      "n": 80
+     }
+    },
+    "tags_free": {
+     "concept_recall": {
+      "value": 0.6494,
+      "lo": 0.6144,
+      "hi": 0.6863,
+      "n": 80
+     },
+     "format_ok": {
+      "value": 0.625,
+      "lo": 0.525,
+      "hi": 0.725,
+      "n": 80
+     },
+     "on_gold_precision": {
+      "value": 0.7596,
+      "lo": 0.7194,
+      "hi": 0.8,
+      "n": 337
+     },
+     "grounded_rate": {
+      "value": 0.9407,
+      "lo": 0.9152,
+      "hi": 0.9652,
+      "n": 337
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.225,
+      "ttft_p90_s": 0.245,
+      "ttft_content_median_s": 14.078,
+      "ttft_content_p90_s": 14.214,
+      "output_tok_s_median": 36.4,
+      "total_median_s": 14.41,
+      "total_p90_s": 14.55,
+      "output_tokens_mean": 524.1,
+      "reasoning_tokens_mean": 512,
+      "decode_tok_s_median": 36.9,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.6494,
+      "lo": 0.6144,
+      "hi": 0.6863,
+      "n": 80
+     }
+    },
+    "extraction": {
+     "field_acc": {
+      "value": 0.9685,
+      "lo": 0.9353,
+      "hi": 0.9927,
+      "n": 413
+     },
+     "item_field_acc": {
+      "value": 0.96,
+      "lo": 0.9183,
+      "hi": 0.9908,
+      "n": 80
+     },
+     "absent_ok": {
+      "value": 0.4366,
+      "lo": 0.3026,
+      "hi": 0.5733,
+      "n": 71
+     },
+     "exact": {
+      "value": 0.7,
+      "lo": 0.6,
+      "hi": 0.8,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 0.95,
+      "lo": 0.9,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 0.975,
+      "lo": 0.9375,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 0.8125,
+      "lo": 0.725,
+      "hi": 0.8875,
+      "n": 80
+     },
+     "extra_keys": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.025,
+      "lo": 0.0,
+      "hi": 0.0625,
+      "n": 80
+     },
+     "refusal": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "length_cut": {
+      "value": 0.1625,
+      "lo": 0.0875,
+      "hi": 0.2375,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.292,
+      "ttft_p90_s": 0.349,
+      "ttft_content_median_s": 14.198,
+      "ttft_content_p90_s": 14.268,
+      "output_tok_s_median": 36.1,
+      "total_median_s": 16.017,
+      "total_p90_s": 21.312,
+      "output_tokens_mean": 601,
+      "reasoning_tokens_mean": 500.9,
+      "decode_tok_s_median": 36.8,
+      "length_cut_rate": 0.1625
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.96,
+      "lo": 0.9183,
+      "hi": 0.9908,
+      "n": 80
+     }
+    },
+    "instructions": {
+     "all_checks": {
+      "value": 0.975,
+      "lo": 0.9375,
+      "hi": 1.0,
+      "n": 80
+     },
+     "check_rate": {
+      "value": 0.9789,
+      "lo": 0.9474,
+      "hi": 1.0,
+      "n": 95
+     },
+     "answer_acc": {
+      "value": 0.931,
+      "lo": 0.8276,
+      "hi": 1.0,
+      "n": 29
+     },
+     "by_check": {
+      "answer_only": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 17
+      },
+      "answer_only_number": {
+       "value": 0.875,
+       "lo": 0.625,
+       "hi": 1.0,
+       "n": 8
+      },
+      "bullet_count": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 7
+      },
+      "ends_with": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 3
+      },
+      "forbidden_words": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "language": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 18
+      },
+      "lowercase": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "max_chars": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 3
+      },
+      "max_sentences": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 8
+      },
+      "max_words": {
+       "value": 0.9333,
+       "lo": 0.8,
+       "hi": 1.0,
+       "n": 15
+      },
+      "single_line": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "starts_with": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      }
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.097,
+      "ttft_p90_s": 0.153,
+      "ttft_content_median_s": 8.715,
+      "ttft_content_p90_s": 13.926,
+      "output_tok_s_median": 36.8,
+      "total_median_s": 10.197,
+      "total_p90_s": 15.189,
+      "output_tokens_mean": 354.9,
+      "reasoning_tokens_mean": 325.9,
+      "decode_tok_s_median": 37.2,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.975,
+      "lo": 0.9375,
+      "hi": 1.0,
+      "n": 80
+     }
+    }
+   }
+  },
+  "lfm3-1.7b-think-guided": {
+   "label": "LFM3-1.7B, thinking on, guided JSON (llguidance)",
+   "server": "serve_ref",
+   "json": "guided",
+   "model": {
+    "repo": "LiquidAI/LFM3-1.7B",
+    "revision": "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7",
+    "load_s": 7.0
+   },
+   "stack": {
+    "server": "tools/chat_bench/serve_ref.py",
+    "backend": "torch",
+    "greedy": "argmax",
+    "torch": "2.14.1",
+    "transformers": "5.20.2",
+    "device": "mps",
+    "dtype": "bfloat16",
+    "llguidance": "1.9.1"
+   },
+   "machine": {
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "chip": "Apple M1 Max",
+    "memory_gb": 32,
+    "arch": "arm64"
+   },
+   "started": "2026-10-30T16:54:52",
+   "requests": 160,
+   "chat_template_args": null,
+   "reasoning_budget": null,
+   "prefill": null,
+   "scores": {
+    "tags_vocab": {
+     "f1": {
+      "value": 0.8946,
+      "lo": 0.8521,
+      "hi": 0.9325,
+      "n": 80
+     },
+     "precision": {
+      "value": 0.9208,
+      "lo": 0.875,
+      "hi": 0.9605,
+      "n": 80
+     },
+     "recall": {
+      "value": 0.9062,
+      "lo": 0.8583,
+      "hi": 0.9479,
+      "n": 80
+     },
+     "top1": {
+      "value": 0.975,
+      "lo": 0.9375,
+      "hi": 1.0,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "off_vocab_rate": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 121
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.3,
+      "ttft_p90_s": 0.319,
+      "ttft_content_median_s": 15.91,
+      "ttft_content_p90_s": 34.365,
+      "output_tok_s_median": 35.9,
+      "total_median_s": 16.176,
+      "total_p90_s": 34.762,
+      "output_tokens_mean": 737.6,
+      "reasoning_tokens_mean": 725.7,
+      "decode_tok_s_median": 36.4,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.8946,
+      "lo": 0.8521,
+      "hi": 0.9325,
+      "n": 80
+     }
+    },
+    "extraction": {
+     "field_acc": {
+      "value": 0.9492,
+      "lo": 0.9073,
+      "hi": 0.9835,
+      "n": 413
+     },
+     "item_field_acc": {
+      "value": 0.925,
+      "lo": 0.8667,
+      "hi": 0.975,
+      "n": 80
+     },
+     "absent_ok": {
+      "value": 0.8448,
+      "lo": 0.7292,
+      "hi": 0.9423,
+      "n": 58
+     },
+     "exact": {
+      "value": 0.8,
+      "lo": 0.7125,
+      "hi": 0.8875,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 0.9375,
+      "lo": 0.875,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 0.9375,
+      "lo": 0.875,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 0.9375,
+      "lo": 0.875,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "extra_keys": {
+      "value": 0.025,
+      "lo": 0.0,
+      "hi": 0.0625,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0625,
+      "lo": 0.0125,
+      "hi": 0.125,
+      "n": 80
+     },
+     "refusal": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "length_cut": {
+      "value": 0.0625,
+      "lo": 0.0125,
+      "hi": 0.125,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.292,
+      "ttft_p90_s": 0.354,
+      "ttft_content_median_s": 28.063,
+      "ttft_content_p90_s": 85.712,
+      "output_tok_s_median": 35.7,
+      "total_median_s": 29.765,
+      "total_p90_s": 87.022,
+      "output_tokens_mean": 1484.6,
+      "reasoning_tokens_mean": 1424.9,
+      "decode_tok_s_median": 36.1,
+      "length_cut_rate": 0.0625
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.925,
+      "lo": 0.8667,
+      "hi": 0.975,
+      "n": 80
+     }
+    }
+   }
+  },
+  "lfm3-1.7b-think": {
+   "label": "LFM3-1.7B, thinking on",
+   "server": "serve_ref",
+   "json": "prompt",
+   "model": {
+    "repo": "LiquidAI/LFM3-1.7B",
+    "revision": "ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7",
+    "load_s": 6.0
+   },
+   "stack": {
+    "server": "tools/chat_bench/serve_ref.py",
+    "backend": "torch",
+    "greedy": "argmax",
+    "torch": "2.14.1",
+    "transformers": "5.20.2",
+    "device": "mps",
+    "dtype": "bfloat16"
+   },
+   "machine": {
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "chip": "Apple M1 Max",
+    "memory_gb": 32,
+    "arch": "arm64"
+   },
+   "started": "2026-10-30T15:31:23",
+   "requests": 400,
+   "chat_template_args": null,
+   "reasoning_budget": null,
+   "prefill": null,
+   "scores": {
+    "titles": {
+     "format_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "len_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "rouge_l": {
+      "value": 0.445,
+      "lo": 0.4073,
+      "hi": 0.482,
+      "n": 80
+     },
+     "emb_sim": {
+      "value": 0.8407,
+      "lo": 0.8267,
+      "hi": 0.8537,
+      "n": 80
+     },
+     "fmt_nonempty": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_single_line": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_max_words": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_quotes": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_prefix": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_trailing_punct": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_markdown": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.247,
+      "ttft_p90_s": 0.355,
+      "ttft_content_median_s": 37.016,
+      "ttft_content_p90_s": 57.41,
+      "output_tok_s_median": 36.3,
+      "total_median_s": 37.261,
+      "total_p90_s": 57.604,
+      "output_tokens_mean": 1402.8,
+      "reasoning_tokens_mean": 1395.1,
+      "decode_tok_s_median": 36.6,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.445,
+      "lo": 0.4073,
+      "hi": 0.482,
+      "n": 80
+     }
+    },
+    "tags_vocab": {
+     "f1": {
+      "value": 0.8946,
+      "lo": 0.8521,
+      "hi": 0.9325,
+      "n": 80
+     },
+     "precision": {
+      "value": 0.9208,
+      "lo": 0.875,
+      "hi": 0.9605,
+      "n": 80
+     },
+     "recall": {
+      "value": 0.9062,
+      "lo": 0.8583,
+      "hi": 0.9479,
+      "n": 80
+     },
+     "top1": {
+      "value": 0.975,
+      "lo": 0.9375,
+      "hi": 1.0,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "off_vocab_rate": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 121
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.298,
+      "ttft_p90_s": 0.319,
+      "ttft_content_median_s": 16.026,
+      "ttft_content_p90_s": 34.19,
+      "output_tok_s_median": 36.0,
+      "total_median_s": 16.336,
+      "total_p90_s": 34.605,
+      "output_tokens_mean": 737.6,
+      "reasoning_tokens_mean": 725.7,
+      "decode_tok_s_median": 36.6,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.8946,
+      "lo": 0.8521,
+      "hi": 0.9325,
+      "n": 80
+     }
+    },
+    "tags_free": {
+     "concept_recall": {
+      "value": 0.66,
+      "lo": 0.625,
+      "hi": 0.695,
+      "n": 80
+     },
+     "format_ok": {
+      "value": 0.9125,
+      "lo": 0.85,
+      "hi": 0.975,
+      "n": 80
+     },
+     "on_gold_precision": {
+      "value": 0.7493,
+      "lo": 0.7102,
+      "hi": 0.7859,
+      "n": 351
+     },
+     "grounded_rate": {
+      "value": 0.9516,
+      "lo": 0.9263,
+      "hi": 0.9744,
+      "n": 351
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.226,
+      "ttft_p90_s": 0.247,
+      "ttft_content_median_s": 40.591,
+      "ttft_content_p90_s": 70.74,
+      "output_tok_s_median": 36.1,
+      "total_median_s": 40.908,
+      "total_p90_s": 71.053,
+      "output_tokens_mean": 1626.3,
+      "reasoning_tokens_mean": 1613.9,
+      "decode_tok_s_median": 36.3,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.66,
+      "lo": 0.625,
+      "hi": 0.695,
+      "n": 80
+     }
+    },
+    "extraction": {
+     "field_acc": {
+      "value": 0.9516,
+      "lo": 0.9103,
+      "hi": 0.9859,
+      "n": 413
+     },
+     "item_field_acc": {
+      "value": 0.9292,
+      "lo": 0.8708,
+      "hi": 0.9792,
+      "n": 80
+     },
+     "absent_ok": {
+      "value": 0.8448,
+      "lo": 0.7292,
+      "hi": 0.9423,
+      "n": 58
+     },
+     "exact": {
+      "value": 0.8125,
+      "lo": 0.725,
+      "hi": 0.9,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 0.9375,
+      "lo": 0.875,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 0.9375,
+      "lo": 0.875,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 0.9375,
+      "lo": 0.875,
+      "hi": 0.9875,
+      "n": 80
+     },
+     "extra_keys": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0625,
+      "lo": 0.0125,
+      "hi": 0.125,
+      "n": 80
+     },
+     "refusal": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "length_cut": {
+      "value": 0.0625,
+      "lo": 0.0125,
+      "hi": 0.125,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.292,
+      "ttft_p90_s": 0.353,
+      "ttft_content_median_s": 27.928,
+      "ttft_content_p90_s": 85.109,
+      "output_tok_s_median": 35.8,
+      "total_median_s": 29.733,
+      "total_p90_s": 86.408,
+      "output_tokens_mean": 1484.3,
+      "reasoning_tokens_mean": 1424.9,
+      "decode_tok_s_median": 36.2,
+      "length_cut_rate": 0.0625
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.9292,
+      "lo": 0.8708,
+      "hi": 0.9792,
+      "n": 80
+     }
+    },
+    "instructions": {
+     "all_checks": {
+      "value": 0.9875,
+      "lo": 0.9625,
+      "hi": 1.0,
+      "n": 80
+     },
+     "check_rate": {
+      "value": 0.9895,
+      "lo": 0.967,
+      "hi": 1.0,
+      "n": 95
+     },
+     "answer_acc": {
+      "value": 0.931,
+      "lo": 0.8276,
+      "hi": 1.0,
+      "n": 29
+     },
+     "by_check": {
+      "answer_only": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 17
+      },
+      "answer_only_number": {
+       "value": 0.875,
+       "lo": 0.625,
+       "hi": 1.0,
+       "n": 8
+      },
+      "bullet_count": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 7
+      },
+      "ends_with": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 3
+      },
+      "forbidden_words": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "language": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 18
+      },
+      "lowercase": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "max_chars": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 3
+      },
+      "max_sentences": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 8
+      },
+      "max_words": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 15
+      },
+      "single_line": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "starts_with": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      }
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.099,
+      "ttft_p90_s": 0.156,
+      "ttft_content_median_s": 8.846,
+      "ttft_content_p90_s": 24.723,
+      "output_tok_s_median": 36.2,
+      "total_median_s": 10.348,
+      "total_p90_s": 25.116,
+      "output_tokens_mean": 494.8,
+      "reasoning_tokens_mean": 466.1,
+      "decode_tok_s_median": 36.7,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.9875,
+      "lo": 0.9625,
+      "hi": 1.0,
+      "n": 80
+     }
+    }
+   }
+  },
   "minicpm5-1b-guided": {
    "label": "MiniCPM5-1B, guided JSON (llguidance)",
    "server": "serve_ref",
@@ -3350,6 +5313,737 @@
       "value": 0.875,
       "lo": 0.8,
       "hi": 0.9375,
+      "n": 80
+     }
+    }
+   }
+  },
+  "minicpm5-2b-torch-guided": {
+   "label": "MiniCPM5-2B on serve_ref (PyTorch, MPS), guided JSON (llguidance)",
+   "server": "serve_ref",
+   "json": "guided",
+   "model": {
+    "repo": "openbmb/MiniCPM5-2B",
+    "revision": "f97400052a43d642bbc6e9975e2397e3ae6a6b52",
+    "load_s": 8.1
+   },
+   "stack": {
+    "server": "tools/chat_bench/serve_ref.py",
+    "backend": "torch",
+    "greedy": "argmax",
+    "torch": "2.14.1",
+    "transformers": "5.20.2",
+    "device": "mps",
+    "dtype": "bfloat16",
+    "llguidance": "1.9.1"
+   },
+   "machine": {
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "chip": "Apple M1 Max",
+    "memory_gb": 32,
+    "arch": "arm64"
+   },
+   "started": "2026-10-30T10:27:02",
+   "requests": 160,
+   "chat_template_args": {
+    "enable_thinking": false
+   },
+   "reasoning_budget": null,
+   "prefill": null,
+   "scores": {
+    "tags_vocab": {
+     "f1": {
+      "value": 0.7696,
+      "lo": 0.7096,
+      "hi": 0.8263,
+      "n": 80
+     },
+     "precision": {
+      "value": 0.7875,
+      "lo": 0.7208,
+      "hi": 0.85,
+      "n": 80
+     },
+     "recall": {
+      "value": 0.8042,
+      "lo": 0.7375,
+      "hi": 0.8667,
+      "n": 80
+     },
+     "top1": {
+      "value": 0.825,
+      "lo": 0.7375,
+      "hi": 0.9,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "off_vocab_rate": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 128
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.374,
+      "ttft_p90_s": 0.395,
+      "ttft_content_median_s": 0.374,
+      "ttft_content_p90_s": 0.395,
+      "output_tok_s_median": 15.0,
+      "total_median_s": 0.665,
+      "total_p90_s": 0.771,
+      "output_tokens_mean": 10.0,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 30.2,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.7696,
+      "lo": 0.7096,
+      "hi": 0.8263,
+      "n": 80
+     }
+    },
+    "extraction": {
+     "field_acc": {
+      "value": 0.8992,
+      "lo": 0.8565,
+      "hi": 0.936,
+      "n": 413
+     },
+     "item_field_acc": {
+      "value": 0.8874,
+      "lo": 0.8427,
+      "hi": 0.9281,
+      "n": 80
+     },
+     "absent_ok": {
+      "value": 0.8701,
+      "lo": 0.7586,
+      "hi": 0.9583,
+      "n": 77
+     },
+     "exact": {
+      "value": 0.55,
+      "lo": 0.4375,
+      "hi": 0.6503,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "extra_keys": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "refusal": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "length_cut": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.366,
+      "ttft_p90_s": 0.445,
+      "ttft_content_median_s": 0.366,
+      "ttft_content_p90_s": 0.445,
+      "output_tok_s_median": 24.6,
+      "total_median_s": 1.969,
+      "total_p90_s": 2.671,
+      "output_tokens_mean": 46.8,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 30.2,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.8874,
+      "lo": 0.8427,
+      "hi": 0.9281,
+      "n": 80
+     }
+    }
+   }
+  },
+  "minicpm5-2b-torch": {
+   "label": "MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows",
+   "server": "serve_ref",
+   "json": "prompt",
+   "model": {
+    "repo": "openbmb/MiniCPM5-2B",
+    "revision": "f97400052a43d642bbc6e9975e2397e3ae6a6b52",
+    "load_s": 8.1
+   },
+   "stack": {
+    "server": "tools/chat_bench/serve_ref.py",
+    "backend": "torch",
+    "greedy": "argmax",
+    "torch": "2.14.1",
+    "transformers": "5.20.2",
+    "device": "mps",
+    "dtype": "bfloat16"
+   },
+   "machine": {
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "chip": "Apple M1 Max",
+    "memory_gb": 32,
+    "arch": "arm64"
+   },
+   "started": "2026-10-30T10:23:22",
+   "requests": 400,
+   "chat_template_args": {
+    "enable_thinking": false
+   },
+   "reasoning_budget": null,
+   "prefill": null,
+   "scores": {
+    "titles": {
+     "format_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "len_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "rouge_l": {
+      "value": 0.4646,
+      "lo": 0.4206,
+      "hi": 0.5085,
+      "n": 80
+     },
+     "emb_sim": {
+      "value": 0.8247,
+      "lo": 0.8046,
+      "hi": 0.8434,
+      "n": 80
+     },
+     "fmt_nonempty": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_single_line": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_max_words": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_quotes": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_prefix": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_trailing_punct": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fmt_no_markdown": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.309,
+      "ttft_p90_s": 0.445,
+      "ttft_content_median_s": 0.309,
+      "ttft_content_p90_s": 0.445,
+      "output_tok_s_median": 7.5,
+      "total_median_s": 0.44,
+      "total_p90_s": 0.565,
+      "output_tokens_mean": 3.5,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 24.9,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.4646,
+      "lo": 0.4206,
+      "hi": 0.5085,
+      "n": 80
+     }
+    },
+    "tags_vocab": {
+     "f1": {
+      "value": 0.7612,
+      "lo": 0.6979,
+      "hi": 0.8204,
+      "n": 80
+     },
+     "precision": {
+      "value": 0.7792,
+      "lo": 0.7125,
+      "hi": 0.8417,
+      "n": 80
+     },
+     "recall": {
+      "value": 0.7958,
+      "lo": 0.725,
+      "hi": 0.8604,
+      "n": 80
+     },
+     "top1": {
+      "value": 0.825,
+      "lo": 0.7375,
+      "hi": 0.9,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 0.975,
+      "lo": 0.9375,
+      "hi": 1.0,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "off_vocab_rate": {
+      "value": 0.0233,
+      "lo": 0.0,
+      "hi": 0.062,
+      "n": 129
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.377,
+      "ttft_p90_s": 0.393,
+      "ttft_content_median_s": 0.377,
+      "ttft_content_p90_s": 0.393,
+      "output_tok_s_median": 14.5,
+      "total_median_s": 0.703,
+      "total_p90_s": 0.785,
+      "output_tokens_mean": 10.0,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 27.5,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.7612,
+      "lo": 0.6979,
+      "hi": 0.8204,
+      "n": 80
+     }
+    },
+    "tags_free": {
+     "concept_recall": {
+      "value": 0.3256,
+      "lo": 0.2731,
+      "hi": 0.3831,
+      "n": 80
+     },
+     "format_ok": {
+      "value": 0.775,
+      "lo": 0.675,
+      "hi": 0.8625,
+      "n": 80
+     },
+     "on_gold_precision": {
+      "value": 0.4586,
+      "lo": 0.3872,
+      "hi": 0.5318,
+      "n": 266
+     },
+     "grounded_rate": {
+      "value": 0.6128,
+      "lo": 0.5364,
+      "hi": 0.6864,
+      "n": 266
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.28,
+      "ttft_p90_s": 0.31,
+      "ttft_content_median_s": 0.28,
+      "ttft_content_p90_s": 0.31,
+      "output_tok_s_median": 13.0,
+      "total_median_s": 0.502,
+      "total_p90_s": 0.595,
+      "output_tokens_mean": 6.8,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 25.6,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.3256,
+      "lo": 0.2731,
+      "hi": 0.3831,
+      "n": 80
+     }
+    },
+    "extraction": {
+     "field_acc": {
+      "value": 0.8992,
+      "lo": 0.8565,
+      "hi": 0.936,
+      "n": 413
+     },
+     "item_field_acc": {
+      "value": 0.8874,
+      "lo": 0.8427,
+      "hi": 0.9281,
+      "n": 80
+     },
+     "absent_ok": {
+      "value": 0.8701,
+      "lo": 0.7586,
+      "hi": 0.9583,
+      "n": 77
+     },
+     "exact": {
+      "value": 0.55,
+      "lo": 0.4375,
+      "hi": 0.6503,
+      "n": 80
+     },
+     "schema_valid": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "parse_ok": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "strict_json": {
+      "value": 1.0,
+      "lo": 1.0,
+      "hi": 1.0,
+      "n": 80
+     },
+     "extra_keys": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "fail": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "refusal": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "length_cut": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.379,
+      "ttft_p90_s": 0.453,
+      "ttft_content_median_s": 0.379,
+      "ttft_content_p90_s": 0.453,
+      "output_tok_s_median": 24.7,
+      "total_median_s": 1.96,
+      "total_p90_s": 2.673,
+      "output_tokens_mean": 46.8,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 30.1,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.8874,
+      "lo": 0.8427,
+      "hi": 0.9281,
+      "n": 80
+     }
+    },
+    "instructions": {
+     "all_checks": {
+      "value": 0.975,
+      "lo": 0.9375,
+      "hi": 1.0,
+      "n": 80
+     },
+     "check_rate": {
+      "value": 0.9789,
+      "lo": 0.9474,
+      "hi": 1.0,
+      "n": 95
+     },
+     "answer_acc": {
+      "value": 0.8966,
+      "lo": 0.7586,
+      "hi": 1.0,
+      "n": 29
+     },
+     "by_check": {
+      "answer_only": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 17
+      },
+      "answer_only_number": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 8
+      },
+      "bullet_count": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 7
+      },
+      "ends_with": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 3
+      },
+      "forbidden_words": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "language": {
+       "value": 0.9444,
+       "lo": 0.8333,
+       "hi": 1.0,
+       "n": 18
+      },
+      "lowercase": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "max_chars": {
+       "value": 0.6667,
+       "lo": 0.0,
+       "hi": 1.0,
+       "n": 3
+      },
+      "max_sentences": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 8
+      },
+      "max_words": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 15
+      },
+      "single_line": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      },
+      "starts_with": {
+       "value": 1.0,
+       "lo": 1.0,
+       "hi": 1.0,
+       "n": 4
+      }
+     },
+     "latency": {
+      "n": 80,
+      "ttft_median_s": 0.111,
+      "ttft_p90_s": 0.19,
+      "ttft_content_median_s": 0.111,
+      "ttft_content_p90_s": 0.19,
+      "output_tok_s_median": 22.9,
+      "total_median_s": 0.474,
+      "total_p90_s": 1.491,
+      "output_tokens_mean": 17.3,
+      "reasoning_tokens_mean": null,
+      "decode_tok_s_median": 29.0,
+      "length_cut_rate": 0.0
+     },
+     "refused": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "errors": {
+      "value": 0.0,
+      "lo": 0.0,
+      "hi": 0.0,
+      "n": 80
+     },
+     "headline_answered": {
+      "value": 0.975,
+      "lo": 0.9375,
+      "hi": 1.0,
       "n": 80
      }
     }
@@ -4988,6 +7682,130 @@
     "n": 80
    }
   },
+  "lfm3-1.7b-nothink-guided": {
+   "tags_vocab": {
+    "value": 0.085,
+    "lo": -0.005,
+    "hi": 0.1858,
+    "n": 80
+   },
+   "extraction": {
+    "value": 0.3213,
+    "lo": 0.2739,
+    "hi": 0.369,
+    "n": 80
+   }
+  },
+  "lfm3-1.7b-nothink": {
+   "titles": {
+    "value": -0.0675,
+    "lo": -0.1102,
+    "hi": -0.0244,
+    "n": 80
+   },
+   "tags_vocab": {
+    "value": 0.0754,
+    "lo": -0.01,
+    "hi": 0.1717,
+    "n": 80
+   },
+   "tags_free": {
+    "value": -0.1175,
+    "lo": -0.1725,
+    "hi": -0.0625,
+    "n": 80
+   },
+   "extraction": {
+    "value": 0.2692,
+    "lo": 0.1891,
+    "hi": 0.3412,
+    "n": 80
+   },
+   "instructions": {
+    "value": -0.1625,
+    "lo": -0.25,
+    "hi": -0.075,
+    "n": 80
+   }
+  },
+  "lfm3-1.7b-think-512": {
+   "titles": {
+    "value": -0.0254,
+    "lo": -0.0697,
+    "hi": 0.0177,
+    "n": 80
+   },
+   "tags_vocab": {
+    "value": 0.2108,
+    "lo": 0.1379,
+    "hi": 0.2904,
+    "n": 80
+   },
+   "tags_free": {
+    "value": 0.0825,
+    "lo": 0.0324,
+    "hi": 0.135,
+    "n": 80
+   },
+   "extraction": {
+    "value": 0.3134,
+    "lo": 0.2445,
+    "hi": 0.3721,
+    "n": 80
+   },
+   "instructions": {
+    "value": 0.0125,
+    "lo": -0.025,
+    "hi": 0.0625,
+    "n": 80
+   }
+  },
+  "lfm3-1.7b-think-guided": {
+   "tags_vocab": {
+    "value": 0.1842,
+    "lo": 0.1062,
+    "hi": 0.2679,
+    "n": 80
+   },
+   "extraction": {
+    "value": 0.2784,
+    "lo": 0.1889,
+    "hi": 0.358,
+    "n": 80
+   }
+  },
+  "lfm3-1.7b-think": {
+   "titles": {
+    "value": -0.034,
+    "lo": -0.078,
+    "hi": 0.0079,
+    "n": 80
+   },
+   "tags_vocab": {
+    "value": 0.1842,
+    "lo": 0.1062,
+    "hi": 0.2679,
+    "n": 80
+   },
+   "tags_free": {
+    "value": 0.0931,
+    "lo": 0.0425,
+    "hi": 0.1456,
+    "n": 80
+   },
+   "extraction": {
+    "value": 0.2826,
+    "lo": 0.1929,
+    "hi": 0.3608,
+    "n": 80
+   },
+   "instructions": {
+    "value": 0.025,
+    "lo": -0.025,
+    "hi": 0.075,
+    "n": 80
+   }
+  },
   "minicpm5-1b-guided": {
    "tags_vocab": {
     "value": -0.3429,
@@ -5045,6 +7863,52 @@
     "value": -0.0875,
     "lo": -0.1625,
     "hi": -0.025,
+    "n": 80
+   }
+  },
+  "minicpm5-2b-torch-guided": {
+   "tags_vocab": {
+    "value": 0.0592,
+    "lo": -0.0313,
+    "hi": 0.1554,
+    "n": 80
+   },
+   "extraction": {
+    "value": 0.2408,
+    "lo": 0.1716,
+    "hi": 0.3038,
+    "n": 80
+   }
+  },
+  "minicpm5-2b-torch": {
+   "titles": {
+    "value": -0.0144,
+    "lo": -0.0618,
+    "hi": 0.0326,
+    "n": 80
+   },
+   "tags_vocab": {
+    "value": 0.0508,
+    "lo": -0.0421,
+    "hi": 0.1467,
+    "n": 80
+   },
+   "tags_free": {
+    "value": -0.2413,
+    "lo": -0.3025,
+    "hi": -0.18,
+    "n": 80
+   },
+   "extraction": {
+    "value": 0.2408,
+    "lo": 0.1716,
+    "hi": 0.3038,
+    "n": 80
+   },
+   "instructions": {
+    "value": 0.0125,
+    "lo": -0.025,
+    "hi": 0.05,
     "n": 80
    }
   },
@@ -5253,6 +8117,96 @@
      "value": 0.125,
      "lo": 0.0625,
      "hi": 0.2125,
+     "n": 80
+    }
+   }
+  },
+  "minicpm5-2b-torch-guided - minicpm5-2b-torch": {
+   "tags_vocab": {
+    "f1": {
+     "value": 0.0083,
+     "lo": 0.0,
+     "hi": 0.025,
+     "n": 80
+    },
+    "schema_valid": {
+     "value": 0.025,
+     "lo": 0.0,
+     "hi": 0.0625,
+     "n": 80
+    }
+   },
+   "extraction": {
+    "item_field_acc": {
+     "value": 0.0,
+     "lo": 0.0,
+     "hi": 0.0,
+     "n": 80
+    },
+    "schema_valid": {
+     "value": 0.0,
+     "lo": 0.0,
+     "hi": 0.0,
+     "n": 80
+    }
+   }
+  },
+  "lfm3-1.7b-nothink-guided - lfm3-1.7b-nothink": {
+   "tags_vocab": {
+    "f1": {
+     "value": 0.0096,
+     "lo": -0.0212,
+     "hi": 0.0479,
+     "n": 80
+    },
+    "schema_valid": {
+     "value": 0.1875,
+     "lo": 0.1125,
+     "hi": 0.275,
+     "n": 80
+    }
+   },
+   "extraction": {
+    "item_field_acc": {
+     "value": 0.0521,
+     "lo": 0.0125,
+     "hi": 0.1021,
+     "n": 80
+    },
+    "schema_valid": {
+     "value": 0.0875,
+     "lo": 0.025,
+     "hi": 0.15,
+     "n": 80
+    }
+   }
+  },
+  "lfm3-1.7b-think-guided - lfm3-1.7b-think": {
+   "tags_vocab": {
+    "f1": {
+     "value": 0.0,
+     "lo": 0.0,
+     "hi": 0.0,
+     "n": 80
+    },
+    "schema_valid": {
+     "value": 0.0,
+     "lo": 0.0,
+     "hi": 0.0,
+     "n": 80
+    }
+   },
+   "extraction": {
+    "item_field_acc": {
+     "value": -0.0042,
+     "lo": -0.0125,
+     "hi": 0.0,
+     "n": 80
+    },
+    "schema_valid": {
+     "value": 0.0,
+     "lo": 0.0,
+     "hi": 0.0,
      "n": 80
     }
    }

@@ -95,6 +95,8 @@ holds the scores below with their intervals.
 | SmolLM2-360M-Instruct | [HuggingFaceTB/SmolLM2-360M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct) `a10cc15` | mlx_lm.server, bf16 | prompt-only |
 | K2-Horizon-0.9B | [IFM/K2-Horizon-0.9B](https://huggingface.co/IFM/K2-Horizon-0.9B) `7c75f2f` | its repository's own PyTorch code (transformers 5.20.2, torch 2.14.1, MPS, bf16) behind `tools/chat_bench/serve_ref.py` | prompt-only |
 | MiniCPM5-1B, guided | as above | `serve_ref.py` on MLX, every token masked to the schema's grammar by llguidance 1.9.1 | guided, with a prompt-only control on the same server |
+| LFM3-1.7B | [LiquidAI/LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B) `ac2586a` | its repository's own PyTorch code (transformers 5.20.2, torch 2.14.1, MPS, bf16) behind `serve_ref.py`; thinking off (`enable_thinking: false`), on, and on capped at 512 tokens | prompt-only, and guided (llguidance) with thinking off and on |
+| MiniCPM5-2B on PyTorch | as above | `serve_ref.py` on PyTorch (MPS, bf16), the same stack as LFM3-1.7B; `enable_thinking: false` | prompt-only and guided: the like-for-like control for the LFM3 rows |
 
 K2-Horizon is a reasoning model with no non-thinking mode: its chat template
 always opens a thinking block, and its card recommends high effort with
@@ -104,6 +106,20 @@ closes the block almost at once (one token on average); and at high effort
 with thinking capped at 512 tokens, after which the harness closes the block
 and lets it answer (budget forcing; 24 of 400 requests reached the cap).
 Thinking tokens count in its output tokens and latency.
+
+LFM3-1.7B's chat template opens a `<think>` block by default, and
+`enable_thinking: false` closes it empty in the generation prompt. Its rows
+and the MiniCPM5-2B controls beside them were measured later in October
+2026, on the same Mac and macOS, from sidekick 0.17.0, both models on the
+same PyTorch stack. MiniCPM5-2B there scores within a point of its MLX row on
+every family, so the stack doesn't move the scores; only the latency
+differs. LFM3 ran with thinking off; with thinking on, with 4,096 tokens of
+headroom over each family's limit for it (5 of 400 requests still ran out
+thinking); and with thinking capped at 512 tokens (budget forcing, as for
+K2-Horizon). With thinking off it sometimes thinks anyway, without an
+opening tag: a draft, a `</think>`, then the answer again (26 of 400
+replies). The scorer takes a reply's answer from after its last closing
+tag, as a reasoning parser would.
 
 Decoding is greedy for every open model. Foundation Models gets
 `temperature: 0`. mlx_lm.server reuses a cached prompt prefix between
@@ -128,6 +144,10 @@ for adding that run.
 | Foundation Models, guided JSON | 48 (44–52) | 0.84 (0.81–0.86) | 99 (96–100) | 99 (96–100) |
 | MiniCPM5-1B | 40 (36–44) | 0.83 (0.81–0.85) | 91 (85–96) | 91 (85–96) |
 | MiniCPM5-2B | 46 (42–51) | 0.82 (0.80–0.84) | 100 (100–100) | 100 (100–100) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | 46 (42–51) | 0.82 (0.80–0.84) | 100 (100–100) | 100 (100–100) |
+| LFM3-1.7B, thinking off | 41 (37–45) | 0.83 (0.82–0.85) | 46 (35–57) | 49 (38–60) |
+| LFM3-1.7B, thinking on | 44 (41–48) | 0.84 (0.83–0.85) | 100 (100–100) | 100 (100–100) |
+| LFM3-1.7B, thinking capped at 512 tokens | 45 (42–49) | 0.84 (0.83–0.86) | 96 (91–100) | 96 (91–100) |
 | SmolLM3-3B, no-think | 37 (33–41) | 0.84 (0.82–0.85) | 36 (26–48) | 42 (31–54) |
 | K2-Horizon-0.9B, empty thinking block | 41 (35–46) | 0.81 (0.79–0.84) | 85 (77–92) | 89 (82–95) |
 | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | 41 (35–46) | 0.81 (0.79–0.84) | 81 (72–89) | 88 (80–94) |
@@ -146,6 +166,13 @@ Reference against the other references: ROUGE-L 35 (33–37), embedding similari
 | MiniCPM5-1B, guided JSON (llguidance) | 37 (31–43) | 30 (24–35) | 54 (45–63) | 40 (30–50) | 100 (100–100) | 0 (0–0) |
 | MiniCPM5-1B, prompt-only JSON on serve_ref (control for the guided row) | 36 (28–44) | 38 (30–47) | 40 (31–49) | 40 (30–50) | 12 (5–20) | 64 (55–72) |
 | MiniCPM5-2B | 76 (70–82) | 78 (71–84) | 80 (72–86) | 82 (74–90) | 98 (94–100) | 2 (0–6) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | 76 (70–82) | 78 (71–84) | 80 (72–86) | 82 (74–90) | 98 (94–100) | 2 (0–6) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), guided JSON (llguidance) | 77 (71–83) | 79 (72–85) | 80 (74–87) | 82 (74–90) | 100 (100–100) | 0 (0–0) |
+| LFM3-1.7B, thinking off | 79 (72–84) | 86 (79–91) | 78 (72–85) | 89 (81–95) | 81 (72–89) | 17 (9–26) |
+| LFM3-1.7B, thinking off, guided JSON (llguidance) | 80 (75–84) | 86 (80–91) | 81 (76–87) | 90 (84–96) | 100 (100–100) | 0 (0–0) |
+| LFM3-1.7B, thinking on | 89 (85–93) | 92 (88–96) | 91 (86–95) | 98 (94–100) | 100 (100–100) | 0 (0–0) |
+| LFM3-1.7B, thinking on, guided JSON (llguidance) | 89 (85–93) | 92 (88–96) | 91 (86–95) | 98 (94–100) | 100 (100–100) | 0 (0–0) |
+| LFM3-1.7B, thinking capped at 512 tokens | 92 (89–95) | 94 (89–97) | 94 (90–97) | 99 (96–100) | 99 (96–100) | 1 (0–3) |
 | SmolLM3-3B, no-think | 72 (64–79) | 84 (76–92) | 66 (58–74) | 85 (78–92) | 90 (82–96) | 7 (2–13) |
 | K2-Horizon-0.9B, empty thinking block | 56 (47–65) | 57 (47–66) | 59 (50–69) | 61 (51–71) | 14 (6–21) | 65 (57–72) |
 | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | 57 (48–65) | 58 (49–68) | 60 (50–69) | 64 (54–74) | 12 (5–20) | 65 (58–72) |
@@ -159,6 +186,10 @@ Reference against the other references: ROUGE-L 35 (33–37), embedding similari
 | Foundation Models, guided JSON | 57 (52–61) | 68 (63–73) | 94 (91–97) | 86 (78–93) |
 | MiniCPM5-1B | 70 (64–76) | 40 (36–45) | 89 (86–91) | 16 (9–25) |
 | MiniCPM5-2B | 31 (26–37) | 44 (37–52) | 58 (50–65) | 82 (74–90) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | 33 (27–38) | 46 (39–53) | 61 (54–69) | 78 (68–86) |
+| LFM3-1.7B, thinking off | 45 (41–49) | 59 (55–63) | 71 (67–74) | 68 (57–78) |
+| LFM3-1.7B, thinking on | 66 (62–70) | 75 (71–79) | 95 (93–97) | 91 (85–98) |
+| LFM3-1.7B, thinking capped at 512 tokens | 65 (61–69) | 76 (72–80) | 94 (92–97) | 62 (52–72) |
 | SmolLM3-3B, no-think | 55 (51–61) | 59 (53–65) | 96 (94–98) | 52 (41–64) |
 | K2-Horizon-0.9B, empty thinking block | 55 (49–60) | 63 (57–69) | 91 (85–95) | 65 (54–75) |
 | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | 55 (49–60) | 63 (57–70) | 91 (86–95) | 65 (54–75) |
@@ -176,6 +207,13 @@ Reference against the other references: ROUGE-L 35 (33–37), embedding similari
 | MiniCPM5-1B, guided JSON (llguidance) | 88 (84–92) | 88 (85–92) | 6 (0–15) | 38 (26–49) | 100 (100–100) | 100 (100–100) | 0 (0–0) |
 | MiniCPM5-1B, prompt-only JSON on serve_ref (control for the guided row) | 86 (81–90) | 86 (82–91) | 26 (13–42) | 38 (26–49) | 88 (79–94) | 0 (0–0) | 0 (0–0) |
 | MiniCPM5-2B | 89 (84–93) | 90 (86–94) | 87 (76–96) | 54 (44–65) | 100 (100–100) | 100 (100–100) | 0 (0–0) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | 89 (84–93) | 90 (86–94) | 87 (76–96) | 55 (44–65) | 100 (100–100) | 100 (100–100) | 0 (0–0) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), guided JSON (llguidance) | 89 (84–93) | 90 (86–94) | 87 (76–96) | 55 (44–65) | 100 (100–100) | 100 (100–100) | 0 (0–0) |
+| LFM3-1.7B, thinking off | 92 (86–96) | 94 (90–97) | 17 (8–27) | 59 (48–69) | 91 (85–98) | 95 (90–99) | 5 (1–10) |
+| LFM3-1.7B, thinking off, guided JSON (llguidance) | 97 (94–99) | 98 (96–99) | 14 (6–23) | 60 (49–70) | 100 (100–100) | 100 (100–100) | 0 (0–0) |
+| LFM3-1.7B, thinking on | 93 (87–98) | 95 (91–99) | 84 (73–94) | 81 (72–90) | 94 (88–99) | 94 (88–99) | 6 (1–12) |
+| LFM3-1.7B, thinking on, guided JSON (llguidance) | 92 (87–98) | 95 (91–98) | 84 (73–94) | 80 (71–89) | 94 (88–99) | 94 (88–99) | 6 (1–12) |
+| LFM3-1.7B, thinking capped at 512 tokens | 96 (92–99) | 97 (94–99) | 44 (30–57) | 70 (60–80) | 95 (90–99) | 81 (72–89) | 2 (0–6) |
 | SmolLM3-3B, no-think | 92 (88–96) | 94 (90–97) | 46 (29–66) | 59 (48–70) | 86 (79–94) | 0 (0–0) | 2 (0–6) |
 | K2-Horizon-0.9B, empty thinking block | 96 (94–98) | 96 (94–98) | 23 (12–37) | 54 (42–65) | 88 (80–94) | 100 (100–100) | 0 (0–0) |
 | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | 96 (94–98) | 96 (94–98) | 22 (11–35) | 52 (41–64) | 86 (79–94) | 100 (100–100) | 0 (0–0) |
@@ -189,6 +227,10 @@ Reference against the other references: ROUGE-L 35 (33–37), embedding similari
 | Foundation Models, guided JSON | 96 (91–100) | 97 (93–100) | 83 (69–97) |
 | MiniCPM5-1B | 88 (80–94) | 88 (82–95) | 38 (21–55) |
 | MiniCPM5-2B | 98 (94–100) | 98 (95–100) | 90 (76–100) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | 98 (94–100) | 98 (95–100) | 90 (76–100) |
+| LFM3-1.7B, thinking off | 80 (70–89) | 83 (75–91) | 69 (52–86) |
+| LFM3-1.7B, thinking on | 99 (96–100) | 99 (97–100) | 93 (83–100) |
+| LFM3-1.7B, thinking capped at 512 tokens | 98 (94–100) | 98 (95–100) | 93 (83–100) |
 | SmolLM3-3B, no-think | 70 (60–80) | 75 (66–84) | 48 (31–66) |
 | K2-Horizon-0.9B, empty thinking block | 80 (71–89) | 83 (76–90) | 59 (41–76) |
 | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | 88 (80–94) | 89 (83–95) | 66 (48–83) |
@@ -197,20 +239,20 @@ Reference against the other references: ROUGE-L 35 (33–37), embedding similari
 
 **Instruction following by check**
 
-| Check | Foundation Models, guided JSON | MiniCPM5-1B | MiniCPM5-2B | SmolLM3-3B, no-think | K2-Horizon-0.9B, empty thinking block | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | K2-Horizon-0.9B, high effort, thinking capped at 512 tokens | SmolLM2-360M-Instruct |
-|---|---|---|---|---|---|---|---|---|
-| `answer_only` | 100 (n=17) | 94 (n=17) | 100 (n=17) | 59 (n=17) | 100 (n=17) | 100 (n=17) | 100 (n=17) | 88 (n=17) |
-| `answer_only_number` | 100 (n=8) | 100 (n=8) | 100 (n=8) | 25 (n=8) | 50 (n=8) | 75 (n=8) | 100 (n=8) | 62 (n=8) |
-| `bullet_count` | 100 (n=7) | 86 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 86 (n=7) |
-| `ends_with` | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 33 (n=3) |
-| `forbidden_words` | 100 (n=4) | 75 (n=4) | 100 (n=4) | 50 (n=4) | 75 (n=4) | 75 (n=4) | 100 (n=4) | 0 (n=4) |
-| `language` | 100 (n=18) | 89 (n=18) | 94 (n=18) | 94 (n=18) | 89 (n=18) | 89 (n=18) | 100 (n=18) | 83 (n=18) |
-| `lowercase` | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 0 (n=4) |
-| `max_chars` | 67 (n=3) | 67 (n=3) | 67 (n=3) | 67 (n=3) | 33 (n=3) | 67 (n=3) | 33 (n=3) | 67 (n=3) |
-| `max_sentences` | 100 (n=8) | 88 (n=8) | 100 (n=8) | 75 (n=8) | 75 (n=8) | 100 (n=8) | 100 (n=8) | 75 (n=8) |
-| `max_words` | 93 (n=15) | 73 (n=15) | 100 (n=15) | 67 (n=15) | 67 (n=15) | 73 (n=15) | 87 (n=15) | 53 (n=15) |
-| `single_line` | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) |
-| `starts_with` | 75 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 75 (n=4) |
+| Check | Foundation Models, guided JSON | MiniCPM5-1B | MiniCPM5-2B | MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | LFM3-1.7B, thinking off | LFM3-1.7B, thinking on | LFM3-1.7B, thinking capped at 512 tokens | SmolLM3-3B, no-think | K2-Horizon-0.9B, empty thinking block | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | K2-Horizon-0.9B, high effort, thinking capped at 512 tokens | SmolLM2-360M-Instruct |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `answer_only` | 100 (n=17) | 94 (n=17) | 100 (n=17) | 100 (n=17) | 94 (n=17) | 100 (n=17) | 100 (n=17) | 59 (n=17) | 100 (n=17) | 100 (n=17) | 100 (n=17) | 88 (n=17) |
+| `answer_only_number` | 100 (n=8) | 100 (n=8) | 100 (n=8) | 100 (n=8) | 38 (n=8) | 88 (n=8) | 88 (n=8) | 25 (n=8) | 50 (n=8) | 75 (n=8) | 100 (n=8) | 62 (n=8) |
+| `bullet_count` | 100 (n=7) | 86 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 100 (n=7) | 86 (n=7) |
+| `ends_with` | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 100 (n=3) | 33 (n=3) |
+| `forbidden_words` | 100 (n=4) | 75 (n=4) | 100 (n=4) | 100 (n=4) | 75 (n=4) | 100 (n=4) | 100 (n=4) | 50 (n=4) | 75 (n=4) | 75 (n=4) | 100 (n=4) | 0 (n=4) |
+| `language` | 100 (n=18) | 89 (n=18) | 94 (n=18) | 94 (n=18) | 89 (n=18) | 100 (n=18) | 100 (n=18) | 94 (n=18) | 89 (n=18) | 89 (n=18) | 100 (n=18) | 83 (n=18) |
+| `lowercase` | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 0 (n=4) |
+| `max_chars` | 67 (n=3) | 67 (n=3) | 67 (n=3) | 67 (n=3) | 67 (n=3) | 100 (n=3) | 100 (n=3) | 67 (n=3) | 33 (n=3) | 67 (n=3) | 33 (n=3) | 67 (n=3) |
+| `max_sentences` | 100 (n=8) | 88 (n=8) | 100 (n=8) | 100 (n=8) | 88 (n=8) | 100 (n=8) | 100 (n=8) | 75 (n=8) | 75 (n=8) | 100 (n=8) | 100 (n=8) | 75 (n=8) |
+| `max_words` | 93 (n=15) | 73 (n=15) | 100 (n=15) | 100 (n=15) | 67 (n=15) | 100 (n=15) | 93 (n=15) | 67 (n=15) | 67 (n=15) | 73 (n=15) | 87 (n=15) | 53 (n=15) |
+| `single_line` | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) |
+| `starts_with` | 75 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 100 (n=4) | 75 (n=4) |
 
 **Refused by guardrails** (% of requests; a refusal scores zero above)
 
@@ -223,6 +265,13 @@ Reference against the other references: ROUGE-L 35 (33–37), embedding similari
 | MiniCPM5-1B, guided JSON (llguidance) | – | 0 (0–0) | – | 0 (0–0) | – |
 | MiniCPM5-1B, prompt-only JSON on serve_ref (control for the guided row) | – | 0 (0–0) | – | 0 (0–0) | – |
 | MiniCPM5-2B | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), guided JSON (llguidance) | – | 0 (0–0) | – | 0 (0–0) | – |
+| LFM3-1.7B, thinking off | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) |
+| LFM3-1.7B, thinking off, guided JSON (llguidance) | – | 0 (0–0) | – | 0 (0–0) | – |
+| LFM3-1.7B, thinking on | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) |
+| LFM3-1.7B, thinking on, guided JSON (llguidance) | – | 0 (0–0) | – | 0 (0–0) | – |
+| LFM3-1.7B, thinking capped at 512 tokens | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) |
 | SmolLM3-3B, no-think | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) |
 | K2-Horizon-0.9B, empty thinking block | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) |
 | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) |
@@ -242,6 +291,13 @@ Reference against the other references: ROUGE-L 35 (33–37), embedding similari
 | MiniCPM5-1B, guided JSON (llguidance) | – | -34 (-43 to -24) | – | +23 (+17 to +29) | – |
 | MiniCPM5-1B, prompt-only JSON on serve_ref (control for the guided row) | – | -35 (-46 to -24) | – | +21 (+15 to +27) | – |
 | MiniCPM5-2B | -1 (-6 to +3) | +5 (-4 to +15) | -25 (-32 to -19) | +24 (+17 to +30) | +1 (-2 to +5) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | -1 (-6 to +3) | +5 (-4 to +15) | -24 (-30 to -18) | +24 (+17 to +30) | +1 (-2 to +5) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), guided JSON (llguidance) | – | +6 (-3 to +16) | – | +24 (+17 to +30) | – |
+| LFM3-1.7B, thinking off | -7 (-11 to -2) | +8 (-1 to +17) | -12 (-17 to -6) | +27 (+19 to +34) | -16 (-25 to -8) |
+| LFM3-1.7B, thinking off, guided JSON (llguidance) | – | +8 (-0 to +19) | – | +32 (+27 to +37) | – |
+| LFM3-1.7B, thinking on | -3 (-8 to +1) | +18 (+11 to +27) | +9 (+4 to +15) | +28 (+19 to +36) | +2 (-2 to +8) |
+| LFM3-1.7B, thinking on, guided JSON (llguidance) | – | +18 (+11 to +27) | – | +28 (+19 to +36) | – |
+| LFM3-1.7B, thinking capped at 512 tokens | -3 (-7 to +2) | +21 (+14 to +29) | +8 (+3 to +14) | +31 (+24 to +37) | +1 (-2 to +6) |
 | SmolLM3-3B, no-think | -11 (-15 to -6) | +1 (-7 to +10) | -1 (-8 to +6) | +28 (+21 to +34) | -26 (-36 to -16) |
 | K2-Horizon-0.9B, empty thinking block | -7 (-13 to -1) | -16 (-27 to -2) | -2 (-9 to +5) | +31 (+26 to +36) | -16 (-25 to -8) |
 | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | -7 (-13 to -2) | -14 (-26 to -2) | -2 (-9 to +5) | +31 (+26 to +36) | -9 (-18 to -1) |
@@ -255,6 +311,9 @@ Reference against the other references: ROUGE-L 35 (33–37), embedding similari
 | Foundation Models, guided JSON − Foundation Models, prompt-only JSON | -3 (-11 to +5) | -4 (-14 to +6) | -15 (-20 to -9) | +2 (+0 to +6) |
 | Foundation Models, guided JSON, all properties required − Foundation Models, prompt-only JSON | – | – | +17 (+13 to +22) | +2 (+0 to +6) |
 | MiniCPM5-1B, guided JSON (llguidance) − MiniCPM5-1B, prompt-only JSON on serve_ref (control for the guided row) | +1 (-6 to +9) | +88 (+80 to +95) | +2 (-1 to +6) | +12 (+6 to +21) |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), guided JSON (llguidance) − MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | +1 (+0 to +2) | +2 (+0 to +6) | +0 (+0 to +0) | +0 (+0 to +0) |
+| LFM3-1.7B, thinking off, guided JSON (llguidance) − LFM3-1.7B, thinking off | +1 (-2 to +5) | +19 (+11 to +28) | +5 (+1 to +10) | +9 (+2 to +15) |
+| LFM3-1.7B, thinking on, guided JSON (llguidance) − LFM3-1.7B, thinking on | +0 (+0 to +0) | +0 (+0 to +0) | -0 (-1 to +0) | +0 (+0 to +0) |
 
 **Latency** (median time to the first answer token / median total, seconds; mean output tokens, thinking included; decode rate is the median of (tokens − 1) / (total − first token))
 
@@ -267,6 +326,13 @@ Reference against the other references: ROUGE-L 35 (33–37), embedding similari
 | MiniCPM5-1B, guided JSON (llguidance) | – | 0.10 / 0.21; 15 tok | – | 0.11 / 0.57; 63 tok | – | 126 |
 | MiniCPM5-1B, prompt-only JSON on serve_ref (control for the guided row) | – | 0.10 / 0.26; 28 tok | – | 0.09 / 0.60; 70 tok | – | 125 |
 | MiniCPM5-2B | 0.22 / 0.29; 4 tok | 0.21 / 0.39; 11 tok | 0.21 / 0.31; 8 tok | 0.18 / 1.08; 48 tok | 0.15 / 0.34; 18 tok | 56 |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), control for the LFM3 rows | 0.31 / 0.44; 4 tok | 0.38 / 0.70; 10 tok | 0.28 / 0.50; 7 tok | 0.38 / 1.96; 47 tok | 0.11 / 0.47; 17 tok | 28 |
+| MiniCPM5-2B on serve_ref (PyTorch, MPS), guided JSON (llguidance) | – | 0.37 / 0.67; 10 tok | – | 0.37 / 1.97; 47 tok | – | 30 |
+| LFM3-1.7B, thinking off | 0.26 / 0.66; 18 tok | 0.30 / 0.53; 16 tok | 0.23 / 0.46; 10 tok | 0.29 / 2.09; 82 tok | 0.10 / 0.80; 39 tok | 33 |
+| LFM3-1.7B, thinking off, guided JSON (llguidance) | – | 0.30 / 0.48; 9 tok | – | 0.29 / 2.06; 72 tok | – | 37 |
+| LFM3-1.7B, thinking on | 37.02 / 37.26; 1403 tok, 1395 thinking | 16.03 / 16.34; 738 tok, 726 thinking | 40.59 / 40.91; 1626 tok, 1614 thinking | 27.93 / 29.73; 1484 tok, 1425 thinking | 8.85 / 10.35; 495 tok, 466 thinking | 37 |
+| LFM3-1.7B, thinking on, guided JSON (llguidance) | – | 15.91 / 16.18; 738 tok, 726 thinking | – | 28.06 / 29.77; 1485 tok, 1425 thinking | – | 36 |
+| LFM3-1.7B, thinking capped at 512 tokens | 14.06 / 14.26; 520 tok, 512 thinking | 14.13 / 14.48; 466 tok, 454 thinking | 14.08 / 14.41; 524 tok, 512 thinking | 14.20 / 16.02; 601 tok, 501 thinking | 8.71 / 10.20; 355 tok, 326 thinking | 37 |
 | SmolLM3-3B, no-think | 0.28 / 0.54; 12 tok | 0.27 / 0.42; 10 tok | 0.27 / 0.57; 18 tok | 0.23 / 1.69; 69 tok | 0.18 / 0.76; 41 tok | 45 |
 | K2-Horizon-0.9B, empty thinking block | 0.14 / 0.29; 7 tok | 0.19 / 0.57; 23 tok | 0.14 / 0.40; 14 tok | 0.18 / 1.45; 70 tok | 0.07 / 0.39; 30 tok | 48 |
 | K2-Horizon-0.9B, low effort, thinking capped at 256 tokens | 0.18 / 0.32; 9 tok, 1 thinking | 0.23 / 0.61; 38 tok, 1 thinking | 0.17 / 0.44; 17 tok, 1 thinking | 0.22 / 1.49; 72 tok, 1 thinking | 0.11 / 0.48; 46 tok, 12 thinking | 53 |
@@ -348,6 +414,28 @@ high effort, capped at 512 thinking tokens, it is the best row on tags
 fields left out) and instruction answers (93%), at 4–8 s a request on
 PyTorch: 200–350 thinking tokens before each answer.
 
+**LFM3-1.7B beats MiniCPM5-2B only with its thinking, at 10–40 s a
+request.** Paired with MiniCPM5-2B on the same PyTorch stack:
+
+- Thinking off, it is behind on titles (46% in format, −54 points, −65 to
+  −42) and on the instruction prompts (80% pass, −18, −26 to −9). It is
+  level on fixed-vocabulary tags (+2 F1, −4 to +10) and extraction (+3, −3
+  to +9), and ahead on free-form tag recall (+12, +6 to +19). It fills in
+  most fields the text doesn't state: 17% left out, against 87%.
+  Constrained decoding makes its JSON valid and lifts extraction to 97%
+  (+8 over MiniCPM5-2B guided, +4 to +12), still filling in absent fields.
+- Thinking on, it is ahead on fixed-vocabulary tags (89 F1, +13, +6 to
+  +21) and free-form tags (66% recall, +33), level on titles, extraction
+  (+4, −3 to +11) and instructions (99%), and leaves 84% of absent fields
+  out: 81% of extraction items exactly right, the most of any row. It
+  thinks for 470–1,600 tokens on average (up to 4,352) before answering.
+  Guided generation changes nothing here: the thinking is the same, and the
+  answers after it were already valid JSON.
+- Capped at 512 thinking tokens, it keeps the tag scores (92 F1, +16; 65%
+  recall, +32) and extraction (96%, +7, +2 to +13), at a median 10–16 s a
+  request instead of 10–41 s. Almost every request reaches the cap, and it then
+  leaves fewer absent fields out (44%).
+
 **Latency.** Foundation Models starts a plain-text reply in 0.5–0.7 s and
 returns guided JSON whole in 1.0 s (tags) to 1.7 s (extraction). On the GPU
 under MLX, MiniCPM5-1B starts in 0.07–0.10 s and decodes at about 128
@@ -355,7 +443,9 @@ tokens/s, MiniCPM5-2B in 0.15–0.22 s at 56 tokens/s, SmolLM3-3B in
 0.18–0.28 s at 45 tokens/s. These are GPU numbers on an idle Mac; serving
 beside a GPU model means the Neural Engine, where
 [#173](https://github.com/ironblock/sidekick/issues/173) measured
-MiniCPM5-1B at 29 tokens/s (fp16) and 54 tokens/s (int8). Foundation Models'
+MiniCPM5-1B at 29 tokens/s (fp16) and 54 tokens/s (int8). On PyTorch
+(MPS), MiniCPM5-2B decodes at 28 tokens/s and LFM3-1.7B at 33–37, so a
+reply that thinks for 1,000 tokens takes about 30 s there. Foundation Models'
 streamed decode rate isn't comparable: it streams in bursts.
 
 **Repeatability.** Two Foundation Models runs at temperature 0 gave
@@ -461,8 +551,9 @@ scorer compares with the first for repeatability.
   each at its best prompt.
 - **The open models ran on the GPU, in their reference stacks**, not
   through sidekick or on the Neural Engine. This measures the models, not a
-  conversion of them (#173's question). K2-Horizon ran on PyTorch, slower
-  than an MLX build would be, so its latency is an upper bound.
+  conversion of them (#173's question). K2-Horizon and LFM3-1.7B ran on
+  PyTorch, slower than an MLX build would be, so their latency is an upper
+  bound.
 - **Latency is client-side over local HTTP**, with mlx_lm.server's prompt
   cache on. During the MiniCPM5-1B guided row and its control, another
   process took memory (free memory fell to 32%, 1 GB of swap); their

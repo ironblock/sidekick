@@ -39,6 +39,8 @@ OUT_SCHEMA = "sidekick-chat-bench-results/1"
 BOOT = 2000
 SEED = 174
 ROW_ORDER = ["afm", "afm-prompt", "afm-required", "minicpm5-1b", "minicpm5-1b-guided", "minicpm5-1b-ref", "minicpm5-2b",
+             "minicpm5-2b-torch", "minicpm5-2b-torch-guided", "lfm3-1.7b-nothink", "lfm3-1.7b-nothink-guided",
+             "lfm3-1.7b-think", "lfm3-1.7b-think-guided", "lfm3-1.7b-think-512",
              "smollm3-3b", "k2-horizon-0.9b-nothink", "k2-horizon-0.9b-low", "k2-horizon-0.9b-high", "smollm2-360m"]
 
 
@@ -81,14 +83,18 @@ def boot_paired(a: dict, b: dict, seed=SEED) -> dict:
 
 _THINK = re.compile(r"<(ifm\|)?think(_fast|_faster)?>.*?</(ifm\|)?think(_fast|_faster)?>", re.S)
 _OPEN_THINK = re.compile(r"<(ifm\|)?think(_fast|_faster)?>")
+_CLOSE_THINK = re.compile(r"</(?:ifm\|)?think(?:_fast|_faster)?>")
 
 
 def final_text(content: str) -> str:
-    """The reply without any thinking block a server left in the content."""
+    """The reply without any thinking block a server left in the content.
+    A closing tag with no opening one (a model that thinks after the template
+    already closed its block) ends the thinking too: the answer is what
+    follows the last one, as a reasoning parser would split it."""
     text = _THINK.sub("", content or "")
     if _OPEN_THINK.search(text):          # thinking never closed: no answer
         return ""
-    return text.strip()
+    return _CLOSE_THINK.split(text)[-1].strip()
 
 
 def norm(s) -> str:
@@ -613,7 +619,9 @@ def latency(records: list[dict]) -> dict:
 
 # ---------------------------------------------------------------- report
 
-GUIDED_PAIRS = [("afm", "afm-prompt"), ("afm-required", "afm-prompt"), ("minicpm5-1b-guided", "minicpm5-1b-ref")]
+GUIDED_PAIRS = [("afm", "afm-prompt"), ("afm-required", "afm-prompt"), ("minicpm5-1b-guided", "minicpm5-1b-ref"),
+                ("minicpm5-2b-torch-guided", "minicpm5-2b-torch"), ("lfm3-1.7b-nothink-guided", "lfm3-1.7b-nothink"),
+                ("lfm3-1.7b-think-guided", "lfm3-1.7b-think")]
 HEADLINE = {"titles": "rouge_l", "tags_vocab": "f1", "tags_free": "concept_recall",
             "extraction": "item_field_acc", "instructions": "all_checks"}
 
